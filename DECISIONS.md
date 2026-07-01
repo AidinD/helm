@@ -3,6 +3,44 @@
 Working name: **Maestro** — a personal orchestrator harness over Claude Code
 sessions. Placeholder name; cheap to rename before there is git history.
 
+## 2026-07-01 — Stop = kill the child process; interject mid-run deferred
+
+**Decision:** "Stop" kills the in-flight `claude -p` child process directly (no
+architecture change needed — the existing one-shot-per-send model already
+holds a process handle). "Interject extra info while a turn is running" is
+NOT implemented yet.
+
+**What was verified:** `--input-format stream-json` gives the CLI a real
+persistent multi-turn mode — spiked in `spike/test-stream-input.mjs`: sent a
+first user message, waited for its `result`, then sent a second message on the
+SAME process and got a second `result`. Confirms `--resume`-per-send isn't the
+only option; a pane COULD hold one long-lived process across a whole
+conversation instead of respawning per message.
+
+**Why deferred anyway:** the spike only proves a message can be sent *between*
+turns, not injected *while* the model is mid-generation/mid-tool-call, which is
+what "interject" actually means. Building UI for unverified behavior risks
+shipping something that silently does nothing or breaks. Needs a follow-up
+spike that sends a second message before the first `result` arrives and checks
+whether the CLI queues it, ignores it, or errors.
+
+## 2026-07-01 — Image paste: tested, not supported this way — deferred
+
+**Decision:** Do not implement paste-image-into-prompt yet.
+
+**What was tested:** sent a `stream-json` input message with a Messages-API-
+style content block (`{type:"image", source:{type:"base64",...}}`) alongside a
+text block asking the model to confirm it saw an image. Response: it did NOT
+see the image (`MAESTRO_NO_IMAGE`). So the CLI's stream-json input does not
+accept inline base64 image blocks in that shape.
+
+**What's still open:** `claude --help` lists a `--file file_id:relative_path`
+flag ("File resources to download at startup") — suggesting attachments go
+through an upload-and-reference flow (a `file_id`, likely from an Anthropic
+Files API), not a raw paste. Needs research into that flow before building;
+not attempted here to avoid guessing at an unverified upload API on autonomous
+unattended time. [[project-maestro]]
+
 ## 2026-07-01 — Build a custom harness rather than live within the desktop app
 
 **Decision:** Build a dedicated app that programmatically starts, roots,

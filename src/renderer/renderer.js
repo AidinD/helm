@@ -7,11 +7,23 @@ let focusedPaneIndex = 0;
 let dragSessionId = null;
 const paneLaunchMap = new Map(); // launchId -> paneIndex
 
-// Each pane: { sessionId, cliSessionId, cwd, title, turns, hiddenCount, loading }
+// Each pane: { sessionId, cliSessionId, cwd, title, turns, hiddenCount, loading,
+//              busy, currentLaunchId, isOrchestrator }
 let panes = [freshPane()];
 
 function freshPane() {
-  return { sessionId: null, cliSessionId: null, cwd: "", title: "New session", turns: [], hiddenCount: 0, loading: false };
+  return {
+    sessionId: null,
+    cliSessionId: null,
+    cwd: "",
+    title: "New session",
+    turns: [],
+    hiddenCount: 0,
+    loading: false,
+    busy: false,
+    currentLaunchId: null,
+    isOrchestrator: false,
+  };
 }
 
 function relTime(ts) {
@@ -48,6 +60,12 @@ function matchesSearch(session) {
 
 function sessionById(id) {
   return state.sessions.find((s) => s.sessionId === id);
+}
+
+// Sessions matched to the "Orchestrator" Jot list are Maestro-building work
+// itself — tagged distinctly so it's never confused with regular project chats.
+function isOrchestratorSession(session) {
+  return session.jot?.category === "Orchestrator";
 }
 
 // ============================== Context menu ==============================
@@ -133,6 +151,18 @@ async function deleteCategory(label) {
   renderSidebar();
 }
 
+// Display-only rename — never writes to the desktop app's own session files,
+// so it can't corrupt live state there; it just overrides what Maestro shows.
+async function renameSession(session) {
+  const label = window.prompt("Rename chat (display only, doesn't touch the original):", session.title);
+  if (!label || !label.trim() || label === session.title) {
+    return;
+  }
+  const titleOverrides = { ...(state.config.titleOverrides || {}), [session.sessionId]: label.trim() };
+  state.config = await window.maestro.setConfig({ titleOverrides });
+  refresh();
+}
+
 // ============================== Drag and drop (VS Code style) ==============================
 
 async function moveSessionToGroup(sessionId, targetLabel, insertBeforeId) {
@@ -177,6 +207,13 @@ function rowEl(session) {
   title.textContent = session.title;
   title.title = session.title;
   titleLine.append(dot, title);
+  if (isOrchestratorSession(session)) {
+    const tag = document.createElement("span");
+    tag.className = "maestro-tag";
+    tag.textContent = "◆";
+    tag.title = "Maestro orchestrator work";
+    titleLine.append(tag);
+  }
   row.append(titleLine);
 
   const meta = document.createElement("div");
@@ -213,6 +250,7 @@ function rowEl(session) {
     showContextMenu(e.clientX, e.clientY, [
       { label: "Open here", onClick: () => openSessionInPane(session, focusedPaneIndex) },
       { label: "Open in split pane", onClick: () => openSessionInPane(session, focusedPaneIndex === 0 ? 1 : 0, true) },
+      { label: "Rename chat", onClick: () => renameSession(session) },
       { sep: true },
       {
         label: "Move to category",
@@ -292,13 +330,13 @@ function openSessionInPane(session, paneIndex, forceSplit) {
     panes.push(freshPane());
   }
   panes[paneIndex] = {
+    ...freshPane(),
     sessionId: session.sessionId,
     cliSessionId: session.cliSessionId || session.sessionId,
     cwd: session.cwd || "",
     title: session.title,
-    turns: [],
-    hiddenCount: 0,
     loading: true,
+    isOrchestrator: isOrchestratorSession(session),
   };
   if (addedPane) {
     renderWorkspace(); // pane count changed — full rebuild is unavoidable here
@@ -438,6 +476,13 @@ function renderSidebar() {
 
   const visible = state.sessions.filter((s) => !s.isArchived).filter(matchesSearch);
 
+  if ((state.config.sidebarMode || "smart") === "list") {
+    body.append(
+      sectionEl({ label: "All sessions", sessions: visible, collapsed: false, droppable: false })
+    );
+    return;
+  }
+
   const attention = visible.filter((s) => s.needsAttention);
   if (attention.length > 0) {
     body.append(
@@ -472,13 +517,71 @@ function renderSidebar() {
 
 // ============================== Workspace (panes) ==============================
 
-function turnEl(turn) {
-  if (turn.kind === "tool_use") {
-    const el = document.createElement("div");
-    el.className = "turn-tool";
-    el.textContent = `🔧 ${turn.toolName}${turn.toolInput ? " · " + turn.toolInput : ""}`;
-    return el;
+// Minimal, safe markdown: bold, inline code, fenced code blocks, "- " lists.
+// Never uses innerHTML with model text — everything goes through
+// createElement/textContent so there is no injection surface.
+function renderMarkdownInto(container, text) {
+  const segments = text.split(/```([\s\S]*?)```/);
+  segments.forEach((segment, i) => {
+    if (i % 2 === 1) {
+      const pre = document.createElement("pre");
+      pre.className = "md-code-block";
+      pre.textContent = segment.replace(/^[ \t]*\S*\n/, "");
+      container.append(pre);
+    } else if (segment) {
+      renderInlineLines(container, segment);
+    }
+  });
+}
+
+function renderInlineLines(container, text) {
+  const lines = text.split("\n");
+  lines.forEach((line, idx) => {
+    const listMatch = /^\s*[-*]\s+(.*)$/.exec(line);
+    if (listMatch) {
+      const li = document.createElement("div");
+      li.className = "md-li";
+      li.append(document.createTextNode("• "), ...inlineFormat(listMatch[1]));
+      container.append(li);
+    } else {
+      const lineSpan = document.createElement("span");
+      lineSpan.append(...inlineFormat(line));
+      container.append(lineSpan);
+    }
+    if (idx < lines.length - 1) {
+      container.append(document.createElement("br"));
+    }
+  });
+}
+
+function inlineFormat(text) {
+  const nodes = [];
+  const regex = /(\*\*[^*]+\*\*|`[^`]+`)/g;
+  let lastIndex = 0;
+  let m;
+  while ((m = regex.exec(text))) {
+    if (m.index > lastIndex) {
+      nodes.push(document.createTextNode(text.slice(lastIndex, m.index)));
+    }
+    const token = m[0];
+    if (token.startsWith("**")) {
+      const b = document.createElement("strong");
+      b.textContent = token.slice(2, -2);
+      nodes.push(b);
+    } else {
+      const c = document.createElement("code");
+      c.textContent = token.slice(1, -1);
+      nodes.push(c);
+    }
+    lastIndex = regex.lastIndex;
   }
+  if (lastIndex < text.length) {
+    nodes.push(document.createTextNode(text.slice(lastIndex)));
+  }
+  return nodes;
+}
+
+function turnEl(turn) {
   if (turn.kind === "tool_result") {
     const el = document.createElement("div");
     el.className = "turn-tool-result";
@@ -489,9 +592,47 @@ function turnEl(turn) {
   wrap.className = "turn " + turn.role;
   const bubble = document.createElement("div");
   bubble.className = "turn-bubble";
-  bubble.textContent = turn.text;
+  if (turn.role === "assistant") {
+    renderMarkdownInto(bubble, turn.text);
+  } else {
+    bubble.textContent = turn.text;
+  }
   wrap.append(bubble);
   return wrap;
+}
+
+// Consecutive tool_use turns render as a single wrapping row of compact
+// pills (Halyard-style: rounded-full, thin border) instead of stacked lines.
+function toolPillRow(group) {
+  const row = document.createElement("div");
+  row.className = "tool-pill-row";
+  group.forEach((t) => {
+    const pill = document.createElement("span");
+    pill.className = "tool-pill";
+    pill.textContent = `🔧 ${t.toolName}`;
+    if (t.toolInput) {
+      pill.title = t.toolInput;
+    }
+    row.append(pill);
+  });
+  return row;
+}
+
+function appendTurns(scroll, turns) {
+  let i = 0;
+  while (i < turns.length) {
+    if (turns[i].kind === "tool_use") {
+      const group = [];
+      while (i < turns.length && turns[i].kind === "tool_use") {
+        group.push(turns[i]);
+        i++;
+      }
+      scroll.append(toolPillRow(group));
+    } else {
+      scroll.append(turnEl(turns[i]));
+      i++;
+    }
+  }
 }
 
 function renderPane(index) {
@@ -533,9 +674,32 @@ function renderPane(index) {
     empty.textContent = "No history yet — start typing below.";
     scroll.append(empty);
   } else {
-    pane.turns.forEach((t) => scroll.append(turnEl(t)));
+    appendTurns(scroll, pane.turns);
+    wireEditableLastUserTurn(index, scroll);
   }
   scroll.scrollTop = scroll.scrollHeight;
+}
+
+// Double-click the most recent user message to copy it back into the prompt
+// box for editing + resend. Does not alter history — the CLI can't retract a
+// turn via --resume, so this is "edit and send again," not a true rewrite.
+function wireEditableLastUserTurn(index, scroll) {
+  const userBubbles = scroll.querySelectorAll(".turn.user .turn-bubble");
+  if (userBubbles.length === 0) {
+    return;
+  }
+  const last = userBubbles[userBubbles.length - 1];
+  last.classList.add("editable");
+  last.title = "Double-click to edit and resend";
+  last.addEventListener("dblclick", () => {
+    const paneEl = document.querySelector(`.pane[data-pane="${index}"]`);
+    const promptEl = paneEl?.querySelector(".pane-composer textarea");
+    if (promptEl) {
+      promptEl.value = last.textContent;
+      promptEl.focus();
+      promptEl.dispatchEvent(new Event("input"));
+    }
+  });
 }
 
 function paneHeaderEl(index) {
@@ -545,12 +709,22 @@ function paneHeaderEl(index) {
   const title = document.createElement("span");
   title.textContent = pane.title || "New session";
   header.append(title);
+  if (pane.isOrchestrator) {
+    const tag = document.createElement("span");
+    tag.className = "maestro-tag";
+    tag.textContent = "◆ Maestro";
+    tag.title = "This is Maestro-building work, not a regular project chat";
+    header.append(tag);
+  }
   if (pane.cwd) {
     const sub = document.createElement("span");
     sub.className = "pane-sub";
     sub.textContent = pane.cwd;
     header.append(sub);
   }
+  const status = document.createElement("span");
+  status.className = "pane-status";
+  header.append(status);
   if (index === 1) {
     const close = document.createElement("button");
     close.className = "pane-close icon-btn";
@@ -653,16 +827,48 @@ function paneComposerEl(index) {
   const sendBtn = document.createElement("button");
   sendBtn.className = "primary";
   sendBtn.textContent = pane.sessionId ? "Continue" : "Start session";
-  sendBtn.addEventListener("click", () => sendFromPane(index, { cwdInput, promptEl, modelSel, effortSel, sendBtn }));
+  const els = { cwdInput, promptEl, modelSel, effortSel, sendBtn };
+  const handleSendOrStop = () => {
+    if (pane.busy) {
+      if (pane.currentLaunchId) {
+        window.maestro.stopSession(pane.currentLaunchId);
+      }
+    } else {
+      sendFromPane(index, els);
+    }
+  };
+  sendBtn.addEventListener("click", handleSendOrStop);
   wrap.append(sendBtn);
 
   promptEl.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-      sendFromPane(index, { cwdInput, promptEl, modelSel, effortSel, sendBtn });
+      handleSendOrStop();
     }
   });
 
+  if (pane.busy) {
+    sendBtn.textContent = "Stop";
+  }
+
   return wrap;
+}
+
+// Toggles the Send/Stop button + status text for a pane without rebuilding
+// its DOM (which would drop typed-but-unsent text in that pane).
+function setPaneBusyUI(index, statusText) {
+  const paneEl = document.querySelector(`.pane[data-pane="${index}"]`);
+  if (!paneEl) {
+    return;
+  }
+  const pane = panes[index];
+  const btn = paneEl.querySelector(".pane-composer .primary");
+  const status = paneEl.querySelector(".pane-status");
+  if (btn) {
+    btn.textContent = pane.busy ? "Stop" : pane.sessionId ? "Continue" : "Start session";
+  }
+  if (status) {
+    status.textContent = statusText || "";
+  }
 }
 
 async function sendFromPane(index, els) {
@@ -671,13 +877,14 @@ async function sendFromPane(index, els) {
   const prompt = els.promptEl.value.trim();
   const model = els.modelSel.value;
   const effort = els.effortSel.value;
-  if (!cwd || !prompt) {
+  if (!cwd || !prompt || pane.busy) {
     return;
   }
   pane.cwd = cwd;
   pane.turns.push({ role: "user", kind: "text", text: prompt });
   els.promptEl.value = "";
-  els.sendBtn.disabled = true;
+  pane.busy = true;
+  setPaneBusyUI(index, "● Working…");
   renderPane(index);
 
   const res = await window.maestro.startSession({
@@ -687,12 +894,14 @@ async function sendFromPane(index, els) {
     effort,
     resumeSessionId: pane.cliSessionId,
   });
-  els.sendBtn.disabled = false;
   if (!res.ok) {
+    pane.busy = false;
+    setPaneBusyUI(index, "");
     pane.turns.push({ role: "assistant", kind: "text", text: "⚠ Failed to start: " + res.error });
     renderPane(index);
     return;
   }
+  pane.currentLaunchId = res.launchId;
   paneLaunchMap.set(res.launchId, index);
 }
 
@@ -758,6 +967,7 @@ async function refresh() {
   state.config = data.config;
   state.quota = data.quota;
   applyViewMode();
+  applySidebarMode();
   renderSidebar();
   renderQuota(state.quota);
 }
@@ -785,6 +995,22 @@ document.getElementById("viewToggle").addEventListener("click", async (e) => {
   applyViewMode();
 });
 
+document.getElementById("sidebarModeToggle").addEventListener("click", async (e) => {
+  const btn = e.target.closest("button[data-mode]");
+  if (!btn) {
+    return;
+  }
+  state.config = await window.maestro.setConfig({ sidebarMode: btn.dataset.mode });
+  applySidebarMode();
+  renderSidebar();
+});
+
+function applySidebarMode() {
+  document.querySelectorAll("#sidebarModeToggle button").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.mode === (state.config.sidebarMode || "smart"));
+  });
+}
+
 document.getElementById("splitToggle").addEventListener("click", () => {
   const workspace = document.getElementById("workspace");
   if (panes.length > 1) {
@@ -810,6 +1036,9 @@ window.maestro.onSessionEvent((evt) => {
     case "session":
       pane.cliSessionId = evt.sessionId;
       break;
+    case "tool_use":
+      setPaneBusyUI(index, `● Working — ${evt.toolName}`);
+      break;
     case "assistant":
       pane.turns.push({ role: "assistant", kind: "text", text: evt.text });
       renderPane(index);
@@ -818,11 +1047,17 @@ window.maestro.onSessionEvent((evt) => {
       renderQuota(evt.quota);
       break;
     case "error":
+      pane.busy = false;
+      pane.currentLaunchId = null;
+      setPaneBusyUI(index, "");
       pane.turns.push({ role: "assistant", kind: "text", text: "⚠ " + evt.message });
       renderPane(index);
       break;
     case "done":
+      pane.busy = false;
+      pane.currentLaunchId = null;
       paneLaunchMap.delete(evt.launchId);
+      setPaneBusyUI(index, "");
       loadTranscriptInto(index).then(refresh);
       break;
     default:

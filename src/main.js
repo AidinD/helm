@@ -14,6 +14,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 let mainWindow = null;
 let latestQuota = null;
 let launchSeq = 0;
+const liveChildren = new Map(); // launchId -> child process, for the Stop button
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -43,6 +44,14 @@ ipcMain.handle("sessions:get", () => {
   const { error, sessions } = readAllSessions({ attentionWindowMs });
   const jotIndex = loadJot(config.jot || {});
   enrichWithJot(sessions, jotIndex, config.jot?.weights || {});
+  // Title overrides are applied AFTER Jot matching so a renamed display title
+  // never breaks the category-name match, which relies on the real title.
+  const overrides = config.titleOverrides || {};
+  for (const session of sessions) {
+    if (overrides[session.sessionId]) {
+      session.title = overrides[session.sessionId];
+    }
+  }
   return {
     error,
     sessions,
@@ -93,7 +102,7 @@ ipcMain.handle("session:start", (_event, { cwd, prompt, model, effort, resumeSes
       mainWindow.webContents.send("session:event", { launchId, ...payload });
     }
   };
-  const { done } = startSession({
+  const { child, done } = startSession({
     cwd,
     prompt,
     model,
@@ -106,8 +115,23 @@ ipcMain.handle("session:start", (_event, { cwd, prompt, model, effort, resumeSes
       send(evt);
     },
   });
-  done.then((summary) => send({ kind: "done", summary }));
+  liveChildren.set(launchId, child);
+  done.then((summary) => {
+    liveChildren.delete(launchId);
+    send({ kind: "done", summary });
+  });
   return { ok: true, launchId };
+});
+
+// --- Stop a running session ---
+ipcMain.handle("session:stop", (_event, { launchId }) => {
+  const child = liveChildren.get(launchId);
+  if (!child) {
+    return { ok: false, error: "no running process for that launch" };
+  }
+  child.kill();
+  liveChildren.delete(launchId);
+  return { ok: true };
 });
 
 app.whenReady().then(createWindow);
