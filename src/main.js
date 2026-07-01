@@ -3,7 +3,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readAllSessions, enrichWithJot } from "./lib/sessions.js";
 import { loadJot } from "./lib/jot.js";
+import { loadConfig, writeConfig } from "./lib/config.js";
 import { startSession } from "./lib/launcher.js";
+import { suggestModelEffort } from "./lib/suggest.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -28,17 +30,31 @@ function createWindow() {
 
 // --- Overview: read + enrich sessions (reuses the Session Radar read layer) ---
 ipcMain.handle("sessions:get", () => {
-  const { error, sessions } = readAllSessions();
-  const jotIndex = loadJot({});
-  enrichWithJot(sessions, jotIndex, {});
+  const config = loadConfig();
+  const attentionWindowMs = (config.attentionWindowHours || 24) * 60 * 60 * 1000;
+  const { error, sessions } = readAllSessions({ attentionWindowMs });
+  const jotIndex = loadJot(config.jot || {});
+  enrichWithJot(sessions, jotIndex, config.jot?.weights || {});
   return {
     error,
     sessions,
+    config,
     jot: { ok: jotIndex.ok, categories: jotIndex.categories },
     quota: latestQuota,
     generatedAt: Date.now(),
   };
 });
+
+// --- Config: grouping, sorting, view mode, persisted to config.json ---
+ipcMain.handle("config:set", (_event, patch) => {
+  const current = loadConfig();
+  const next = { ...current, ...patch };
+  writeConfig(next);
+  return next;
+});
+
+// --- Model/effort suggestion for a given prompt ---
+ipcMain.handle("suggest:modelEffort", (_event, prompt) => suggestModelEffort(prompt));
 
 // --- Pick a repo folder to root a new session in ---
 ipcMain.handle("dialog:pickFolder", async () => {
@@ -52,8 +68,8 @@ ipcMain.handle("dialog:pickFolder", async () => {
   return result.filePaths[0];
 });
 
-// --- Start a rooted session; stream events to the renderer ---
-ipcMain.handle("session:start", (_event, { cwd, prompt, model }) => {
+// --- Start (or resume) a rooted session; stream events to the renderer ---
+ipcMain.handle("session:start", (_event, { cwd, prompt, model, effort, resumeSessionId }) => {
   if (!cwd || !prompt) {
     return { ok: false, error: "cwd and prompt are required" };
   }
@@ -67,6 +83,8 @@ ipcMain.handle("session:start", (_event, { cwd, prompt, model }) => {
     cwd,
     prompt,
     model,
+    effort,
+    resumeSessionId,
     onEvent: (evt) => {
       if (evt.kind === "quota" && evt.quota) {
         latestQuota = evt.quota;

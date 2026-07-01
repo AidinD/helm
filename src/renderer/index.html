@@ -8,17 +8,27 @@
   <body>
     <header>
       <div class="brand"><span class="logo">◆</span><h1>Maestro</h1></div>
-      <div class="quota" id="quota">quota: —</div>
+      <div class="header-controls">
+        <div class="view-toggle" id="viewToggle">
+          <button data-mode="simple" class="active">Simple</button>
+          <button data-mode="advanced">Advanced</button>
+        </div>
+        <span class="quota" id="quota">quota: —</span>
+      </div>
     </header>
 
     <div class="layout">
-      <main id="overview">
-        <section id="attention" class="attention"></section>
-        <section id="all"></section>
-      </main>
+      <nav class="sidebar" id="sidebar">
+        <input type="text" id="search" class="search" placeholder="Search sessions…" />
+        <div id="sidebarBody"></div>
+      </nav>
 
-      <aside class="launcher">
-        <h2>Start a rooted session</h2>
+      <main class="composer">
+        <h2>Start or resume a session</h2>
+        <div id="resumeBanner" class="resume-banner hidden">
+          Resuming <strong id="resumeTitle"></strong>
+          <button id="cancelResume">✕ new session instead</button>
+        </div>
         <label>
           Repo folder (root on main)
           <div class="folder-row">
@@ -27,20 +37,27 @@
           </div>
         </label>
         <label>
-          Model
+          Task / prompt
+          <textarea id="prompt" rows="5" placeholder="What should this session do?"></textarea>
+        </label>
+        <div class="suggest-row">
+          <span id="suggestBadge" class="suggest-badge">Suggested: —</span>
           <select id="model">
             <option value="claude-sonnet-5">Sonnet 5</option>
             <option value="claude-opus-4-8">Opus 4.8</option>
             <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
           </select>
-        </label>
-        <label>
-          Task / prompt
-          <textarea id="prompt" rows="4" placeholder="What should this session do?"></textarea>
-        </label>
+          <select id="effort">
+            <option value="low">low</option>
+            <option value="medium" selected>medium</option>
+            <option value="high">high</option>
+            <option value="xhigh">xhigh</option>
+            <option value="max">max</option>
+          </select>
+        </div>
         <button id="start" class="primary">Start session</button>
         <div class="log" id="log"></div>
-      </aside>
+      </main>
     </div>
 
     <script src="renderer.js"></script>

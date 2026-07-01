@@ -122,6 +122,10 @@ function buildSession(meta, attentionWindowMs) {
   });
   return {
     sessionId: meta.sessionId,
+    // The claude CLI's --resume flag needs cliSessionId (the transcript
+    // filename), not the desktop app's local_ sessionId — they only
+    // coincide for early sessions. Fall back to sessionId when absent.
+    cliSessionId: meta.cliSessionId || meta.sessionId,
     title: meta.title || "(untitled)",
     cwd: meta.cwd || "",
     model: meta.model || "",
