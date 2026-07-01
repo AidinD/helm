@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Maestro</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header>
+      <div class="brand"><span class="logo">◆</span><h1>Maestro</h1></div>
+      <div class="quota" id="quota">quota: —</div>
+    </header>
+
+    <div class="layout">
+      <main id="overview">
+        <section id="attention" class="attention"></section>
+        <section id="all"></section>
+      </main>
+
+      <aside class="launcher">
+        <h2>Start a rooted session</h2>
+        <label>
+          Repo folder (root on main)
+          <div class="folder-row">
+            <input type="text" id="cwd" placeholder="D:\Repo\..." />
+            <button id="pick">Pick…</button>
+          </div>
+        </label>
+        <label>
+          Model
+          <select id="model">
+            <option value="claude-sonnet-5">Sonnet 5</option>
+            <option value="claude-opus-4-8">Opus 4.8</option>
+            <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
+          </select>
+        </label>
+        <label>
+          Task / prompt
+          <textarea id="prompt" rows="4" placeholder="What should this session do?"></textarea>
+        </label>
+        <button id="start" class="primary">Start session</button>
+        <div class="log" id="log"></div>
+      </aside>
+    </div>
+
+    <script src="renderer.js"></script>
+  </body>
+</html>
