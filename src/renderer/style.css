@@ -135,6 +135,15 @@ h1 {
   padding: 10px 10px 4px;
 }
 
+.sidebar-mode-toggle {
+  margin: 4px 10px 6px;
+  align-self: flex-start;
+}
+
+.sidebar-mode-toggle button {
+  flex: 1;
+}
+
 .search {
   flex: 1;
   min-width: 0;
@@ -294,6 +303,18 @@ h1 {
   font-size: 12.5px;
 }
 
+/* Marks sessions matched to the "Orchestrator" Jot list — Maestro-building
+   work itself, kept visually distinct from regular project chats. */
+.maestro-tag {
+  font-size: 10px;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  padding: 0 5px;
+  flex-shrink: 0;
+  line-height: 1.5;
+}
+
 .row-meta {
   display: none;
   flex-wrap: wrap;
@@ -365,6 +386,17 @@ body.advanced .row-jot {
   font-size: 11px;
 }
 
+.pane-status {
+  font-weight: 400;
+  color: var(--active);
+  font-size: 11px;
+  font-style: italic;
+}
+
+.pane-status:empty {
+  display: none;
+}
+
 .pane-header .pane-close {
   margin-left: auto;
 }
@@ -425,13 +457,55 @@ body.advanced .row-jot {
   border: 1px solid var(--border);
 }
 
-.turn-tool {
-  font-size: 11px;
-  color: var(--text-dim);
-  background: #202020;
+.turn-bubble.editable {
+  cursor: text;
+}
+
+.turn-bubble .md-code-block {
+  background: #141414;
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 3px 9px;
+  padding: 6px 8px;
+  margin: 4px 0;
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: 11.5px;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.turn-bubble .md-li {
+  padding-left: 2px;
+}
+
+.turn-bubble code {
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 4px;
+  padding: 1px 4px;
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: 11.5px;
+}
+
+.turn.user .turn-bubble code {
+  background: rgba(0, 0, 0, 0.15);
+}
+
+/* Tool-call pills, styled after Reinmaker's rounded usage-pill (999px radius,
+   thin border, muted text) instead of stacked code-block-looking lines. */
+.tool-pill-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  align-self: flex-start;
+  max-width: 100%;
+}
+
+.tool-pill {
+  font-size: 11px;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 10px;
+  white-space: nowrap;
   font-family: "Cascadia Code", "Consolas", monospace;
 }
 

@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld("maestro", {
   getTranscript: (ids) => ipcRenderer.invoke("transcript:get", ids),
   pickFolder: () => ipcRenderer.invoke("dialog:pickFolder"),
   startSession: (opts) => ipcRenderer.invoke("session:start", opts),
+  stopSession: (launchId) => ipcRenderer.invoke("session:stop", { launchId }),
   onSessionEvent: (handler) => {
     const listener = (_event, payload) => handler(payload);
     ipcRenderer.on("session:event", listener);

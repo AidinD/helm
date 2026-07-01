@@ -89,9 +89,17 @@ export function startSession({ cwd, prompt, model, effort, resumeSessionId, onEv
     }
     const type = evt.type;
     if (type === "assistant") {
-      const text = evt.message?.content?.map?.((c) => c.text).filter(Boolean).join("") ?? "";
-      if (text) {
-        emit({ kind: "assistant", text });
+      const blocks = evt.message?.content;
+      if (Array.isArray(blocks)) {
+        for (const block of blocks) {
+          if (block.type === "text" && block.text) {
+            emit({ kind: "assistant", text: block.text });
+          } else if (block.type === "tool_use") {
+            // Lets the UI show a live "agent is running X" indicator while a
+            // turn is in progress, ahead of the authoritative transcript.
+            emit({ kind: "tool_use", toolName: block.name });
+          }
+        }
       }
     } else if (type === "result") {
       sawResult = true;
