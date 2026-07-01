@@ -21,7 +21,7 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
-  font-size: 14px;
+  font-size: 13px;
   height: 100vh;
   display: flex;
   flex-direction: column;
@@ -31,28 +31,56 @@ header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 20px;
+  padding: 10px 16px;
   border-bottom: 1px solid var(--border);
 }
 
 .brand {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 .logo {
   color: var(--accent);
-  font-size: 18px;
+  font-size: 17px;
 }
 
 h1 {
-  font-size: 15px;
+  font-size: 14px;
   margin: 0;
 }
 
+.header-controls {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.view-toggle {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.view-toggle button {
+  background: var(--bg-card);
+  color: var(--text-dim);
+  border: none;
+  padding: 4px 10px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.view-toggle button.active {
+  background: var(--accent);
+  color: #1a1a1a;
+  font-weight: 600;
+}
+
 .quota {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-dim);
 }
 
@@ -63,106 +91,238 @@ h1 {
 .layout {
   flex: 1;
   display: grid;
-  grid-template-columns: 1fr 340px;
+  grid-template-columns: 300px 1fr;
   min-height: 0;
 }
 
-#overview {
+/* --- Sidebar --- */
+.sidebar {
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.search {
+  margin: 10px;
+  background: var(--bg-card);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font: inherit;
+}
+
+#sidebarBody {
+  flex: 1;
   overflow-y: auto;
-  padding: 16px 20px;
+  padding: 0 8px 12px;
 }
 
-.attention:empty {
-  display: none;
+.section {
+  margin-bottom: 4px;
 }
 
-.attention h2,
-#all h2 {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+.section-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 8px 4px;
+  cursor: pointer;
+  user-select: none;
   color: var(--text-dim);
-  margin: 4px 0 10px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 6px;
 }
 
-.attention h2 {
+.section-head:hover {
+  background: var(--bg-card);
+}
+
+.section-head.attention-head {
   color: var(--waiting);
 }
 
-.cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 8px;
-  margin-bottom: 18px;
+.section-head .caret {
+  font-size: 9px;
+  transition: transform 0.12s;
+  width: 10px;
 }
 
-.card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 10px 12px;
+.section-head.collapsed .caret {
+  transform: rotate(-90deg);
+}
+
+.section-count {
+  color: var(--text-faint);
+  font-weight: 400;
+  margin-left: auto;
+}
+
+.section-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
+  padding: 2px 2px 8px;
+  min-height: 6px; /* keeps empty groups droppable */
+  border-radius: 6px;
 }
 
-.card.waiting {
-  border-left: 3px solid var(--waiting);
+.section-list.drag-over {
+  background: rgba(217, 119, 87, 0.08);
+  outline: 1px dashed var(--accent);
 }
 
-.card.active {
-  border-left: 3px solid var(--active);
+.section-list.hidden {
+  display: none;
 }
 
-.card.idle {
-  border-left: 3px solid var(--idle);
+.empty-hint {
+  color: var(--text-faint);
+  font-size: 11.5px;
+  font-style: italic;
+  padding: 6px 8px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
 }
 
-.card-title {
-  font-weight: 600;
+/* --- Session row (sidebar item), styled after the desktop app's session list --- */
+.row {
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 8px;
+  cursor: grab;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.row:hover {
+  background: var(--bg-card);
+}
+
+.row.selected {
+  background: var(--bg-card-hover);
+}
+
+.row:active {
+  cursor: grabbing;
+}
+
+.row.dragging {
+  opacity: 0.4;
+}
+
+.row-title-line {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--idle);
+}
+
+.status-dot.waiting {
+  background: var(--waiting);
+  box-shadow: 0 0 5px var(--waiting);
+}
+
+.status-dot.active {
+  background: var(--active);
+  box-shadow: 0 0 5px var(--active);
+}
+
+.row-title {
+  font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  font-size: 12.5px;
 }
 
-.card-meta {
-  display: flex;
+.row-meta {
+  display: none;
   flex-wrap: wrap;
-  gap: 4px 10px;
+  gap: 3px 8px;
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: 10.5px;
+  margin-left: 14px;
 }
 
-.jot {
-  font-size: 11px;
+body.advanced .row-meta {
+  display: flex;
+}
+
+.row-jot {
+  display: none;
+  font-size: 10px;
   color: var(--text-dim);
   background: #2e2e2e;
   border: 1px solid var(--border);
-  border-radius: 5px;
-  padding: 2px 7px;
+  border-radius: 4px;
+  padding: 1px 6px;
   align-self: flex-start;
+  margin-left: 14px;
 }
 
-.jot.review {
+body.advanced .row-jot {
+  display: inline-block;
+}
+
+.row-jot.review {
   border-color: var(--waiting);
   color: var(--waiting);
 }
 
-.launcher {
-  border-left: 1px solid var(--border);
-  padding: 16px;
+/* --- Composer (right pane) --- */
+.composer {
+  padding: 16px 20px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  overflow-y: auto;
+  gap: 10px;
+  min-height: 0;
+  max-width: 640px;
 }
 
-.launcher h2 {
+.composer h2 {
   font-size: 13px;
   margin: 0;
 }
 
-.launcher label {
+.resume-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(78, 161, 217, 0.1);
+  border: 1px solid var(--active);
+  color: var(--active);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.resume-banner.hidden {
+  display: none;
+}
+
+.resume-banner button {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid var(--active);
+  color: var(--active);
+  padding: 2px 8px;
+  font-size: 11px;
+}
+
+.composer label {
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -170,9 +330,9 @@ h1 {
   color: var(--text-dim);
 }
 
-.launcher input,
-.launcher select,
-.launcher textarea {
+.composer input,
+.composer select,
+.composer textarea {
   background: var(--bg-card);
   color: var(--text);
   border: 1px solid var(--border);
@@ -189,6 +349,22 @@ h1 {
 .folder-row input {
   flex: 1;
   min-width: 0;
+}
+
+.suggest-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.suggest-badge {
+  font-size: 11px;
+  color: var(--text-dim);
+  background: #2e2e2e;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 4px 8px;
+  flex: 1;
 }
 
 button {
@@ -214,7 +390,7 @@ button.primary {
 
 .log {
   flex: 1;
-  min-height: 120px;
+  min-height: 160px;
   background: #141414;
   border: 1px solid var(--border);
   border-radius: 6px;

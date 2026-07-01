@@ -11,7 +11,7 @@ import { spawn } from "node:child_process";
  * Returns { child, done } where `done` resolves with a summary once the process
  * exits. Emits normalized events: { kind, ...fields }.
  */
-export function startSession({ cwd, prompt, model, onEvent }) {
+export function startSession({ cwd, prompt, model, effort, resumeSessionId, onEvent }) {
   const args = [
     "-p",
     prompt,
@@ -21,6 +21,12 @@ export function startSession({ cwd, prompt, model, onEvent }) {
   ];
   if (model) {
     args.push("--model", model);
+  }
+  if (effort) {
+    args.push("--effort", effort);
+  }
+  if (resumeSessionId) {
+    args.push("--resume", resumeSessionId);
   }
 
   const child = spawn("claude", args, {
