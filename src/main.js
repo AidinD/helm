@@ -6,6 +6,8 @@ import { loadJot } from "./lib/jot.js";
 import { loadConfig, writeConfig } from "./lib/config.js";
 import { startSession } from "./lib/launcher.js";
 import { suggestModelEffort } from "./lib/suggest.js";
+import { readTranscript } from "./lib/transcript.js";
+import { findTranscriptPath } from "./lib/paths.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -26,6 +28,12 @@ function createWindow() {
     },
   });
   mainWindow.loadFile(path.join(__dirname, "renderer", "index.html"));
+  // Surface renderer console output (incl. errors) in the terminal — there is
+  // no separate devtools console to watch when driving this headlessly.
+  mainWindow.webContents.on("console-message", (_event, level, message, line, sourceId) => {
+    const tag = ["LOG", "WARN", "ERROR"][level] || "LOG";
+    console.log(`[renderer:${tag}] ${message} (${sourceId}:${line})`);
+  });
 }
 
 // --- Overview: read + enrich sessions (reuses the Session Radar read layer) ---
@@ -55,6 +63,12 @@ ipcMain.handle("config:set", (_event, patch) => {
 
 // --- Model/effort suggestion for a given prompt ---
 ipcMain.handle("suggest:modelEffort", (_event, prompt) => suggestModelEffort(prompt));
+
+// --- Full chat history for a session (for the pane view) ---
+ipcMain.handle("transcript:get", (_event, { cliSessionId, sessionId }) => {
+  const transcriptPath = findTranscriptPath([cliSessionId, sessionId]);
+  return readTranscript(transcriptPath);
+});
 
 // --- Pick a repo folder to root a new session in ---
 ipcMain.handle("dialog:pickFolder", async () => {

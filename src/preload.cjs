@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld("maestro", {
   getSessions: () => ipcRenderer.invoke("sessions:get"),
   setConfig: (patch) => ipcRenderer.invoke("config:set", patch),
   suggestModelEffort: (prompt) => ipcRenderer.invoke("suggest:modelEffort", prompt),
+  getTranscript: (ids) => ipcRenderer.invoke("transcript:get", ids),
   pickFolder: () => ipcRenderer.invoke("dialog:pickFolder"),
   startSession: (opts) => ipcRenderer.invoke("session:start", opts),
   onSessionEvent: (handler) => {
