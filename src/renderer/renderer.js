@@ -21,7 +21,7 @@ const TERMINAL_TASK_STATUSES = new Set(["completed", "failed"]);
 const pendingLaunchCallbacks = new Map();
 
 // Each pane: { sessionId, cliSessionId, cwd, title, turns, hiddenCount, loading,
-//              busy, currentLaunchId, isOrchestrator, pendingImages }
+//              busy, currentLaunchId, isOrchestrator, pendingAttachments }
 let panes = [freshPane()];
 
 function freshPane() {
@@ -37,7 +37,7 @@ function freshPane() {
     currentLaunchId: null,
     stopRequested: false,
     isOrchestrator: false,
-    pendingImages: [], // [{ path, name }] — pasted images attached to the next send
+    pendingAttachments: [], // [{ path, name }] — pasted images attached to the next send
   };
 }
 
@@ -1328,25 +1328,25 @@ function paneComposerEl(index) {
   promptEl.placeholder = pane.sessionId ? `Continue "${pane.title}"…` : "What should this session do?";
   shell.append(promptEl);
 
-  // Pasted-image chips, shown between the textarea and the control row.
-  // Populated by the paste handler below, cleared on send.
+  // Attachment chips (pasted images + picked files), shown between the
+  // textarea and the control row. Cleared on send.
   const attachmentsEl = document.createElement("div");
   attachmentsEl.className = "composer-attachments";
   shell.append(attachmentsEl);
   function renderAttachments() {
     attachmentsEl.innerHTML = "";
-    attachmentsEl.style.display = pane.pendingImages.length ? "flex" : "none";
-    pane.pendingImages.forEach((img, i) => {
+    attachmentsEl.style.display = pane.pendingAttachments.length ? "flex" : "none";
+    pane.pendingAttachments.forEach((att, i) => {
       const chip = document.createElement("span");
       chip.className = "attachment-chip";
-      chip.textContent = "🖼 " + img.name;
+      chip.textContent = (att.isImage ? "🖼 " : "📎 ") + att.name;
       const remove = document.createElement("button");
       remove.type = "button";
       remove.className = "attachment-remove";
       remove.textContent = "×";
       remove.title = "Remove attachment";
       remove.addEventListener("click", () => {
-        pane.pendingImages.splice(i, 1);
+        pane.pendingAttachments.splice(i, 1);
         renderAttachments();
       });
       chip.append(remove);
@@ -1386,7 +1386,7 @@ function paneComposerEl(index) {
       // Pane may have been reset/reused while the save round-tripped through
       // main — don't attach a stale paste to whatever now occupies this slot.
       if (res.ok && panes[index] === pane) {
-        pane.pendingImages.push({ path: res.path, name: file.name || `pasted.${ext}` });
+        pane.pendingAttachments.push({ path: res.path, name: file.name || `pasted.${ext}`, isImage: true });
         renderAttachments();
       }
     }
@@ -1412,7 +1412,10 @@ function paneComposerEl(index) {
   pickBtn.title = "Pick repo folder";
   pickBtn.addEventListener("click", async () => {
     const folder = await window.maestro.pickFolder();
-    if (folder) {
+    // The dialog can stay open indefinitely — same guard as the attach-file
+    // and paste-image handlers, so a folder pick doesn't land on a pane that
+    // was reset/reused while the dialog was up.
+    if (folder && panes[index] === pane) {
       pane.cwd = folder;
       cwdInput.value = folder;
       cwdInput.title = folder;
@@ -1465,12 +1468,33 @@ function paneComposerEl(index) {
     () => {}
   );
 
+  // Same mechanism as pasting an image, just picked via a dialog instead of
+  // the clipboard — a plain file (any type) attached by path. Read tool
+  // handles whatever it can from there; Maestro doesn't need to know the type.
+  const attachBtn = document.createElement("button");
+  attachBtn.className = "icon-btn";
+  attachBtn.textContent = "📎";
+  attachBtn.title = "Attach a file";
+  attachBtn.addEventListener("click", async () => {
+    const filePaths = await window.maestro.pickFiles();
+    // The dialog is modal and can sit open a long time — the pane may have
+    // been reset while it was up. Same guard as the paste handler.
+    if (!filePaths?.length || panes[index] !== pane) {
+      return;
+    }
+    for (const filePath of filePaths) {
+      const name = filePath.split(/[\\/]/).pop();
+      pane.pendingAttachments.push({ path: filePath, name, isImage: /\.(png|jpe?g|gif|webp|bmp)$/i.test(name) });
+    }
+    renderAttachments();
+  });
+
   const sendBtn = document.createElement("button");
   sendBtn.className = "send-btn";
   sendBtn.textContent = "➤";
   sendBtn.title = pane.sessionId ? "Continue (Enter)" : "Start session (Enter)";
 
-  controls.append(pickBtn, cwdInput, permissionDD.el, modelDD.el, effortDD.el, sendBtn);
+  controls.append(pickBtn, cwdInput, attachBtn, permissionDD.el, modelDD.el, effortDD.el, sendBtn);
   shell.append(controls);
 
   // Visible reasoning, not just a hover tooltip — a suggestion nobody reads
@@ -1591,16 +1615,18 @@ async function sendFromPane(index, els) {
     els.cwdInput.focus();
     return;
   }
-  if (!typedText && pane.pendingImages.length === 0) {
+  if (!typedText && pane.pendingAttachments.length === 0) {
     return;
   }
   // Image attachments become plain file-path mentions ahead of the typed
   // text — Claude Code's own Read tool fetches them from there (see
   // spike/test-image-via-path.mjs). This is what actually gets sent AND what
   // gets shown in history, so the turn matches what the model received.
-  const imagePrefix = pane.pendingImages.map((img) => `[Attached image: ${img.path}]`).join("\n");
-  const prompt = imagePrefix ? `${imagePrefix}\n\n${typedText}` : typedText;
-  pane.pendingImages = [];
+  const attachmentPrefix = pane.pendingAttachments
+    .map((att) => `[Attached ${att.isImage ? "image" : "file"}: ${att.path}]`)
+    .join("\n");
+  const prompt = attachmentPrefix ? `${attachmentPrefix}\n\n${typedText}` : typedText;
+  pane.pendingAttachments = [];
   els.renderAttachments();
   pane.cwd = cwd;
   pane.turns.push({ role: "user", kind: "text", text: prompt });
@@ -2005,7 +2031,58 @@ async function renderAnalysisPage() {
     });
   }
 
-  grid.append(modelBlock, toolBlock, skillUsageBlock, fitBlock);
+  const accuracyBlock = document.createElement("div");
+  accuracyBlock.className = "analysis-block";
+  const accuracyH = document.createElement("h3");
+  accuracyH.textContent = "Suggestion accuracy";
+  accuracyH.title =
+    "Joins each run's followed-vs-overridden auto-suggestion with the judge's verdict for that SAME run (by launchId) — not just a same-model coincidence. Runs from before this tracking existed, or with no judge verdict, are excluded rather than estimated.";
+  accuracyBlock.append(accuracyH);
+  const acc = summary.suggestionAccuracy || { followed: {}, overridden: {} };
+  const followedTotal = (acc.followed.too_weak || 0) + (acc.followed.appropriate || 0) + (acc.followed.too_strong || 0);
+  const overriddenTotal = (acc.overridden.too_weak || 0) + (acc.overridden.appropriate || 0) + (acc.overridden.too_strong || 0);
+  if (followedTotal + overriddenTotal === 0) {
+    const empty = document.createElement("div");
+    empty.className = "pane-empty";
+    empty.textContent = "No judged runs with a suggestion yet.";
+    accuracyBlock.append(empty);
+  } else {
+    const followedRow = document.createElement("div");
+    followedRow.className = "fit-row";
+    const followedLabel = document.createElement("span");
+    followedLabel.className = "fit-model-label";
+    followedLabel.textContent = `Followed suggestion (${followedTotal})`;
+    followedRow.append(followedLabel);
+    followedRow.append(fitPill("too_weak", acc.followed.too_weak || 0), fitPill("appropriate", acc.followed.appropriate || 0), fitPill("too_strong", acc.followed.too_strong || 0));
+    accuracyBlock.append(followedRow);
+
+    const overriddenRow = document.createElement("div");
+    overriddenRow.className = "fit-row";
+    const overriddenLabel = document.createElement("span");
+    overriddenLabel.className = "fit-model-label";
+    overriddenLabel.textContent = `Overrode suggestion (${overriddenTotal})`;
+    overriddenRow.append(overriddenLabel);
+    overriddenRow.append(fitPill("too_weak", acc.overridden.too_weak || 0), fitPill("appropriate", acc.overridden.appropriate || 0), fitPill("too_strong", acc.overridden.too_strong || 0));
+    accuracyBlock.append(overriddenRow);
+
+    // A plain read of what the numbers say, not a persuasive spin — if
+    // overriding does better, that's a real signal the heuristic in
+    // suggest.js should change, not something to word around.
+    const followedRate = followedTotal ? (acc.followed.appropriate || 0) / followedTotal : null;
+    const overriddenRate = overriddenTotal ? (acc.overridden.appropriate || 0) / overriddenTotal : null;
+    if (followedRate !== null && overriddenRate !== null) {
+      const note = document.createElement("div");
+      note.className = "suggest-hint";
+      const diff = Math.round((followedRate - overriddenRate) * 100);
+      note.textContent =
+        diff >= 0
+          ? `Following the suggestion was judged "appropriate" ${diff} points more often than overriding it.`
+          : `Overriding the suggestion was judged "appropriate" ${Math.abs(diff)} points more often than following it — worth revisiting suggest.js's heuristic.`;
+      accuracyBlock.append(note);
+    }
+  }
+
+  grid.append(modelBlock, toolBlock, skillUsageBlock, fitBlock, accuracyBlock);
   grid.append(
     skillListEl("Global skills (~/.claude/skills)", global, "global", cwd),
     skillListEl(`This pane's project skills${cwd ? "" : " (no folder set on the focused pane)"}`, project, "project", cwd)

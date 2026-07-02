@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, Notification, clipboard } from "electron";
 import path from "node:path";
+import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { readAllSessions, enrichWithJot, setSessionArchived } from "./lib/sessions.js";
 import { loadJot } from "./lib/jot.js";
@@ -17,7 +18,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 let mainWindow = null;
 let latestQuota = null;
-let launchSeq = 0;
 const liveChildren = new Map(); // launchId -> child process, for the Stop button
 
 function createWindow() {
@@ -138,6 +138,19 @@ ipcMain.handle("dialog:pickFolder", async () => {
   return result.filePaths[0];
 });
 
+// --- Pick one or more files to attach to a prompt (same path-reference
+// mechanism as a pasted image) ---
+ipcMain.handle("dialog:pickFiles", async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: "Attach files",
+    properties: ["openFile", "multiSelections"],
+  });
+  if (result.canceled) {
+    return [];
+  }
+  return result.filePaths;
+});
+
 // --- Start (or resume) a rooted session; stream events to the renderer ---
 ipcMain.handle(
   "session:start",
@@ -145,7 +158,13 @@ ipcMain.handle(
     if (!cwd || !prompt) {
       return { ok: false, error: "cwd and prompt are required" };
     }
-    const launchId = ++launchSeq;
+    // A random id, not an incrementing counter — usage-log.jsonl persists
+    // across app restarts but this counter wouldn't, so small reused integers
+    // (1, 2, 3...) could join a verdict to the WRONG run from a different
+    // Maestro session (found by review, see DECISIONS.md's suggestion-
+    // accuracy entry). randomUUID makes cross-restart collision practically
+    // impossible instead of merely unlikely.
+    const launchId = crypto.randomUUID();
     const send = (payload) => {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send("session:event", { launchId, ...payload });
@@ -185,6 +204,7 @@ ipcMain.handle(
       liveChildren.delete(launchId);
       appendUsageLog({
         type: "run",
+        launchId,
         timestamp: Date.now(),
         cwd,
         model: meta.actualModel,
@@ -233,6 +253,7 @@ ipcMain.handle(
           }
           appendUsageLog({
             type: "modelFitVerdict",
+            launchId,
             timestamp: Date.now(),
             model: meta.actualModel,
             verdict: result.verdict,
