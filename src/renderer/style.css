@@ -357,20 +357,30 @@ h1 {
   outline: 1px dashed var(--accent);
 }
 
-/* VS Code-style insertion line shown between rows while reordering */
-.insertion-line {
+/* VS Code-style drop indicator shown at a row's top/bottom edge while
+   reordering. Drawn as an absolutely-positioned pseudo-element so it takes
+   NO space in the list flow — toggling it never shifts layout, so the rect
+   measurements the position math depends on stay stable (the old approach
+   inserted a real block element here, which pushed rows around and made the
+   drop land somewhere other than where the line was shown). */
+.row.drop-before::before,
+.row.drop-after::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  right: 4px;
   height: 2px;
-  margin: 0 4px;
   background: var(--accent);
   border-radius: 1px;
-  /* Real bug, not cosmetic: without this, dropping exactly on the thin line
-     itself (the natural target — it's what "drop here" is pointing at) made
-     it the drag event's target instead of the row/list beneath it. The
-     list's own drop handler then bailed via its "e.target !== el" guard
-     (added for the empty-space-append case) and nothing happened — read as
-     "jumps and doesn't land where I drop it." Making the line inert lets
-     drag/drop events pass through to whatever's actually underneath. */
   pointer-events: none;
+}
+
+.row.drop-before::before {
+  top: -1px;
+}
+
+.row.drop-after::after {
+  bottom: -1px;
 }
 
 .section-list.hidden {
@@ -388,6 +398,7 @@ h1 {
 
 /* --- Session row (sidebar item), styled after the desktop app's session list --- */
 .row {
+  position: relative; /* anchor for the drop-before/after edge markers */
   background: transparent;
   border: none;
   border-radius: 6px;
