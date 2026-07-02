@@ -125,12 +125,29 @@ function isOrchestratorSession(session) {
 
 // "Delete" a session from Maestro's own view — never touches the desktop
 // app's real session files (that would risk destroying real conversation
-// history). Purely hides it from the sidebar via config; restorable by
-// editing config.json's hiddenSessions array.
+// history). Purely hides it from the sidebar via config; restorable from
+// the Archive page.
 async function removeFromMaestro(session) {
   const hidden = [...(state.config.hiddenSessions || []), session.sessionId];
   state.config = await window.maestro.setConfig({ hiddenSessions: hidden });
   refresh();
+}
+
+async function restoreToMaestro(session) {
+  const hidden = (state.config.hiddenSessions || []).filter((id) => id !== session.sessionId);
+  state.config = await window.maestro.setConfig({ hiddenSessions: hidden });
+  await refresh();
+  refreshArchivePageIfVisible();
+}
+
+// refresh() only ever re-renders the sidebar — Analysis/Settings/Archive are
+// pull-based (re-rendered on tab switch), which would otherwise leave a
+// just-restored/unarchived row stale on screen if you're currently ON the
+// Archive page when you click its own action button.
+function refreshArchivePageIfVisible() {
+  if (!document.getElementById("archivePage").classList.contains("hidden")) {
+    renderArchivePage();
+  }
 }
 
 // Real archiving: flips isArchived in the desktop app's OWN local_*.json
@@ -146,6 +163,19 @@ async function archiveSession(session) {
     return;
   }
   refresh();
+}
+
+// From the Archive page — flips isArchived back to false so the session
+// reappears both in Maestro's sidebar and in the real desktop app.
+async function unarchiveSession(session) {
+  const res = await window.maestro.archiveSession(session.sessionId, false);
+  if (!res.ok) {
+    console.error("[maestro] unarchive failed:", res.error);
+    showToast(`Couldn't unarchive "${session.title}": ${res.error}`);
+    return;
+  }
+  await refresh();
+  refreshArchivePageIfVisible();
 }
 
 // Small transient message for failures with no natural home (e.g. no pane to
@@ -1846,9 +1876,12 @@ document.getElementById("pageToggle").addEventListener("click", (e) => {
   const page = btn.dataset.page;
   document.getElementById("chatPage").classList.toggle("hidden", page !== "chat");
   document.getElementById("analysisPage").classList.toggle("hidden", page !== "analysis");
+  document.getElementById("archivePage").classList.toggle("hidden", page !== "archive");
   document.getElementById("settingsPage").classList.toggle("hidden", page !== "settings");
   if (page === "analysis") {
     renderAnalysisPage();
+  } else if (page === "archive") {
+    renderArchivePage();
   } else if (page === "settings") {
     renderSettingsPage();
   }
@@ -1873,6 +1906,74 @@ function settingsToggleRow(title, desc, checked, onChange) {
   descEl.textContent = desc;
   labelText.append(titleEl, descEl);
   row.append(checkbox, labelText);
+  return row;
+}
+
+// A place to actually get sessions back — "Remove from Maestro" and
+// "Archive" both used to be one-way (restorable only by hand-editing
+// config.json / knowing to look). Reads the same state.sessions/state.config
+// refresh() already keeps current; no separate IPC needed.
+function renderArchivePage() {
+  const page = document.getElementById("archivePage");
+  page.innerHTML = "";
+
+  const header = document.createElement("h2");
+  header.textContent = "Archive";
+  page.append(header);
+
+  const archived = state.sessions.filter((s) => s.isArchived);
+  const hiddenIds = state.config.hiddenSessions || [];
+  // Excludes anything also archived — the two flags are independent, so a
+  // session could be both, and listing it (with two unrelated "get it back"
+  // actions) in both sections at once would just be confusing. Archived is
+  // the more definitive state; unarchiving it is enough to see it again here
+  // even if it's still separately hidden from Maestro's own sidebar view.
+  const hidden = hiddenIds.map(sessionById).filter(Boolean).filter((s) => !s.isArchived);
+
+  page.append(
+    archiveSectionEl("Archived sessions", archived, "No archived sessions.", (session) =>
+      archiveRowEl(session, "Unarchive", () => unarchiveSession(session))
+    ),
+    archiveSectionEl("Removed from Maestro", hidden, "Nothing hidden.", (session) =>
+      archiveRowEl(session, "Restore", () => restoreToMaestro(session))
+    )
+  );
+}
+
+function archiveSectionEl(title, sessions, emptyText, rowFactory) {
+  const block = document.createElement("div");
+  block.className = "analysis-block";
+  const h = document.createElement("h3");
+  h.textContent = `${title} · ${sessions.length}`;
+  block.append(h);
+  if (sessions.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "pane-empty";
+    empty.textContent = emptyText;
+    block.append(empty);
+  } else {
+    sortByAttention(sessions).forEach((s) => block.append(rowFactory(s)));
+  }
+  return block;
+}
+
+function archiveRowEl(session, actionLabel, onAction) {
+  const row = document.createElement("div");
+  row.className = "archive-row";
+  const info = document.createElement("div");
+  info.className = "archive-row-info";
+  const title = document.createElement("div");
+  title.className = "archive-row-title";
+  title.textContent = session.title;
+  const meta = document.createElement("div");
+  meta.className = "archive-row-meta";
+  meta.textContent = `${session.cwd || "no folder"} · last active ${relTime(session.lastActivityAt)}`;
+  info.append(title, meta);
+  const action = document.createElement("button");
+  action.className = "text-btn";
+  action.textContent = actionLabel;
+  action.addEventListener("click", onAction);
+  row.append(info, action);
   return row;
 }
 

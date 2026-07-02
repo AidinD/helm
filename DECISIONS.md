@@ -1,5 +1,29 @@
 # Decisions
 
+## 2026-07-02 — New "Archive" page: see and restore hidden/archived sessions
+
+**Decision:** Added a 4th header tab, "Archive," with two sections —
+"Archived sessions" (`isArchived: true`, real desktop-app state; an
+"Unarchive" button flips it back via the existing `session:archive` IPC
+handler with `archived: false`) and "Removed from Maestro" (sessions in
+`config.hiddenSessions`; a "Restore" button removes the id from that array).
+No new IPC or data source needed — both flags were already tracked, there
+was just no UI to see or undo either one before now (archiving/removing were
+one-way outside manually editing `config.json`).
+
+**Why:** direct request after shipping manual archiving — "we need a page to
+see all hidden + archived sessions to get them back if needed." Both
+"hide" actions were one-way by design (a deliberate choice at the time,
+documented above), but that only works long-term with an undo path, which
+didn't exist until now.
+
+**Bug caught in review:** the two flags (`isArchived`, `hiddenSessions`) are
+independent — a session could be both archived AND hidden, which would have
+listed it in both sections with two unrelated "get it back" buttons.
+Archived sessions are now excluded from the "Removed from Maestro" list;
+unarchiving is enough to see it again here, even if it's separately still
+hidden from Maestro's own sidebar.
+
 ## 2026-07-02 — Jot-review fix batch: bullet spacing, icon-only copy button, a real DnD drop bug, image lightbox
 
 **Bullet-list spacing:** a side-by-side vs. the desktop app showed the gap
