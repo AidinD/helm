@@ -102,7 +102,7 @@ ipcMain.handle("dialog:pickFolder", async () => {
 // --- Start (or resume) a rooted session; stream events to the renderer ---
 ipcMain.handle(
   "session:start",
-  (_event, { cwd, prompt, model, effort, resumeSessionId, suggestedModel, suggestedEffort }) => {
+  (_event, { cwd, prompt, model, effort, permissionMode, resumeSessionId, suggestedModel, suggestedEffort }) => {
     if (!cwd || !prompt) {
       return { ok: false, error: "cwd and prompt are required" };
     }
@@ -118,6 +118,7 @@ ipcMain.handle(
       prompt,
       model,
       effort,
+      permissionMode,
       resumeSessionId,
       onEvent: (evt) => {
         if (evt.kind === "quota" && evt.quota) {
@@ -134,6 +135,11 @@ ipcMain.handle(
       },
     });
     liveChildren.set(launchId, child);
+    // Headless -p expands a leading "/skill-name" in the prompt text before
+    // running it, so a leading slash-token is a reasonable (if not perfect —
+    // it's a text-pattern guess, not a real event from the CLI) proxy for
+    // "which skill was invoked," which the stream itself doesn't expose.
+    const skillMatch = /^\/(\S+)/.exec(prompt.trim());
     done.then((summary) => {
       liveChildren.delete(launchId);
       appendUsageLog({
@@ -141,12 +147,14 @@ ipcMain.handle(
         cwd,
         model: meta.actualModel,
         effort: effort || null,
+        permissionMode: permissionMode || null,
         suggestedModel: suggestedModel || null,
         suggestedEffort: suggestedEffort || null,
         followedSuggestion: !suggestedModel || suggestedModel === meta.actualModel,
         costUsd: meta.costUsd,
         numTurns: meta.numTurns,
         toolsUsed: meta.toolsUsed,
+        skillInvoked: skillMatch ? skillMatch[1] : null,
       });
       send({ kind: "done", summary });
     });

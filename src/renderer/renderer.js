@@ -601,6 +601,13 @@ function renderSidebar() {
     return;
   }
 
+  const maestroSessions = visible.filter(isOrchestratorSession);
+  if (maestroSessions.length > 0) {
+    body.append(
+      sectionEl({ label: "◆ Maestro", sessions: maestroSessions, collapsed: false, pinned: true, droppable: false })
+    );
+  }
+
   const attention = visible.filter((s) => s.needsAttention);
   if (attention.length > 0) {
     body.append(
@@ -795,7 +802,11 @@ function toolGroupEl(pairs) {
   const details = document.createElement("details");
   details.className = "tool-group";
   const summary = document.createElement("summary");
-  summary.textContent = pairs.length === 1 ? "Used 1 tool" : `Used ${pairs.length} tools`;
+  const names = pairs.map((p) => p.useTurn.toolName);
+  const shown = names.slice(0, 3).join(", ");
+  const extra = names.length > 3 ? ` +${names.length - 3} more` : "";
+  summary.textContent =
+    (pairs.length === 1 ? "Used 1 tool" : `Used ${pairs.length} tools`) + `: ${shown}${extra}`;
   details.append(summary);
 
   const list = document.createElement("div");
@@ -1025,16 +1036,47 @@ function paneComposerEl(index) {
     effortSel.append(opt);
   });
 
+  // Matches the desktop app's mode picker (Ask permissions / Accept edits /
+  // Plan mode / Auto mode / Bypass permissions). Maestro's -p invocation has
+  // no live channel to answer an interactive approval prompt, so a mode that
+  // genuinely needs to ask mid-run could still stall — tested "default" in
+  // this environment and it did not (the captain's existing broad allowlists let
+  // tools through), but that is not a general guarantee for every setup.
+  const permissionSel = document.createElement("select");
+  permissionSel.className = "meta-pill";
+  [
+    { value: "default", label: "Ask permissions" },
+    { value: "acceptEdits", label: "Accept edits" },
+    { value: "plan", label: "Plan mode" },
+    { value: "auto", label: "Auto mode" },
+    { value: "bypassPermissions", label: "Bypass permissions" },
+  ].forEach(({ value, label }) => {
+    const opt = document.createElement("option");
+    opt.value = value;
+    opt.textContent = label;
+    if (value === "auto") {
+      opt.selected = true;
+    }
+    permissionSel.append(opt);
+  });
+
   const sendBtn = document.createElement("button");
   sendBtn.className = "send-btn";
   sendBtn.textContent = "➤";
   sendBtn.title = pane.sessionId ? "Continue (Enter)" : "Start session (Enter)";
 
-  controls.append(pickBtn, cwdInput, modelSel, effortSel, sendBtn);
+  controls.append(pickBtn, cwdInput, permissionSel, modelSel, effortSel, sendBtn);
   shell.append(controls);
+
+  // Visible reasoning, not just a hover tooltip — a suggestion nobody reads
+  // isn't a suggestion. Explicitly says so even when it just confirms your
+  // current pick, per "always decide, and if it's already right, say so."
+  const suggestHint = document.createElement("div");
+  suggestHint.className = "suggest-hint";
+  shell.append(suggestHint);
   wrap.append(shell);
 
-  const els = { cwdInput, promptEl, modelSel, effortSel, sendBtn };
+  const els = { cwdInput, promptEl, modelSel, effortSel, permissionSel, sendBtn };
   const handleSendOrStop = () => {
     if (pane.busy) {
       if (pane.currentLaunchId) {
@@ -1053,12 +1095,17 @@ function paneComposerEl(index) {
     clearTimeout(suggestTimer);
     suggestTimer = setTimeout(async () => {
       const suggestion = await window.maestro.suggestModelEffort(promptEl.value);
+      const alreadySelected = modelSel.value === suggestion.model && effortSel.value === suggestion.effort;
       modelSel.value = suggestion.model;
       effortSel.value = suggestion.effort;
       modelSel.title = `Suggested: ${suggestion.reason}`;
       effortSel.title = modelSel.title;
       modelSel.dataset.suggested = suggestion.model;
       effortSel.dataset.suggested = suggestion.effort;
+      const modelLabel = suggestion.model.replace("claude-", "");
+      suggestHint.textContent = alreadySelected
+        ? `✓ ${modelLabel} · ${suggestion.effort} is already selected — ${suggestion.reason}`
+        : `→ Suggesting ${modelLabel} · ${suggestion.effort} — ${suggestion.reason}`;
     }, 300);
   });
 
@@ -1130,6 +1177,7 @@ async function sendFromPane(index, els) {
     prompt,
     model,
     effort,
+    permissionMode: els.permissionSel.value,
     resumeSessionId: pane.cliSessionId,
     suggestedModel: els.modelSel.dataset.suggested || null,
     suggestedEffort: els.effortSel.dataset.suggested || null,
@@ -1346,7 +1394,24 @@ async function renderAnalysisPage() {
     toolEntries.forEach(([t, c]) => toolBlock.append(barRow(t, c, toolMax)));
   }
 
-  grid.append(modelBlock, toolBlock);
+  const skillUsageBlock = document.createElement("div");
+  skillUsageBlock.className = "analysis-block";
+  const skillUsageH = document.createElement("h3");
+  skillUsageH.textContent = "Skill usage (best-effort)";
+  skillUsageH.title = 'Guessed from a leading "/skill-name" in the prompt text — not a real event from the CLI, so this misses skills invoked any other way.';
+  skillUsageBlock.append(skillUsageH);
+  const skillEntries = Object.entries(summary.bySkill).sort((a, b) => b[1] - a[1]);
+  const skillMax = skillEntries.length ? skillEntries[0][1] : 0;
+  if (skillEntries.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "pane-empty";
+    empty.textContent = "No data yet — only counts prompts starting with /skill-name.";
+    skillUsageBlock.append(empty);
+  } else {
+    skillEntries.forEach(([s, c]) => skillUsageBlock.append(barRow(s, c, skillMax)));
+  }
+
+  grid.append(modelBlock, toolBlock, skillUsageBlock);
   grid.append(
     skillListEl("Global skills (~/.claude/skills)", global),
     skillListEl(`This pane's project skills${cwd ? "" : " (no folder set on the focused pane)"}`, project)
