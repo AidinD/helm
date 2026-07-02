@@ -1199,6 +1199,23 @@ function tableEl(headerLine, bodyLines) {
 
 const isListLine = (line) => /^\s*[-*]\s+/.test(line);
 
+// Walks from idx in the given direction (-1 back, +1 forward), skipping
+// blank separator lines, and returns the nearest actual content line (or ""
+// if the text runs out first). A plain "lines[idx-1]"/"lines[idx+1]" check
+// only sees ONE line away — with two-or-more consecutive blank lines
+// between a list and the next paragraph (or vice versa), that only catches
+// the single blank immediately touching the list, leaving the rest to
+// render as ordinary empty lines and reintroduce the doubled-gap problem
+// this whole block exists to avoid.
+function nearestContentLine(lines, idx, direction) {
+  for (let i = idx + direction; i >= 0 && i < lines.length; i += direction) {
+    if (lines[i].trim() !== "") {
+      return lines[i];
+    }
+  }
+  return "";
+}
+
 function renderInlineLines(container, text) {
   const lines = text.split("\n");
   lines.forEach((line, idx) => {
@@ -1211,7 +1228,11 @@ function renderInlineLines(container, text) {
     // both doubled the visible gap AND sat between the two .md-li divs,
     // breaking their sibling adjacency so ".md-li + .md-li" (meant to
     // tighten spacing between bullets) never actually matched anything.
-    if (isBlank && (isListLine(lines[idx - 1] || "") || isListLine(nextLine || ""))) {
+    // Checks the nearest CONTENT line in each direction, not just one line
+    // away — two or more consecutive blank lines between a list and the
+    // next paragraph would otherwise leave every blank past the first to
+    // render as an ordinary empty line, reintroducing the doubled gap.
+    if (isBlank && (isListLine(nearestContentLine(lines, idx, -1)) || isListLine(nearestContentLine(lines, idx, 1)))) {
       return;
     }
 
@@ -1223,6 +1244,15 @@ function renderInlineLines(container, text) {
       container.append(li);
     } else {
       const lineSpan = document.createElement("span");
+      // The transition INTO a list gets a deliberate gap (.md-li's own
+      // margin-top). The transition OUT of one got nothing — a plain <span>
+      // has no margin rule at all, so the line right after the last bullet
+      // sat flush against it with only incidental line-height between them,
+      // reading as "tight"/inconsistent next to every other spaced
+      // transition. This class gives it the matching gap.
+      if (isListLine(nearestContentLine(lines, idx, -1))) {
+        lineSpan.className = "md-after-list";
+      }
       lineSpan.append(...inlineFormat(line));
       container.append(lineSpan);
     }

@@ -1,5 +1,42 @@
 # Decisions
 
+## 2026-07-02 — Fix the last bullet-list spacing gap; "tight" transition out of a list
+
+**Decision:** New feedback on the already-fixed bullet spacing: the
+transition INTO a list got a deliberate gap (`.md-li`'s own `margin-top`),
+but the transition OUT of one — the line right after the last bullet,
+resuming prose or a bold lead-in — got nothing, since a plain `<span>` has
+no margin rule at all. It sat flush against the last bullet with only
+incidental line-height between them, reading as "tight" next to every other
+spaced transition in the same bubble. Fixed with a new `.md-after-list`
+class (mirrors `.md-li`'s own 10px) applied when the nearest actual content
+line above (skipping blank separators) was a list line.
+
+**Two real bugs caught in review before shipping**, both in the SAME spot as
+the earlier bullet-spacing fix: `precededByListLine`'s single-line lookback
+missed the common case of TWO OR MORE consecutive blank lines between a list
+and the next paragraph — only the first blank got skipped, the rest
+re-rendered as ordinary empty lines, reintroducing the doubled-gap problem
+the earlier fix existed to solve, this time compounded by the new margin.
+Fixed by generalizing to a bidirectional `nearestContentLine(lines, idx,
+direction)` walk used by BOTH the blank-line-skip check and the after-list
+detection — now correct for any number of consecutive blanks. A second
+flagged concern (that a preceding `<br>` might stack with `.md-after-list`'s
+`margin-top`, making the gap larger than the into-list case) was
+investigated and did NOT reproduce — traced the control flow by hand and
+confirmed empirically (6 scenarios via a standalone DOM-trace script) that
+no `<br>` is ever emitted immediately before an after-list span, so the two
+gaps ARE symmetric as intended.
+
+**Also cleaned up two misplaced Jot cards while triaging in-progress**: a
+drag-and-drop comment ("konstiga markeringar") had landed on the unrelated
+interject-during-execution task again (second time this exact card has had
+stray feedback attached) — rerouted to the DnD task, then the user confirmed
+it was itself a misfire and it moved back to review with no code change.
+Two other in-progress items (the blocking-input UI, the interject feature)
+moved back to open — no new feedback, still genuinely blocked on an
+architecture decision, not something actively being worked.
+
 ## 2026-07-02 — Second review round (Opus) over the shipped Tier 1-3 fixes: 3 more real issues
 
 The captain (back on Opus) asked for a verification pass over everything Sonnet
