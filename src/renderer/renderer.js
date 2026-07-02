@@ -64,9 +64,31 @@ function sessionById(id) {
 }
 
 // Sessions matched to the "Orchestrator" Jot list are Maestro-building work
-// itself — tagged distinctly so it's never confused with regular project chats.
+// itself — tagged distinctly so it's never confused with regular project
+// chats. The Jot-name match is fragile (breaks if that list is renamed), so
+// it can also be set manually via right-click, independent of Jot.
 function isOrchestratorSession(session) {
-  return session.jot?.category === "Orchestrator";
+  const manual = state.config.manualMaestroSessions || [];
+  return session.jot?.category === "Orchestrator" || manual.includes(session.sessionId);
+}
+
+// "Delete" a session from Maestro's own view — never touches the desktop
+// app's real session files (that would risk destroying real conversation
+// history). Purely hides it from the sidebar via config; restorable by
+// editing config.json's hiddenSessions array.
+async function removeFromMaestro(session) {
+  const hidden = [...(state.config.hiddenSessions || []), session.sessionId];
+  state.config = await window.maestro.setConfig({ hiddenSessions: hidden });
+  refresh();
+}
+
+async function toggleManualMaestroTag(session) {
+  const current = state.config.manualMaestroSessions || [];
+  const next = current.includes(session.sessionId)
+    ? current.filter((id) => id !== session.sessionId)
+    : [...current, session.sessionId];
+  state.config = await window.maestro.setConfig({ manualMaestroSessions: next });
+  refresh();
 }
 
 // ============================== Context menu ==============================
@@ -306,6 +328,10 @@ function rowEl(session) {
       { label: "Open here", onClick: () => openSessionInPane(session, focusedPaneIndex) },
       { label: "Open in split pane", onClick: () => openSessionInPane(session, focusedPaneIndex === 0 ? 1 : 0, true) },
       { label: "Rename chat (or double-click it)", onClick: () => makeInlineEditable(title, session.title, (v) => renameSessionTo(session, v)) },
+      {
+        label: isOrchestratorSession(session) ? "Unmark as Maestro chat" : "Mark as Maestro chat",
+        onClick: () => toggleManualMaestroTag(session),
+      },
       { sep: true },
       {
         label: "Move to category",
@@ -313,6 +339,12 @@ function rowEl(session) {
           ...groupLabels.map((label) => ({ label, onClick: () => moveSessionToGroup(session.sessionId, label) })),
           { label: "Unsorted", onClick: () => moveSessionToGroup(session.sessionId, null) },
         ],
+      },
+      { sep: true },
+      {
+        label: "Remove from Maestro",
+        danger: true,
+        onClick: () => removeFromMaestro(session),
       },
     ]);
   });
@@ -556,7 +588,11 @@ function renderSidebar() {
   const body = document.getElementById("sidebarBody");
   body.innerHTML = "";
 
-  const visible = state.sessions.filter((s) => !s.isArchived).filter(matchesSearch);
+  const hiddenIds = new Set(state.config.hiddenSessions || []);
+  const visible = state.sessions
+    .filter((s) => !s.isArchived)
+    .filter((s) => !hiddenIds.has(s.sessionId))
+    .filter(matchesSearch);
 
   if ((state.config.sidebarMode || "smart") === "list") {
     body.append(
@@ -751,21 +787,34 @@ function turnEl(turn) {
   return wrap;
 }
 
-// A tool call renders as a collapsed, expandable pill (Halyard-style
-// rounded chip as the closed state, matching the desktop app's clickable
-// "Bash"/"Read" summaries that expand to show the actual output).
-function toolCallEl(useTurn, resultTurn) {
+// A run of consecutive tool calls collapses into ONE plain, unboxed
+// "Used N tools" line — matching the desktop app's flat "Used 3 tools ›" /
+// "Searched code ›" style — instead of a separate bordered box per call
+// (which read as heavy/boxy per feedback comparing the two side by side).
+function toolGroupEl(pairs) {
   const details = document.createElement("details");
-  details.className = "tool-call";
+  details.className = "tool-group";
   const summary = document.createElement("summary");
-  summary.textContent = `🔧 ${useTurn.toolName}${useTurn.toolInput ? " · " + useTurn.toolInput : ""}`;
+  summary.textContent = pairs.length === 1 ? "Used 1 tool" : `Used ${pairs.length} tools`;
   details.append(summary);
-  if (resultTurn) {
-    const pre = document.createElement("pre");
-    pre.className = "tool-call-output";
-    pre.textContent = resultTurn.text;
-    details.append(pre);
-  }
+
+  const list = document.createElement("div");
+  list.className = "tool-group-list";
+  pairs.forEach(({ useTurn, resultTurn }) => {
+    const item = document.createElement("details");
+    item.className = "tool-call-item";
+    const itemSummary = document.createElement("summary");
+    itemSummary.textContent = `${useTurn.toolName}${useTurn.toolInput ? " · " + useTurn.toolInput : ""}`;
+    item.append(itemSummary);
+    if (resultTurn) {
+      const pre = document.createElement("pre");
+      pre.className = "tool-call-output";
+      pre.textContent = resultTurn.text;
+      item.append(pre);
+    }
+    list.append(item);
+  });
+  details.append(list);
   return details;
 }
 
@@ -773,11 +822,15 @@ function appendTurns(scroll, turns) {
   let i = 0;
   while (i < turns.length) {
     if (turns[i].kind === "tool_use") {
-      const useTurn = turns[i];
-      const next = turns[i + 1];
-      const resultTurn = next && next.kind === "tool_result" ? next : null;
-      scroll.append(toolCallEl(useTurn, resultTurn));
-      i += resultTurn ? 2 : 1;
+      const pairs = [];
+      while (i < turns.length && turns[i].kind === "tool_use") {
+        const useTurn = turns[i];
+        const next = turns[i + 1];
+        const resultTurn = next && next.kind === "tool_result" ? next : null;
+        pairs.push({ useTurn, resultTurn });
+        i += resultTurn ? 2 : 1;
+      }
+      scroll.append(toolGroupEl(pairs));
     } else {
       scroll.append(turnEl(turns[i]));
       i++;
@@ -870,10 +923,6 @@ function paneHeaderEl(index) {
     sub.textContent = pane.cwd;
     header.append(sub);
   }
-  const status = document.createElement("span");
-  status.className = "pane-status";
-  header.append(status);
-
   const actions = document.createElement("span");
   actions.className = "pane-actions";
   if (pane.sessionId) {
@@ -912,6 +961,13 @@ function paneComposerEl(index) {
   const wrap = document.createElement("div");
   wrap.className = "pane-composer";
 
+  // Status lives right above the composer (was in the header, easy to miss
+  // while your eyes are on the prompt box) — visible exactly where you're
+  // already looking while waiting for a reply.
+  const status = document.createElement("div");
+  status.className = "pane-status";
+  wrap.append(status);
+
   // One unified rounded "shell" (textarea on top, controls below), closer to
   // the desktop app's single-pill composer instead of stacked separate fields.
   const shell = document.createElement("div");
@@ -938,7 +994,7 @@ function paneComposerEl(index) {
   });
   const pickBtn = document.createElement("button");
   pickBtn.className = "icon-btn";
-  pickBtn.textContent = "📁";
+  pickBtn.textContent = "…";
   pickBtn.title = "Pick repo folder";
   pickBtn.addEventListener("click", async () => {
     const folder = await window.maestro.pickFolder();
@@ -1017,6 +1073,7 @@ function paneComposerEl(index) {
   if (pane.busy) {
     sendBtn.textContent = "■";
     sendBtn.title = "Stop";
+    sendBtn.classList.add("stopping");
   }
 
   return wrap;
@@ -1035,6 +1092,7 @@ function setPaneBusyUI(index, statusText) {
   if (btn) {
     btn.textContent = pane.busy ? "■" : "➤";
     btn.title = pane.busy ? "Stop" : pane.sessionId ? "Continue (Enter)" : "Start session (Enter)";
+    btn.classList.toggle("stopping", pane.busy);
   }
   if (status) {
     status.textContent = statusText || "";
@@ -1169,38 +1227,132 @@ document.getElementById("newChat").addEventListener("click", () => {
   renderSidebar();
 });
 
-document.getElementById("skillsBtn").addEventListener("click", async (e) => {
-  e.stopPropagation();
-  const cwd = panes[focusedPaneIndex]?.cwd || "";
-  const { global, project } = await window.maestro.listSkills(cwd);
-  const toItems = (names) =>
-    names.length ? names.map((n) => ({ label: n })) : [{ label: "(none found)" }];
-  showContextMenu(e.clientX, e.clientY, [
-    { label: `Global (~/.claude/skills) · ${global.length}`, submenu: toItems(global) },
-    {
-      label: `This pane's project · ${project.length}${cwd ? "" : " (no folder set)"}`,
-      submenu: toItems(project),
-    },
-  ]);
+// ============================== Analysis page ==============================
+// Replaces the earlier popup versions of Skills/Usage — those rendered via
+// submenus that could overflow off-screen near the window edge, and the captain
+// asked for a real page he can switch to rather than staying on the prompt
+// page. Combines both into one page with simple hand-rolled bar charts (no
+// charting dependency needed for this).
+
+document.getElementById("pageToggle").addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-page]");
+  if (!btn) {
+    return;
+  }
+  document.querySelectorAll("#pageToggle button").forEach((b) => b.classList.toggle("active", b === btn));
+  const isAnalysis = btn.dataset.page === "analysis";
+  document.getElementById("chatPage").classList.toggle("hidden", isAnalysis);
+  document.getElementById("analysisPage").classList.toggle("hidden", !isAnalysis);
+  if (isAnalysis) {
+    renderAnalysisPage();
+  }
 });
 
-document.getElementById("usageBtn").addEventListener("click", async (e) => {
-  e.stopPropagation();
-  const summary = await window.maestro.getUsageSummary();
-  const modelItems = Object.entries(summary.byModel)
-    .sort((a, b) => b[1] - a[1])
-    .map(([model, count]) => ({ label: `${model.replace("claude-", "")} · ${count}` }));
-  const toolItems = Object.entries(summary.byTool)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 10)
-    .map(([tool, count]) => ({ label: `${tool} · ${count}` }));
-  showContextMenu(e.clientX, e.clientY, [
-    { label: `${summary.totalRuns} runs · $${summary.totalCostUsd.toFixed(2)} total` },
-    { sep: true },
-    { label: "By model", submenu: modelItems.length ? modelItems : [{ label: "(no data yet)" }] },
-    { label: "Top tools", submenu: toolItems.length ? toolItems : [{ label: "(no data yet)" }] },
+function barRow(label, count, max) {
+  const row = document.createElement("div");
+  row.className = "bar-row";
+  const name = document.createElement("span");
+  name.className = "bar-label";
+  name.textContent = label;
+  const track = document.createElement("span");
+  track.className = "bar-track";
+  const fill = document.createElement("span");
+  fill.className = "bar-fill";
+  fill.style.width = `${max ? Math.max(4, (count / max) * 100) : 0}%`;
+  track.append(fill);
+  const value = document.createElement("span");
+  value.className = "bar-value";
+  value.textContent = count;
+  row.append(name, track, value);
+  return row;
+}
+
+function skillListEl(title, names) {
+  const section = document.createElement("div");
+  section.className = "analysis-block";
+  const h = document.createElement("h3");
+  h.textContent = `${title} · ${names.length}`;
+  section.append(h);
+  if (names.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "pane-empty";
+    empty.textContent = "None found.";
+    section.append(empty);
+  } else {
+    const list = document.createElement("div");
+    list.className = "skill-chip-list";
+    names.forEach((n) => {
+      const chip = document.createElement("span");
+      chip.className = "skill-chip";
+      chip.textContent = n;
+      list.append(chip);
+    });
+    section.append(list);
+  }
+  return section;
+}
+
+async function renderAnalysisPage() {
+  const page = document.getElementById("analysisPage");
+  page.innerHTML = "";
+
+  const cwd = panes[focusedPaneIndex]?.cwd || "";
+  const [{ global, project }, summary] = await Promise.all([
+    window.maestro.listSkills(cwd),
+    window.maestro.getUsageSummary(),
   ]);
-});
+
+  const header = document.createElement("h2");
+  header.textContent = "Analysis";
+  page.append(header);
+
+  const totals = document.createElement("div");
+  totals.className = "analysis-totals";
+  totals.textContent = `${summary.totalRuns} runs · $${summary.totalCostUsd.toFixed(2)} total`;
+  page.append(totals);
+
+  const grid = document.createElement("div");
+  grid.className = "analysis-grid";
+
+  const modelBlock = document.createElement("div");
+  modelBlock.className = "analysis-block";
+  const modelH = document.createElement("h3");
+  modelH.textContent = "By model";
+  modelBlock.append(modelH);
+  const modelEntries = Object.entries(summary.byModel).sort((a, b) => b[1] - a[1]);
+  const modelMax = modelEntries.length ? modelEntries[0][1] : 0;
+  if (modelEntries.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "pane-empty";
+    empty.textContent = "No data yet — usage logs as you use Maestro.";
+    modelBlock.append(empty);
+  } else {
+    modelEntries.forEach(([m, c]) => modelBlock.append(barRow(m.replace("claude-", ""), c, modelMax)));
+  }
+
+  const toolBlock = document.createElement("div");
+  toolBlock.className = "analysis-block";
+  const toolH = document.createElement("h3");
+  toolH.textContent = "Top tools used";
+  toolBlock.append(toolH);
+  const toolEntries = Object.entries(summary.byTool).sort((a, b) => b[1] - a[1]).slice(0, 10);
+  const toolMax = toolEntries.length ? toolEntries[0][1] : 0;
+  if (toolEntries.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "pane-empty";
+    empty.textContent = "No data yet.";
+    toolBlock.append(empty);
+  } else {
+    toolEntries.forEach(([t, c]) => toolBlock.append(barRow(t, c, toolMax)));
+  }
+
+  grid.append(modelBlock, toolBlock);
+  grid.append(
+    skillListEl("Global skills (~/.claude/skills)", global),
+    skillListEl(`This pane's project skills${cwd ? "" : " (no folder set on the focused pane)"}`, project)
+  );
+  page.append(grid);
+}
 
 document.getElementById("viewToggle").addEventListener("click", async (e) => {
   const btn = e.target.closest("button[data-mode]");

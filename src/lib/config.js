@@ -15,6 +15,8 @@ const DEFAULT_CONFIG = {
   // Display-only session title overrides — never writes to the desktop app's
   // own session files, so "renaming a chat" can't corrupt live app state.
   titleOverrides: {}, // { "<sessionId>": "Custom title" }
+  manualMaestroSessions: [], // sessionIds tagged "◆ Maestro" by hand, independent of Jot category matching
+  hiddenSessions: [], // sessionIds removed from Maestro's view (restore by editing this array)
   jot: {
     enabled: true,
     path: "D:\\Dropbox\\jot\\todos.json",

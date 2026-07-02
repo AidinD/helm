@@ -1,11 +1,18 @@
+/* Warm charcoal palette (closer to the desktop app) instead of stark
+   near-black + hard gray borders — per feedback that colors felt "too harsh"
+   and sections were hard to tell apart. Sections are now distinguished by
+   subtle background-tone shifts (--bg-sidebar vs --bg) more than by borders;
+   --border itself is a soft translucent hairline rather than a solid line. */
 :root {
-  --bg: #1a1a1a;
-  --bg-card: #242424;
-  --bg-card-hover: #2c2c2c;
-  --border: #363636;
-  --text: #e8e8e8;
-  --text-dim: #8a8a8a;
-  --text-faint: #5f5f5f;
+  color-scheme: dark; /* makes native <select> popups render dark too */
+  --bg: #232320;
+  --bg-sidebar: #1c1c1a;
+  --bg-card: #2b2b28;
+  --bg-card-hover: #333330;
+  --border: rgba(255, 255, 255, 0.08);
+  --text: #e8e6e0;
+  --text-dim: #9c9a92;
+  --text-faint: #6b695f;
   --accent: #d97757;
   --waiting: #e0b341;
   --active: #4ea1d9;
@@ -16,12 +23,17 @@
   box-sizing: border-box;
 }
 
+.hidden {
+  display: none !important;
+}
+
 body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
   font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
-  font-size: 13px;
+  font-size: 13.5px;
+  line-height: 1.5;
   height: 100vh;
   display: flex;
   flex-direction: column;
@@ -32,6 +44,7 @@ header {
   align-items: center;
   justify-content: space-between;
   padding: 10px 16px;
+  background: var(--bg-sidebar);
   border-bottom: 1px solid var(--border);
 }
 
@@ -123,7 +136,7 @@ h1 {
 
 /* --- Sidebar --- */
 .sidebar {
-  border-right: 1px solid var(--border);
+  background: var(--bg-sidebar);
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -180,12 +193,14 @@ h1 {
 .search {
   flex: 1;
   min-width: 0;
+  height: 26px;
   background: var(--bg-card);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 6px 10px;
+  padding: 0 10px;
   font: inherit;
+  font-size: 12.5px;
 }
 
 #sidebarBody {
@@ -428,14 +443,15 @@ body.advanced .row-jot {
 }
 
 .pane-status {
-  font-weight: 400;
+  font-weight: 500;
   color: var(--active);
-  font-size: 11px;
-  font-style: italic;
+  font-size: 11.5px;
+  padding: 0 16px 4px;
 }
 
 .pane-status:empty {
   display: none;
+  padding: 0;
 }
 
 .pane-actions {
@@ -551,40 +567,61 @@ body.advanced .row-jot {
   background: rgba(0, 0, 0, 0.15);
 }
 
-/* Expandable tool call — closed state is a Halyard-style rounded pill
-   (999px radius, thin border, muted text); opening reveals the actual output,
-   matching the desktop app's clickable "Bash"/"Read" summaries. */
-.tool-call {
+/* Flat, unboxed tool-call summary — "Used N tools ›" — matching the desktop
+   app's plain clickable lines rather than a bordered pill/box per call. */
+.tool-group {
   align-self: flex-start;
   max-width: 100%;
 }
 
-.tool-call summary {
+.tool-group > summary {
   cursor: pointer;
   list-style: none;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-dim);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 2px 10px;
-  display: inline-block;
-  font-family: "Cascadia Code", "Consolas", monospace;
 }
 
-.tool-call summary::-webkit-details-marker {
+.tool-group > summary::after {
+  content: " \203a"; /* › */
+}
+
+.tool-group > summary:hover {
+  color: var(--text);
+}
+
+.tool-group > summary::-webkit-details-marker {
   display: none;
 }
 
-.tool-call[open] summary {
-  border-radius: 8px 8px 0 0;
+.tool-group-list {
+  margin-top: 4px;
+  padding-left: 12px;
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.tool-call-item > summary {
+  cursor: pointer;
+  list-style: none;
+  font-size: 11px;
+  color: var(--text-faint);
+  font-family: "Cascadia Code", "Consolas", monospace;
+}
+
+.tool-call-item > summary::-webkit-details-marker {
+  display: none;
+}
+
+.tool-call-item > summary:hover {
+  color: var(--text-dim);
 }
 
 .tool-call-output {
-  margin: 0;
-  background: #141414;
-  border: 1px solid var(--border);
-  border-top: none;
-  border-radius: 0 0 8px 8px;
+  margin: 4px 0 0;
+  background: var(--bg-card);
+  border-radius: 6px;
   padding: 6px 10px;
   font-size: 11px;
   color: var(--text-faint);
@@ -690,6 +727,7 @@ body.advanced .row-jot {
 .send-btn {
   background: var(--accent);
   border: none;
+  outline: none;
   color: #1a1a1a;
   border-radius: 50%;
   width: 26px;
@@ -701,10 +739,27 @@ body.advanced .row-jot {
   justify-content: center;
   padding: 0;
   cursor: pointer;
+  transition: filter 0.1s, transform 0.05s;
 }
 
 .send-btn:hover {
-  filter: brightness(1.08);
+  filter: brightness(1.12);
+}
+
+.send-btn:active {
+  filter: brightness(0.92);
+  transform: scale(0.94);
+}
+
+/* Distinct color while stopping — the send arrow and the stop square
+   sharing the same accent orange read as "the same button did nothing." */
+.send-btn.stopping {
+  background: #c0392b;
+  color: #f5e6e3;
+}
+
+.send-btn.stopping:hover {
+  filter: brightness(1.15);
 }
 
 /* --- Context menu --- */
@@ -807,4 +862,96 @@ button.primary {
 
 .log .err {
   color: var(--accent);
+}
+
+/* --- Analysis page --- */
+.analysis-page {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 32px;
+}
+
+.analysis-page h2 {
+  font-size: 18px;
+  margin: 0 0 4px;
+}
+
+.analysis-totals {
+  color: var(--text-dim);
+  font-size: 12.5px;
+  margin-bottom: 20px;
+}
+
+.analysis-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(280px, 1fr));
+  gap: 20px;
+}
+
+.analysis-block {
+  background: var(--bg-card);
+  border-radius: 12px;
+  padding: 16px 18px;
+}
+
+.analysis-block h3 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  margin: 0 0 12px;
+  font-weight: 600;
+}
+
+.bar-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.bar-label {
+  width: 110px;
+  flex-shrink: 0;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bar-track {
+  flex: 1;
+  background: var(--bg);
+  border-radius: 4px;
+  height: 8px;
+  overflow: hidden;
+}
+
+.bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 4px;
+}
+
+.bar-value {
+  width: 28px;
+  text-align: right;
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+
+.skill-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.skill-chip {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  background: var(--bg);
+  border-radius: 999px;
+  padding: 3px 10px;
 }
