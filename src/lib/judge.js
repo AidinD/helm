@@ -14,9 +14,11 @@ const JUDGE_SYSTEM_PROMPT =
   "You are a terse model-selection quality judge for a coding assistant. " +
   "Given a task and which model/effort handled it, judge whether that choice was " +
   "appropriate, too_weak (task showed signs of struggle: excessive tool calls, " +
-  "errors, vague or wrong-looking output for its complexity), or too_strong " +
+  "errors, vague or wrong-looking output for its complexity, or an explicit " +
+  "user instruction about model/effort was not honored), or too_strong " +
   "(overkill — a cheaper/faster model would clearly have done just as well). " +
-  "Respond only in the requested JSON schema, one or two sentences for reason.";
+  "Respond only in the requested JSON schema. reason MUST be under 12 words, " +
+  "one short clause, no filler — this is a compact UI label, not an explanation.";
 
 /**
  * Judges whether a completed run's model/effort choice fit the task. Runs a
