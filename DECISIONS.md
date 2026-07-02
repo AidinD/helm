@@ -130,3 +130,35 @@ Results:
 
 Decision: proceed to Phase 1 on the CLI-wrapping approach. Design the wrapper to
 parse `rate_limit_event` for the quota view and `result` for per-turn cost.
+
+## 2026-07-02 — Correction: the Phase 0 spike's "PASS" never actually checked prompt fidelity, and it was silently broken
+
+**What happened:** after shipping several features, Aidin reported real prompts
+got "cut to the first word." Root cause: `spawn("claude", args, { shell: true
+})` on Windows does NOT quote array arguments before handing them to `cmd.exe`
+— it just concatenates them with spaces. Any prompt containing a space (i.e.
+every real prompt) was silently split into multiple shell tokens, so only the
+first word ever reached `-p`. Verified directly: a 5-word prompt sent through
+the old `shell:true` spawn produced a response proving the model never saw
+anything past word one; the identical prompt sent via a directly-resolved
+`claude.exe` (no shell) came back byte-for-byte correct.
+
+**This means the original Phase 0 "SPIKE PASS" was invalid on this specific
+point.** Its own test prompt ("Respond with exactly this token...") almost
+certainly hit the same bug — the model's reply was conversational rather than
+the literal token, which I should have treated as a red flag instead of
+counting the run as a pass because a `result` event arrived with exit code 0.
+The auth/rooting/streaming conclusions from that spike still hold (they don't
+depend on prompt content), but the prompt-fidelity assumption was wrong from
+the start and went unnoticed through several feature batches because no test
+prompt used since then happened to get manually diffed against the reply.
+
+**Fix:** `launcher.js` now resolves the actual `claude.exe` path once (via
+`where claude`, preferring a `.exe` over a `.cmd` shim) and spawns it directly
+— no shell — so Node's own correct Windows argv escaping applies. `shell` only
+falls back to `true` if no real binary could be resolved.
+
+**Lesson:** "the process exited 0 and said something plausible" is not
+verification that it received the actual input. A real check needs the
+model to echo back something that could ONLY come from the full prompt (as
+the later re-test did), not just any coherent-sounding reply.

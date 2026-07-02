@@ -1,4 +1,29 @@
-import { spawn } from "node:child_process";
+import { spawn, execSync } from "node:child_process";
+
+// `shell: true` on Windows does NOT quote array args before handing them to
+// cmd.exe — it just concatenates them, so any prompt containing a space gets
+// split into separate shell tokens and truncated to its first word. Resolving
+// the real claude.exe and spawning it directly avoids the shell entirely, so
+// Node's own (correct) Windows argv escaping applies.
+let resolvedClaudePath = null;
+function resolveClaudeBinary() {
+  if (resolvedClaudePath) {
+    return resolvedClaudePath;
+  }
+  try {
+    const out = execSync(process.platform === "win32" ? "where claude" : "which claude", {
+      encoding: "utf8",
+    });
+    const candidates = out.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    // Prefer a real .exe — it can be spawned directly without a shell. A
+    // .cmd shim still needs shell:true, which reintroduces the quoting bug.
+    resolvedClaudePath =
+      candidates.find((c) => c.toLowerCase().endsWith(".exe")) || candidates[0] || "claude";
+  } catch {
+    resolvedClaudePath = "claude";
+  }
+  return resolvedClaudePath;
+}
 
 /**
  * Starts a real Claude Code session, rooted in `cwd` (a normal repo dir on its
@@ -29,9 +54,12 @@ export function startSession({ cwd, prompt, model, effort, resumeSessionId, onEv
     args.push("--resume", resumeSessionId);
   }
 
-  const child = spawn("claude", args, {
+  const claudePath = resolveClaudeBinary();
+  const child = spawn(claudePath, args, {
     cwd,
-    shell: true, // resolve the claude shim on Windows
+    // Only shell out if we couldn't resolve a real binary (unlikely) — a
+    // direct .exe spawn needs no shell and keeps multi-word prompts intact.
+    shell: !claudePath.toLowerCase().endsWith(".exe"),
     env: process.env,
   });
 
