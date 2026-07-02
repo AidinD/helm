@@ -827,11 +827,7 @@ function inlineFormat(text) {
 }
 
 const MODEL_FIT_ICON = { too_weak: "⬆", appropriate: "⚖", too_strong: "⬇" };
-const MODEL_FIT_LABEL = {
-  too_weak: "May have been underpowered",
-  appropriate: "Model fit looked appropriate",
-  too_strong: "May have been overkill",
-};
+const MODEL_FIT_LABEL = { too_weak: "Underpowered", appropriate: "Good fit", too_strong: "Overkill" };
 
 function turnEl(turn) {
   if (turn.kind === "tool_result") {
