@@ -1,5 +1,54 @@
 # Decisions
 
+## 2026-07-02 — Second review round (Opus) over the shipped Tier 1-3 fixes: 3 more real issues
+
+The captain (back on Opus) asked for a verification pass over everything Sonnet
+shipped for the 15 review findings, plus a fresh review round. The per-batch
+reviews each saw only their own batch; this round deliberately took the
+CUMULATIVE / integration angle (the three tiers all touched the same
+renderer event handler + main.js lifecycle) and re-read the final combined
+state. It confirmed all 15 tier fixes are sound AND surfaced three genuine
+issues the isolated reviews structurally couldn't see:
+
+1. **`before-quit` killed children asynchronously — losing the race against
+   the app's own exit** (`main.js`). The Tier-1 quit sweep called the async
+   `taskkill` form and didn't await, so the app could tear down before the
+   kill actually ran — orphaning the very process tree the sweep exists to
+   clean up (the Stop-button path was fine; only quit was affected). Notably
+   the Tier-1 per-batch review had explicitly dismissed this ("fired
+   async/best-effort... not a concern") — a fresh adversarial pass caught
+   what a confirm-the-fix pass didn't. Fixed with a synchronous `execFileSync`
+   kill on the quit path only.
+
+2. **`fs.readSync`'s return value was ignored in the transcript tail read**
+   (`transcript.js`). Node explicitly warns the buffer may not be fully
+   filled; a short read would leave `Buffer.alloc`'s zero-fill as NUL bytes
+   appended to the last line, which then fails `JSON.parse` and silently
+   drops the most recent turn(s). Low-probability (only under a concurrent
+   truncation of the file), but the fix is unambiguous: decode only
+   `buffer.toString("utf8", 0, bytesRead)`.
+
+3. **"Summarize & carry over" silently drove the judge + usage analytics**
+   (`main.js` + `renderer.js`) — the highest-value find, and a textbook
+   cross-batch defect. The summarize feature (Fas 2, built BEFORE the
+   model-fit judge and usage analytics existed) resumes a session via the
+   same `startSession` path, so every summarize spent a real ~$0.015 judge
+   call AND injected a synthetic run — hidden carry-over prompt, model forced
+   to sonnet-5 — into the exact By-model / Model-fit / Suggestion-accuracy
+   views the app is built to surface. No isolated review could see it: it's
+   the interaction of a feature from one era with a pipeline from another.
+   Fixed with an `internal: true` flag threaded startSession -> IPC ->
+   main.js that suppresses the usage log, the completion notification, and
+   the judge for Maestro's own internal launches (the renderer still gets its
+   `done` event, which the summarize callback needs).
+
+Both fresh reviewers otherwise confirmed the shipped work clean: the
+pane-routing consolidation integrates correctly across all three batches, no
+map leaks, no reentrancy, the atomic archive write / config deep-merge /
+judge output-cap all hold against the probed edge cases. Per the captain's
+explicit say-so this one time, all 15 finding tasks moved to done (normally
+they'd sit in review for his own check).
+
 ## 2026-07-02 — Tier 3 fixes from the full-app review: polish/a11y (closes the review)
 
 **1. config.js deep-merge for nested defaults** — a shallow

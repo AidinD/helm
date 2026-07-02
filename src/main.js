@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, Notification, clipboard } from "electron";
 import path from "node:path";
 import crypto from "node:crypto";
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { readAllSessions, enrichWithJot, setSessionArchived } from "./lib/sessions.js";
 import { loadJot } from "./lib/jot.js";
@@ -27,12 +27,28 @@ const liveChildren = new Map(); // launchId -> child process, for the Stop butto
 // automatically terminated when their parent dies. Left running, they keep
 // executing (and consuming subscription usage) after a Stop click or even
 // after Maestro itself quits. `taskkill /T` recurses through the whole tree.
-function killChildTree(child) {
+// `sync: true` runs the kill synchronously — required from the "before-quit"
+// sweep, where an async execFile would very likely lose the race against the
+// process actually exiting (nothing awaits it, so the app tears down before
+// the async taskkill has run, leaving exactly the orphaned tree this is
+// meant to prevent). The Stop-button path uses the default async form since
+// the app keeps running there and blocking the main thread is pointless.
+function killChildTree(child, { sync = false } = {}) {
   if (!child || child.killed || !child.pid) {
     return;
   }
   if (process.platform === "win32") {
-    execFile("taskkill", ["/pid", String(child.pid), "/T", "/F"], (err) => {
+    const args = ["/pid", String(child.pid), "/T", "/F"];
+    if (sync) {
+      try {
+        execFileSync("taskkill", args, { stdio: "ignore" });
+      } catch {
+        // Process may have already exited on its own — taskkill then reports
+        // an error, which is fine and nothing to act on.
+      }
+      return;
+    }
+    execFile("taskkill", args, (err) => {
       if (err) {
         // Best-effort: the process may have already exited on its own
         // between the check above and this call, which taskkill reports as
@@ -179,7 +195,7 @@ ipcMain.handle("dialog:pickFiles", async () => {
 // --- Start (or resume) a rooted session; stream events to the renderer ---
 ipcMain.handle(
   "session:start",
-  (_event, { cwd, prompt, model, effort, permissionMode, resumeSessionId, suggestedModel, suggestedEffort }) => {
+  (_event, { cwd, prompt, model, effort, permissionMode, resumeSessionId, suggestedModel, suggestedEffort, internal }) => {
     if (!cwd || !prompt) {
       return { ok: false, error: "cwd and prompt are required" };
     }
@@ -233,6 +249,17 @@ ipcMain.handle(
       // renderer never got its "done" event and the pane stayed "running"
       // forever with no way to recover short of restarting Maestro.
       send({ kind: "done", summary });
+
+      // Maestro-internal launches (e.g. the hidden "summarize & carry over"
+      // resume) are not real user turns: they must not be usage-logged,
+      // notified, or judged. Doing so would spend a real judge call per
+      // summarize AND inject a synthetic run into the very By-model /
+      // Model-fit / Suggestion-accuracy analytics this app exists to surface.
+      // The renderer still needs the "done" event above (its pendingLaunch
+      // callback resolves on it), so that's sent unconditionally first.
+      if (internal) {
+        return;
+      }
 
       try {
         appendUsageLog({
@@ -336,8 +363,11 @@ app.whenReady().then(() => {
 // its claude.exe process tree orphaned — same underlying issue as Stop
 // (see killChildTree above), just triggered by app exit instead of a click.
 app.on("before-quit", () => {
+  // Synchronous kills here: this handler does not (and cannot easily) await,
+  // so an async taskkill would race the app's own teardown and often lose,
+  // orphaning the very process tree this sweep exists to clean up.
   for (const child of liveChildren.values()) {
-    killChildTree(child);
+    killChildTree(child, { sync: true });
   }
   liveChildren.clear();
 });

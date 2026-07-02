@@ -751,6 +751,13 @@ function summarizeSession(session) {
       model: "claude-sonnet-5",
       effort: "medium",
       resumeSessionId: session.cliSessionId || session.sessionId,
+      // Maestro-internal launch (the hidden carry-over summary), not a real
+      // user turn — keeps it out of the usage log, the "prompt finished"
+      // notification, and the model-fit judge, which would otherwise spend a
+      // real judge call on it AND contaminate the By-model / Model-fit /
+      // Suggestion-accuracy analytics with a synthetic run the user never
+      // initiated (model forced to sonnet-5, a hidden prompt).
+      internal: true,
     });
     if (!res.ok) {
       resolve({ error: res.error });
