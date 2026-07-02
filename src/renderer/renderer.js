@@ -840,6 +840,9 @@ function turnEl(turn) {
     el.textContent = turn.text;
     return el;
   }
+  if (turn.kind === "task_notification") {
+    return taskNotificationEl(turn.text);
+  }
   const wrap = document.createElement("div");
   wrap.className = "turn " + turn.role;
   const bubble = document.createElement("div");
@@ -857,6 +860,32 @@ function turnEl(turn) {
 // "Used N tools" line — matching the desktop app's flat "Used 3 tools ›" /
 // "Searched code ›" style — instead of a separate bordered box per call
 // (which read as heavy/boxy per feedback comparing the two side by side).
+// A background task/subagent completion, delivered as raw <task-notification>
+// XML — shown as a compact expandable line (like a tool call), not as a
+// normal chat bubble, since Aidin didn't actually type this.
+function taskNotificationEl(rawText) {
+  const summaryMatch = /<summary>([\s\S]*?)<\/summary>/.exec(rawText);
+  const statusMatch = /<status>([\s\S]*?)<\/status>/.exec(rawText);
+  const status = statusMatch ? statusMatch[1].trim() : "unknown";
+  const summaryText = summaryMatch ? summaryMatch[1].trim() : "Background task";
+  const icon = status === "completed" ? "✓" : status === "failed" ? "✗" : "◔";
+
+  const details = document.createElement("details");
+  details.className = "tool-group";
+  const summary = document.createElement("summary");
+  summary.textContent = `${icon} Background task: ${truncateText(summaryText, 100)}`;
+  details.append(summary);
+  const pre = document.createElement("pre");
+  pre.className = "tool-call-output";
+  pre.textContent = rawText;
+  details.append(pre);
+  return details;
+}
+
+function truncateText(text, max) {
+  return text.length > max ? text.slice(0, max) + "…" : text;
+}
+
 function toolGroupEl(pairs) {
   const details = document.createElement("details");
   details.className = "tool-group";
