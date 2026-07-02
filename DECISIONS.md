@@ -1,5 +1,37 @@
 # Decisions
 
+## 2026-07-02 — "Rewind to here": fresh session replaying prior context, since --resume can't retract turns
+
+**Decision:** Mirrors the desktop app's rewind icon, but implemented around
+a hard constraint: the CLI's `--resume` cannot retract turns from an
+existing session. So instead of editing the old session in place, clicking
+"⤺" on a past user message opens a FRESH session/pane whose draft replays
+the conversation up to (not including) that message, then the message itself
+as an editable draft — future context is genuinely dropped, not just
+visually hidden. Prior turns are replayed VERBATIM (not LLM-summarized like
+Fas 2's carry-over): a rewind is usually to somewhere recent where the raw
+exchange is more faithful than a lossy summary, and it keeps the action
+instant and free. Capped at the 30 most-recent prior text turns (with an
+"N omitted" note) and 500 chars/turn so rewinding deep into a long chat
+can't build a pathological draft. Distinct from the existing double-click-
+to-edit-and-resend (which just refills the current composer, appending a new
+turn to the SAME session — no context dropped).
+
+**Critical bug caught in review, fixed before shipping:** the shared
+`openFreshDraftInPane` → `pickDraftTargetPane` helper, when both panes are
+full, fell back to `focusedPaneIndex` and overwrote it in place. Since the
+rewind button lives INSIDE a pane (which is focused when you click it), this
+meant rewinding in a two-pane layout wiped the very conversation you were
+rewinding from. (Latent gap the summarize feature shared but rarely hit,
+since summarize is triggered from the sidebar with a free pane usually
+available.) Fixed by threading an `avoidIndex` through so the fallback picks
+the OTHER pane, never the source; verified across 5 pane-layout scenarios
+plus the draft-building logic across 3 (excludes future turns + tool noise,
+caps correctly keeping most-recent, handles zero-prior-context first
+message). The clobber was never real data loss — the session's transcript on
+disk is untouched and reopenable — but it was destructive to the pane view
+and exactly the wrong pane.
+
 ## 2026-07-02 — Drag-and-drop reorder for categories themselves, not just sessions
 
 **Decision:** Categories/lists in the sidebar could never be reordered
