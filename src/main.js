@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog } from "electron";
+import { app, BrowserWindow, ipcMain, dialog, shell, Notification } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readAllSessions, enrichWithJot } from "./lib/sessions.js";
@@ -8,7 +8,7 @@ import { startSession } from "./lib/launcher.js";
 import { suggestModelEffort } from "./lib/suggest.js";
 import { readTranscript } from "./lib/transcript.js";
 import { findTranscriptPath } from "./lib/paths.js";
-import { listSkills } from "./lib/skills.js";
+import { listSkills, skillMdPath } from "./lib/skills.js";
 import { appendUsageLog, readUsageSummary } from "./lib/usage.js";
 import { judgeModelFit } from "./lib/judge.js";
 
@@ -78,6 +78,16 @@ ipcMain.handle("suggest:modelEffort", (_event, prompt) => suggestModelEffort(pro
 
 // --- Skills available to a pane, split global vs project-specific ---
 ipcMain.handle("skills:list", (_event, cwd) => listSkills(cwd));
+
+// --- Open a skill's SKILL.md in the OS default app (from an Analysis-page chip) ---
+ipcMain.handle("skills:open", (_event, { name, origin, cwd }) => {
+  const file = skillMdPath(name, origin, cwd);
+  if (!file) {
+    return { ok: false, error: "SKILL.md not found" };
+  }
+  shell.openPath(file);
+  return { ok: true };
+});
 
 // --- Aggregate usage summary (models + tools most used) ---
 ipcMain.handle("usage:summary", () => readUsageSummary());
@@ -162,6 +172,18 @@ ipcMain.handle(
       });
       send({ kind: "done", summary });
 
+      // Native OS notification (Windows plays its default sound with it, no
+      // separate audio file needed) when a prompt finishes — lets the captain
+      // switch away while a run is in progress.
+      const notifyConfig = loadConfig().notifyOnComplete;
+      if (notifyConfig !== false && summary.sawResult && Notification.isSupported()) {
+        new Notification({
+          title: "Maestro — prompt finished",
+          body: truncateForNotification(prompt),
+          silent: false,
+        }).show();
+      }
+
       // Model-fit judge: user-requested, cost-verified (~$0.015-0.02/call
       // after stripping MCP servers + tool defs the judge never needs).
       // Fire-and-forget so it never delays the real response; only runs on a
@@ -207,6 +229,11 @@ ipcMain.handle("session:stop", (_event, { launchId }) => {
   liveChildren.delete(launchId);
   return { ok: true };
 });
+
+function truncateForNotification(text) {
+  const oneLine = text.trim().replace(/\s+/g, " ");
+  return oneLine.length > 100 ? oneLine.slice(0, 100) + "…" : oneLine;
+}
 
 app.whenReady().then(createWindow);
 

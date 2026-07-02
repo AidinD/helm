@@ -70,20 +70,25 @@ h1 {
   gap: 14px;
 }
 
+/* No outer frame around the pair — per feedback that the boxed group looked
+   heavy. Each button is its own soft pill; only the active one gets a fill. */
 .view-toggle {
   display: flex;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  overflow: hidden;
+  gap: 2px;
 }
 
 .view-toggle button {
-  background: var(--bg-card);
+  background: transparent;
   color: var(--text-dim);
   border: none;
+  border-radius: 6px;
   padding: 4px 10px;
   font: inherit;
   cursor: pointer;
+}
+
+.view-toggle button:hover {
+  color: var(--text);
 }
 
 .view-toggle button.active {
@@ -507,10 +512,6 @@ body.advanced .row-jot {
   word-break: break-word;
 }
 
-.turn-bubble .md-li {
-  line-height: 1.3;
-}
-
 .turn.user .turn-bubble {
   background: var(--accent);
   color: #1a1a1a;
@@ -537,8 +538,13 @@ body.advanced .row-jot {
   white-space: pre;
 }
 
+/* Gives both "space before the list starts" and "space between items" the
+   same modest gap — was previously tightened based on different feedback
+   ("less air"), which turned out to point the opposite direction from what
+   the captain actually wanted here (more breathing room, matching the desktop app). */
 .turn-bubble .md-li {
   padding-left: 2px;
+  margin-top: 4px;
 }
 
 .turn-bubble .md-table {
@@ -741,10 +747,9 @@ body.advanced .row-jot {
 
 /* Model/effort selects styled as text pills (Halyard's .meta-pill: rounded
    border, bold small text, no visible "dropdown box" chrome). */
+/* Now a <button> that opens the shared context-menu popup, not a native
+   <select> — see dropdownPill() in renderer.js for why. */
 .meta-pill {
-  color-scheme: dark;
-  appearance: none;
-  -webkit-appearance: none;
   background: transparent;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -755,6 +760,7 @@ body.advanced .row-jot {
   padding: 4px 10px;
   cursor: pointer;
   text-align: center;
+  white-space: nowrap;
 }
 
 .meta-pill:hover {
@@ -948,6 +954,15 @@ button.primary {
   align-items: flex-start;
   gap: 12px;
   cursor: pointer;
+  padding-bottom: 16px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-toggle-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+  margin-bottom: 0;
 }
 
 .settings-toggle-row input {
@@ -1022,11 +1037,19 @@ button.primary {
 }
 
 .skill-chip {
+  font: inherit;
   font-size: 11.5px;
   color: var(--text-dim);
   background: var(--bg);
+  border: none;
   border-radius: 999px;
   padding: 3px 10px;
+  cursor: pointer;
+}
+
+.skill-chip:hover {
+  color: var(--text);
+  background: var(--bg-card-hover);
 }
 
 .fit-row {

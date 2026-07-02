@@ -22,6 +22,7 @@ const DEFAULT_CONFIG = {
   // after stripping MCP/tool defs the judge doesn't need). User-requested;
   // set enabled:false here to turn it off if the recurring cost isn't worth it.
   modelFitJudge: { enabled: true },
+  notifyOnComplete: true, // native OS notification (+ its default sound) when a prompt finishes
   jot: {
     enabled: true,
     path: "D:\\Dropbox\\jot\\todos.json",
