@@ -52,9 +52,20 @@ export function readTranscript(transcriptPath, { maxTurns = 4000 } = {}) {
 function pushUserTurn(turns, entry) {
   const content = entry.message?.content;
   if (typeof content === "string") {
-    if (content.trim()) {
-      turns.push({ role: "user", kind: "text", text: content });
+    const trimmed = content.trim();
+    if (!trimmed) {
+      return;
     }
+    // A background-task/subagent completion is delivered as a synthetic
+    // "user" turn whose content is a raw <task-notification> XML string —
+    // not something the captain actually typed. Rendering it as a normal outgoing
+    // message reads as "you said this XML," which is wrong; give it its own
+    // kind so the UI can show a compact summary instead.
+    if (trimmed.startsWith("<task-notification>")) {
+      turns.push({ role: "system", kind: "task_notification", text: trimmed });
+      return;
+    }
+    turns.push({ role: "user", kind: "text", text: content });
     return;
   }
   if (Array.isArray(content)) {
