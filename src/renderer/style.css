@@ -551,6 +551,22 @@ body.advanced .row-jot {
   color: var(--waiting);
 }
 
+/* Deadline chip — shown in BOTH simple and advanced views (unlike .row-jot,
+   which is advanced-only): a bearing-down deadline is high-signal and is
+   exactly what's reordering the row, so it shouldn't be hidden in the
+   cleaner default view. */
+.row-deadline {
+  font-size: 10px;
+  color: var(--text-dim);
+  align-self: flex-start;
+  margin-left: 14px;
+}
+
+.row-deadline.overdue {
+  color: var(--waiting);
+  font-weight: 600;
+}
+
 .archive-suggest-pill {
   align-self: flex-start;
   margin-left: 14px;

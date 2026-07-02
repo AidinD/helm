@@ -1,5 +1,25 @@
 # Decisions
 
+## 2026-07-02 — Deadline-aware attention sorting from Jot
+
+**Decision:** Jot todos carry an optional `deadline` (epoch ms) — now factored
+into the sidebar's attention ranking. `jot.js` surfaces each category's
+`nearestDeadline` (soonest deadline among its still-open, non-done tasks,
+overdue ones included since they're the MOST urgent). `sessions.js` adds a
+tiered boost to `attentionScore` via `deadlineBoost()`: overdue = full weight
+(default 80, a new configurable `deadline` weight), <24h = 75%, <3d = 45%,
+<7d = 20%, beyond a week = 0 (a deadline that far off shouldn't reorder the
+board yet). A "⏰ due in Nd / due today / overdue" chip renders on the row in
+BOTH simple and advanced views (unlike the advanced-only Jot-counts chip) —
+a bearing-down deadline is high-signal and it's what's reordering the row, so
+hiding it in the default view would make the sort look arbitrary.
+
+Verified the full pipeline against real Jot data: the boost math is correct
+across all tiers (standalone test), and `nearestDeadline` surfaces correctly
+(the one real deadline in the board today is 2027, >7 days out, so it
+correctly produces no boost and no chip yet — the machinery is dormant until
+a near-term deadline exists, which is the intended behavior, not a bug).
+
 ## 2026-07-02 — "Rewind to here": fresh session replaying prior context, since --resume can't retract turns
 
 **Decision:** Mirrors the desktop app's rewind icon, but implemented around

@@ -126,6 +126,29 @@ function relTime(ts) {
   return `${Math.round(hr / 24)}d ago`;
 }
 
+// Short deadline label for the sidebar chip, or "" when the deadline is too
+// far off to be worth showing (matches sessions.js's 7-day deadlineBoost
+// cutoff — beyond that it doesn't affect sorting, so it shouldn't clutter
+// the row either). null/non-number → "".
+function deadlineChipText(ms) {
+  if (typeof ms !== "number") {
+    return "";
+  }
+  const DAY = 24 * 60 * 60 * 1000;
+  const msLeft = ms - Date.now();
+  if (msLeft < 0) {
+    return "overdue";
+  }
+  if (msLeft < DAY) {
+    return "due today";
+  }
+  const days = Math.round(msLeft / DAY);
+  if (days <= 7) {
+    return `due in ${days}d`;
+  }
+  return "";
+}
+
 function sortByAttention(list) {
   return [...list].sort((a, b) => {
     const s = (b.attentionScore || 0) - (a.attentionScore || 0);
@@ -588,6 +611,18 @@ function rowEl(session) {
     }
     j.textContent = parts.length ? `${session.jot.category} · ${parts.join(" · ")}` : session.jot.category;
     row.append(j);
+
+    // Deadline chip — only when close enough to actually matter for sorting
+    // (within a week or overdue), matching the deadlineBoost tiers in
+    // sessions.js. Makes the deadline-aware ordering legible: it explains
+    // why a session with little other activity is sitting near the top.
+    const deadlineText = deadlineChipText(session.jot.nearestDeadline);
+    if (deadlineText) {
+      const d = document.createElement("div");
+      d.className = "row-deadline" + (session.jot.nearestDeadline < Date.now() ? " overdue" : "");
+      d.textContent = "⏰ " + deadlineText;
+      row.append(d);
+    }
   }
 
   // "Orchestrator proposes, you approve" — only ever a suggestion. Clicking

@@ -13,7 +13,34 @@ export const DEFAULT_WEIGHTS = {
   review: 30, // per Jot review task
   inProgress: 20, // per Jot in-progress task
   open: 2, // per Jot open (backlog) task
+  deadline: 80, // MAX boost for a category's nearest deadline, scaled by urgency (see deadlineBoost)
 };
+
+// Tiered urgency boost from how soon (or how overdue) a session's matched Jot
+// category's nearest deadline is. A hard deadline bearing down is a genuine
+// "look at this" signal comparable to an open conversation loop, so overdue
+// gets the full weight; it decays as the deadline recedes and is zero past a
+// week out (a deadline that far off shouldn't reorder your board yet).
+function deadlineBoost(nearestDeadline, maxWeight, now) {
+  if (typeof nearestDeadline !== "number") {
+    return 0;
+  }
+  const msLeft = nearestDeadline - now;
+  const DAY = 24 * 60 * 60 * 1000;
+  if (msLeft < 0) {
+    return maxWeight; // overdue — most urgent
+  }
+  if (msLeft < DAY) {
+    return maxWeight * 0.75;
+  }
+  if (msLeft < 3 * DAY) {
+    return maxWeight * 0.45;
+  }
+  if (msLeft < 7 * DAY) {
+    return maxWeight * 0.2;
+  }
+  return 0;
+}
 
 // How recent lastActivityAt must be for a "user"-ended session to count as
 // actively running rather than idle/parked.
@@ -62,6 +89,7 @@ export function readAllSessions(options = {}) {
  */
 export function enrichWithJot(sessions, jotIndex, weightsOverride = {}) {
   const weights = { ...DEFAULT_WEIGHTS, ...weightsOverride };
+  const now = Date.now();
   for (const session of sessions) {
     const cat = jotIndex.matchByTitle(session.title, session.sessionId);
     if (cat) {
@@ -71,6 +99,7 @@ export function enrichWithJot(sessions, jotIndex, weightsOverride = {}) {
         open: cat.open,
         inProgress: cat.inProgress,
         review: cat.review,
+        nearestDeadline: cat.nearestDeadline ?? null,
       };
     } else {
       session.jot = null;
@@ -86,6 +115,7 @@ export function enrichWithJot(sessions, jotIndex, weightsOverride = {}) {
       score += session.jot.review * weights.review;
       score += session.jot.inProgress * weights.inProgress;
       score += session.jot.open * weights.open;
+      score += deadlineBoost(session.jot.nearestDeadline, weights.deadline, now);
     }
     session.attentionScore = score;
 
