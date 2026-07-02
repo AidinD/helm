@@ -710,6 +710,16 @@ body.advanced .row-jot {
   margin-top: 4px;
 }
 
+/* Symmetric with .md-li's own margin-top: the transition INTO a list gets a
+   deliberate gap, but a plain line has no margin rule at all, so the line
+   right after the LAST bullet sat flush against it with nothing but
+   line-height between them — inconsistent next to every other spaced
+   transition in the same bubble. */
+.turn-bubble .md-after-list {
+  display: inline-block;
+  margin-top: 10px;
+}
+
 .turn-bubble .md-table {
   border-collapse: collapse;
   margin: 6px 0;
