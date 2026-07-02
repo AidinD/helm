@@ -285,6 +285,17 @@ function buildMenuItems(items) {
       sub.className = "submenu";
       sub.append(buildMenuItems(it.submenu));
       el.append(sub);
+      // The submenu opens at left:100% of its parent item by default —
+      // right-clicking a row near the right edge of the window (a very
+      // normal thing to do) pushed it off-screen with no way to reach its
+      // items. Estimate against the submenu's own min-width (160px, set in
+      // CSS) rather than measuring the real rect, since it's display:none
+      // until hover and measuring a hidden element just returns zeros.
+      el.addEventListener("mouseenter", () => {
+        const itemRect = el.getBoundingClientRect();
+        const submenuMinWidth = 160;
+        sub.classList.toggle("flip-left", itemRect.right + submenuMinWidth > window.innerWidth);
+      });
     } else if (it.onClick) {
       el.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -300,6 +311,13 @@ function buildMenuItems(items) {
 document.addEventListener("click", closeContextMenu);
 document.addEventListener("contextmenu", (e) => {
   if (!e.target.closest("[data-has-menu]")) {
+    closeContextMenu();
+  }
+});
+// The menu previously only closed on an outside click — no keyboard way to
+// dismiss it at all, matching the image lightbox's own Escape handling.
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
     closeContextMenu();
   }
 });
@@ -2607,7 +2625,13 @@ window.maestro.onSessionEvent((evt) => {
       pane.busy = false;
       pane.currentLaunchId = null;
       setPaneBusyUI(index, "");
-      if (pane.stopRequested) {
+      // stopRequested alone isn't reliable: the process can finish naturally
+      // in the small window between clicking Stop and that IPC call actually
+      // landing, in which case it's not actually stopped, just a real
+      // completion that happened to race a Stop click. evt.summary.sawResult
+      // reflects whether the CLI itself produced a genuine result — only
+      // treat this as a stop if it did NOT.
+      if (pane.stopRequested && !evt.summary?.sawResult) {
         // A killed process may not have flushed its in-progress turn to disk
         // yet — reloading the transcript here would silently drop whatever
         // text already streamed live. Keep what's on screen instead.
@@ -2615,6 +2639,7 @@ window.maestro.onSessionEvent((evt) => {
         pane.turns.push({ role: "assistant", kind: "text", text: "⏹ Stopped." });
         renderPane(index);
       } else {
+        pane.stopRequested = false;
         loadTranscriptInto(index).then(refresh);
       }
       break;
