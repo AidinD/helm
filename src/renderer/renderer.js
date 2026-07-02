@@ -17,6 +17,18 @@ let dropTarget = null;
 // target rather than sharing/overloading `dropTarget` above.
 // { wrap: HTMLElement, label: string, before: boolean } | null.
 let categoryDropTarget = null;
+// Timestamp a category drag started (null when not dragging). The 30s
+// refresh() timer — or any session event — otherwise rebuilds the sidebar
+// mid-drag, visibly undoing the drag-collapse and destroying the dragged
+// header. refresh() skips the sidebar rebuild while this is set. A timestamp
+// (not a bool) so a drag that somehow never ends self-heals after 30s rather
+// than freezing the sidebar forever — dragend clears it in every normal case.
+let categoryDragStartedAt = null;
+const CATEGORY_DRAG_STALE_MS = 30000;
+
+function categoryDragInProgress() {
+  return categoryDragStartedAt !== null && Date.now() - categoryDragStartedAt < CATEGORY_DRAG_STALE_MS;
+}
 // launchId -> { index, pane, startedAt }. The ONE map every launch-scoped
 // event (session/tool_use/assistant/error/done/modelFit) is routed through,
 // always gated on `panes[index] === pane` before being applied. Storing the
@@ -1139,12 +1151,14 @@ function sectionEl({ label, sessions, collapsed, pinned, droppable, emptyHint, i
       // dragend. Layout settles once here at dragstart, before any dragover,
       // so it doesn't disturb the drop-position math.
       document.getElementById("sidebarBody").classList.add("dragging-category");
+      categoryDragStartedAt = Date.now();
       e.dataTransfer.setData("text/category-label", label);
       e.dataTransfer.effectAllowed = "move";
     });
     head.addEventListener("dragend", () => {
       wrap.classList.remove("dragging");
       document.getElementById("sidebarBody").classList.remove("dragging-category");
+      categoryDragStartedAt = null;
       clearCategoryDropIndicators();
       categoryDropTarget = null;
     });
@@ -2449,7 +2463,14 @@ async function refresh() {
   state.quota = data.quota;
   applyViewMode();
   applySidebarMode();
-  renderSidebar();
+  // Don't rebuild the sidebar out from under an in-progress category drag —
+  // innerHTML="" would destroy the dragged header and the drag-collapse
+  // mid-gesture (jarring layout jump). State above is still refreshed; the
+  // sidebar re-renders on the next tick once the drag ends (dragend clears
+  // the flag; reorderCategory/openSessionInPane also re-render on their own).
+  if (!categoryDragInProgress()) {
+    renderSidebar();
+  }
   renderQuota(state.quota);
   pruneStaleLaunchHistory();
   pruneStaleBackgroundTasks();

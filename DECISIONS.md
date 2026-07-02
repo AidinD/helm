@@ -1,5 +1,32 @@
 # Decisions
 
+## 2026-07-02 — Cumulative integration review of the whole backlog batch; one glitch fixed
+
+The captain asked for a review of all the backlog-pass fixes before his own manual
+review. Each feature already had an isolated review when built, so this pass
+took the CUMULATIVE / integration angle across the two clusters they share
+code in: sidebar (category DnD reorder + drag-collapse + back/forward nav +
+deadline chip) and workspace (resizable split + rewind + queue-next-prompt +
+event routing + version badge).
+
+**Workspace cluster: fully clean** — no cross-feature bugs. Notably confirmed
+the inserted `.pane-divider` element (between panes 0/1) breaks nothing,
+because every pane lookup is `[data-pane="N"]`-attribute-based, never
+child-index/sibling-based; `pane.els` never goes stale because `renderPane`
+(the "done"/transcript-reload path) rebuilds only `.pane-scroll`, not the
+composer; and `fireQueuedPromptIfAny` runs synchronously after the identity
+guard with no intervening await.
+
+**Sidebar cluster: one medium glitch, fixed.** The 30s `refresh()` timer (or
+any session event) could call `renderSidebar()` mid category-drag —
+`innerHTML=""` destroying the dragged header and un-hiding the collapsed
+lists mid-gesture (a jarring layout jump; not corruption — the HTML5 drag
+continues on the detached node and the drop still resolves via the persisted
+dataTransfer). Fixed: `refresh()` skips the sidebar rebuild while a category
+drag is in progress, gated on a `categoryDragStartedAt` TIMESTAMP (not a
+bool) so a drag that somehow never ends self-heals after 30s instead of
+freezing the sidebar — dragend clears it in every normal case.
+
 ## 2026-07-02 — Resizable split panes (the contained half of the split-view ask)
 
 **Decision:** Split the "split view ska kunna drag-and-dropas som i VS Code +
