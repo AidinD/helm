@@ -832,8 +832,14 @@ function summarizeSession(session) {
 }
 
 // Prefers an existing empty pane over forcing a new split, so this doesn't
-// clutter the workspace when one is already free.
-function pickDraftTargetPane() {
+// clutter the workspace when one is already free. `avoidIndex` is a pane
+// that must NOT be clobbered — the rewind button lives INSIDE a pane, so
+// without this the all-panes-full fallback used to overwrite the very pane
+// you clicked in, wiping the conversation you were rewinding FROM (found in
+// review; a latent gap the summarize feature shared but rarely hit). The
+// target pane's in-memory view is replaced, but the underlying session/
+// transcript on disk is untouched and still reopenable from the sidebar.
+function pickDraftTargetPane(avoidIndex) {
   const emptyIndex = panes.findIndex((p) => !p.sessionId && p.turns.length === 0 && !p.busy);
   if (emptyIndex !== -1) {
     return { index: emptyIndex, addedPane: false };
@@ -842,11 +848,15 @@ function pickDraftTargetPane() {
     panes.push(freshPane());
     return { index: panes.length - 1, addedPane: true };
   }
-  return { index: focusedPaneIndex, addedPane: false };
+  // Both panes full: use the one that ISN'T the source, so the pane the
+  // action came from stays intact. Only fall back to avoidIndex if there's
+  // genuinely no other pane (avoidIndex undefined, or a future 1-pane edge).
+  const alternative = panes.findIndex((_, i) => i !== avoidIndex);
+  return { index: alternative !== -1 ? alternative : focusedPaneIndex, addedPane: false };
 }
 
-function openFreshDraftInPane(cwd, draftText) {
-  const { index, addedPane } = pickDraftTargetPane();
+function openFreshDraftInPane(cwd, draftText, avoidIndex) {
+  const { index, addedPane } = pickDraftTargetPane(avoidIndex);
   panes[index] = { ...freshPane(), cwd: cwd || "" };
   focusedPaneIndex = index;
   if (addedPane) {
@@ -1645,8 +1655,20 @@ function renderPane(index) {
 // editing + resend. Does not alter history — the CLI can't retract a turn via
 // --resume, so this is "edit and send again" (appends as a new turn), not a
 // true rewind/branch like the desktop app's retry icon.
+//
+// The real "rewind to here" (mirroring the desktop app's own icon) is the
+// separate button added below: it opens a FRESH session/pane whose draft
+// replays the conversation up to (not including) this message, then the
+// message itself — future context is genuinely left out, not just visually
+// hidden, since --resume has no way to retract turns from the OLD session.
 function wireEditableUserTurns(index, scroll) {
-  scroll.querySelectorAll(".turn.user .turn-bubble").forEach((bubble) => {
+  const pane = panes[index];
+  // Correlates 1:1 and in DOM order with ".turn.user .turn-bubble" elements:
+  // turnEl() only gives a user turn that plain bubble treatment when its
+  // kind is "text" (a tool_result gets a separate .turn-tool-result div, and
+  // a task_notification is role "system", not "user").
+  const userTextTurns = pane.turns.filter((t) => t.role === "user" && t.kind === "text");
+  scroll.querySelectorAll(".turn.user .turn-bubble").forEach((bubble, i) => {
     bubble.classList.add("editable");
     bubble.title = "Double-click to edit and resend";
     bubble.addEventListener("dblclick", () => {
@@ -1658,7 +1680,67 @@ function wireEditableUserTurns(index, scroll) {
         promptEl.dispatchEvent(new Event("input"));
       }
     });
+
+    const turn = userTextTurns[i];
+    const wrap = bubble.parentElement;
+    if (!turn || !wrap) {
+      return;
+    }
+    const rewindBtn = document.createElement("button");
+    rewindBtn.className = "copy-btn rewind-btn";
+    rewindBtn.title = "Rewind to here — start a fresh chat with the conversation up to this point, drop everything after it";
+    rewindBtn.textContent = "⤺";
+    rewindBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const turnGlobalIndex = pane.turns.indexOf(turn);
+      if (turnGlobalIndex !== -1) {
+        rewindToTurn(index, turnGlobalIndex);
+      }
+    });
+    wrap.append(rewindBtn);
   });
+}
+
+// How much prior context "rewind to here" replays verbatim before the target
+// message — capped so rewinding deep into a very long conversation doesn't
+// build a pathologically large draft prompt. Deliberately NOT summarized via
+// an LLM call (unlike Fas 2's carry-over) — a rewind is usually to somewhere
+// recent, where the raw exchange is more useful and faithful than a lossy
+// summary, and skipping the call keeps this instant and free.
+const MAX_REWIND_PRIOR_TURNS = 30;
+const MAX_REWIND_TURN_CHARS = 500;
+
+function buildRewindDraft(pane, turnGlobalIndex) {
+  const priorTurns = pane.turns
+    .slice(0, turnGlobalIndex)
+    .filter((t) => (t.role === "user" || t.role === "assistant") && t.kind === "text");
+  const targetTurn = pane.turns[turnGlobalIndex];
+  const omittedCount = Math.max(0, priorTurns.length - MAX_REWIND_PRIOR_TURNS);
+  const shown = priorTurns.slice(-MAX_REWIND_PRIOR_TURNS);
+
+  const lines = [
+    "[Rewinding to an earlier point in this conversation — everything that " +
+      "happened AFTER this point is intentionally left out, since the message " +
+      "below is being revised. Prior context:]",
+    "",
+  ];
+  if (omittedCount > 0) {
+    lines.push(`[${omittedCount} earlier turn(s) omitted]`, "");
+  }
+  for (const t of shown) {
+    lines.push(`${t.role === "user" ? "User" : "Assistant"}: ${truncateText(t.text, MAX_REWIND_TURN_CHARS)}`, "");
+  }
+  lines.push("[End of prior context — edit the message below and send when ready:]", "");
+  lines.push(targetTurn.text);
+  return lines.join("\n");
+}
+
+function rewindToTurn(index, turnGlobalIndex) {
+  const pane = panes[index];
+  const draft = buildRewindDraft(pane, turnGlobalIndex);
+  // Pass the source pane so the fresh draft never overwrites the very pane
+  // the rewind was clicked in (would wipe the conversation being rewound).
+  openFreshDraftInPane(pane.cwd, draft, index);
 }
 
 function paneHeaderEl(index) {
