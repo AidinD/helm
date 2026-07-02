@@ -31,12 +31,25 @@ export function readUsageSummary() {
     bySkill: {},
     modelFit: {}, // { model: { too_weak, appropriate, too_strong } }
     judgeCostUsd: 0,
+    // Answers "should the suggestion heuristic change?" by joining a run's
+    // followedSuggestion with the judge's verdict for that SAME run (linked
+    // by launchId, not just model+time proximity). Runs from before launchId
+    // was logged, or with no judge verdict, are silently excluded — this is
+    // a strict subset, not an estimate padded with guesses.
+    suggestionAccuracy: {
+      followed: { too_weak: 0, appropriate: 0, too_strong: 0 },
+      overridden: { too_weak: 0, appropriate: 0, too_strong: 0 },
+    },
   };
   if (!fs.existsSync(logPath)) {
     return empty;
   }
   const lines = fs.readFileSync(logPath, "utf8").split("\n").filter(Boolean);
   const summary = empty;
+  // Only runs where a suggestion was actually computed (suggestedModel set)
+  // are candidates for the accuracy join — a run with no suggestion has
+  // nothing to judge the heuristic against.
+  const suggestedRunsByLaunchId = new Map();
   for (const line of lines) {
     let entry;
     try {
@@ -55,6 +68,13 @@ export function readUsageSummary() {
       if (entry.verdict && summary.modelFit[model][entry.verdict] !== undefined) {
         summary.modelFit[model][entry.verdict] += 1;
       }
+      if (entry.launchId != null && suggestedRunsByLaunchId.has(entry.launchId)) {
+        const run = suggestedRunsByLaunchId.get(entry.launchId);
+        const bucket = run.followedSuggestion ? summary.suggestionAccuracy.followed : summary.suggestionAccuracy.overridden;
+        if (entry.verdict && bucket[entry.verdict] !== undefined) {
+          bucket[entry.verdict] += 1;
+        }
+      }
       continue;
     }
     summary.totalRuns += 1;
@@ -69,6 +89,9 @@ export function readUsageSummary() {
     // event from the CLI — see the comment where this is set in main.js.
     if (entry.skillInvoked) {
       summary.bySkill[entry.skillInvoked] = (summary.bySkill[entry.skillInvoked] || 0) + 1;
+    }
+    if (entry.launchId != null && entry.suggestedModel) {
+      suggestedRunsByLaunchId.set(entry.launchId, entry);
     }
   }
   return summary;

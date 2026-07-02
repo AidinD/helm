@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld("maestro", {
   archiveSession: (sessionId, archived) => ipcRenderer.invoke("session:archive", { sessionId, archived }),
   getUsageSummary: () => ipcRenderer.invoke("usage:summary"),
   pickFolder: () => ipcRenderer.invoke("dialog:pickFolder"),
+  pickFiles: () => ipcRenderer.invoke("dialog:pickFiles"),
   startSession: (opts) => ipcRenderer.invoke("session:start", opts),
   stopSession: (launchId) => ipcRenderer.invoke("session:stop", { launchId }),
   onSessionEvent: (handler) => {

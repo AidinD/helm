@@ -1,5 +1,42 @@
 # Decisions
 
+## 2026-07-02 — Generalized image-paste to "attach any file," and closed the suggestion-heuristic feedback loop
+
+**Decision (attachments):** The image-paste mechanism generalized cleanly to
+plain files — a new 📎 button opens a file picker (`dialog:pickFiles`,
+multi-select) and attaches by path exactly like a pasted image
+(`[Attached file: <path>]` vs `[Attached image: <path>]`, based on extension).
+Renamed `pane.pendingImages` → `pendingAttachments` throughout. No new
+mechanism needed — this was always going to work the same way, images just
+happened to be the first case.
+
+**Decision (suggestion accuracy):** Closes the open "periodically analyze
+whether the right model was suggested" task with a pull-model report instead
+of a background job — added a `launchId` field to both the `"run"` and
+`"modelFitVerdict"` usage-log entries so they can be joined per-run (not just
+matched by model+time proximity), and a new "Suggestion accuracy" block on
+the Analysis page comparing judge verdicts for runs where the auto-suggestion
+was followed vs. overridden. If overriding scores better, that's a direct
+signal `suggest.js`'s heuristic needs work — the report says so plainly
+instead of hedging.
+
+**Why a report instead of a cadence/trigger:** "do a periodic analysis" needs
+a cadence decision (daily? weekly? after N runs?) that's the captain's call, not
+mine to guess. A report that's always current and one click away sidesteps
+needing that decision at all, and the data foundation (`followedSuggestion`)
+already existed — this was just never joined into something readable.
+
+Both features (paste generalization, suggestion accuracy) passed independent
+code-review agent passes before committing. The suggestion-accuracy review
+caught a real bug: `launchId` was `++launchSeq`, an in-memory counter that
+resets to 0 on every app restart, while `usage-log.jsonl` persists forever —
+a verdict whose write got delayed past a NEW session's reused small integer
+(e.g. both sessions' first run being `launchId: 1`) could join to the WRONG
+run. Fixed by switching `launchId` to `crypto.randomUUID()` — it was already
+used as an opaque Map key everywhere (IPC payload, `liveChildren`,
+`paneLaunchMap`, `launchPaneHistory`), never arithmetic, so this needed no
+other change.
+
 ## 2026-07-02 — Real archiving: manual (context menu) + "orchestrator proposes, you approve" (opt-in sidebar pill)
 
 **Decision:** Two paths, both requiring an explicit click every time:
