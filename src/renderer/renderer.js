@@ -27,6 +27,10 @@ const launchPaneHistory = new Map();
 // Schema verified via spike/test-task-events-shape.mjs before building this.
 const backgroundTasks = new Map();
 const TERMINAL_TASK_STATUSES = new Set(["completed", "failed"]);
+// A long session can spawn many subagents; the only removal path used to be
+// the manual "Clear finished" click, so a session that never clicks it
+// grows this map forever. Mirrors pruneStaleLaunchHistory's shape.
+const BACKGROUND_TASK_MAX_AGE_MS = 60 * 60 * 1000;
 // Ad-hoc listeners for a specific launchId that isn't tied to a pane's normal
 // display flow — used by "Summarize & carry over" to capture a resumed
 // session's summary reply without it needing to occupy a visible pane.
@@ -713,6 +717,14 @@ const CARRY_OVER_PROMPT =
   "message of a new session, so write it as context FOR that new session, " +
   "not as a message to me.";
 
+// If a summarize launch's "done"/"error" event never arrives (a crashed main
+// process, a dropped IPC message), the callback registered below would
+// otherwise wait forever — the caller's `await summarizeSession(...)` never
+// resolves and the pane's status line stays stuck on "Summarizing…"
+// indefinitely. This bounds the wait; a real Sonnet summarization of even a
+// very long conversation should finish well under this.
+const SUMMARIZE_TIMEOUT_MS = 5 * 60 * 1000;
+
 function summarizeSession(session) {
   return new Promise(async (resolve) => {
     const res = await window.maestro.startSession({
@@ -726,9 +738,16 @@ function summarizeSession(session) {
       resolve({ error: res.error });
       return;
     }
+    const timeoutId = setTimeout(() => {
+      pendingLaunchCallbacks.delete(res.launchId);
+      resolve({ error: "Timed out waiting for the summary." });
+    }, SUMMARIZE_TIMEOUT_MS);
     pendingLaunchCallbacks.set(res.launchId, {
       assistantText: "",
-      onDone: (text, error) => resolve(error ? { error } : { text }),
+      onDone: (text, error) => {
+        clearTimeout(timeoutId);
+        resolve(error ? { error } : { text });
+      },
     });
   });
 }
@@ -1095,13 +1114,37 @@ function renderTextBlock(container, text) {
   flushPlain();
 }
 
+// Splits a table row on "|" the way GFM actually requires: a pipe inside an
+// inline code span (`...`) or escaped as "\|" is literal cell content, not a
+// column delimiter. A naive line.split("|") mangles any cell containing
+// either — e.g. a cell showing `Set-Cookie: a|b` would split into two
+// columns instead of one, misaligning the whole row.
 function tableCells(line) {
-  return line
-    .trim()
-    .replace(/^\|/, "")
-    .replace(/\|$/, "")
-    .split("|")
-    .map((c) => c.trim());
+  const trimmed = line.trim().replace(/^\|/, "").replace(/\|$/, "");
+  const cells = [];
+  let current = "";
+  let inCode = false;
+  for (let i = 0; i < trimmed.length; i++) {
+    const ch = trimmed[i];
+    if (ch === "\\" && trimmed[i + 1] === "|") {
+      current += "|";
+      i++;
+      continue;
+    }
+    if (ch === "`") {
+      inCode = !inCode;
+      current += ch;
+      continue;
+    }
+    if (ch === "|" && !inCode) {
+      cells.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+  cells.push(current.trim());
+  return cells;
 }
 
 function tableEl(headerLine, bodyLines) {
@@ -1894,6 +1937,8 @@ async function refresh() {
   renderSidebar();
   renderQuota(state.quota);
   pruneStaleLaunchHistory();
+  pruneStaleBackgroundTasks();
+  renderBackgroundTasksBadge();
 }
 
 // The modelFit event is the normal way launchPaneHistory entries get cleaned
@@ -1918,6 +1963,21 @@ function pruneStaleLaunchHistory() {
     }
     if ((entry.startedAt || 0) < cutoff) {
       launchPaneHistory.delete(launchId);
+    }
+  }
+}
+
+// Backstop for backgroundTasks — "Clear finished" is the normal way entries
+// go away, but a session that never clicks it (or forgets to) grows this map
+// forever. Only removes tasks that already reached a terminal state and are
+// old enough that nobody's still looking at them; a still-"running" task is
+// never touched here regardless of age (its own task_updated/task_done will
+// resolve it, or it'll age out once THAT lands).
+function pruneStaleBackgroundTasks() {
+  const cutoff = Date.now() - BACKGROUND_TASK_MAX_AGE_MS;
+  for (const [taskId, t] of backgroundTasks) {
+    if (TERMINAL_TASK_STATUSES.has(t.status) && (t.startedAt || 0) < cutoff) {
+      backgroundTasks.delete(taskId);
     }
   }
 }
@@ -2372,6 +2432,20 @@ document.getElementById("splitToggle").addEventListener("click", () => {
 // task_started/task_progress/task_updated/task_notification events (verified
 // schema via spike/test-task-events-shape.mjs) rather than a hollow copy.
 
+// task_progress/task_updated/task_done can arrive for a taskId this map
+// hasn't seen yet — the underlying IPC/stream-json event stream has no
+// delivery-order guarantee, so a dropped or reordered task_started is a
+// real possibility, not just a theoretical one. Backfills a minimal
+// placeholder rather than silently discarding the event.
+function getOrCreateBackgroundTask(taskId) {
+  let t = backgroundTasks.get(taskId);
+  if (!t) {
+    t = { description: "Background task", status: "running", lastToolName: null, startedAt: Date.now() };
+    backgroundTasks.set(taskId, t);
+  }
+  return t;
+}
+
 function renderBackgroundTasksBadge() {
   const btn = document.getElementById("backgroundTasksBtn");
   const running = [...backgroundTasks.values()].filter((t) => t.status === "running").length;
@@ -2442,6 +2516,14 @@ window.maestro.onSessionEvent((evt) => {
 
   // Background Task-tool subagents — app-wide, not tied to a single pane.
   if (evt.kind === "task_started") {
+    const existing = backgroundTasks.get(evt.taskId);
+    // An out-of-order task_done/task_updated can arrive BEFORE task_started
+    // and already backfill a terminal placeholder via getOrCreateBackgroundTask
+    // below — unconditionally overwriting it here would un-finish an already-
+    // completed task back to "running" with nothing left to ever fix it again.
+    if (existing && TERMINAL_TASK_STATUSES.has(existing.status)) {
+      return;
+    }
     backgroundTasks.set(evt.taskId, {
       description: evt.description || evt.subagentType || "Background task",
       status: "running",
@@ -2452,31 +2534,32 @@ window.maestro.onSessionEvent((evt) => {
     return;
   }
   if (evt.kind === "task_progress") {
-    const t = backgroundTasks.get(evt.taskId);
-    if (t) {
-      t.lastToolName = evt.lastToolName || t.lastToolName;
-      renderBackgroundTasksBadge();
-    }
+    // progress/updated/done for a taskId with no prior task_started (a
+    // dropped or reordered IPC message — this stream has no delivery
+    // guarantee) used to be silently ignored, making that task permanently
+    // invisible even though it's genuinely running. getOrCreateBackgroundTask
+    // backfills a minimal placeholder instead, so it still shows up.
+    const t = getOrCreateBackgroundTask(evt.taskId);
+    t.lastToolName = evt.lastToolName || t.lastToolName;
+    renderBackgroundTasksBadge();
     return;
   }
   if (evt.kind === "task_updated") {
-    const t = backgroundTasks.get(evt.taskId);
+    const t = getOrCreateBackgroundTask(evt.taskId);
     // Ignore an out-of-order/delayed update trying to un-finish a task that
     // already reached a terminal state (e.g. via task_done) — a duplicate or
     // reordered IPC message shouldn't make a completed task look running again.
-    if (t && !TERMINAL_TASK_STATUSES.has(t.status)) {
+    if (!TERMINAL_TASK_STATUSES.has(t.status)) {
       t.status = evt.status || t.status;
       renderBackgroundTasksBadge();
     }
     return;
   }
   if (evt.kind === "task_done") {
-    const t = backgroundTasks.get(evt.taskId);
-    if (t) {
-      t.status = evt.status || "completed";
-      t.summary = evt.summary || t.description;
-      renderBackgroundTasksBadge();
-    }
+    const t = getOrCreateBackgroundTask(evt.taskId);
+    t.status = evt.status || "completed";
+    t.summary = evt.summary || t.description;
+    renderBackgroundTasksBadge();
     return;
   }
 

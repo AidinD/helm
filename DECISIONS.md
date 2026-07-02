@@ -1,5 +1,67 @@
 # Decisions
 
+## 2026-07-02 — Tier 2 fixes from the full-app review: robustness/degradation
+
+**1. Unbounded transcript read** (`transcript.js`) — a huge .jsonl file was
+read whole into memory then doubled via `split("\n")`, blocking the main
+process. Now caps the read to the trailing 8MB via a byte-offset `readSync`
+(mirrors sessions.js's own 96KB tail-read technique, sized for actually
+rendering chat instead of just checking the last message's role), dropping
+the resulting partial first line. Caught two of my own mistakes before
+shipping: `hiddenCount` could go negative when the tail window happened to
+produce fewer turns than `maxTurns` (fixed with a `Math.max` floor), and
+review flagged `totalLines` silently changing meaning (whole-file count →
+partial-window count) once the cap could kick in — renamed to `linesRead`
+since nothing in the codebase consumes the field today, so the honest name
+costs nothing.
+
+**2. Judge had no timeout** (`judge.js`) — a hung Haiku call (network stall,
+an auth prompt with no TTY to answer) left the child running forever and the
+fire-and-forget promise dangling. Added a 30s timeout that kills the child
+and resolves `null`, a 1MB output cap, and a `settled` guard so a
+timeout-then-close race can't resolve twice.
+
+**3. backgroundTasks — unbounded growth + dropped out-of-order events**
+(`renderer.js`) — the only removal path was the manual "Clear finished"
+click, and `task_progress`/`task_updated`/`task_done` for a taskId with no
+prior `task_started` (this stream has no delivery-order guarantee) were
+silently ignored, making that task permanently invisible. Added an
+auto-prune for terminal tasks older than an hour, and `getOrCreateBackgroundTask()`
+so those three event kinds backfill a placeholder instead of dropping the
+event. Caught a real bug myself before the review even ran: `task_started`
+unconditionally overwrote whatever was already there, including a
+just-backfilled TERMINAL placeholder from an out-of-order `task_done` — a
+demonstrably-finished task could get un-finished back to "running" forever.
+Fixed by skipping the overwrite when the existing entry is already terminal.
+
+**4. summarize/pendingLaunchCallbacks had no timeout** (`renderer.js`) — if
+a summarize launch's "done"/"error" never arrived, `summarizeAndCarryOver`
+awaited forever and the pane's status line stuck on "Summarizing…"
+permanently. Added a 5-minute timeout that resolves an error and cleans up
+the map entry.
+
+**5. Table-cell splitter broke on pipes in inline code/escapes** (`renderer.js`,
+`tableCells`) — `line.split("|")` treated every `|` as a column delimiter,
+so a cell like `` `Set-Cookie: a|b` `` or an escaped `\|` misaligned the
+whole row. Replaced with a char-by-char parser that treats a pipe inside a
+backtick span, or escaped as `\|`, as literal content. Unit-tested standalone
+(5/5 cases) before shipping.
+
+**Investigated, not changed:** the review also flagged the code-fence
+info-string strip (`renderMarkdownInto`) as possibly eating a real content
+line when a fenced block has no language tag and its first line is a bare
+token. Traced through the actual regex behavior for both the "language tag
+present" and "no language tag" cases by hand — in both, only the true
+info-string line is stripped, matching CommonMark's own spec (whatever text
+follows the opening fence up to the first newline IS the info string, by
+definition — there's no way to distinguish "real code" from "info string"
+that lands on that exact line, because in well-formed markdown they're the
+same line and even CommonMark itself doesn't try). Left as-is rather than
+"fix" something that traced out to already be spec-correct.
+
+All fixes passed an independent review; only the `totalLines`/`linesRead`
+naming issue survived as a real (if currently inert) finding, fixed above.
+
 ## 2026-07-02 — Full-app review (4 parallel Opus reviewers), Tier 1 fixes shipped
 
 **Context:** ran a whole-codebase review (main process/IPC, data/read layer,

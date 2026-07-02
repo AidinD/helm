@@ -10,6 +10,16 @@ const VERDICT_SCHEMA = JSON.stringify({
   required: ["verdict", "reason"],
 });
 
+// The judge is a cheap Haiku call with no tools/MCP — should resolve in a
+// few seconds. Bounds a hang (network stall, an auth prompt with no TTY to
+// answer it) so a stuck child doesn't linger forever unkilled and the
+// fire-and-forget promise doesn't just dangle.
+const JUDGE_TIMEOUT_MS = 30_000;
+// A real verdict response easily fits in a few KB; this is just a backstop
+// against unbounded accumulation if something unexpected keeps writing to
+// stdout.
+const MAX_OUTPUT_BYTES = 1024 * 1024;
+
 const JUDGE_SYSTEM_PROMPT =
   "You are a terse model-selection quality judge for a coding assistant. " +
   "Given a task and which model/effort handled it, judge whether that choice was " +
@@ -79,21 +89,41 @@ export function judgeModelFit({ cwd, taskPrompt, model, effort, toolsUsed, numTu
     }
 
     let out = "";
+    let settled = false;
+    // Guards against resolving twice (e.g. the timeout fires and kills the
+    // child, which then also emits its own "close") and always clears the
+    // timer once a real outcome — success or failure — is known.
+    const finish = (result) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeoutId);
+      resolve(result);
+    };
+
+    const timeoutId = setTimeout(() => {
+      child.kill();
+      finish(null);
+    }, JUDGE_TIMEOUT_MS);
+
     child.stdout.on("data", (d) => {
-      out += d.toString("utf8");
+      if (out.length < MAX_OUTPUT_BYTES) {
+        out += d.toString("utf8");
+      }
     });
-    child.on("error", () => resolve(null));
+    child.on("error", () => finish(null));
     child.on("close", () => {
       try {
         const parsed = JSON.parse(out);
         const verdict = parsed.structured_output;
         if (verdict && verdict.verdict && verdict.reason) {
-          resolve({ verdict: verdict.verdict, reason: verdict.reason, costUsd: parsed.total_cost_usd || 0 });
+          finish({ verdict: verdict.verdict, reason: verdict.reason, costUsd: parsed.total_cost_usd || 0 });
         } else {
-          resolve(null);
+          finish(null);
         }
       } catch {
-        resolve(null);
+        finish(null);
       }
     });
   });
