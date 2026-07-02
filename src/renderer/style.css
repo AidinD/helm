@@ -648,6 +648,25 @@ body.advanced .row-jot {
   white-space: pre-wrap;
 }
 
+/* Model-fit judge verdict — a subtle, muted footnote under the reply, not a
+   loud banner, since it appears after every completed prompt. */
+.model-fit {
+  align-self: flex-start;
+  max-width: 92%;
+  font-size: 11px;
+  font-style: italic;
+  color: var(--text-faint);
+  padding: 2px 4px;
+}
+
+.model-fit-too_weak {
+  color: var(--waiting);
+}
+
+.model-fit-too_strong {
+  color: var(--active);
+}
+
 /* --- Pane composer: one unified rounded "shell", closer to the desktop
    app's single-pill composer than a stack of separate boxes. --- */
 .pane-composer {
@@ -977,4 +996,34 @@ button.primary {
   background: var(--bg);
   border-radius: 999px;
   padding: 3px 10px;
+}
+
+.fit-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.fit-model-label {
+  width: 90px;
+  flex-shrink: 0;
+  color: var(--text-dim);
+}
+
+.fit-pill {
+  font-size: 11px;
+  border-radius: 999px;
+  padding: 2px 9px;
+  background: var(--bg);
+  color: var(--text-faint);
+}
+
+.fit-pill-too_weak {
+  color: var(--waiting);
+}
+
+.fit-pill-too_strong {
+  color: var(--active);
 }

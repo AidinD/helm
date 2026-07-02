@@ -10,6 +10,7 @@ import { readTranscript } from "./lib/transcript.js";
 import { findTranscriptPath } from "./lib/paths.js";
 import { listSkills } from "./lib/skills.js";
 import { appendUsageLog, readUsageSummary } from "./lib/usage.js";
+import { judgeModelFit } from "./lib/judge.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -112,7 +113,7 @@ ipcMain.handle(
         mainWindow.webContents.send("session:event", { launchId, ...payload });
       }
     };
-    const meta = { toolsUsed: [], costUsd: 0, numTurns: 0, actualModel: model || null };
+    const meta = { toolsUsed: [], costUsd: 0, numTurns: 0, actualModel: model || null, lastAssistantText: "" };
     const { child, done } = startSession({
       cwd,
       prompt,
@@ -125,6 +126,8 @@ ipcMain.handle(
           latestQuota = evt.quota;
         } else if (evt.kind === "tool_use" && evt.toolName) {
           meta.toolsUsed.push(evt.toolName);
+        } else if (evt.kind === "assistant" && evt.text) {
+          meta.lastAssistantText = evt.text;
         } else if (evt.kind === "result") {
           meta.costUsd = evt.costUsd || 0;
           meta.numTurns = evt.numTurns || 0;
@@ -143,6 +146,7 @@ ipcMain.handle(
     done.then((summary) => {
       liveChildren.delete(launchId);
       appendUsageLog({
+        type: "run",
         timestamp: Date.now(),
         cwd,
         model: meta.actualModel,
@@ -157,6 +161,37 @@ ipcMain.handle(
         skillInvoked: skillMatch ? skillMatch[1] : null,
       });
       send({ kind: "done", summary });
+
+      // Model-fit judge: user-requested, cost-verified (~$0.015-0.02/call
+      // after stripping MCP servers + tool defs the judge never needs).
+      // Fire-and-forget so it never delays the real response; only runs on a
+      // genuinely completed turn (skipped if the process was killed early —
+      // sawResult false — since there is nothing meaningful to judge then).
+      const config = loadConfig();
+      if (summary.sawResult && config.modelFitJudge?.enabled !== false) {
+        judgeModelFit({
+          cwd,
+          taskPrompt: prompt,
+          model: meta.actualModel,
+          effort,
+          toolsUsed: meta.toolsUsed,
+          numTurns: meta.numTurns,
+          finalText: meta.lastAssistantText,
+        }).then((result) => {
+          if (!result) {
+            return;
+          }
+          appendUsageLog({
+            type: "modelFitVerdict",
+            timestamp: Date.now(),
+            model: meta.actualModel,
+            verdict: result.verdict,
+            reason: result.reason,
+            judgeCostUsd: result.costUsd,
+          });
+          send({ kind: "modelFit", verdict: result.verdict, reason: result.reason });
+        });
+      }
     });
     return { ok: true, launchId };
   }

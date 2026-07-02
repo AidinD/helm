@@ -5,7 +5,11 @@ let searchTerm = "";
 let selectedSessionId = null;
 let focusedPaneIndex = 0;
 let dragSessionId = null;
-const paneLaunchMap = new Map(); // launchId -> paneIndex
+const paneLaunchMap = new Map(); // launchId -> paneIndex, cleared once a launch finishes
+// Separate, never-cleared map so a late-arriving async event (the model-fit
+// judge finishes well after "done") can still find its way back to the right
+// pane even after paneLaunchMap already dropped that launchId.
+const launchPaneHistory = new Map();
 
 // Each pane: { sessionId, cliSessionId, cwd, title, turns, hiddenCount, loading,
 //              busy, currentLaunchId, isOrchestrator }
@@ -774,11 +778,24 @@ function inlineFormat(text) {
   return nodes;
 }
 
+const MODEL_FIT_ICON = { too_weak: "⬆", appropriate: "⚖", too_strong: "⬇" };
+const MODEL_FIT_LABEL = {
+  too_weak: "May have been underpowered",
+  appropriate: "Model fit looked appropriate",
+  too_strong: "May have been overkill",
+};
+
 function turnEl(turn) {
   if (turn.kind === "tool_result") {
     const el = document.createElement("div");
     el.className = "turn-tool-result";
     el.textContent = turn.text;
+    return el;
+  }
+  if (turn.kind === "model_fit") {
+    const el = document.createElement("div");
+    el.className = `model-fit model-fit-${turn.verdict}`;
+    el.textContent = `${MODEL_FIT_ICON[turn.verdict] || "⚖"} ${MODEL_FIT_LABEL[turn.verdict] || turn.verdict}: ${turn.reason}`;
     return el;
   }
   const wrap = document.createElement("div");
@@ -1191,6 +1208,11 @@ async function sendFromPane(index, els) {
   }
   pane.currentLaunchId = res.launchId;
   paneLaunchMap.set(res.launchId, index);
+  // Stores the pane OBJECT, not just the index — if the user opens a
+  // different session in this same pane slot before a late event (the judge)
+  // arrives, panes[index] will no longer be this object, and we can tell not
+  // to misattribute the result to the new session.
+  launchPaneHistory.set(res.launchId, { index, pane });
 }
 
 // Rebuilds every pane's DOM. Only call this when the NUMBER of panes changes
@@ -1340,6 +1362,14 @@ function skillListEl(title, names) {
   return section;
 }
 
+function fitPill(kind, count) {
+  const pill = document.createElement("span");
+  pill.className = `fit-pill fit-pill-${kind}`;
+  const shortLabel = { too_weak: "weak", appropriate: "ok", too_strong: "strong" }[kind];
+  pill.textContent = `${count} ${shortLabel}`;
+  return pill;
+}
+
 async function renderAnalysisPage() {
   const page = document.getElementById("analysisPage");
   page.innerHTML = "";
@@ -1356,7 +1386,9 @@ async function renderAnalysisPage() {
 
   const totals = document.createElement("div");
   totals.className = "analysis-totals";
-  totals.textContent = `${summary.totalRuns} runs · $${summary.totalCostUsd.toFixed(2)} total`;
+  totals.textContent =
+    `${summary.totalRuns} runs · $${summary.totalCostUsd.toFixed(2)} total` +
+    (summary.judgeCostUsd ? ` · $${summary.judgeCostUsd.toFixed(2)} spent on model-fit judging` : "");
   page.append(totals);
 
   const grid = document.createElement("div");
@@ -1411,7 +1443,33 @@ async function renderAnalysisPage() {
     skillEntries.forEach(([s, c]) => skillUsageBlock.append(barRow(s, c, skillMax)));
   }
 
-  grid.append(modelBlock, toolBlock, skillUsageBlock);
+  const fitBlock = document.createElement("div");
+  fitBlock.className = "analysis-block";
+  const fitH = document.createElement("h3");
+  fitH.textContent = "Model fit (judged)";
+  fitH.title = "A cheap Haiku judge reviews each completed prompt for whether the model/effort choice fit the task.";
+  fitBlock.append(fitH);
+  const fitModels = Object.keys(summary.modelFit || {});
+  if (fitModels.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "pane-empty";
+    empty.textContent = "No verdicts yet.";
+    fitBlock.append(empty);
+  } else {
+    fitModels.forEach((m) => {
+      const counts = summary.modelFit[m];
+      const row = document.createElement("div");
+      row.className = "fit-row";
+      const label = document.createElement("span");
+      label.className = "fit-model-label";
+      label.textContent = m.replace("claude-", "");
+      row.append(label);
+      row.append(fitPill("too_weak", counts.too_weak), fitPill("appropriate", counts.appropriate), fitPill("too_strong", counts.too_strong));
+      fitBlock.append(row);
+    });
+  }
+
+  grid.append(modelBlock, toolBlock, skillUsageBlock, fitBlock);
   grid.append(
     skillListEl("Global skills (~/.claude/skills)", global),
     skillListEl(`This pane's project skills${cwd ? "" : " (no folder set on the focused pane)"}`, project)
@@ -1457,6 +1515,18 @@ document.getElementById("splitToggle").addEventListener("click", () => {
 });
 
 window.maestro.onSessionEvent((evt) => {
+  // Handled separately: the judge resolves well after "done" already cleared
+  // paneLaunchMap, so this needs the longer-lived launchPaneHistory instead.
+  if (evt.kind === "modelFit") {
+    const entry = launchPaneHistory.get(evt.launchId);
+    if (!entry || panes[entry.index] !== entry.pane) {
+      return; // pane was reused for a different session in the meantime
+    }
+    entry.pane.turns.push({ role: "assistant", kind: "model_fit", verdict: evt.verdict, reason: evt.reason });
+    renderPane(entry.index);
+    return;
+  }
+
   const index = paneLaunchMap.get(evt.launchId);
   if (index === undefined) {
     return;
