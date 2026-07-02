@@ -23,6 +23,11 @@ const DEFAULT_CONFIG = {
   // set enabled:false here to turn it off if the recurring cost isn't worth it.
   modelFitJudge: { enabled: true },
   notifyOnComplete: true, // native OS notification (+ its default sound) when a prompt finishes
+  // Off by default: manual "Archive" (context menu) is always available.
+  // When on, idle sessions with no open Jot work get a "Suggest: archive"
+  // affordance in the sidebar row — still a manual click to confirm, never
+  // an automatic write. This is the "orchestrator proposes, I approve" path.
+  archiveSuggestions: { enabled: false },
   jot: {
     enabled: true,
     path: "D:\\Dropbox\\jot\\todos.json",

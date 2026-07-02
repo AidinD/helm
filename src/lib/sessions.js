@@ -99,6 +99,49 @@ export function enrichWithJot(sessions, jotIndex, weightsOverride = {}) {
   return sessions;
 }
 
+/**
+ * Flips isArchived on a session's own local_*.json file — the one write this
+ * module performs against the desktop app's live state, and only ever in
+ * response to an explicit user action (a manual "Archive" click, or an
+ * orchestrator-proposed suggestion the user approved), never automatically.
+ */
+export function setSessionArchived(sessionId, archived) {
+  const dir = findSessionsDir();
+  if (!dir) {
+    return { ok: false, error: "Could not locate Claude session files." };
+  }
+  let files;
+  try {
+    files = fs.readdirSync(dir).filter((f) => f.startsWith("local_") && f.endsWith(".json"));
+  } catch (err) {
+    return { ok: false, error: `Failed to read sessions dir: ${err.message}` };
+  }
+  for (const file of files) {
+    const filePath = path.join(dir, file);
+    const scanMeta = readMeta(filePath);
+    if (!scanMeta || scanMeta.sessionId !== sessionId) {
+      continue;
+    }
+    try {
+      // Re-reads right before writing, rather than reusing the copy from the
+      // directory scan above — the desktop app owns this file and could still
+      // be flushing a turn to it (idle sessions aren't guaranteed quiescent).
+      // This can't fully eliminate the race, but shrinks the window from "the
+      // whole scan" to "one read + one write," and only ever touches
+      // isArchived instead of writing back a possibly-stale full object.
+      const freshMeta = readMeta(filePath) || scanMeta;
+      freshMeta.isArchived = archived;
+      // Matches the app's own compact (non-pretty-printed) format, so this
+      // write doesn't needlessly reformat a file another app owns.
+      fs.writeFileSync(filePath, JSON.stringify(freshMeta), "utf8");
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: `Failed to write session file: ${err.message}` };
+    }
+  }
+  return { ok: false, error: "Session file not found." };
+}
+
 function readMeta(filePath) {
   try {
     const raw = fs.readFileSync(filePath, "utf8");

@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld("maestro", {
   listSkills: (cwd) => ipcRenderer.invoke("skills:list", cwd),
   openSkill: (opts) => ipcRenderer.invoke("skills:open", opts),
   copyToClipboard: (text) => ipcRenderer.invoke("clipboard:write", text),
+  saveImage: (base64Data, ext) => ipcRenderer.invoke("image:save", { base64Data, ext }),
+  archiveSession: (sessionId, archived) => ipcRenderer.invoke("session:archive", { sessionId, archived }),
   getUsageSummary: () => ipcRenderer.invoke("usage:summary"),
   pickFolder: () => ipcRenderer.invoke("dialog:pickFolder"),
   startSession: (opts) => ipcRenderer.invoke("session:start", opts),

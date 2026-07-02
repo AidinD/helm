@@ -1,5 +1,90 @@
 # Decisions
 
+## 2026-07-02 — Real archiving: manual (context menu) + "orchestrator proposes, you approve" (opt-in sidebar pill)
+
+**Decision:** Two paths, both requiring an explicit click every time:
+1. **Manual** — right-click a session -> "Archive session" -> two-step
+   confirm (same pattern as "Delete category"; no native `window.confirm()`,
+   unreliable in this build) -> writes `isArchived: true` to that session's
+   own `local_*.json` in the desktop app's session-metadata folder.
+2. **Suggested** — a new, default-OFF setting
+   (`config.archiveSuggestions.enabled`). When on, idle sessions with no open
+   Jot review/in-progress/open work get a small "Archive?" pill in the
+   sidebar row. Clicking it archives immediately — the pill IS the proposal,
+   the click IS the approval. Never suggested for the Maestro-building
+   session itself (idle between long autonomous stretches isn't "done").
+
+Neither path ever archives without a click in the moment. There is no
+background timer or heuristic that archives on its own — matches the captain's
+"föreslå och så godkänner jag" (propose, and I approve), read literally: the
+proposal is a UI affordance, not an autonomous action needing a separate
+approval round-trip.
+
+**Implementation:** `setSessionArchived()` in `src/lib/sessions.js` — scans
+the session-metadata dir for the file whose `sessionId` matches, flips
+`isArchived`, and writes back with `JSON.stringify(meta)` (no pretty-print)
+to match the app's own compact format instead of needlessly reformatting a
+file another app owns. New `session:archive` IPC handler + preload bridge.
+
+**Known, NOT-yet-verified risk — flagging per the "verify before theorizing"
+lesson from earlier tonight:** this write goes through `%APPDATA%`, and every
+time Maestro has been rebooted for testing *tonight* it was launched via a
+`npm start` spawned from this chat session's own Bash tool. If Claude Code's
+own process is MSIX-sandboxed on this machine (a real, previously-confirmed
+gotcha — see `feedback_verify_before_theory.md`), a write from a
+Claude-spawned Maestro instance could land in an invisible sandbox overlay
+copy of that `%APPDATA%` path instead of the real file the desktop app reads
+— meaning archiving could report success while doing nothing the real app
+ever sees. **I did not test the actual write against real session state
+tonight, because doing so through a Claude-spawned Maestro instance would not
+be a trustworthy test** (my own tool round-tripping with itself is exactly
+the false-positive pattern that lesson warns about). Boot-tested for crashes
+only. **Needs the captain to verify once**: launch Maestro normally (not through a
+Claude Code session), archive a real disposable/old session, and confirm it
+actually disappears from the *desktop app's own* sidebar — not just
+Maestro's.
+
+## 2026-07-02 — Image paste: shipped via file-path reference, not base64-in-stream-json
+
+**Decision:** Paste an image into the composer -> it's saved to
+`pasted-images/` (repo-local, gitignored) and its absolute path is prepended
+to the prompt as `[Attached image: <path>]`. No other change to the
+architecture: still the same `-p`/`--resume` CLI-wrapping flow, same
+subscription auth, same model-fit judge.
+
+**Why this works:** Claude Code's own `Read` tool already reads image files
+given a path — the agent loop naturally opens an attached screenshot the same
+way it would open one you mentioned by hand. Verified empirically before
+building anything (`spike/test-image-via-path.mjs`): pointed a fresh `claude
+-p` call at a real Maestro screenshot with unpredictable content (a dropdown
+mid-interaction) and asked it to name the highlighted option and list the
+others in order. It called `Read` on the exact path and answered correctly
+("Auto mode" highlighted, all 5 options in the right order) — not a guessable
+answer, so this wasn't the model coincidentally describing something
+plausible.
+
+**Why not the earlier `stream-json` base64-block approach:** already tested
+2026-07-01 (see the now-superseded entry below) — the CLI's stream-json input
+does not accept inline image content blocks; the model reported
+`MAESTRO_NO_IMAGE`. The `--file file_id:relative_path` flag hinted at an
+upload-and-reference flow, but never needed investigating further once the
+much simpler "just save it and mention the path" approach was confirmed to
+work with zero new surface area.
+
+**Why not the Agent SDK (`query()`) route, mirroring how Halyard does image
+paste:** would mean a second, parallel code path with its own auth
+verification, skill/CLAUDE.md loading config, and resume semantics — real
+migration cost for a problem the file-path trick already solves with the
+existing, already-hardened wrapper. Revisit only if some future need (e.g.
+truly ephemeral images that must never touch disk) makes the file-path
+approach unworkable.
+
+**Implementation:** `src/lib/images.js` (`savePastedImage`,
+`prunePastedImages` — 7-day cleanup on app start, since these are throwaway
+clipboard pastes that can contain anything on screen), new `image:save` IPC
+handler, composer `paste` listener + attachment chips in
+`src/renderer/renderer.js`.
+
 ## 2026-07-02 — Fas 2 core built: "Summarize & carry over," real archiving deliberately NOT touched
 
 **Decision:** Built the context-flow half of Fas 2 (right-click a session ->
@@ -79,6 +164,10 @@ spike that sends a second message before the first `result` arrives and checks
 whether the CLI queues it, ignores it, or errors.
 
 ## 2026-07-01 — Image paste: tested, not supported this way — deferred
+
+**Superseded 2026-07-02** — see "Image paste: shipped via file-path
+reference" above. This entry is kept for the record of what was tried and
+ruled out first.
 
 **Decision:** Do not implement paste-image-into-prompt yet.
 
