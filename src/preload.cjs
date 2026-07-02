@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld("maestro", {
   saveImage: (base64Data, ext) => ipcRenderer.invoke("image:save", { base64Data, ext }),
   archiveSession: (sessionId, archived) => ipcRenderer.invoke("session:archive", { sessionId, archived }),
   getUsageSummary: () => ipcRenderer.invoke("usage:summary"),
+  getVersion: () => ipcRenderer.invoke("app:version"),
   pickFolder: () => ipcRenderer.invoke("dialog:pickFolder"),
   pickFiles: () => ipcRenderer.invoke("dialog:pickFiles"),
   startSession: (opts) => ipcRenderer.invoke("session:start", opts),

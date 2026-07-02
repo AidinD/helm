@@ -1,5 +1,48 @@
 # Decisions
 
+## 2026-07-02 — Backlog pass: version numbering, pinned card, split-icon fix, queue-next-prompt, chat history nav
+
+Working through the priority-0 Jot backlog. Five shipped this pass, each
+boot-tested and independently reviewed:
+
+1. **Version numbering** (`src/lib/version.js`) — same scheme as Crewline
+   (major.minor hand-bumped in `package.json`, a trailing number that's
+   actually a commit count since that bump so it resets to 0 on every bump
+   instead of growing forever). Crewline computes this at Vite build time;
+   Maestro has no bundler, so it runs once at app startup via `git log -1
+   -S... -- package.json` + `git rev-list --count`. Verified end-to-end
+   against the real repo (`v0.1.32`) before wiring into the UI. Review
+   caught the pickaxe search string being too loose (`"0.1` would also
+   match `0.10`, `0.11`, `0.1.5`) — fixed with a trailing-dot anchor,
+   re-verified after the fix.
+2. **Split-view icon fixed a self-inflicted collision** — it was "⧉", the
+   exact same glyph used for the copy button (added a few commits ago in
+   the Tier 3 pass, without noticing the reuse). Changed to "◫".
+3. **Orchestrator card now genuinely pinned** — it was the first child
+   appended INSIDE the scrollable `#sidebarBody`, so it scrolled out of
+   view with everything else despite being called "pinned." Moved to a new
+   sibling `#sidebarPinned` div above the scroll area.
+4. **Queue next prompt** ("flika in" scenario 2 from Aidin's clarification:
+   queue a follow-up to run once the current job finishes, distinct from
+   scenario 1 — inject info into a run that's already happening — which
+   still needs the persistent-process architecture decision). Typing while
+   a pane is busy and pressing Enter now queues instead of silently
+   discarding the text (a real pre-existing bug: Enter-while-busy called
+   the SAME handler as Stop, which never read the textbox at all — so
+   typing + Enter while busy used to both lose your text AND kill the run).
+   Fires through the exact same `sendFromPane` path once "done" arrives, no
+   duplicated send logic.
+5. **Back/forward chat navigation** between chats opened in a pane, browser-
+   tab style. History lives in a module-level map keyed by pane INDEX, not
+   on the pane object (which gets fully replaced on every navigation).
+   Review caught two real bugs: `navigateHistory` advanced its position
+   pointer before confirming the target session still existed, silently
+   desyncing the buttons from what was actually navigable if a session in
+   history had been archived/removed — fixed to walk past dead entries
+   instead of committing to one blindly. And `paneNavHistory` was cleared on
+   split-close but NOT on "New chat" (either the sidebar button or the
+   pane-header reset) — an inconsistency, now fixed in both places.
+
 ## 2026-07-02 — Fix the last bullet-list spacing gap; "tight" transition out of a list
 
 **Decision:** New feedback on the already-fixed bullet spacing: the

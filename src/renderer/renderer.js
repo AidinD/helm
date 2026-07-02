@@ -36,6 +36,12 @@ const BACKGROUND_TASK_MAX_AGE_MS = 60 * 60 * 1000;
 // session's summary reply without it needing to occupy a visible pane.
 const pendingLaunchCallbacks = new Map();
 
+// Browser-style back/forward between chats opened in a given pane SLOT.
+// Keyed by pane index, not stored on the pane object itself — openSessionInPane
+// replaces the whole pane object on every navigation, which would wipe
+// history stored there. { stack: [sessionId, ...], position: number }.
+const paneNavHistory = new Map();
+
 // Each pane: { sessionId, cliSessionId, cwd, title, turns, hiddenCount, loading,
 //              busy, currentLaunchId, isOrchestrator, pendingAttachments }
 let panes = [freshPane()];
@@ -54,6 +60,8 @@ function freshPane() {
     stopRequested: false,
     isOrchestrator: false,
     pendingAttachments: [], // [{ path, name }] — pasted images attached to the next send
+    queuedPrompt: null, // text to auto-send once the current busy run finishes
+    els: null, // the currently-live composer's element refs, set by paneComposerEl
   };
 }
 
@@ -838,7 +846,10 @@ function setPaneBusyUIRaw(index, statusText) {
   }
 }
 
-function openSessionInPane(session, paneIndex, forceSplit) {
+// fromHistoryNav is true only when THIS call originated from clicking the
+// back/forward buttons — it skips the history push below so navigating
+// backward doesn't itself get recorded as a new forward step.
+function openSessionInPane(session, paneIndex, forceSplit, fromHistoryNav) {
   focusedPaneIndex = paneIndex;
   selectedSessionId = session.sessionId;
   const addedPane = forceSplit && panes.length < 2;
@@ -854,6 +865,9 @@ function openSessionInPane(session, paneIndex, forceSplit) {
     loading: true,
     isOrchestrator: isOrchestratorSession(session),
   };
+  if (!fromHistoryNav) {
+    pushNavHistory(paneIndex, session.sessionId);
+  }
   if (addedPane) {
     renderWorkspace(); // pane count changed — full rebuild is unavoidable here
   } else {
@@ -861,6 +875,54 @@ function openSessionInPane(session, paneIndex, forceSplit) {
   }
   renderSidebar();
   loadTranscriptInto(paneIndex);
+}
+
+function pushNavHistory(paneIndex, sessionId) {
+  let entry = paneNavHistory.get(paneIndex);
+  if (!entry) {
+    entry = { stack: [], position: -1 };
+    paneNavHistory.set(paneIndex, entry);
+  }
+  // Same as a browser tab: navigating to something new after having gone
+  // back drops whatever forward history existed past this point.
+  entry.stack = entry.stack.slice(0, entry.position + 1);
+  entry.stack.push(sessionId);
+  entry.position = entry.stack.length - 1;
+}
+
+function canNavigateHistory(paneIndex, delta) {
+  const entry = paneNavHistory.get(paneIndex);
+  if (!entry) {
+    return false;
+  }
+  const target = entry.position + delta;
+  return target >= 0 && target < entry.stack.length;
+}
+
+function navigateHistory(paneIndex, delta) {
+  const entry = paneNavHistory.get(paneIndex);
+  if (!entry) {
+    return;
+  }
+  // Walk in the requested direction until a still-existing session is
+  // found, rather than committing to the first entry regardless — a
+  // session in history can have been archived/removed since. Committing
+  // `position` on a dead entry before confirming it exists left the
+  // pointer silently advanced with nothing opened, desyncing the ←/→
+  // buttons' disabled state from what was actually still navigable.
+  let candidate = entry.position + delta;
+  while (candidate >= 0 && candidate < entry.stack.length) {
+    const session = sessionById(entry.stack[candidate]);
+    if (session) {
+      entry.position = candidate;
+      openSessionInPane(session, paneIndex, false, true);
+      return;
+    }
+    candidate += delta;
+  }
+  // Nothing valid in that direction — re-render so the buttons reflect
+  // reality even though nothing changed.
+  renderSinglePane(paneIndex);
 }
 
 async function loadTranscriptInto(paneIndex) {
@@ -1028,7 +1090,9 @@ async function persistCollapsed(groupLabel, collapsed) {
 
 function renderSidebar() {
   const body = document.getElementById("sidebarBody");
+  const pinned = document.getElementById("sidebarPinned");
   body.innerHTML = "";
+  pinned.innerHTML = "";
 
   const hiddenIds = new Set(state.config.hiddenSessions || []);
   const visible = state.sessions
@@ -1047,10 +1111,14 @@ function renderSidebar() {
   // prominent card at the top — never duplicated into Needs-attention, its
   // original category, or Unsorted (per feedback that a plain accordion
   // section made it look like it belonged in multiple places at once).
+  // Lives in its own #sidebarPinned slot, a sibling of the scrollable
+  // #sidebarBody rather than its first child — appending it INSIDE the
+  // scrolling body meant it scrolled out of view with everything else,
+  // defeating the point of "always visible."
   const maestroSessions = visible.filter(isOrchestratorSession);
   const maestroIds = new Set(maestroSessions.map((s) => s.sessionId));
   if (maestroSessions.length > 0) {
-    body.append(orchestratorCardEl(sortByAttention(maestroSessions)[0]));
+    pinned.append(orchestratorCardEl(sortByAttention(maestroSessions)[0]));
   }
 
   const attention = visible.filter((s) => s.needsAttention && !maestroIds.has(s.sessionId));
@@ -1489,6 +1557,23 @@ function paneHeaderEl(index) {
   const pane = panes[index];
   const header = document.createElement("div");
   header.className = "pane-header";
+
+  const navBack = document.createElement("button");
+  navBack.className = "icon-btn";
+  navBack.textContent = "←";
+  navBack.title = "Previous chat in this pane";
+  navBack.disabled = !canNavigateHistory(index, -1);
+  navBack.addEventListener("click", () => navigateHistory(index, -1));
+
+  const navForward = document.createElement("button");
+  navForward.className = "icon-btn";
+  navForward.textContent = "→";
+  navForward.title = "Next chat in this pane";
+  navForward.disabled = !canNavigateHistory(index, 1);
+  navForward.addEventListener("click", () => navigateHistory(index, 1));
+
+  header.append(navBack, navForward);
+
   const title = document.createElement("span");
   title.textContent = pane.title || "New session";
   header.append(title);
@@ -1514,6 +1599,9 @@ function paneHeaderEl(index) {
     resetBtn.title = "Start a new chat in this pane";
     resetBtn.addEventListener("click", () => {
       panes[index] = freshPane();
+      // Same reasoning as the sidebar's "+ New chat" button — a fresh chat
+      // is a new browsing context for this slot.
+      paneNavHistory.delete(index);
       if (selectedSessionId === pane.sessionId) {
         selectedSessionId = null;
       }
@@ -1538,6 +1626,9 @@ function paneHeaderEl(index) {
       if (closingPane?.busy && closingPane.currentLaunchId) {
         window.maestro.stopSession(closingPane.currentLaunchId);
       }
+      // A future split reusing slot 1 is a new browsing context — don't let
+      // it inherit back/forward history from whatever used to live there.
+      paneNavHistory.delete(1);
       panes = [panes[0]];
       document.getElementById("workspace").classList.remove("split");
       renderWorkspace();
@@ -1606,6 +1697,37 @@ function paneComposerEl(index) {
     });
   }
   renderAttachments();
+
+  // "Flika in vs efteråt" scenario 2: queue a follow-up prompt to run
+  // automatically once the CURRENT run finishes, for when you're stepping
+  // away and want to be sure the next thing you wanted done actually
+  // happens. (Scenario 1 — inject info into the run that's happening RIGHT
+  // NOW — needs the persistent-process architecture, still an open
+  // decision; this half doesn't, since it's just "the next -p call.")
+  const queuedEl = document.createElement("div");
+  queuedEl.className = "queued-prompt";
+  shell.append(queuedEl);
+  function renderQueuedPrompt() {
+    queuedEl.innerHTML = "";
+    if (!pane.queuedPrompt) {
+      queuedEl.style.display = "none";
+      return;
+    }
+    queuedEl.style.display = "flex";
+    const label = document.createElement("span");
+    label.textContent = `⏭ Queued: ${pane.queuedPrompt}`;
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "attachment-remove";
+    cancel.textContent = "×";
+    cancel.title = "Cancel queued prompt";
+    cancel.addEventListener("click", () => {
+      pane.queuedPrompt = null;
+      renderQueuedPrompt();
+    });
+    queuedEl.append(label, cancel);
+  }
+  renderQueuedPrompt();
 
   // Saves a pasted image to disk and attaches its path — Claude Code's own
   // Read tool picks up an image from a plain file-path mention in the prompt
@@ -1764,7 +1886,13 @@ function paneComposerEl(index) {
   modelFitLine.className = "model-fit-line";
   wrap.append(modelFitLine);
 
-  const els = { cwdInput, promptEl, modelDD, effortDD, permissionDD, sendBtn, renderAttachments };
+  const els = { cwdInput, promptEl, modelDD, effortDD, permissionDD, sendBtn, renderAttachments, renderQueuedPrompt };
+  // Lets the "done" event handler (which only has the pane object, not this
+  // composer's closure) trigger a queued prompt through the exact same send
+  // path — reusing sendFromPane's cwd/attachment/suggestion handling instead
+  // of duplicating it. Rebuilt every time this composer is (re)created, so
+  // it always points at the currently-live set of elements.
+  pane.els = els;
   const handleSendOrStop = async () => {
     if (pane.busy) {
       if (pane.currentLaunchId) {
@@ -1807,11 +1935,28 @@ function paneComposerEl(index) {
   });
 
   // Enter sends; Shift+Enter inserts a newline (matches the desktop app).
+  // While busy, Enter can't "send" (there's no live channel mid-turn — see
+  // the interject architecture note above) — but it can QUEUE the typed
+  // text to auto-send once the current run finishes. Previously, typing
+  // here and hitting Enter while busy silently discarded the text AND
+  // stopped the run (handleSendOrStop ignores promptEl.value entirely while
+  // busy) — an easy way to accidentally kill a long run. Stop now only ever
+  // happens via an explicit click on the button.
   promptEl.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSendOrStop();
+    if (e.key !== "Enter" || e.shiftKey) {
+      return;
     }
+    e.preventDefault();
+    if (pane.busy) {
+      const text = promptEl.value.trim();
+      if (text) {
+        pane.queuedPrompt = text;
+        promptEl.value = "";
+        renderQueuedPrompt();
+      }
+      return;
+    }
+    handleSendOrStop();
   });
 
   if (pane.busy) {
@@ -1930,6 +2075,23 @@ async function sendFromPane(index, els) {
   // one map with an identity check, so a pane reused before a late event
   // arrives can never have that event misattributed to it.
   launchPaneHistory.set(res.launchId, { index, pane, startedAt: Date.now() });
+}
+
+// Fires a prompt queued while the pane was busy (see the Enter-key handler
+// in paneComposerEl), through the exact same sendFromPane path used for a
+// normal manual send — no duplicated cwd/attachment/suggestion logic. Called
+// synchronously from the "done" case, so `panes[index] === pane` is still
+// guaranteed true here (no await has happened since the identity check at
+// the top of the event switch).
+function fireQueuedPromptIfAny(index, pane) {
+  if (!pane.queuedPrompt || !pane.els) {
+    return;
+  }
+  const queued = pane.queuedPrompt;
+  pane.queuedPrompt = null;
+  pane.els.renderQueuedPrompt();
+  pane.els.promptEl.value = queued;
+  sendFromPane(index, pane.els);
 }
 
 // Rebuilds every pane's DOM. Only call this when the NUMBER of panes changes
@@ -2056,6 +2218,12 @@ document.getElementById("newCategory").addEventListener("click", createCategory)
 
 document.getElementById("newChat").addEventListener("click", () => {
   panes[focusedPaneIndex] = freshPane();
+  // A brand-new chat is a new browsing context for this slot — without
+  // this, ← immediately after "New chat" navigated back into whatever
+  // session used to be here, which is exactly the inconsistency the
+  // split-close handler already guards against for slot 1 (found in
+  // review, was previously missing here and on the pane-header reset).
+  paneNavHistory.delete(focusedPaneIndex);
   selectedSessionId = null;
   renderSinglePane(focusedPaneIndex);
   renderSidebar();
@@ -2675,9 +2843,13 @@ window.maestro.onSessionEvent((evt) => {
         pane.stopRequested = false;
         pane.turns.push({ role: "assistant", kind: "text", text: "⏹ Stopped." });
         renderPane(index);
+        // A queued prompt is deliberately NOT fired after an explicit stop —
+        // you stopped this run for a reason, most likely to intervene, not
+        // to have something else auto-fire right after.
       } else {
         pane.stopRequested = false;
         loadTranscriptInto(index).then(refresh);
+        fireQueuedPromptIfAny(index, pane);
       }
       break;
     default:
@@ -2694,3 +2866,7 @@ renderWorkspace();
 renderBackgroundTasksBadge();
 refresh();
 setInterval(refresh, 30000);
+
+window.maestro.getVersion().then((v) => {
+  document.getElementById("appVersion").textContent = v;
+});

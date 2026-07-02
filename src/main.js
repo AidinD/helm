@@ -14,6 +14,7 @@ import { listSkills, skillMdPath } from "./lib/skills.js";
 import { appendUsageLog, readUsageSummary } from "./lib/usage.js";
 import { judgeModelFit } from "./lib/judge.js";
 import { savePastedImage, prunePastedImages } from "./lib/images.js";
+import { computeVersionString } from "./lib/version.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -160,6 +161,11 @@ ipcMain.handle("image:save", (_event, { base64Data, ext }) => {
 
 // --- Aggregate usage summary (models + tools most used) ---
 ipcMain.handle("usage:summary", () => readUsageSummary());
+
+// --- App version, same scheme as Crewline/Jot: major.minor (hand-bumped in
+// package.json) + a commit count since that bump, so the last number resets
+// to 0 on every version bump instead of growing forever. ---
+ipcMain.handle("app:version", () => computeVersionString());
 
 // --- Full chat history for a session (for the pane view) ---
 ipcMain.handle("transcript:get", (_event, { cliSessionId, sessionId }) => {
