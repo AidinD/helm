@@ -120,14 +120,46 @@ diagnosis was Opus-shaped, the localized fixes were Sonnet-shaped).
   exists (`attentionScore`); this extends it to "which of my several active
   goals should I actually be looking at right now."
 - **Point 12 — Coach: notice context-switching, suggest better patterns.**
-  This is where the "En liten orkestrator helper kanske?" Jot idea (a
-  cheap-model background process on a timer/hook, inspecting every session's
-  phase, inferring next-step-or-done, cross-checking Jot) becomes the
-  concrete mechanism — it's the sensor Fas 3's coaching needs. Output is a
-  proposal (per the human-gating principle above), e.g. "6 of your 10 open
-  sessions haven't moved in 3+ days — archive candidates?" or "you've
-  touched 4 different projects in the last hour — intentional, or drifting?"
-  Never auto-acts; surfaces and lets the captain decide.
+  This is where the "En liten orkestrator helper kanske?" Jot idea becomes
+  the concrete mechanism — it's the sensor Fas 3's coaching needs. Settled
+  the architecture in a 2026-07-02 discussion, deliberately NOT what the captain
+  first proposed (a persistent "helper session" hooked into every other
+  session) — pushed back toward something cheaper and simpler:
+  - **A periodic batch classifier, not a session.** Each check is stateless
+    ("given this session's recent messages + its Jot task, what's its
+    status?") — no conversational continuity needed. Reuses the model-fit
+    judge's already-proven, already-cost-optimized recipe (`--allowed-tools
+    ""` + empty `--strict-mcp-config`, ~$0.015/call), just applied per
+    session on a timer instead of per completed prompt.
+  - **No Claude Code hooks needed.** Maestro's main process already has
+    direct file-system visibility into every session's transcript (the same
+    access `sessions.js`'s status derivation already uses) — this extends
+    the existing `refresh()` poll loop, it doesn't need a new triggering
+    mechanism.
+  - **Output is a status tag per session** (e.g. `waiting_for_input` /
+    `stuck` / `done_not_archived` / `blocked_external`), which feeds INTO
+    the existing `attentionScore` sorting and sharpens the archive-suggestion
+    pill (today it's a blunt "idle + no open Jot work" proxy for "actually
+    done" — this replaces the proxy with something that's actually read the
+    content).
+  - **Urgency is the weak link.** No deadline data exists today outside Jot
+    task priority, so urgency-inference is only as good as that data —
+    ties directly to the open Jot item "använda jot deadline för smartare
+    sortering," worth building together rather than separately.
+  - Output is always a proposal (per the human-gating principle above), e.g.
+    "6 of your 10 open sessions haven't moved in 3+ days — archive
+    candidates?" or "you've touched 4 different projects in the last hour —
+    intentional, or drifting?" Never auto-acts; surfaces and lets the captain
+    decide.
+  - **The captain wants a visualizer for how this helper is working** — not
+    specified yet (neither the mechanism nor the look), genuinely open.
+    Worth drawing out in its own discussion once the classifier itself
+    exists and there's real behavior to visualize, rather than designing a
+    UI for data that doesn't exist yet. Candidate angles to raise then: a
+    live per-session "what did the helper conclude and why" trace (so its
+    judgment is auditable, not a black box), a timeline of status changes
+    per session, or just a debug view during early development before
+    deciding it's worth a permanent UI surface at all.
 - **Multi-model** — bring in Gemini when it fits (Jot task "Gemini vid
   behov?"), gated on the existing Antigravity-backend scaffolding
   ([[project-gemini-artist-mode]]) rather than a fresh integration.
