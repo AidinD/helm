@@ -15,6 +15,20 @@ export function listSkills(cwd) {
   return { global, project };
 }
 
+/**
+ * Resolves a skill's SKILL.md path given its origin (global/project), for
+ * opening it in the OS default app when a user clicks a skill chip.
+ */
+export function skillMdPath(name, origin, cwd) {
+  const base = origin === "project" ? cwd : path.join(os.homedir(), ".claude");
+  if (!base) {
+    return null;
+  }
+  const dir = origin === "project" ? path.join(base, ".claude", "skills") : path.join(base, "skills");
+  const file = path.join(dir, name, "SKILL.md");
+  return fs.existsSync(file) ? file : null;
+}
+
 function listSkillDir(dir) {
   if (!dir || !fs.existsSync(dir)) {
     return [];

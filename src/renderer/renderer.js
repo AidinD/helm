@@ -86,11 +86,14 @@ async function removeFromMaestro(session) {
   refresh();
 }
 
+// Exclusive (radio-button, not checkbox) — per "shouldn't there just be ONE
+// Maestro chat?" Marking a new one replaces any previous manual pick. The
+// Jot-category auto-match can still independently tag more than one session
+// (that reflects real list membership, not a manual choice), so this only
+// governs the manual override.
 async function toggleManualMaestroTag(session) {
   const current = state.config.manualMaestroSessions || [];
-  const next = current.includes(session.sessionId)
-    ? current.filter((id) => id !== session.sessionId)
-    : [...current, session.sessionId];
+  const next = current.includes(session.sessionId) ? [] : [session.sessionId];
   state.config = await window.maestro.setConfig({ manualMaestroSessions: next });
   refresh();
 }
@@ -99,6 +102,42 @@ async function toggleManualMaestroTag(session) {
 
 function closeContextMenu() {
   document.getElementById("contextMenu").classList.add("hidden");
+}
+
+// Custom dropdown button reusing the context-menu popup, instead of a native
+// <select> — Chromium's native select popup rendered white-on-white in this
+// Electron build despite color-scheme:dark set three different ways, so this
+// sidesteps it entirely by never using a native popup at all.
+function dropdownPill(initialValue, options, onSelect) {
+  const btn = document.createElement("button");
+  btn.className = "meta-pill";
+  btn.dataset.hasMenu = "1";
+  btn.type = "button";
+
+  const setValue = (value) => {
+    btn.dataset.value = value;
+    const opt = options.find((o) => o.value === value);
+    btn.textContent = opt ? opt.label : value;
+  };
+  setValue(initialValue);
+
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const rect = btn.getBoundingClientRect();
+    showContextMenu(
+      rect.left,
+      rect.bottom + 4,
+      options.map((o) => ({
+        label: o.label,
+        onClick: () => {
+          setValue(o.value);
+          onSelect(o.value);
+        },
+      }))
+    );
+  });
+
+  return { el: btn, setValue, get value() { return btn.dataset.value; } };
 }
 
 function showContextMenu(x, y, items) {
@@ -605,8 +644,16 @@ function renderSidebar() {
     return;
   }
 
+  // Pinned spotlight sections (Maestro, attention) are lenses over the same
+  // data, not organizational membership — but leaving a session in Unsorted
+  // TOO, when it's not in any real category, read as "duplicated" rather than
+  // as two views of one thing. Track them so Unsorted excludes them, same as
+  // real category membership already does.
+  const pinnedIds = new Set();
+
   const maestroSessions = visible.filter(isOrchestratorSession);
   if (maestroSessions.length > 0) {
+    maestroSessions.forEach((s) => pinnedIds.add(s.sessionId));
     body.append(
       sectionEl({ label: "◆ Maestro", sessions: maestroSessions, collapsed: false, pinned: true, droppable: false })
     );
@@ -614,13 +661,14 @@ function renderSidebar() {
 
   const attention = visible.filter((s) => s.needsAttention);
   if (attention.length > 0) {
+    attention.forEach((s) => pinnedIds.add(s.sessionId));
     body.append(
       sectionEl({ label: "Needs your attention", sessions: attention, collapsed: false, pinned: true, droppable: false })
     );
   }
 
   const groups = state.config.groups || [];
-  const grouped = new Set();
+  const grouped = new Set(pinnedIds);
   for (const group of groups) {
     const members = (group.sessionIds || [])
       .map(sessionById)
@@ -1027,25 +1075,31 @@ function paneComposerEl(index) {
     }
   });
 
-  const modelSel = document.createElement("select");
-  modelSel.className = "meta-pill";
-  ["claude-sonnet-5", "claude-opus-4-8", "claude-haiku-4-5-20251001"].forEach((m) => {
-    const opt = document.createElement("option");
-    opt.value = m;
-    opt.textContent = m.replace("claude-", "");
-    modelSel.append(opt);
-  });
-  const effortSel = document.createElement("select");
-  effortSel.className = "meta-pill";
-  ["low", "medium", "high", "xhigh", "max"].forEach((eff) => {
-    const opt = document.createElement("option");
-    opt.value = eff;
-    opt.textContent = eff;
-    if (eff === "medium") {
-      opt.selected = true;
-    }
-    effortSel.append(opt);
-  });
+  // "Auto" lets Maestro pick per-prompt (resolved at send time from the
+  // current text); picking a specific value locks it in and stops the
+  // suggestion from silently overriding your choice.
+  const modelDD = dropdownPill(
+    "auto",
+    [
+      { value: "auto", label: "Auto" },
+      { value: "claude-sonnet-5", label: "Sonnet 5" },
+      { value: "claude-opus-4-8", label: "Opus 4.8" },
+      { value: "claude-haiku-4-5-20251001", label: "Haiku 4.5" },
+    ],
+    () => {}
+  );
+  const effortDD = dropdownPill(
+    "auto",
+    [
+      { value: "auto", label: "Auto" },
+      { value: "low", label: "low" },
+      { value: "medium", label: "medium" },
+      { value: "high", label: "high" },
+      { value: "xhigh", label: "xhigh" },
+      { value: "max", label: "max" },
+    ],
+    () => {}
+  );
 
   // Matches the desktop app's mode picker (Ask permissions / Accept edits /
   // Plan mode / Auto mode / Bypass permissions). Maestro's -p invocation has
@@ -1053,30 +1107,26 @@ function paneComposerEl(index) {
   // genuinely needs to ask mid-run could still stall — tested "default" in
   // this environment and it did not (Aidin's existing broad allowlists let
   // tools through), but that is not a general guarantee for every setup.
-  const permissionSel = document.createElement("select");
-  permissionSel.className = "meta-pill";
-  [
-    { value: "default", label: "Ask permissions" },
-    { value: "acceptEdits", label: "Accept edits" },
-    { value: "plan", label: "Plan mode" },
-    { value: "auto", label: "Auto mode" },
-    { value: "bypassPermissions", label: "Bypass permissions" },
-  ].forEach(({ value, label }) => {
-    const opt = document.createElement("option");
-    opt.value = value;
-    opt.textContent = label;
-    if (value === "auto") {
-      opt.selected = true;
-    }
-    permissionSel.append(opt);
-  });
+  // Note: this "auto" is a literal CLI permission mode name, unrelated to the
+  // model/effort "Auto" above (let Maestro pick) — they just share the word.
+  const permissionDD = dropdownPill(
+    "auto",
+    [
+      { value: "default", label: "Ask permissions" },
+      { value: "acceptEdits", label: "Accept edits" },
+      { value: "plan", label: "Plan mode" },
+      { value: "auto", label: "Auto mode" },
+      { value: "bypassPermissions", label: "Bypass permissions" },
+    ],
+    () => {}
+  );
 
   const sendBtn = document.createElement("button");
   sendBtn.className = "send-btn";
   sendBtn.textContent = "➤";
   sendBtn.title = pane.sessionId ? "Continue (Enter)" : "Start session (Enter)";
 
-  controls.append(pickBtn, cwdInput, permissionSel, modelSel, effortSel, sendBtn);
+  controls.append(pickBtn, cwdInput, permissionDD.el, modelDD.el, effortDD.el, sendBtn);
   shell.append(controls);
 
   // Visible reasoning, not just a hover tooltip — a suggestion nobody reads
@@ -1094,7 +1144,7 @@ function paneComposerEl(index) {
   modelFitLine.className = "model-fit-line";
   wrap.append(modelFitLine);
 
-  const els = { cwdInput, promptEl, modelSel, effortSel, permissionSel, sendBtn };
+  const els = { cwdInput, promptEl, modelDD, effortDD, permissionDD, sendBtn };
   const handleSendOrStop = () => {
     if (pane.busy) {
       if (pane.currentLaunchId) {
@@ -1108,22 +1158,21 @@ function paneComposerEl(index) {
   };
   sendBtn.addEventListener("click", handleSendOrStop);
 
+  // This is a text-pattern heuristic (keywords + length), not a real reading
+  // of the task — the label says "Suggesting," not "Analyzed and decided,"
+  // on purpose. Only updates the hint text; it never overwrites a manual
+  // model/effort pick anymore (that silently discarding your choice was the
+  // actual bug — "auto" is now its own explicit option instead).
   let suggestTimer = null;
   promptEl.addEventListener("input", () => {
     clearTimeout(suggestTimer);
     suggestTimer = setTimeout(async () => {
       const suggestion = await window.maestro.suggestModelEffort(promptEl.value);
-      const alreadySelected = modelSel.value === suggestion.model && effortSel.value === suggestion.effort;
-      modelSel.value = suggestion.model;
-      effortSel.value = suggestion.effort;
-      modelSel.title = `Suggested: ${suggestion.reason}`;
-      effortSel.title = modelSel.title;
-      modelSel.dataset.suggested = suggestion.model;
-      effortSel.dataset.suggested = suggestion.effort;
       const modelLabel = suggestion.model.replace("claude-", "");
-      suggestHint.textContent = alreadySelected
-        ? `✓ ${modelLabel} · ${suggestion.effort} is already selected — ${suggestion.reason}`
-        : `→ Suggesting ${modelLabel} · ${suggestion.effort} — ${suggestion.reason}`;
+      const usingAuto = modelDD.value === "auto" && effortDD.value === "auto";
+      suggestHint.textContent = usingAuto
+        ? `→ Auto-picking ${modelLabel} · ${suggestion.effort} — ${suggestion.reason}`
+        : `Heuristic guess: ${modelLabel} · ${suggestion.effort} — ${suggestion.reason} (using your manual pick instead)`;
     }, 300);
   });
 
@@ -1178,8 +1227,6 @@ async function sendFromPane(index, els) {
   const pane = panes[index];
   const cwd = els.cwdInput.value.trim();
   const prompt = els.promptEl.value.trim();
-  const model = els.modelSel.value;
-  const effort = els.effortSel.value;
   if (pane.busy) {
     return;
   }
@@ -1201,15 +1248,23 @@ async function sendFromPane(index, els) {
   setModelFitLine(index, "");
   renderPane(index);
 
+  // Resolved fresh from the FINAL prompt text at send time (not the debounced
+  // background suggestion, which could be stale) — used to fill in any "Auto"
+  // picks, and always logged as the suggestion regardless of whether you
+  // followed it, so usage-log's followedSuggestion stays meaningful.
+  const suggestion = await window.maestro.suggestModelEffort(prompt);
+  const model = els.modelDD.value === "auto" ? suggestion.model : els.modelDD.value;
+  const effort = els.effortDD.value === "auto" ? suggestion.effort : els.effortDD.value;
+
   const res = await window.maestro.startSession({
     cwd,
     prompt,
     model,
     effort,
-    permissionMode: els.permissionSel.value,
+    permissionMode: els.permissionDD.value,
     resumeSessionId: pane.cliSessionId,
-    suggestedModel: els.modelSel.dataset.suggested || null,
-    suggestedEffort: els.effortSel.dataset.suggested || null,
+    suggestedModel: suggestion.model,
+    suggestedEffort: suggestion.effort,
   });
   if (!res.ok) {
     pane.busy = false;
@@ -1290,7 +1345,10 @@ async function refresh() {
 
 function applyViewMode() {
   document.body.classList.toggle("advanced", state.config.viewMode === "advanced");
-  document.querySelectorAll(".view-toggle button").forEach((btn) => {
+  // Scoped to #viewToggle specifically — a bare ".view-toggle button" also
+  // matches the page tabs and sidebar mode toggle (same shared class), which
+  // was wiping their active state every time this ran.
+  document.querySelectorAll("#viewToggle button").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.mode === (state.config.viewMode || "simple"));
   });
 }
@@ -1335,6 +1393,26 @@ document.getElementById("pageToggle").addEventListener("click", (e) => {
 
 // ============================== Settings page ==============================
 
+function settingsToggleRow(title, desc, checked, onChange) {
+  const row = document.createElement("label");
+  row.className = "settings-toggle-row";
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.checked = checked;
+  checkbox.addEventListener("change", () => onChange(checkbox.checked));
+  const labelText = document.createElement("div");
+  labelText.className = "settings-toggle-text";
+  const titleEl = document.createElement("div");
+  titleEl.textContent = title;
+  titleEl.className = "settings-toggle-title";
+  const descEl = document.createElement("div");
+  descEl.className = "settings-toggle-desc";
+  descEl.textContent = desc;
+  labelText.append(titleEl, descEl);
+  row.append(checkbox, labelText);
+  return row;
+}
+
 function renderSettingsPage() {
   const page = document.getElementById("settingsPage");
   page.innerHTML = "";
@@ -1346,28 +1424,30 @@ function renderSettingsPage() {
   const block = document.createElement("div");
   block.className = "analysis-block settings-block";
 
-  const row = document.createElement("label");
-  row.className = "settings-toggle-row";
-  const checkbox = document.createElement("input");
-  checkbox.type = "checkbox";
-  checkbox.checked = state.config.modelFitJudge?.enabled !== false;
-  checkbox.addEventListener("change", async () => {
-    state.config = await window.maestro.setConfig({
-      modelFitJudge: { ...(state.config.modelFitJudge || {}), enabled: checkbox.checked },
-    });
-  });
-  const labelText = document.createElement("div");
-  labelText.className = "settings-toggle-text";
-  const title = document.createElement("div");
-  title.textContent = "Model-fit judge";
-  title.className = "settings-toggle-title";
-  const desc = document.createElement("div");
-  desc.className = "settings-toggle-desc";
-  desc.textContent =
-    "Runs a cheap Haiku call after every completed prompt to flag whether the model/effort choice was too weak, too strong, or appropriate. Adds ~$0.015 per prompt. Shown under the composer, not in the chat history.";
-  labelText.append(title, desc);
-  row.append(checkbox, labelText);
-  block.append(row);
+  block.append(
+    settingsToggleRow(
+      "Model-fit judge",
+      "Runs a cheap Haiku call after every completed prompt to flag whether the model/effort choice was too weak, too strong, or appropriate. Adds ~$0.015 per prompt. Shown under the composer, not in the chat history.",
+      state.config.modelFitJudge?.enabled !== false,
+      async (checked) => {
+        state.config = await window.maestro.setConfig({
+          modelFitJudge: { ...(state.config.modelFitJudge || {}), enabled: checked },
+        });
+      }
+    )
+  );
+
+  block.append(
+    settingsToggleRow(
+      "Notify when a prompt finishes",
+      "Shows a native Windows notification (with its default sound) when a session completes a run, so you can switch away while it works.",
+      state.config.notifyOnComplete !== false,
+      async (checked) => {
+        state.config = await window.maestro.setConfig({ notifyOnComplete: checked });
+      }
+    )
+  );
+
   page.append(block);
 }
 
@@ -1390,7 +1470,7 @@ function barRow(label, count, max) {
   return row;
 }
 
-function skillListEl(title, names) {
+function skillListEl(title, names, origin, cwd) {
   const section = document.createElement("div");
   section.className = "analysis-block";
   const h = document.createElement("h3");
@@ -1405,9 +1485,11 @@ function skillListEl(title, names) {
     const list = document.createElement("div");
     list.className = "skill-chip-list";
     names.forEach((n) => {
-      const chip = document.createElement("span");
+      const chip = document.createElement("button");
       chip.className = "skill-chip";
       chip.textContent = n;
+      chip.title = "Open SKILL.md";
+      chip.addEventListener("click", () => window.maestro.openSkill({ name: n, origin, cwd }));
       list.append(chip);
     });
     section.append(list);
@@ -1524,8 +1606,8 @@ async function renderAnalysisPage() {
 
   grid.append(modelBlock, toolBlock, skillUsageBlock, fitBlock);
   grid.append(
-    skillListEl("Global skills (~/.claude/skills)", global),
-    skillListEl(`This pane's project skills${cwd ? "" : " (no folder set on the focused pane)"}`, project)
+    skillListEl("Global skills (~/.claude/skills)", global, "global", cwd),
+    skillListEl(`This pane's project skills${cwd ? "" : " (no folder set on the focused pane)"}`, project, "project", cwd)
   );
   page.append(grid);
 }
