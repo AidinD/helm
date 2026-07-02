@@ -64,6 +64,11 @@ h1 {
   margin: 0;
 }
 
+.app-version {
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+
 .header-controls {
   display: flex;
   align-items: center;
@@ -122,6 +127,12 @@ h1 {
 .icon-btn:hover {
   background: var(--bg-card-hover);
   color: var(--text);
+}
+
+.icon-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+  pointer-events: none;
 }
 
 .text-btn {
@@ -281,6 +292,13 @@ h1 {
   padding: 0 10px;
   font: inherit;
   font-size: 12.5px;
+}
+
+/* Sibling of #sidebarBody, not its first child — holds only the pinned
+   orchestrator card, which must stay visible while the rest of the sidebar
+   scrolls underneath it. */
+#sidebarPinned {
+  flex-shrink: 0;
 }
 
 #sidebarBody {
@@ -890,6 +908,26 @@ body.advanced .row-jot {
   flex-wrap: wrap;
   gap: 6px;
   padding: 0 2px 2px;
+}
+
+.queued-prompt {
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 10px;
+  margin: 0 2px 2px;
+  background: var(--bg-sidebar);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.queued-prompt span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .attachment-chip {

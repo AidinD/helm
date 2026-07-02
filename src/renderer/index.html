@@ -9,7 +9,7 @@
   </head>
   <body>
     <header>
-      <div class="brand"><span class="logo">◆</span><h1>Maestro</h1></div>
+      <div class="brand"><span class="logo">◆</span><h1>Maestro</h1><span class="app-version" id="appVersion"></span></div>
       <div class="header-controls">
         <div class="view-toggle" id="pageToggle">
           <button data-page="chat" class="active">Chat</button>
@@ -21,7 +21,7 @@
           <button data-mode="simple" class="active">Simple</button>
           <button data-mode="advanced">Advanced</button>
         </div>
-        <button id="splitToggle" class="icon-btn" title="Toggle split view">⧉</button>
+        <button id="splitToggle" class="icon-btn" title="Toggle split view">◫</button>
         <button id="backgroundTasksBtn" class="text-btn" title="Background tasks (subagents)">Background tasks</button>
         <span class="quota" id="quota">quota: —</span>
       </div>
@@ -38,6 +38,7 @@
           <button data-mode="smart" class="active">Smart</button>
           <button data-mode="list">List</button>
         </div>
+        <div id="sidebarPinned"></div>
         <div id="sidebarBody"></div>
       </nav>
 
