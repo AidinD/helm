@@ -1,5 +1,51 @@
 # Decisions
 
+## 2026-07-02 — Confirmed: mid-turn interjection genuinely works (not just between-turns) — architecture change, not built tonight
+
+**Finding:** `spike/test-mid-turn-interject.mjs` sent a first message asking
+the model to run `sleep 6 && echo done` via Bash, then wrote a SECOND stdin
+message the moment the Bash tool_use event appeared — well before that
+turn's `result` event. The final reply was `DONE1\n\nMAESTRO_INTERJECT_SEEN`:
+the interjected instruction ("say MAESTRO_INTERJECT_SEEN") was genuinely
+picked up and honored WITHIN the same in-progress turn, not queued for a
+separate next turn. This is a real answer to the open "flika in med extra
+info under körning" Jot task — `2026-07-01`'s spike only proved multi-turn
+works BETWEEN completed turns; this is the first confirmation the actual
+"interject while running" case works at all.
+
+**Why not built tonight:** using this means switching a pane's session from
+"spawn a fresh `-p` process per message" to "hold one persistent
+`--input-format stream-json` process per pane for its whole conversation."
+That touches Stop (currently: kill the process — would need to become "send
+an interrupt within the persistent process" or similar), the model-fit judge
+(currently fires from a one-shot process's exit), usage logging, and resume
+semantics, all of which are hardened and working well right now per tonight's
+and Aidin's own testing. This is real architecture surgery across several
+already-verified code paths, not an evening feature — flagging for Aidin's
+go-ahead on approach rather than autonomously rewiring the core launch
+mechanism.
+
+**Also verified, not previously known:** a long-running Bash tool call (the
+6-second sleep) triggered `task_started`/`task_notification` system events —
+the same lifecycle previously thought to be Agent/Task-tool-only. Not
+investigated further tonight; worth knowing if the Background Tasks panel
+should also reflect long individual tool calls, not just subagents.
+
+**Honest note on how long this took:** spent well over half an hour chasing
+a phantom "intermittent ENOENT spawning claude.exe" before finding the real
+cause — the spike file was originally written via a bash heredoc
+(`cat > file << 'EOF'`), which silently collapsed `"D:\\Repo\\Tools\\maestro"`
+into a single-backslash string. `\R`, `\T`, `\m` are not recognized JS escape
+sequences, so the literal cwd string became `"D:RepoToolsmaestro"` — an
+invalid path, which Windows' CreateProcess surfaces as ENOENT on the
+executable, not as an invalid-cwd error. This looked exactly like
+"environment/sandbox flakiness" for a long time because it was NOT
+consistently reproducible with structurally-similar test scripts written
+correctly. Lesson: **write files with backslash-heavy Windows path strings
+via the Write/Edit tool, never a bash heredoc** — this is now the second
+time in this project a heredoc silently mangled backslashes (the first
+being a Jot-update script earlier tonight).
+
 ## 2026-07-02 — Generalized image-paste to "attach any file," and closed the suggestion-heuristic feedback loop
 
 **Decision (attachments):** The image-paste mechanism generalized cleanly to
