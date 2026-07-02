@@ -5,6 +5,12 @@ let searchTerm = "";
 let selectedSessionId = null;
 let focusedPaneIndex = 0;
 let dragSessionId = null;
+// The single source of truth for a drag-reorder: set on every dragover and
+// read verbatim by drop, so the drop lands exactly where the indicator was
+// shown (the old code recomputed position from a live rect at drop time,
+// which disagreed with the shown indicator once layout had shifted).
+// { row: HTMLElement, before: boolean } | null.
+let dropTarget = null;
 const paneLaunchMap = new Map(); // launchId -> paneIndex, cleared once a launch finishes
 // Separate, never-cleared map so a late-arriving async event (the model-fit
 // judge finishes well after "done") can still find its way back to the right
@@ -397,8 +403,14 @@ async function moveSessionToGroup(sessionId, targetLabel, insertBeforeId) {
   renderSidebar();
 }
 
-function clearInsertionLines(container) {
-  container.querySelectorAll(".insertion-line").forEach((el) => el.remove());
+// Clears the drop indicator everywhere so only one row is ever marked. The
+// indicator is a CSS class drawing an absolutely-positioned pseudo-element
+// line — NOT a real element in the list flow — so toggling it never shifts
+// layout and never moves the rects the position math depends on.
+function clearDropIndicators() {
+  document
+    .querySelectorAll(".row.drop-before, .row.drop-after")
+    .forEach((el) => el.classList.remove("drop-before", "drop-after"));
 }
 
 // ============================== Row + section rendering ==============================
@@ -603,47 +615,51 @@ function rowEl(session) {
   });
   row.addEventListener("dragend", () => {
     row.classList.remove("dragging");
-    document.querySelectorAll(".insertion-line").forEach((el) => el.remove());
+    clearDropIndicators();
+    dropTarget = null;
   });
 
-  // VS Code-style: hovering the top/bottom half of a row shows an insertion
-  // line there instead of just highlighting the whole list.
+  // VS Code-style: hovering the top/bottom half of a row marks that edge.
+  // The marker is a pure CSS class (absolutely-positioned pseudo-element,
+  // zero layout impact), and the exact {row, before} shown here is stashed
+  // in dropTarget so the drop handler acts on the SAME decision — no second,
+  // independently-recomputed measurement that could disagree with it.
   row.addEventListener("dragover", (e) => {
     e.preventDefault();
     e.stopPropagation();
-    const rect = row.getBoundingClientRect();
-    const before = e.clientY - rect.top < rect.height / 2;
-    // Inserting the line shifts the layout, which shifts every row's rect
-    // for the NEXT dragover event — re-inserting on every single event
-    // (dragover fires continuously, far more often than the mouse actually
-    // crosses a row's midpoint) turned that into a feedback loop: insert ->
-    // rects shift -> next event's midpoint math flips -> insert somewhere
-    // else -> rects shift again. This was almost certainly the "jumps and
-    // doesn't land where I drop it" bug. Skipping the DOM mutation when the
-    // line is already exactly where it should be removes nearly all of that
-    // churn — only a genuine crossing (or first hover) touches the DOM.
-    const alreadyBefore = before && row.previousElementSibling?.classList.contains("insertion-line");
-    const alreadyAfter = !before && row.nextElementSibling?.classList.contains("insertion-line");
-    if (alreadyBefore || alreadyAfter) {
+    // No indicator on the row being dragged — dropping onto yourself is a
+    // no-op, and marking it would just be visual noise.
+    if (row.classList.contains("dragging")) {
+      clearDropIndicators();
+      dropTarget = null;
       return;
     }
-    const list = row.parentElement;
-    clearInsertionLines(list);
-    const line = document.createElement("div");
-    line.className = "insertion-line";
-    if (before) {
-      row.before(line);
-    } else {
-      row.after(line);
+    const rect = row.getBoundingClientRect();
+    const before = e.clientY - rect.top < rect.height / 2;
+    if (dropTarget && dropTarget.row === row && dropTarget.before === before) {
+      return; // unchanged since last event — nothing to redraw
     }
+    dropTarget = { row, before };
+    clearDropIndicators();
+    row.classList.add(before ? "drop-before" : "drop-after");
   });
   row.addEventListener("drop", (e) => {
     e.preventDefault();
     e.stopPropagation();
+    // Dropping onto the row being dragged is a no-op (dragover cleared
+    // dropTarget for it) — bail before it degenerates into an append.
+    if (row.classList.contains("dragging")) {
+      clearDropIndicators();
+      dropTarget = null;
+      return;
+    }
     const list = row.parentElement;
     const groupLabel = list.dataset.groupLabel;
-    const insertBeforeId = list.dataset.groupLabel ? nextRowSessionId(row, e) : null;
-    clearInsertionLines(list);
+    // Read the position from the indicator that was actually shown, not a
+    // fresh rect measurement — guarantees the drop lands where you saw it.
+    const insertBeforeId = groupLabel ? insertBeforeIdFromDropTarget() : null;
+    clearDropIndicators();
+    dropTarget = null;
     const sid = e.dataTransfer.getData("text/session-id");
     if (sid) {
       moveSessionToGroup(sid, groupLabel || null, insertBeforeId);
@@ -653,13 +669,22 @@ function rowEl(session) {
   return row;
 }
 
-function nextRowSessionId(row, e) {
-  const rect = row.getBoundingClientRect();
-  const before = e.clientY - rect.top < rect.height / 2;
+// Translates the shown {row, before} indicator into the sessionId to insert
+// in front of (null = append to end). "After row X" means "before whatever
+// follows X" — and a following .dragging row is skipped so dropping just
+// below the item you're dragging isn't a confusing no-op-that-looks-like-move.
+function insertBeforeIdFromDropTarget() {
+  if (!dropTarget) {
+    return null;
+  }
+  const { row, before } = dropTarget;
   if (before) {
     return row.dataset.sessionId;
   }
-  const next = row.nextElementSibling;
+  let next = row.nextElementSibling;
+  while (next && next.classList.contains("dragging")) {
+    next = next.nextElementSibling;
+  }
   return next && next.dataset.sessionId ? next.dataset.sessionId : null;
 }
 
@@ -893,6 +918,10 @@ function sectionEl({ label, sessions, collapsed, pinned, droppable, emptyHint, i
     head.addEventListener("dragover", (e) => {
       e.preventDefault();
       head.classList.add("drag-over");
+      // Hovering the header means "append here", not "between two rows" —
+      // clear any row edge-marker left over from passing over rows.
+      clearDropIndicators();
+      dropTarget = null;
     });
     head.addEventListener("dragleave", () => head.classList.remove("drag-over"));
     head.addEventListener("drop", (e) => {
@@ -918,6 +947,10 @@ function wireListDropZone(el, targetLabel) {
     e.preventDefault();
     if (e.target === el) {
       el.classList.add("drag-over");
+      // Over the list's own empty space (not a row) = append; drop any
+      // leftover row edge-marker so the two indicators don't both show.
+      clearDropIndicators();
+      dropTarget = null;
     }
   });
   el.addEventListener("dragleave", (e) => {

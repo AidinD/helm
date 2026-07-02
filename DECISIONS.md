@@ -1,5 +1,40 @@
 # Decisions
 
+## 2026-07-02 — Drag-and-drop reorder: full rewrite (single source of truth + zero-layout indicator)
+
+**Decision:** After two partial fixes didn't fully resolve "reorder is
+sporadic / doesn't land where I drop it," rewrote the interaction rather than
+patch it a third time. Two root causes, both now gone:
+
+1. **The indicator was a real block element inserted into the list flow**
+   (`row.before(line)`). Even inert (`pointer-events:none`), it took vertical
+   space, so every row below shifted and every `getBoundingClientRect()` on
+   the next `dragover` was offset — a feedback loop that could flip the
+   insertion point with a stationary mouse. Now the indicator is a pure CSS
+   class drawing an absolutely-positioned `::before`/`::after` line (`.row`
+   is `position:relative`), which takes zero space and never reflows.
+2. **Drop recomputed the position from a fresh rect** (`nextRowSessionId`),
+   a second measurement independent of what the indicator showed — so once
+   layout had shifted, the drop could land somewhere other than the line.
+   Now a module-level `dropTarget = {row, before}` is set in `dragover` and
+   read verbatim by `drop`. Single source of truth: the drop acts on exactly
+   the indicator you saw.
+
+**Edge cases handled:** dropping onto the row you're dragging is a true
+no-op (guarded in both `dragover` and `drop`); "after row X" skips a trailing
+`.dragging` sibling so dropping just below the dragged item isn't an
+off-by-one move; `clearDropIndicators()` is document-wide (required — a
+cross-category drag must clear the previous list's marker) and called before
+every marker add, so exactly one shows at a time; `dragend` is the catch-all
+reset for Escape / drop-outside-any-zone, so no stale `dropTarget` survives
+into the next drag.
+
+**Verification:** the pure index-reorder math was unit-tested standalone
+(9/9 scenarios incl. adjacent no-ops) and the DOM/event/state lifecycle
+passed an independent review across all four drop paths. Removed
+`insertion-line` / `nextRowSessionId` / `clearInsertionLines` entirely.
+Still needs Aidin's hands-on confirmation that the *feel* is finally right.
+
 ## 2026-07-02 — Root-caused the bullet-spacing bug; partial fix for sporadic drag-and-drop; Archive page split into 2 columns
 
 **Bullet spacing, actually fixed this time:** the earlier `.md-li + .md-li`
