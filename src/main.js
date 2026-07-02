@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, Notification, clipboard } from "electron";
 import path from "node:path";
 import crypto from "node:crypto";
+import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { readAllSessions, enrichWithJot, setSessionArchived } from "./lib/sessions.js";
 import { loadJot } from "./lib/jot.js";
@@ -19,6 +20,30 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 let mainWindow = null;
 let latestQuota = null;
 const liveChildren = new Map(); // launchId -> child process, for the Stop button
+
+// child.kill() only signals the top-level claude.exe — it does NOT kill the
+// process tree. claude.exe spawns its own children (the model runtime, any
+// MCP servers, Task-tool subagents), and on Windows those are not
+// automatically terminated when their parent dies. Left running, they keep
+// executing (and consuming subscription usage) after a Stop click or even
+// after Maestro itself quits. `taskkill /T` recurses through the whole tree.
+function killChildTree(child) {
+  if (!child || child.killed || !child.pid) {
+    return;
+  }
+  if (process.platform === "win32") {
+    execFile("taskkill", ["/pid", String(child.pid), "/T", "/F"], (err) => {
+      if (err) {
+        // Best-effort: the process may have already exited on its own
+        // between the check above and this call, which taskkill reports as
+        // an error — nothing more useful to do with it here.
+        console.error(`[maestro] taskkill failed for pid ${child.pid}:`, err.message);
+      }
+    });
+    return;
+  }
+  child.kill();
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -202,66 +227,84 @@ ipcMain.handle(
     const skillMatch = /^\/(\S+)/.exec(prompt.trim());
     done.then((summary) => {
       liveChildren.delete(launchId);
-      appendUsageLog({
-        type: "run",
-        launchId,
-        timestamp: Date.now(),
-        cwd,
-        model: meta.actualModel,
-        effort: effort || null,
-        permissionMode: permissionMode || null,
-        suggestedModel: suggestedModel || null,
-        suggestedEffort: suggestedEffort || null,
-        followedSuggestion: !suggestedModel || suggestedModel === meta.actualModel,
-        costUsd: meta.costUsd,
-        numTurns: meta.numTurns,
-        toolsUsed: meta.toolsUsed,
-        skillInvoked: skillMatch ? skillMatch[1] : null,
-      });
+      // Send "done" FIRST, before any of the bookkeeping below that could
+      // throw (a corrupt config.json, a disk-full usage-log write, etc).
+      // Previously this came after appendUsageLog — if that threw, the
+      // renderer never got its "done" event and the pane stayed "running"
+      // forever with no way to recover short of restarting Maestro.
       send({ kind: "done", summary });
 
-      // Native OS notification (Windows plays its default sound with it, no
-      // separate audio file needed) when a prompt finishes — lets Aidin
-      // switch away while a run is in progress.
-      const notifyConfig = loadConfig().notifyOnComplete;
-      if (notifyConfig !== false && summary.sawResult && Notification.isSupported()) {
-        new Notification({
-          title: "Maestro — prompt finished",
-          body: truncateForNotification(prompt),
-          silent: false,
-        }).show();
-      }
-
-      // Model-fit judge: user-requested, cost-verified (~$0.015-0.02/call
-      // after stripping MCP servers + tool defs the judge never needs).
-      // Fire-and-forget so it never delays the real response; only runs on a
-      // genuinely completed turn (skipped if the process was killed early —
-      // sawResult false — since there is nothing meaningful to judge then).
-      const config = loadConfig();
-      if (summary.sawResult && config.modelFitJudge?.enabled !== false) {
-        judgeModelFit({
+      try {
+        appendUsageLog({
+          type: "run",
+          launchId,
+          timestamp: Date.now(),
           cwd,
-          taskPrompt: prompt,
           model: meta.actualModel,
-          effort,
-          toolsUsed: meta.toolsUsed,
+          effort: effort || null,
+          permissionMode: permissionMode || null,
+          suggestedModel: suggestedModel || null,
+          suggestedEffort: suggestedEffort || null,
+          followedSuggestion: !suggestedModel || suggestedModel === meta.actualModel,
+          costUsd: meta.costUsd,
           numTurns: meta.numTurns,
-          finalText: meta.lastAssistantText,
-        }).then((result) => {
-          if (!result) {
-            return;
-          }
-          appendUsageLog({
-            type: "modelFitVerdict",
-            launchId,
-            timestamp: Date.now(),
-            model: meta.actualModel,
-            verdict: result.verdict,
-            reason: result.reason,
-            judgeCostUsd: result.costUsd,
-          });
-          send({ kind: "modelFit", verdict: result.verdict, reason: result.reason });
+          toolsUsed: meta.toolsUsed,
+          skillInvoked: skillMatch ? skillMatch[1] : null,
         });
+
+        // Native OS notification (Windows plays its default sound with it, no
+        // separate audio file needed) when a prompt finishes — lets Aidin
+        // switch away while a run is in progress.
+        const notifyConfig = loadConfig().notifyOnComplete;
+        if (notifyConfig !== false && summary.sawResult && Notification.isSupported()) {
+          new Notification({
+            title: "Maestro — prompt finished",
+            body: truncateForNotification(prompt),
+            silent: false,
+          }).show();
+        }
+
+        // Model-fit judge: user-requested, cost-verified (~$0.015-0.02/call
+        // after stripping MCP servers + tool defs the judge never needs).
+        // Fire-and-forget so it never delays the real response; only runs on a
+        // genuinely completed turn (skipped if the process was killed early —
+        // sawResult false — since there is nothing meaningful to judge then).
+        const config = loadConfig();
+        if (summary.sawResult && config.modelFitJudge?.enabled !== false) {
+          judgeModelFit({
+            cwd,
+            taskPrompt: prompt,
+            model: meta.actualModel,
+            effort,
+            toolsUsed: meta.toolsUsed,
+            numTurns: meta.numTurns,
+            finalText: meta.lastAssistantText,
+          })
+            .then((result) => {
+              if (!result) {
+                return;
+              }
+              appendUsageLog({
+                type: "modelFitVerdict",
+                launchId,
+                timestamp: Date.now(),
+                model: meta.actualModel,
+                verdict: result.verdict,
+                reason: result.reason,
+                judgeCostUsd: result.costUsd,
+              });
+              send({ kind: "modelFit", verdict: result.verdict, reason: result.reason });
+            })
+            .catch((err) => {
+              console.error("[maestro] model-fit judge failed:", err);
+            });
+        }
+      } catch (err) {
+        // Purely post-run bookkeeping (usage log, notification, judge
+        // kickoff) — the renderer already has its "done" event above and
+        // the pane is no longer waiting on any of this, so a failure here
+        // is logged, not surfaced as a broken run.
+        console.error("[maestro] post-run bookkeeping failed:", err);
       }
     });
     return { ok: true, launchId };
@@ -274,7 +317,7 @@ ipcMain.handle("session:stop", (_event, { launchId }) => {
   if (!child) {
     return { ok: false, error: "no running process for that launch" };
   }
-  child.kill();
+  killChildTree(child);
   liveChildren.delete(launchId);
   return { ok: true };
 });
@@ -287,6 +330,16 @@ function truncateForNotification(text) {
 app.whenReady().then(() => {
   prunePastedImages();
   createWindow();
+});
+
+// Without this, quitting Maestro while any prompt is still running leaves
+// its claude.exe process tree orphaned — same underlying issue as Stop
+// (see killChildTree above), just triggered by app exit instead of a click.
+app.on("before-quit", () => {
+  for (const child of liveChildren.values()) {
+    killChildTree(child);
+  }
+  liveChildren.clear();
 });
 
 app.on("window-all-closed", () => {

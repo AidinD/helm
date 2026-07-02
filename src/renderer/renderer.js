@@ -11,10 +11,16 @@ let dragSessionId = null;
 // which disagreed with the shown indicator once layout had shifted).
 // { row: HTMLElement, before: boolean } | null.
 let dropTarget = null;
-const paneLaunchMap = new Map(); // launchId -> paneIndex, cleared once a launch finishes
-// Separate, never-cleared map so a late-arriving async event (the model-fit
-// judge finishes well after "done") can still find its way back to the right
-// pane even after paneLaunchMap already dropped that launchId.
+// launchId -> { index, pane, startedAt }. The ONE map every launch-scoped
+// event (session/tool_use/assistant/error/done/modelFit) is routed through,
+// always gated on `panes[index] === pane` before being applied. Storing the
+// pane OBJECT (not just its index) is what makes that check meaningful: if
+// the user resets/reopens that pane slot before a launch's events arrive,
+// `panes[index]` no longer IS this object, and the (now orphaned) event is
+// correctly dropped instead of bleeding into an unrelated session. A prior
+// version used a second map (paneLaunchMap) for the common-case lookup
+// WITHOUT this identity check, plus its own separate, leak-prone cleanup —
+// removed in favor of this single map used everywhere.
 const launchPaneHistory = new Map();
 // App-wide, not per-pane — a background Task-tool subagent's lifecycle
 // (task_started -> task_progress* -> task_updated/task_done), keyed by taskId.
@@ -1424,13 +1430,15 @@ function paneHeaderEl(index) {
     close.textContent = "✕";
     close.title = "Close split";
     close.addEventListener("click", () => {
-      // If this pane has a live launch, stop it and drop its map entries
-      // before discarding the pane — otherwise the process keeps running
-      // with no UI left able to show its completion or stop it.
+      // If this pane has a live launch, stop it before discarding the pane
+      // — otherwise the process keeps running with no UI left able to show
+      // its completion or stop it. No map entry to clean up here: once
+      // `panes = [panes[0]]` below drops this slot, launchPaneHistory's own
+      // identity check (`panes[index] === pane`) naturally rejects any of
+      // this launch's late events on its own.
       const closingPane = panes[1];
       if (closingPane?.busy && closingPane.currentLaunchId) {
         window.maestro.stopSession(closingPane.currentLaunchId);
-        paneLaunchMap.delete(closingPane.currentLaunchId);
       }
       panes = [panes[0]];
       document.getElementById("workspace").classList.remove("split");
@@ -1819,11 +1827,10 @@ async function sendFromPane(index, els) {
     return;
   }
   pane.currentLaunchId = res.launchId;
-  paneLaunchMap.set(res.launchId, index);
-  // Stores the pane OBJECT, not just the index — if the user opens a
-  // different session in this same pane slot before a late event (the judge)
-  // arrives, panes[index] will no longer be this object, and we can tell not
-  // to misattribute the result to the new session.
+  // Stores the pane OBJECT, not just the index — every launch-scoped event
+  // (session/tool_use/assistant/error/done/modelFit) is routed through this
+  // one map with an identity check, so a pane reused before a late event
+  // arrives can never have that event misattributed to it.
   launchPaneHistory.set(res.launchId, { index, pane, startedAt: Date.now() });
 }
 
@@ -1893,9 +1900,22 @@ async function refresh() {
 // up, but if the judge is disabled (config.modelFitJudge.enabled: false) or
 // errors before emitting one, that never happens — this is the backstop so
 // the map doesn't grow forever over a long-running session.
+//
+// This map is now also the ONLY routing table for every live event
+// (session/tool_use/assistant/error/done), so pruning by age alone would be
+// a real regression: a long xhigh-effort prompt can easily run past a fixed
+// cutoff while still genuinely in progress, and pruning its entry mid-run
+// would silently drop its remaining events. Only prune once the launch can
+// no longer matter — either the attached pane is done with it (busy: false)
+// or the pane was already reset/reused elsewhere (identity mismatch), in
+// which case nothing could ever reach this entry again regardless of age.
 function pruneStaleLaunchHistory() {
   const cutoff = Date.now() - 10 * 60 * 1000;
   for (const [launchId, entry] of launchPaneHistory) {
+    const stillAttachedAndBusy = panes[entry.index] === entry.pane && entry.pane.busy;
+    if (stillAttachedAndBusy) {
+      continue;
+    }
     if ((entry.startedAt || 0) < cutoff) {
       launchPaneHistory.delete(launchId);
     }
@@ -2406,8 +2426,9 @@ window.maestro.onSessionEvent((evt) => {
     return;
   }
 
-  // Handled separately: the judge resolves well after "done" already cleared
-  // paneLaunchMap, so this needs the longer-lived launchPaneHistory instead.
+  // Handled separately from the main switch below because this is the ONE
+  // event kind that fully retires an entry — the judge resolves well after
+  // "done" and is the last thing that will ever need this launchId.
   if (evt.kind === "modelFit") {
     const entry = launchPaneHistory.get(evt.launchId);
     launchPaneHistory.delete(evt.launchId); // this is the only consumer; always one-shot
@@ -2459,14 +2480,28 @@ window.maestro.onSessionEvent((evt) => {
     return;
   }
 
-  const index = paneLaunchMap.get(evt.launchId);
-  if (index === undefined) {
+  // App-wide, not tied to any one pane — must never be gated behind a pane
+  // lookup (a stale/missing launch entry shouldn't also swallow quota news).
+  if (evt.kind === "quota") {
+    renderQuota(evt.quota);
     return;
   }
-  const pane = panes[index];
-  if (!pane) {
+
+  // Routes purely via launchPaneHistory + an identity check, the same
+  // pattern already used by the modelFit handler above. A separate
+  // launchId->index map (paneLaunchMap) used to do this lookup WITHOUT the
+  // identity check, which meant: send in a pane, hit "+" for a new chat
+  // before the reply lands, and the orphaned launch's assistant text/done
+  // would land in the unrelated NEW session now sitting at that index. That
+  // map's own cleanup was also inconsistent (deleted on "done" but not on
+  // "error", a genuine unbounded leak on every failed launch). Consolidating
+  // on launchPaneHistory removes both problems: one map, one identity check,
+  // used everywhere a launchId needs to find its way back to a pane.
+  const entry = launchPaneHistory.get(evt.launchId);
+  if (!entry || panes[entry.index] !== entry.pane) {
     return;
   }
+  const { index, pane } = entry;
   switch (evt.kind) {
     case "session":
       pane.cliSessionId = evt.sessionId;
@@ -2478,9 +2513,6 @@ window.maestro.onSessionEvent((evt) => {
       pane.turns.push({ role: "assistant", kind: "text", text: evt.text });
       renderPane(index);
       break;
-    case "quota":
-      renderQuota(evt.quota);
-      break;
     case "error":
       pane.busy = false;
       pane.currentLaunchId = null;
@@ -2491,7 +2523,6 @@ window.maestro.onSessionEvent((evt) => {
     case "done":
       pane.busy = false;
       pane.currentLaunchId = null;
-      paneLaunchMap.delete(evt.launchId);
       setPaneBusyUI(index, "");
       if (pane.stopRequested) {
         // A killed process may not have flushed its in-progress turn to disk
@@ -2507,6 +2538,11 @@ window.maestro.onSessionEvent((evt) => {
     default:
       break;
   }
+  // launchPaneHistory is intentionally NOT deleted here (unlike the old
+  // paneLaunchMap on "done") — the model-fit judge fires well after "done"
+  // and still needs this same entry; it does the one-shot delete itself.
+  // Backstop: pruneStaleLaunchHistory() reclaims anything the judge never
+  // consumes (disabled, errored launch, etc).
 });
 
 renderWorkspace();

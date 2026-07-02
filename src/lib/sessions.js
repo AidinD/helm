@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import { findSessionsDir, findTranscriptPath } from "./paths.js";
 
 // Default scoring weights for the attention ranking. Overridable via
@@ -133,7 +134,30 @@ export function setSessionArchived(sessionId, archived) {
       freshMeta.isArchived = archived;
       // Matches the app's own compact (non-pretty-printed) format, so this
       // write doesn't needlessly reformat a file another app owns.
-      fs.writeFileSync(filePath, JSON.stringify(freshMeta), "utf8");
+      //
+      // Written via a temp file + rename rather than a direct writeFileSync
+      // (which truncates the file before writing the new content). A crash,
+      // full disk, or killed process mid-write would leave the desktop
+      // app's OWN session file half-written and unparseable — this is the
+      // one place Maestro mutates another app's live state, so a torn write
+      // there is a real risk, not a theoretical one. fs.renameSync is
+      // atomic when the temp file is on the same volume (same directory),
+      // so the real file is always either fully the old content or fully
+      // the new content, never a partial mix of both.
+      const tmpPath = path.join(dir, `.${file}.${crypto.randomBytes(4).toString("hex")}.tmp`);
+      try {
+        fs.writeFileSync(tmpPath, JSON.stringify(freshMeta), "utf8");
+        fs.renameSync(tmpPath, filePath);
+      } catch (err) {
+        // Don't leave a stray .tmp file sitting in the desktop app's own
+        // session directory if the rename step is what failed.
+        try {
+          fs.unlinkSync(tmpPath);
+        } catch {
+          // best-effort; the write itself already failed, this is just cleanup
+        }
+        throw err;
+      }
       return { ok: true };
     } catch (err) {
       return { ok: false, error: `Failed to write session file: ${err.message}` };
