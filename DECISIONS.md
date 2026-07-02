@@ -1,5 +1,44 @@
 # Decisions
 
+## 2026-07-02 — Root-caused the bullet-spacing bug; partial fix for sporadic drag-and-drop; Archive page split into 2 columns
+
+**Bullet spacing, actually fixed this time:** the earlier `.md-li + .md-li`
+CSS rule (shipped a few commits ago) never actually did anything — it just
+looked like it should. `renderInlineLines` unconditionally inserted a `<br>`
+after every line (list or not) and rendered every blank line as an empty
+`<span>`, so real assistant output with blank lines between bullets produced
+`<div class="md-li">...</div><br><span></span><br><div class="md-li">...`.
+A `<br>`/`<span>` sitting between two `.md-li` divs means they are not
+adjacent siblings, so `.md-li + .md-li` could never match. Fixed at the
+source: blank lines touching a list line are now skipped entirely (they're
+pure markdown separation, not content), and a `<br>` is only ever inserted
+between two consecutive PLAIN-TEXT lines — never immediately before/after a
+list item, since a `display:block` div already forces its own line break.
+Verified with a standalone DOM-trace script before shipping (five cases:
+blank-separated list, non-blank list, plain multi-line text, blank-separated
+paragraphs, heading-then-list) — non-list rendering is byte-for-byte
+identical to before, only the list-adjacency case changed.
+
+**Drag-and-drop reorder, partial fix:** "still very sporadic" after the
+earlier `pointer-events: none` fix. Real remaining cause: the dragover
+handler unconditionally removed and re-inserted the insertion-line indicator
+on EVERY dragover event (which fires continuously, far more often than the
+mouse crosses a row's midpoint) — inserting that line shifts the list's
+layout, which shifts every row's `getBoundingClientRect()` for the NEXT
+event, creating a feedback loop that could flip the insertion point even
+with a stationary mouse. Fixed by skipping the DOM mutation when the line is
+already exactly where it belongs. **Honest caveat:** this fixes
+dragover-loop-induced flicker specifically; it does NOT touch the
+drop-time midpoint recalculation in `nextRowSessionId`, which could still
+occasionally disagree with what was last shown if the mouse moves fast
+between the last dragover and the drop. If it's still not fully reliable
+after this, the more thorough fix is caching each row's position once at
+drag-start instead of re-measuring live throughout the drag.
+
+**Archive page:** the two sections (Archived / Removed from Maestro) now sit
+side-by-side in the same 2-column grid the Analysis page already uses,
+instead of stacked vertically.
+
 ## 2026-07-02 — New "Archive" page: see and restore hidden/archived sessions
 
 **Decision:** Added a 4th header tab, "Archive," with two sections —

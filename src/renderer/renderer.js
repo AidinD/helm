@@ -611,10 +611,24 @@ function rowEl(session) {
   row.addEventListener("dragover", (e) => {
     e.preventDefault();
     e.stopPropagation();
-    const list = row.parentElement;
-    clearInsertionLines(list);
     const rect = row.getBoundingClientRect();
     const before = e.clientY - rect.top < rect.height / 2;
+    // Inserting the line shifts the layout, which shifts every row's rect
+    // for the NEXT dragover event — re-inserting on every single event
+    // (dragover fires continuously, far more often than the mouse actually
+    // crosses a row's midpoint) turned that into a feedback loop: insert ->
+    // rects shift -> next event's midpoint math flips -> insert somewhere
+    // else -> rects shift again. This was almost certainly the "jumps and
+    // doesn't land where I drop it" bug. Skipping the DOM mutation when the
+    // line is already exactly where it should be removes nearly all of that
+    // churn — only a genuine crossing (or first hover) touches the DOM.
+    const alreadyBefore = before && row.previousElementSibling?.classList.contains("insertion-line");
+    const alreadyAfter = !before && row.nextElementSibling?.classList.contains("insertion-line");
+    if (alreadyBefore || alreadyAfter) {
+      return;
+    }
+    const list = row.parentElement;
+    clearInsertionLines(list);
     const line = document.createElement("div");
     line.className = "insertion-line";
     if (before) {
@@ -1076,11 +1090,26 @@ function tableEl(headerLine, bodyLines) {
   return table;
 }
 
+const isListLine = (line) => /^\s*[-*]\s+/.test(line);
+
 function renderInlineLines(container, text) {
   const lines = text.split("\n");
   lines.forEach((line, idx) => {
-    const listMatch = /^\s*[-*]\s+(.*)$/.exec(line);
-    if (listMatch) {
+    const nextLine = lines[idx + 1];
+    const isBlank = line.trim() === "";
+    const isList = isListLine(line);
+
+    // A blank line whose only job in the source markdown is separating list
+    // items isn't content — rendering it (an empty <span> + a trailing <br>)
+    // both doubled the visible gap AND sat between the two .md-li divs,
+    // breaking their sibling adjacency so ".md-li + .md-li" (meant to
+    // tighten spacing between bullets) never actually matched anything.
+    if (isBlank && (isListLine(lines[idx - 1] || "") || isListLine(nextLine || ""))) {
+      return;
+    }
+
+    if (isList) {
+      const listMatch = /^\s*[-*]\s+(.*)$/.exec(line);
       const li = document.createElement("div");
       li.className = "md-li";
       li.append(document.createTextNode("• "), ...inlineFormat(listMatch[1]));
@@ -1090,7 +1119,11 @@ function renderInlineLines(container, text) {
       lineSpan.append(...inlineFormat(line));
       container.append(lineSpan);
     }
-    if (idx < lines.length - 1) {
+
+    // A list item is already display:block and self-breaks onto its own
+    // line — a <br> touching one on either side is exactly what broke
+    // .md-li adjacency above. Only insert one between two plain lines.
+    if (idx < lines.length - 1 && !isList && !isListLine(nextLine || "")) {
       container.append(document.createElement("br"));
     }
   });
@@ -1930,7 +1963,9 @@ function renderArchivePage() {
   // even if it's still separately hidden from Maestro's own sidebar view.
   const hidden = hiddenIds.map(sessionById).filter(Boolean).filter((s) => !s.isArchived);
 
-  page.append(
+  const grid = document.createElement("div");
+  grid.className = "analysis-grid";
+  grid.append(
     archiveSectionEl("Archived sessions", archived, "No archived sessions.", (session) =>
       archiveRowEl(session, "Unarchive", () => unarchiveSession(session))
     ),
@@ -1938,6 +1973,7 @@ function renderArchivePage() {
       archiveRowEl(session, "Restore", () => restoreToMaestro(session))
     )
   );
+  page.append(grid);
 }
 
 function archiveSectionEl(title, sessions, emptyText, rowFactory) {
