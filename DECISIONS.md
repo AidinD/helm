@@ -1,5 +1,39 @@
 # Decisions
 
+## 2026-07-02 — Jot-review fix batch: bullet spacing, icon-only copy button, a real DnD drop bug, image lightbox
+
+**Bullet-list spacing:** a side-by-side vs. the desktop app showed the gap
+after a heading was right but consecutive bullets read as too tall. Each
+list line renders as a standalone sibling `<div class="md-li">` (no `<ul>`
+wrapper), so `.md-li + .md-li { margin-top: 4px }` (down from the uniform
+10px) tightens only "bullet right after another bullet" while leaving the
+gap after a heading/paragraph untouched.
+
+**Copy button:** changed from an always-visible "Copy" text button under
+every assistant reply to an icon-only button (⧉ / ✓), invisible until the
+row is hovered.
+
+**Real bug in drag-and-drop reordering:** category reordering "worked but
+jumped and didn't always land where I dropped it." Root cause: the visual
+insertion-line indicator shown between rows is a sibling `<div>` with no
+drop handler of its own. Dropping exactly ON the line (the natural thing to
+do — it's what "drop here" is pointing at) made the line itself the drop
+event's `e.target`; the list container's own drop handler bails via an
+`e.target !== el` guard meant for a *different* case (append-on-empty-space),
+so the drop was silently swallowed. Fixed with `pointer-events: none` on
+`.insertion-line` so drag/drop events pass through to whatever's actually
+underneath.
+
+**Image lightbox:** attachment chips now show a real thumbnail (via a new
+`toFileUrl()` path→`file://` converter) instead of an emoji; clicking it
+opens a full-screen enlarged view. Needed `img-src 'self' file:` added to
+the CSP meta tag. Review caught a real bug in `toFileUrl`: it
+`encodeURIComponent`'d every path segment including the drive letter,
+turning `D:` into `D%3A` — Chromium does not decode that back to a drive
+letter, so every thumbnail would have silently failed to load. Fixed by
+leaving a bare `<letter>:` segment un-encoded; verified the corrected output
+resolves via `new URL(...).pathname` before shipping.
+
 ## 2026-07-02 — Confirmed: mid-turn interjection genuinely works (not just between-turns) — architecture change, not built tonight
 
 **Finding:** `spike/test-mid-turn-interject.mjs` sent a first message asking

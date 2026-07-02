@@ -41,6 +41,43 @@ function freshPane() {
   };
 }
 
+// Converts a Windows absolute path to a file:// URL an <img> can load —
+// forward slashes, percent-encoded per path segment (handles spaces and any
+// other special characters e.g. in "D:\Dropbox\Documents\..."). The
+// drive-letter segment ("D:") is left un-encoded — encodeURIComponent would
+// turn it into "D%3A", which Chromium does NOT decode back to a drive letter,
+// silently breaking every single local-file image load.
+function toFileUrl(winPath) {
+  const normalized = winPath.replace(/\\/g, "/");
+  const encoded = normalized
+    .split("/")
+    .map((segment) => (/^[A-Za-z]:$/.test(segment) ? segment : encodeURIComponent(segment)))
+    .join("/");
+  return "file:///" + encoded;
+}
+
+// Full-size click-to-enlarge view for an attached image — dismissed by
+// clicking anywhere (including the image itself) or pressing Escape.
+function showImageLightbox(fileUrl) {
+  const overlay = document.createElement("div");
+  overlay.className = "image-lightbox";
+  const img = document.createElement("img");
+  img.src = fileUrl;
+  overlay.append(img);
+  const close = () => {
+    overlay.remove();
+    document.removeEventListener("keydown", onKey);
+  };
+  const onKey = (e) => {
+    if (e.key === "Escape") {
+      close();
+    }
+  };
+  overlay.addEventListener("click", close);
+  document.addEventListener("keydown", onKey);
+  document.body.append(overlay);
+}
+
 function relTime(ts) {
   if (!ts) {
     return "unknown";
@@ -1081,15 +1118,18 @@ function turnEl(turn) {
   wrap.append(bubble);
 
   if (turn.role === "assistant") {
+    // Icon-only, shown on hover (was an always-visible "Copy" text button —
+    // per feedback that read as too loud sitting under every single reply).
     const copyBtn = document.createElement("button");
     copyBtn.className = "copy-btn";
-    copyBtn.textContent = "Copy";
+    copyBtn.title = "Copy";
+    copyBtn.textContent = "⧉";
     copyBtn.addEventListener("click", () => {
       window.maestro.copyToClipboard(turn.text);
-      copyBtn.textContent = "Copied";
+      copyBtn.textContent = "✓";
       copyBtn.classList.add("copied");
       setTimeout(() => {
-        copyBtn.textContent = "Copy";
+        copyBtn.textContent = "⧉";
         copyBtn.classList.remove("copied");
       }, 1200);
     });
@@ -1339,7 +1379,17 @@ function paneComposerEl(index) {
     pane.pendingAttachments.forEach((att, i) => {
       const chip = document.createElement("span");
       chip.className = "attachment-chip";
-      chip.textContent = (att.isImage ? "🖼 " : "📎 ") + att.name;
+      if (att.isImage) {
+        const thumb = document.createElement("img");
+        thumb.className = "attachment-thumb";
+        thumb.src = toFileUrl(att.path);
+        thumb.title = "Click to enlarge";
+        thumb.addEventListener("click", () => showImageLightbox(thumb.src));
+        chip.append(thumb);
+      } else {
+        chip.append(document.createTextNode("📎 "));
+      }
+      chip.append(document.createTextNode(att.name));
       const remove = document.createElement("button");
       remove.type = "button";
       remove.className = "attachment-remove";

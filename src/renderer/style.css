@@ -363,6 +363,14 @@ h1 {
   margin: 0 4px;
   background: var(--accent);
   border-radius: 1px;
+  /* Real bug, not cosmetic: without this, dropping exactly on the thin line
+     itself (the natural target — it's what "drop here" is pointing at) made
+     it the drag event's target instead of the row/list beneath it. The
+     list's own drop handler then bailed via its "e.target !== el" guard
+     (added for the empty-space-append case) and nothing happened — read as
+     "jumps and doesn't land where I drop it." Making the line inert lets
+     drag/drop events pass through to whatever's actually underneath. */
+  pointer-events: none;
 }
 
 .section-list.hidden {
@@ -641,9 +649,16 @@ body.advanced .row-jot {
   background: transparent;
   border: none;
   color: var(--text-faint);
-  font-size: 10.5px;
+  font-size: 12px;
+  line-height: 1;
   padding: 2px 4px;
   cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.1s ease;
+}
+
+.turn.assistant:hover .copy-btn {
+  opacity: 1;
 }
 
 .copy-btn:hover {
@@ -652,6 +667,7 @@ body.advanced .row-jot {
 
 .copy-btn.copied {
   color: var(--active);
+  opacity: 1;
 }
 
 .turn-bubble .md-code-block {
@@ -666,14 +682,20 @@ body.advanced .row-jot {
   white-space: pre;
 }
 
-/* Gives both "space before the list starts" and "space between items" the
-   same modest gap — was previously tightened based on different feedback
-   ("less air"), which turned out to point the opposite direction from what
-   the captain actually wanted here (more breathing room, matching the desktop app). */
+/* Space before a list starts (after a heading/paragraph) and space BETWEEN
+   its own items are different things — confirmed by a side-by-side vs the
+   desktop app: the gap after a heading was right, but consecutive bullets
+   had the same 10px and read as too tall. Each list line is a standalone
+   sibling div (no <ul> wrapper), so ".md-li + .md-li" is what "the item
+   right after another item" actually means here. */
 .turn-bubble .md-li {
   display: block;
   padding-left: 2px;
   margin-top: 10px;
+}
+
+.turn-bubble .md-li + .md-li {
+  margin-top: 4px;
 }
 
 .turn-bubble .md-table {
@@ -851,7 +873,7 @@ body.advanced .row-jot {
 .attachment-chip {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   background: var(--bg-sidebar);
   border: 1px solid var(--border);
   border-radius: 999px;
@@ -859,6 +881,37 @@ body.advanced .row-jot {
   font-size: 11px;
   color: var(--text-faint);
   max-width: 220px;
+}
+
+.attachment-chip:has(.attachment-thumb) {
+  padding-left: 3px;
+}
+
+.attachment-thumb {
+  width: 20px;
+  height: 20px;
+  object-fit: cover;
+  border-radius: 999px;
+  cursor: zoom-in;
+  flex-shrink: 0;
+}
+
+.image-lightbox {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+  cursor: zoom-out;
+}
+
+.image-lightbox img {
+  max-width: 90vw;
+  max-height: 90vh;
+  border-radius: 6px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
 }
 
 .attachment-remove {
