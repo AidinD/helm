@@ -1,5 +1,33 @@
 # Decisions
 
+## 2026-07-02 — Drag-and-drop reorder for categories themselves, not just sessions
+
+**Decision:** Categories/lists in the sidebar could never be reordered
+relative to each other before — only sessions within a category could be
+dragged. Added the same VS Code-style reorder to category headers: a
+distinct dataTransfer type (`"text/category-label"`, never
+`"text/session-id"`) so it can never be confused with session-row dragging
+that already lives on the same header element (dropping a session onto a
+category header still appends it there, unchanged). Reuses the exact
+zero-layout-impact pseudo-element indicator technique already proven for
+session rows, just scoped to `.section` instead of `.row`. Only the header
+itself is draggable, not the whole (session-count-dependent, sometimes very
+tall) section — a small fixed-size handle is far easier to aim than judging
+"top half vs bottom half" of a 30-session category.
+
+**Real bug caught in review:** the session-row's own `dragover`/`drop`
+handlers had no guard against a CATEGORY-type drag landing on them — so
+dragging a category header over an unrelated session row (in a different
+category's list) falsely showed a session-row drop indicator that would
+never actually do anything (the row's drop handler already no-ops on a
+missing `text/session-id`, so no data corruption, but the UI lied about
+having a valid target here). The same gap existed in `wireListDropZone`
+(empty list space). Fixed by adding an early `types.includes("text/category-
+label")` guard to both.
+
+Splice-based reorder math unit-tested standalone (6/6 scenarios) before
+shipping; DOM/event integration passed an independent review.
+
 ## 2026-07-02 — Backlog pass: version numbering, pinned card, split-icon fix, queue-next-prompt, chat history nav
 
 Working through the priority-0 Jot backlog. Five shipped this pass, each

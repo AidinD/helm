@@ -11,6 +11,12 @@ let dragSessionId = null;
 // which disagreed with the shown indicator once layout had shifted).
 // { row: HTMLElement, before: boolean } | null.
 let dropTarget = null;
+// Same pattern, separate state — reordering CATEGORIES (dragging a section's
+// header) is a distinct drag payload type ("text/category-label", never
+// "text/session-id") from reordering sessions, so it needs its own drop
+// target rather than sharing/overloading `dropTarget` above.
+// { wrap: HTMLElement, label: string, before: boolean } | null.
+let categoryDropTarget = null;
 // launchId -> { index, pane, startedAt }. The ONE map every launch-scoped
 // event (session/tool_use/assistant/error/done/modelFit) is routed through,
 // always gated on `panes[index] === pane` before being applied. Storing the
@@ -449,6 +455,31 @@ function clearDropIndicators() {
     .forEach((el) => el.classList.remove("drop-before", "drop-after"));
 }
 
+function clearCategoryDropIndicators() {
+  document
+    .querySelectorAll(".section.drop-before, .section.drop-after")
+    .forEach((el) => el.classList.remove("drop-before", "drop-after"));
+}
+
+// Reorders state.config.groups by moving draggedLabel to just before/after
+// targetLabel. Splice-based, same shape as moveSessionToGroup's reorder.
+async function reorderCategory(draggedLabel, targetLabel, before) {
+  const groups = [...(state.config.groups || [])];
+  const draggedIdx = groups.findIndex((g) => g.label === draggedLabel);
+  if (draggedIdx === -1) {
+    return;
+  }
+  const [dragged] = groups.splice(draggedIdx, 1);
+  const targetIdx = groups.findIndex((g) => g.label === targetLabel);
+  if (targetIdx === -1) {
+    groups.push(dragged);
+  } else {
+    groups.splice(before ? targetIdx : targetIdx + 1, 0, dragged);
+  }
+  state.config = await window.maestro.setConfig({ groups });
+  renderSidebar();
+}
+
 // ============================== Row + section rendering ==============================
 
 // The orchestrator's own chat — one static, prominent card, not a row inside
@@ -662,6 +693,16 @@ function rowEl(session) {
   // independently-recomputed measurement that could disagree with it.
   row.addEventListener("dragover", (e) => {
     e.preventDefault();
+    // A category being dragged (reordering the lists themselves) has no
+    // business showing a session-row drop indicator — this row would never
+    // actually receive that drop (its own drop handler below no-ops on a
+    // missing "text/session-id"), so without this guard it falsely promised
+    // a valid target. Found in review, alongside the same drag also being
+    // able to leave a stale .section indicator AND a stale .row indicator
+    // visible at once, since neither handler cleared the other's markers.
+    if (e.dataTransfer.types.includes("text/category-label")) {
+      return;
+    }
     e.stopPropagation();
     // No indicator on the row being dragged — dropping onto yourself is a
     // no-op, and marking it would just be visual noise.
@@ -681,6 +722,11 @@ function rowEl(session) {
   });
   row.addEventListener("drop", (e) => {
     e.preventDefault();
+    // Same reasoning as the dragover guard above — a category drop landing
+    // here isn't for this row at all.
+    if (e.dataTransfer.types.includes("text/category-label")) {
+      return;
+    }
     e.stopPropagation();
     // Dropping onto the row being dragged is a no-op (dragover cleared
     // dropTarget for it) — bail before it degenerates into an append.
@@ -1026,9 +1072,55 @@ function sectionEl({ label, sessions, collapsed, pinned, droppable, emptyHint, i
         },
       ]);
     });
-    // Dropping directly on the header appends to the end of that category.
+    // Reordering categories themselves — only sessions could be dragged
+    // before (found in review: category order had no drag handle at all).
+    // A distinct dataTransfer type ("text/category-label", never
+    // "text/session-id") keeps this from ever being confused with a
+    // session drag — the existing session handlers already guard on
+    // getData(...) being non-empty, so a category-type drag landing on a
+    // session row's handlers is a harmless no-op. Only the header itself is
+    // draggable, not the whole (often much taller, session-count-dependent)
+    // section — a small fixed-size handle is far easier to aim than
+    // splitting a tall section into "top half vs bottom half."
+    head.draggable = true;
+    head.addEventListener("dragstart", (e) => {
+      e.stopPropagation();
+      wrap.classList.add("dragging");
+      e.dataTransfer.setData("text/category-label", label);
+      e.dataTransfer.effectAllowed = "move";
+    });
+    head.addEventListener("dragend", () => {
+      wrap.classList.remove("dragging");
+      clearCategoryDropIndicators();
+      categoryDropTarget = null;
+    });
+
+    // Dropping a SESSION directly on the header appends it to the end of
+    // that category (existing behavior). Dropping a CATEGORY shows a
+    // before/after indicator on the whole section instead — same header,
+    // branched on drag type via dataTransfer.types (readable during
+    // dragover; getData itself is only reliably readable at drop in some
+    // browsers).
     head.addEventListener("dragover", (e) => {
       e.preventDefault();
+      if (e.dataTransfer.types.includes("text/category-label")) {
+        clearDropIndicators(); // no leftover session-row marker while reordering categories
+        dropTarget = null;
+        if (wrap.classList.contains("dragging")) {
+          clearCategoryDropIndicators();
+          categoryDropTarget = null;
+          return; // dropping a category onto itself is a no-op, mirroring the row pattern
+        }
+        const rect = head.getBoundingClientRect();
+        const before = e.clientY - rect.top < rect.height / 2;
+        if (categoryDropTarget && categoryDropTarget.wrap === wrap && categoryDropTarget.before === before) {
+          return;
+        }
+        categoryDropTarget = { wrap, label, before };
+        clearCategoryDropIndicators();
+        wrap.classList.add(before ? "drop-before" : "drop-after");
+        return;
+      }
       head.classList.add("drag-over");
       // Hovering the header means "append here", not "between two rows" —
       // clear any row edge-marker left over from passing over rows.
@@ -1039,6 +1131,16 @@ function sectionEl({ label, sessions, collapsed, pinned, droppable, emptyHint, i
     head.addEventListener("drop", (e) => {
       e.preventDefault();
       head.classList.remove("drag-over");
+      const draggedLabel = e.dataTransfer.getData("text/category-label");
+      if (draggedLabel) {
+        const target = categoryDropTarget;
+        clearCategoryDropIndicators();
+        categoryDropTarget = null;
+        if (draggedLabel !== label) {
+          reorderCategory(draggedLabel, label, target ? target.before : true);
+        }
+        return;
+      }
       const sid = e.dataTransfer.getData("text/session-id");
       if (sid) {
         moveSessionToGroup(sid, label, null);
@@ -1057,6 +1159,12 @@ function sectionEl({ label, sessions, collapsed, pinned, droppable, emptyHint, i
 function wireListDropZone(el, targetLabel) {
   el.addEventListener("dragover", (e) => {
     e.preventDefault();
+    // Same reasoning as the row/header guards: a category-reorder drag has
+    // no business highlighting a session list's empty space as a drop
+    // target it will never actually use.
+    if (e.dataTransfer.types.includes("text/category-label")) {
+      return;
+    }
     if (e.target === el) {
       el.classList.add("drag-over");
       // Over the list's own empty space (not a row) = append; drop any
