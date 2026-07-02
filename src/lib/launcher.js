@@ -22,6 +22,17 @@ export function resolveClaudeBinary() {
   } catch {
     resolvedClaudePath = "claude";
   }
+  // If resolution didn't land on a real .exe, every launch falls back to
+  // shell:true and the space-truncation bug fixed earlier tonight is live
+  // again for this machine. Loud on purpose — this failure mode is silent
+  // otherwise (prompts just quietly lose everything after the first word).
+  if (!resolvedClaudePath.toLowerCase().endsWith(".exe")) {
+    console.error(
+      `[launcher] Could not resolve a direct claude.exe (got "${resolvedClaudePath}"). ` +
+        "Falling back to shell:true, which re-exposes the prompt-truncation bug for any prompt with a space. " +
+        "Check that 'claude' resolves to a real .exe via `where claude` / `which claude`."
+    );
+  }
   return resolvedClaudePath;
 }
 

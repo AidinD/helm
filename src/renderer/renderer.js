@@ -1219,6 +1219,14 @@ function paneHeaderEl(index) {
     close.textContent = "✕";
     close.title = "Close split";
     close.addEventListener("click", () => {
+      // If this pane has a live launch, stop it and drop its map entries
+      // before discarding the pane — otherwise the process keeps running
+      // with no UI left able to show its completion or stop it.
+      const closingPane = panes[1];
+      if (closingPane?.busy && closingPane.currentLaunchId) {
+        window.maestro.stopSession(closingPane.currentLaunchId);
+        paneLaunchMap.delete(closingPane.currentLaunchId);
+      }
       panes = [panes[0]];
       document.getElementById("workspace").classList.remove("split");
       renderWorkspace();
@@ -1348,12 +1356,22 @@ function paneComposerEl(index) {
   wrap.append(modelFitLine);
 
   const els = { cwdInput, promptEl, modelDD, effortDD, permissionDD, sendBtn };
-  const handleSendOrStop = () => {
+  const handleSendOrStop = async () => {
     if (pane.busy) {
       if (pane.currentLaunchId) {
         pane.stopRequested = true;
         setPaneBusyUI(index, "● Stopping…");
-        window.maestro.stopSession(pane.currentLaunchId);
+        const res = await window.maestro.stopSession(pane.currentLaunchId);
+        // The process may have finished naturally in the tiny window between
+        // the click and this call landing in main — its "done" event is then
+        // already queued and will clear busy shortly, but don't leave the
+        // button stuck on "Stopping…" waiting for that if it does not.
+        if (!res.ok && panes[index] === pane && pane.busy) {
+          pane.busy = false;
+          pane.stopRequested = false;
+          pane.currentLaunchId = null;
+          setPaneBusyUI(index, "");
+        }
       }
     } else {
       sendFromPane(index, els);
@@ -1470,10 +1488,21 @@ async function sendFromPane(index, els) {
     suggestedEffort: suggestion.effort,
   });
   if (!res.ok) {
-    pane.busy = false;
-    setPaneBusyUI(index, "");
-    pane.turns.push({ role: "assistant", kind: "text", text: "⚠ Failed to start: " + res.error });
-    renderPane(index);
+    if (panes[index] === pane) {
+      pane.busy = false;
+      setPaneBusyUI(index, "");
+      pane.turns.push({ role: "assistant", kind: "text", text: "⚠ Failed to start: " + res.error });
+      renderPane(index);
+    }
+    return;
+  }
+  // The pane slot may have been reset/reused during the two awaits above
+  // (e.g. the user hit "+" for a new chat before the round-trip finished).
+  // Don't wire this launch's live events to whatever now occupies `index` —
+  // that would bleed the orphaned launch's reply into the unrelated new
+  // session. The underlying process keeps running and completes on its own
+  // (still logged/judged main-process side); it's just not shown live.
+  if (panes[index] !== pane) {
     return;
   }
   pane.currentLaunchId = res.launchId;
