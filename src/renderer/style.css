@@ -72,9 +72,15 @@ h1 {
 
 /* No outer frame around the pair — per feedback that the boxed group looked
    heavy. Each button is its own soft pill; only the active one gets a fill. */
+/* A soft background groups the pair without the heavy outer-border look from
+   before — needed a middle ground after removing the border entirely made it
+   unclear which buttons belonged together. */
 .view-toggle {
   display: flex;
   gap: 2px;
+  background: var(--bg-card);
+  border-radius: 8px;
+  padding: 2px;
 }
 
 .view-toggle button {
@@ -165,6 +171,53 @@ h1 {
   display: flex;
   gap: 6px;
   padding: 10px 10px 4px;
+}
+
+/* The orchestrator's chat — a static, prominent card (not an accordion row),
+   since it's special and always there, per feedback. */
+.orchestrator-card {
+  margin: 10px 10px 4px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(217, 119, 87, 0.16), rgba(217, 119, 87, 0.05));
+  border: 1px solid rgba(217, 119, 87, 0.4);
+  cursor: pointer;
+}
+
+.orchestrator-card:hover {
+  border-color: var(--accent);
+}
+
+.orchestrator-card.selected {
+  background: linear-gradient(135deg, rgba(217, 119, 87, 0.26), rgba(217, 119, 87, 0.08));
+}
+
+.orchestrator-card-title-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.orchestrator-card-badge {
+  color: var(--accent);
+  font-size: 15px;
+}
+
+.orchestrator-card-title {
+  font-weight: 700;
+  font-size: 13.5px;
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.orchestrator-card-meta {
+  margin-top: 6px;
+  margin-left: 23px;
+  font-size: 11px;
+  color: var(--text-dim);
 }
 
 /* Inline rename input — replaces a label in place, matches its surrounding
@@ -526,6 +579,25 @@ body.advanced .row-jot {
   cursor: text;
 }
 
+.copy-btn {
+  align-self: flex-start;
+  margin-top: 2px;
+  background: transparent;
+  border: none;
+  color: var(--text-faint);
+  font-size: 10.5px;
+  padding: 2px 4px;
+  cursor: pointer;
+}
+
+.copy-btn:hover {
+  color: var(--text-dim);
+}
+
+.copy-btn.copied {
+  color: var(--active);
+}
+
 .turn-bubble .md-code-block {
   background: #141414;
   border: 1px solid var(--border);
@@ -543,8 +615,9 @@ body.advanced .row-jot {
    ("less air"), which turned out to point the opposite direction from what
    the captain actually wanted here (more breathing room, matching the desktop app). */
 .turn-bubble .md-li {
+  display: block;
   padding-left: 2px;
-  margin-top: 4px;
+  margin-top: 10px;
 }
 
 .turn-bubble .md-table {

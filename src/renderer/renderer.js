@@ -301,6 +301,64 @@ function clearInsertionLines(container) {
 
 // ============================== Row + section rendering ==============================
 
+// The orchestrator's own chat — one static, prominent card, not a row inside
+// an accordion. Per feedback: it's special, always exists, and you shouldn't
+// need to think about which group it's in.
+function orchestratorCardEl(session) {
+  const card = document.createElement("div");
+  card.className = "orchestrator-card" + (session.sessionId === selectedSessionId ? " selected" : "");
+
+  const titleLine = document.createElement("div");
+  titleLine.className = "orchestrator-card-title-line";
+  const badge = document.createElement("span");
+  badge.className = "orchestrator-card-badge";
+  badge.textContent = "◆";
+  const title = document.createElement("span");
+  title.className = "orchestrator-card-title";
+  title.textContent = session.title;
+  const dot = document.createElement("span");
+  dot.className = `status-dot ${session.status}`;
+  titleLine.append(badge, title, dot);
+  card.append(titleLine);
+
+  if (session.jot) {
+    const meta = document.createElement("div");
+    meta.className = "orchestrator-card-meta";
+    const parts = [];
+    if (session.jot.review > 0) {
+      parts.push(`${session.jot.review} review`);
+    }
+    if (session.jot.inProgress > 0) {
+      parts.push(`${session.jot.inProgress} wip`);
+    }
+    if (session.jot.open > 0) {
+      parts.push(`${session.jot.open} open`);
+    }
+    meta.textContent = parts.length ? parts.join(" · ") : "up to date";
+    card.append(meta);
+  }
+
+  card.addEventListener("click", () => openSessionInPane(session, focusedPaneIndex));
+  title.addEventListener("dblclick", (e) => {
+    e.stopPropagation();
+    makeInlineEditable(title, session.title, (v) => renameSessionTo(session, v));
+  });
+  card.dataset.hasMenu = "1";
+  card.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    showContextMenu(e.clientX, e.clientY, [
+      { label: "Open here", onClick: () => openSessionInPane(session, focusedPaneIndex) },
+      { label: "Open in split pane", onClick: () => openSessionInPane(session, focusedPaneIndex === 0 ? 1 : 0, true) },
+      { label: "Rename chat (or double-click it)", onClick: () => makeInlineEditable(title, session.title, (v) => renameSessionTo(session, v)) },
+      { sep: true },
+      { label: "Unmark as Maestro chat", onClick: () => toggleManualMaestroTag(session) },
+    ]);
+  });
+
+  return card;
+}
+
 function rowEl(session) {
   const row = document.createElement("div");
   row.className = "row" + (session.sessionId === selectedSessionId ? " selected" : "");
@@ -530,7 +588,12 @@ function sectionEl({ label, sessions, collapsed, pinned, droppable, emptyHint, i
     hint.textContent = emptyHint;
     list.append(hint);
   } else {
-    sortByAttention(sessions).forEach((s) => list.append(rowEl(s)));
+    // Categories keep whatever order the user dragged them into (the actual
+    // bug: this used to always re-sort by attention, so a manual reorder
+    // changed the underlying data but the display silently overrode it every
+    // render). Only the computed spotlight/list views sort by attention.
+    const ordered = isCategory ? sessions : sortByAttention(sessions);
+    ordered.forEach((s) => list.append(rowEl(s)));
   }
 
   // Same click-then-dblclick-cancels debounce as session rows, so a double
@@ -644,37 +707,32 @@ function renderSidebar() {
     return;
   }
 
-  // Pinned spotlight sections (Maestro, attention) are lenses over the same
-  // data, not organizational membership — but leaving a session in Unsorted
-  // TOO, when it's not in any real category, read as "duplicated" rather than
-  // as two views of one thing. Track them so Unsorted excludes them, same as
-  // real category membership already does.
-  const pinnedIds = new Set();
-
+  // The orchestrator chat is special, not just another group: one static,
+  // prominent card at the top — never duplicated into Needs-attention, its
+  // original category, or Unsorted (per feedback that a plain accordion
+  // section made it look like it belonged in multiple places at once).
   const maestroSessions = visible.filter(isOrchestratorSession);
+  const maestroIds = new Set(maestroSessions.map((s) => s.sessionId));
   if (maestroSessions.length > 0) {
-    maestroSessions.forEach((s) => pinnedIds.add(s.sessionId));
-    body.append(
-      sectionEl({ label: "◆ Maestro", sessions: maestroSessions, collapsed: false, pinned: true, droppable: false })
-    );
+    body.append(orchestratorCardEl(sortByAttention(maestroSessions)[0]));
   }
 
-  const attention = visible.filter((s) => s.needsAttention);
+  const attention = visible.filter((s) => s.needsAttention && !maestroIds.has(s.sessionId));
   if (attention.length > 0) {
-    attention.forEach((s) => pinnedIds.add(s.sessionId));
     body.append(
       sectionEl({ label: "Needs your attention", sessions: attention, collapsed: false, pinned: true, droppable: false })
     );
   }
 
   const groups = state.config.groups || [];
-  const grouped = new Set(pinnedIds);
+  const grouped = new Set(maestroIds);
   for (const group of groups) {
     const members = (group.sessionIds || [])
       .map(sessionById)
       .filter(Boolean)
       .filter((s) => !s.isArchived)
-      .filter(matchesSearch);
+      .filter(matchesSearch)
+      .filter((s) => !maestroIds.has(s.sessionId));
     (group.sessionIds || []).forEach((id) => grouped.add(id));
     body.append(
       sectionEl({
@@ -849,6 +907,23 @@ function turnEl(turn) {
     bubble.textContent = turn.text;
   }
   wrap.append(bubble);
+
+  if (turn.role === "assistant") {
+    const copyBtn = document.createElement("button");
+    copyBtn.className = "copy-btn";
+    copyBtn.textContent = "Copy";
+    copyBtn.addEventListener("click", () => {
+      window.maestro.copyToClipboard(turn.text);
+      copyBtn.textContent = "Copied";
+      copyBtn.classList.add("copied");
+      setTimeout(() => {
+        copyBtn.textContent = "Copy";
+        copyBtn.classList.remove("copied");
+      }, 1200);
+    });
+    wrap.append(copyBtn);
+  }
+
   return wrap;
 }
 
