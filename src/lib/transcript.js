@@ -1,5 +1,14 @@
 import fs from "node:fs";
 
+// Bounds how much of a transcript file is ever read into memory. Transcripts
+// "can be many megabytes" (a long session with big tool outputs easily gets
+// there) — reading the whole file with readFileSync + split("\n") doubles
+// that in memory and blocks the main process for the duration. sessions.js
+// already does an equivalent tail-read (96KB) for its own narrower need
+// (just the last message's role); this is the same technique sized for
+// actually rendering chat history.
+const MAX_READ_BYTES = 8 * 1024 * 1024;
+
 /**
  * Parses a Claude Code session transcript (.jsonl) into a flat list of
  * renderable turns for a full chat-history view. Verified against a real
@@ -16,10 +25,32 @@ import fs from "node:fs";
  */
 export function readTranscript(transcriptPath, { maxTurns = 4000 } = {}) {
   if (!transcriptPath || !fs.existsSync(transcriptPath)) {
-    return { turns: [], truncated: false, totalLines: 0 };
+    return { turns: [], truncated: false, linesRead: 0 };
   }
-  const raw = fs.readFileSync(transcriptPath, "utf8");
+  const size = fs.statSync(transcriptPath).size;
+  const readFromTail = size > MAX_READ_BYTES;
+  let raw;
+  if (readFromTail) {
+    const fd = fs.openSync(transcriptPath, "r");
+    try {
+      const start = size - MAX_READ_BYTES;
+      const buffer = Buffer.alloc(MAX_READ_BYTES);
+      fs.readSync(fd, buffer, 0, MAX_READ_BYTES, start);
+      raw = buffer.toString("utf8");
+    } finally {
+      fs.closeSync(fd);
+    }
+  } else {
+    raw = fs.readFileSync(transcriptPath, "utf8");
+  }
   const lines = raw.split("\n");
+  if (readFromTail) {
+    // The byte offset almost certainly lands mid-line — the first "line" is
+    // a fragment of a longer one that started before our window. JSON.parse
+    // would just fail on it anyway (already handled below), but dropping it
+    // explicitly is clearer than relying on that as an accident of parsing.
+    lines.shift();
+  }
   const turns = [];
 
   for (const line of lines) {
@@ -44,9 +75,22 @@ export function readTranscript(transcriptPath, { maxTurns = 4000 } = {}) {
     // other types are structural noise for a chat view; skipped
   }
 
-  const truncated = turns.length > maxTurns;
-  const sliced = truncated ? turns.slice(turns.length - maxTurns) : turns;
-  return { turns: sliced, truncated, totalLines: lines.length, hiddenCount: truncated ? turns.length - maxTurns : 0 };
+  const turnsExceedCap = turns.length > maxTurns;
+  const truncated = turnsExceedCap || readFromTail;
+  const sliced = turnsExceedCap ? turns.slice(turns.length - maxTurns) : turns;
+  // hiddenCount must never go negative: if only the byte-cap kicked in
+  // (turns.length is comfortably under maxTurns from the tail window alone),
+  // "turns.length - maxTurns" would be negative — there IS earlier content
+  // beyond what was read, we just don't know exactly how many turns' worth,
+  // so fall back to a minimum of 1 rather than a nonsensical count.
+  const hiddenCount = truncated ? Math.max(turns.length - maxTurns, readFromTail ? 1 : 0) : 0;
+  // Named linesRead, not totalLines — when readFromTail is true this is only
+  // the line count of the trailing window that was actually read, not the
+  // real total in the file. The old name silently changed meaning (whole-
+  // file count -> partial count) for any large transcript once the byte cap
+  // above was added; nothing in this codebase consumes the field today
+  // (verified), but the name itself was a trap for the next thing that does.
+  return { turns: sliced, truncated, linesRead: lines.length, hiddenCount };
 }
 
 function pushUserTurn(turns, entry) {
