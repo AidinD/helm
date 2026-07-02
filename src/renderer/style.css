@@ -308,7 +308,36 @@ h1 {
 }
 
 .section {
+  position: relative; /* anchor for the drop-before/after edge markers */
   margin-bottom: 4px;
+}
+
+.section.dragging {
+  opacity: 0.4;
+}
+
+/* Same technique as the session-row drop indicator: an absolutely-
+   positioned pseudo-element, not a real element in the list flow, so
+   showing/hiding it never shifts layout or the rects the drag position math
+   depends on. */
+.section.drop-before::before,
+.section.drop-after::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 1px;
+  pointer-events: none;
+}
+
+.section.drop-before::before {
+  top: -3px;
+}
+
+.section.drop-after::after {
+  bottom: -3px;
 }
 
 .section-head {
