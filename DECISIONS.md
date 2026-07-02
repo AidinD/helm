@@ -1,5 +1,63 @@
 # Decisions
 
+## 2026-07-02 — Full-app review (4 parallel Opus reviewers), Tier 1 fixes shipped
+
+**Context:** ran a whole-codebase review (main process/IPC, data/read layer,
+renderer state/lifecycle, renderer DOM/CSS/UX — 4 independent reviewers, no
+sub-agents), synthesized + personally verified the top findings against the
+actual code, then ranked everything into Tier 1 (real bugs) / Tier 2
+(robustness/degradation) / Tier 3 (polish/a11y). All 15 findings filed in
+Jot at priority -2. Fixing all of them in order per the captain's explicit ask.
+
+**Tier 1, shipped this batch (6 fixes):**
+
+1. **Stop didn't kill the process tree on Windows** (`main.js`) —
+   `child.kill()` only signals the top-level `claude.exe`; its own children
+   (model runtime, MCP servers, subagents) survived and kept running/costing
+   subscription usage. New `killChildTree()` uses `taskkill /pid <pid> /T /F`
+   on win32. **Verified empirically**, not just by reading the code: spawned
+   a real 2-level process tree, confirmed plain `kill()` left an orphan
+   (before=16, after=17) and `taskkill /T /F` cleaned up fully (after=17,
+   back to baseline).
+2. **Nothing killed live children on app quit** — added an `app.on("before-
+   quit")` sweep over `liveChildren` using the same `killChildTree()`.
+3. **Unprotected post-run bookkeeping could strand a pane as "running"
+   forever** — `done.then(...)` used to run `appendUsageLog`/Notification/
+   judge-kickoff BEFORE sending the `done` IPC event; a throw in any of them
+   (corrupt config, disk-full log write) meant the renderer never got
+   unblocked. Now `send({kind:"done"})` fires first, and everything after it
+   is wrapped in try/catch (+ a `.catch()` on the judge's own promise chain).
+4. **Archive write was non-atomic against another app's live file**
+   (`sessions.js`) — `writeFileSync` truncates-then-writes; a crash/disk-full
+   mid-write could corrupt the desktop app's own session file. Now writes to
+   a temp file in the same directory + `renameSync` (atomic same-volume),
+   with best-effort cleanup if the rename itself fails. Verified the temp
+   name's shape (`.<file>.<hex>.tmp`) is invisible to every directory scan
+   that looks for `local_*.json`.
+5. **Orphaned launch could bleed into an unrelated new session, and the
+   error path leaked forever** (`renderer.js`) — the biggest structural fix.
+   A separate `paneLaunchMap` (launchId→index, no identity check) routed
+   every launch-scoped event, and its own cleanup only ran on `done`, never
+   on `error` — an unbounded leak on every failed launch. Removed entirely;
+   ALL launch-scoped events (session/tool_use/assistant/error/done/modelFit)
+   now route through the existing `launchPaneHistory` map with the identity
+   check (`panes[index] === pane`) already used elsewhere in this codebase.
+   `quota` was pulled out of the pane-gated switch too — it's app-wide and
+   was being silently dropped whenever the routing lookup failed for
+   unrelated reasons.
+6. **`pruneStaleLaunchHistory`'s blind time cutoff became a correctness
+   risk** once launchPaneHistory became the ONLY routing table (previously
+   it only fed the model-fit judge, where losing an entry early was a
+   cosmetic miss at worst) — a long xhigh-effort prompt running past the
+   10-minute cutoff would have had its entry pruned mid-run, silently
+   dropping its remaining events. Fixed: never prune an entry whose pane is
+   still attached AND still busy; only the time cutoff applies once a launch
+   is actually finished or orphaned.
+
+All 4 fixes passed an independent review pass (main-process integration,
+atomic-write correctness, and the full renderer-routing consolidation with
+its 4 specific correctness questions) — no new bugs found.
+
 ## 2026-07-02 — Drag-and-drop reorder: full rewrite (single source of truth + zero-layout indicator)
 
 **Decision:** After two partial fixes didn't fully resolve "reorder is
