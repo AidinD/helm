@@ -34,6 +34,9 @@ export function loadJot(jotConfig = {}) {
       review: 0,
       done: 0,
       total: 0,
+      // Earliest deadline among this category's still-open work (null if
+      // none). Drives deadline-aware attention sorting in sessions.js.
+      nearestDeadline: null,
     });
   }
   for (const todo of todos) {
@@ -52,6 +55,12 @@ export function loadJot(jotConfig = {}) {
     }
     if (todo.status !== "done") {
       entry.total += 1;
+      // Only unfinished work's deadline matters — a done task's deadline is
+      // history. Track the soonest such deadline (including overdue ones,
+      // which are the most urgent, not filtered out).
+      if (typeof todo.deadline === "number" && (entry.nearestDeadline === null || todo.deadline < entry.nearestDeadline)) {
+        entry.nearestDeadline = todo.deadline;
+      }
     }
   }
 
