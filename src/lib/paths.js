@@ -50,7 +50,12 @@ function walkForSessionJson(dir, out, depth) {
     out.push({ dir, count: localCount });
   }
   for (const entry of entries) {
-    if (entry.isDirectory()) {
+    // A symlinked directory reports isDirectory() true (following the link
+    // target), so a symlink loop under this tree would keep re-walking the
+    // same target on every level until the depth guard above finally saves
+    // it. Skipping symlinks outright avoids that pointless re-walk — this
+    // tree is app-owned, real subdirectories are never symlinks.
+    if (entry.isDirectory() && !entry.isSymbolicLink()) {
       walkForSessionJson(path.join(dir, entry.name), out, depth + 1);
     }
   }

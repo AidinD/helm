@@ -668,7 +668,8 @@ body.advanced .row-jot {
   transition: opacity 0.1s ease;
 }
 
-.turn.assistant:hover .copy-btn {
+.turn.assistant:hover .copy-btn,
+.copy-btn:focus-visible {
   opacity: 1;
 }
 
@@ -1091,6 +1092,11 @@ body.advanced .row-jot {
   border-radius: 8px;
   padding: 4px;
   min-width: 160px;
+}
+
+.context-menu .submenu.flip-left {
+  left: auto;
+  right: 100%;
 }
 
 .context-menu .item:hover > .submenu {

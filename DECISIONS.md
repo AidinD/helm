@@ -1,5 +1,52 @@
 # Decisions
 
+## 2026-07-02 — Tier 3 fixes from the full-app review: polish/a11y (closes the review)
+
+**1. config.js deep-merge for nested defaults** — a shallow
+`{...DEFAULT_CONFIG, ...parsed}` meant a config.json with a partial
+`jot`/`modelFitJudge`/`archiveSuggestions` object silently dropped the other
+default sub-keys. Now merges those three (the only fixed-shape nested
+defaults — everything else is a free-form map/array where shallow replace
+is correct) one level deep.
+
+**2. paths.js skips symlinks in the session-directory walk** — a symlinked
+subdirectory reports `isDirectory()` true, so a symlink cycle under the
+session-storage tree would re-walk the same target repeatedly until the
+existing depth guard finally stopped it. Real subdirectories there are never
+symlinks (it's app-managed storage), so skipping them outright has no
+downside.
+
+**3. Stop-vs-natural-completion race** — a process finishing naturally in the
+small window between a Stop click and the IPC call landing still showed
+"⏹ Stopped." even though it completed normally, because the check was
+`pane.stopRequested` alone. Now also checks `!evt.summary?.sawResult`
+(confirmed in `launcher.js`: only set when the CLI itself emitted a genuine
+`result` event) — a stop-click race that turns out to have actually finished
+is now correctly treated as a completion, not a stop.
+
+**4. Context-menu keyboard/UX** — three small additions: Escape now closes
+the context menu (previously only an outside click did; verified no conflict
+with the inline-edit input's own Escape handling, which stops propagation
+before it can reach this new document-level listener); the "Move to
+category" submenu now flips to the left side when it would overflow past the
+right edge of the window (right-clicking a row near the edge used to push it
+off-screen with no way to reach it); the copy button under an assistant
+reply is now visible on keyboard focus, not just mouse hover (previously
+invisible to keyboard/touch entirely).
+
+**Investigated, not changed:** the inline-edit "blur commits the edit"
+behavior the review flagged — re-read `makeInlineEditable`'s own doc comment
+and found this is already-intentional, already-documented design (Enter/blur
+commit, Escape cancels — Escape-to-cancel was already correctly wired, just
+not what the review initially assumed was missing). Left as-is rather than
+change a working, deliberate behavior. Full keyboard arrow-navigation
+through the custom context menu/dropdown was scoped OUT of this pass — a
+real accessibility gap, but a larger UI undertaking than "polish," better
+addressed as its own piece of work if it matters enough to prioritize.
+
+All 4 fixes passed an independent review — no new bugs found. **This closes
+the full-app review**: 15 findings across 3 tiers, all fixed and verified.
+
 ## 2026-07-02 — Tier 2 fixes from the full-app review: robustness/degradation
 
 **1. Unbounded transcript read** (`transcript.js`) — a huge .jsonl file was

@@ -51,7 +51,20 @@ export function loadConfig() {
   try {
     const raw = fs.readFileSync(configPath, "utf8");
     const parsed = JSON.parse(raw);
-    return { ...DEFAULT_CONFIG, ...parsed };
+    // A plain {...DEFAULT_CONFIG, ...parsed} is a SHALLOW merge — a
+    // config.json with only a partial nested object (e.g. {"jot":
+    // {"enabled":false}}) would replace the whole default `jot`, silently
+    // dropping `path`/`overrides`/`weights`. Only these three keys are
+    // nested objects with their own defaults worth protecting individually;
+    // everything else in DEFAULT_CONFIG is a primitive or an array, where a
+    // shallow overwrite is exactly the right behavior.
+    return {
+      ...DEFAULT_CONFIG,
+      ...parsed,
+      modelFitJudge: { ...DEFAULT_CONFIG.modelFitJudge, ...parsed.modelFitJudge },
+      archiveSuggestions: { ...DEFAULT_CONFIG.archiveSuggestions, ...parsed.archiveSuggestions },
+      jot: { ...DEFAULT_CONFIG.jot, ...parsed.jot },
+    };
   } catch {
     return { ...DEFAULT_CONFIG };
   }
