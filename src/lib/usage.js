@@ -23,16 +23,38 @@ export function appendUsageLog(entry) {
  * Tolerant of a missing file or the occasional malformed line.
  */
 export function readUsageSummary() {
+  const empty = {
+    totalRuns: 0,
+    totalCostUsd: 0,
+    byModel: {},
+    byTool: {},
+    bySkill: {},
+    modelFit: {}, // { model: { too_weak, appropriate, too_strong } }
+    judgeCostUsd: 0,
+  };
   if (!fs.existsSync(logPath)) {
-    return { totalRuns: 0, totalCostUsd: 0, byModel: {}, byTool: {}, bySkill: {} };
+    return empty;
   }
   const lines = fs.readFileSync(logPath, "utf8").split("\n").filter(Boolean);
-  const summary = { totalRuns: 0, totalCostUsd: 0, byModel: {}, byTool: {}, bySkill: {} };
+  const summary = empty;
   for (const line of lines) {
     let entry;
     try {
       entry = JSON.parse(line);
     } catch {
+      continue;
+    }
+    // Entries logged before the "type" field existed are implicitly "run".
+    const type = entry.type || "run";
+    if (type === "modelFitVerdict") {
+      summary.judgeCostUsd += entry.judgeCostUsd || 0;
+      const model = entry.model || "unknown";
+      if (!summary.modelFit[model]) {
+        summary.modelFit[model] = { too_weak: 0, appropriate: 0, too_strong: 0 };
+      }
+      if (entry.verdict && summary.modelFit[model][entry.verdict] !== undefined) {
+        summary.modelFit[model][entry.verdict] += 1;
+      }
       continue;
     }
     summary.totalRuns += 1;

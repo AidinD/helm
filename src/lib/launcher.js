@@ -6,7 +6,7 @@ import { spawn, execSync } from "node:child_process";
 // the real claude.exe and spawning it directly avoids the shell entirely, so
 // Node's own (correct) Windows argv escaping applies.
 let resolvedClaudePath = null;
-function resolveClaudeBinary() {
+export function resolveClaudeBinary() {
   if (resolvedClaudePath) {
     return resolvedClaudePath;
   }

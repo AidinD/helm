@@ -17,6 +17,11 @@ const DEFAULT_CONFIG = {
   titleOverrides: {}, // { "<sessionId>": "Custom title" }
   manualMaestroSessions: [], // sessionIds tagged "◆ Maestro" by hand, independent of Jot category matching
   hiddenSessions: [], // sessionIds removed from Maestro's view (restore by editing this array)
+  // Runs a cheap Haiku judge after every completed prompt to flag whether the
+  // model/effort choice was too weak/too strong (~$0.015-0.02 extra per run,
+  // after stripping MCP/tool defs the judge doesn't need). User-requested;
+  // set enabled:false here to turn it off if the recurring cost isn't worth it.
+  modelFitJudge: { enabled: true },
   jot: {
     enabled: true,
     path: "D:\\Dropbox\\jot\\todos.json",

@@ -1,5 +1,36 @@
 # Decisions
 
+## 2026-07-02 — Model-fit judge: Haiku, non-bare, cost reduced ~78% by stripping tools/MCP
+
+**Decision:** After every completed prompt, fire a separate cheap `claude -p`
+call (Haiku, effort low) that judges whether the model/effort choice was
+`too_weak` / `appropriate` / `too_strong`, using `--json-schema` for a
+structured verdict. Fire-and-forget — never delays the real response, and
+skipped if the run was stopped early (nothing meaningful to judge).
+
+**Cost investigation (measured, not assumed):**
+- Naive non-bare Haiku call: **$0.068/call** (~32k cache-creation tokens).
+- `--bare` would cut this further but was rejected outright: it hard-codes
+  `ANTHROPIC_API_KEY`-only auth, bypassing the subscription entirely — not
+  worth it for a background feature.
+- `--system-prompt` (replacing the default system prompt, still non-bare):
+  $0.068 → $0.053 (~22% cut). CLAUDE.md/default-prompt bulk wasn't the main
+  cost.
+- Adding `--allowed-tools ""` + `--mcp-config '{"mcpServers":{}}'
+  --strict-mcp-config` (the judge needs zero tools — it only emits JSON): **
+  $0.068 → $0.015, a 78% cut.** The bulk of the cost was tool/MCP-server
+  schema definitions (the captain has several MCP servers configured) being sent on
+  every non-bare invocation regardless of system prompt size — not CLAUDE.md.
+
+**Why this matters beyond this feature:** any future "small utility call"
+(judge, classifier, summarizer) that doesn't need tools should use this same
+recipe (`--system-prompt` + empty `--allowed-tools` + empty
+`--strict-mcp-config`) to stay cheap without giving up subscription auth.
+
+**Toggle:** `config.json`'s `modelFitJudge.enabled` (default `true`, per
+The captain's explicit request "efter varje färdig prompt"). Set `false` to disable
+if the recurring cost isn't worth it later.
+
 Working name: **Maestro** — a personal orchestrator harness over Claude Code
 sessions. Placeholder name; cheap to rename before there is git history.
 
