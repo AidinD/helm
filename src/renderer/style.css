@@ -124,6 +124,28 @@ h1 {
   color: var(--text);
 }
 
+.text-btn {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 6px;
+  height: 26px;
+  padding: 0 10px;
+  cursor: pointer;
+  font-size: 11.5px;
+  font: inherit;
+}
+
+.text-btn:hover {
+  background: var(--bg-card-hover);
+  color: var(--text);
+}
+
+.text-btn.has-running {
+  border-color: var(--active);
+  color: var(--active);
+}
+
 .icon-btn.active {
   border-color: var(--accent);
   color: var(--accent);

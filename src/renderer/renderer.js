@@ -10,6 +10,10 @@ const paneLaunchMap = new Map(); // launchId -> paneIndex, cleared once a launch
 // judge finishes well after "done") can still find its way back to the right
 // pane even after paneLaunchMap already dropped that launchId.
 const launchPaneHistory = new Map();
+// App-wide, not per-pane — a background Task-tool subagent's lifecycle
+// (task_started -> task_progress* -> task_updated/task_done), keyed by taskId.
+// Schema verified via spike/test-task-events-shape.mjs before building this.
+const backgroundTasks = new Map();
 
 // Each pane: { sessionId, cliSessionId, cwd, title, turns, hiddenCount, loading,
 //              busy, currentLaunchId, isOrchestrator }
@@ -1749,6 +1753,49 @@ document.getElementById("splitToggle").addEventListener("click", () => {
   renderWorkspace();
 });
 
+// ============================== Background tasks (subagents) ==============================
+// Matches the desktop app's "Background tasks" drawer, backed by real
+// task_started/task_progress/task_updated/task_notification events (verified
+// schema via spike/test-task-events-shape.mjs) rather than a hollow copy.
+
+function renderBackgroundTasksBadge() {
+  const btn = document.getElementById("backgroundTasksBtn");
+  const running = [...backgroundTasks.values()].filter((t) => t.status === "running").length;
+  btn.textContent = running > 0 ? `Background tasks (${running})` : "Background tasks";
+  btn.classList.toggle("has-running", running > 0);
+}
+
+document.getElementById("backgroundTasksBtn").addEventListener("click", (e) => {
+  e.stopPropagation();
+  const tasks = [...backgroundTasks.entries()];
+  if (tasks.length === 0) {
+    showContextMenu(e.clientX, e.clientY, [{ label: "No background tasks yet" }]);
+    return;
+  }
+  const items = tasks
+    .sort((a, b) => (b[1].startedAt || 0) - (a[1].startedAt || 0))
+    .map(([taskId, t]) => {
+      const statusIcon = t.status === "running" ? "◔" : t.status === "failed" ? "✗" : "✓";
+      const detail = t.status === "running" && t.lastToolName ? ` · ${t.lastToolName}` : "";
+      return { label: `${statusIcon} ${t.summary || t.description}${detail}` };
+    });
+  items.push(
+    { sep: true },
+    {
+      label: "Clear finished",
+      onClick: () => {
+        for (const [taskId, t] of backgroundTasks) {
+          if (t.status !== "running") {
+            backgroundTasks.delete(taskId);
+          }
+        }
+        renderBackgroundTasksBadge();
+      },
+    }
+  );
+  showContextMenu(e.clientX, e.clientY, items);
+});
+
 window.maestro.onSessionEvent((evt) => {
   // Handled separately: the judge resolves well after "done" already cleared
   // paneLaunchMap, so this needs the longer-lived launchPaneHistory instead.
@@ -1759,6 +1806,43 @@ window.maestro.onSessionEvent((evt) => {
     }
     const text = `${MODEL_FIT_ICON[evt.verdict] || "⚖"} ${MODEL_FIT_LABEL[evt.verdict] || evt.verdict}: ${evt.reason}`;
     setModelFitLine(entry.index, text, evt.verdict);
+    return;
+  }
+
+  // Background Task-tool subagents — app-wide, not tied to a single pane.
+  if (evt.kind === "task_started") {
+    backgroundTasks.set(evt.taskId, {
+      description: evt.description || evt.subagentType || "Background task",
+      status: "running",
+      lastToolName: null,
+      startedAt: Date.now(),
+    });
+    renderBackgroundTasksBadge();
+    return;
+  }
+  if (evt.kind === "task_progress") {
+    const t = backgroundTasks.get(evt.taskId);
+    if (t) {
+      t.lastToolName = evt.lastToolName || t.lastToolName;
+      renderBackgroundTasksBadge();
+    }
+    return;
+  }
+  if (evt.kind === "task_updated") {
+    const t = backgroundTasks.get(evt.taskId);
+    if (t) {
+      t.status = evt.status || t.status;
+      renderBackgroundTasksBadge();
+    }
+    return;
+  }
+  if (evt.kind === "task_done") {
+    const t = backgroundTasks.get(evt.taskId);
+    if (t) {
+      t.status = evt.status || "completed";
+      t.summary = evt.summary || t.description;
+      renderBackgroundTasksBadge();
+    }
     return;
   }
 
@@ -1813,5 +1897,6 @@ window.maestro.onSessionEvent((evt) => {
 });
 
 renderWorkspace();
+renderBackgroundTasksBadge();
 refresh();
 setInterval(refresh, 30000);
