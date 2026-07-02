@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, Notification } from "electron";
+import { app, BrowserWindow, ipcMain, dialog, shell, Notification, clipboard } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readAllSessions, enrichWithJot } from "./lib/sessions.js";
@@ -86,6 +86,13 @@ ipcMain.handle("skills:open", (_event, { name, origin, cwd }) => {
     return { ok: false, error: "SKILL.md not found" };
   }
   shell.openPath(file);
+  return { ok: true };
+});
+
+// --- Copy text to clipboard (Electron's own module, not navigator.clipboard,
+// to avoid relying on an untested web-permission assumption) ---
+ipcMain.handle("clipboard:write", (_event, text) => {
+  clipboard.writeText(text || "");
   return { ok: true };
 });
 
