@@ -928,12 +928,13 @@ function paneComposerEl(index) {
   const cwdInput = document.createElement("input");
   cwdInput.type = "text";
   cwdInput.className = "cwd-input";
-  cwdInput.placeholder = "D:\\Repo\\...";
+  cwdInput.placeholder = "Repo folder (required to send)";
   cwdInput.value = pane.cwd || "";
   cwdInput.title = pane.cwd || "Repo folder this session roots in";
   cwdInput.addEventListener("input", (e) => {
     pane.cwd = e.target.value;
     cwdInput.title = e.target.value;
+    cwdInput.classList.remove("cwd-missing");
   });
   const pickBtn = document.createElement("button");
   pickBtn.className = "icon-btn";
@@ -1046,7 +1047,17 @@ async function sendFromPane(index, els) {
   const prompt = els.promptEl.value.trim();
   const model = els.modelSel.value;
   const effort = els.effortSel.value;
-  if (!cwd || !prompt || pane.busy) {
+  if (pane.busy) {
+    return;
+  }
+  if (!cwd) {
+    // Was a SILENT no-op before — indistinguishable from "sending is broken".
+    // Make the block visible instead of dropping the click on the floor.
+    els.cwdInput.classList.add("cwd-missing");
+    els.cwdInput.focus();
+    return;
+  }
+  if (!prompt) {
     return;
   }
   pane.cwd = cwd;
