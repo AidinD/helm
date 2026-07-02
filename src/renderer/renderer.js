@@ -14,6 +14,7 @@ const launchPaneHistory = new Map();
 // (task_started -> task_progress* -> task_updated/task_done), keyed by taskId.
 // Schema verified via spike/test-task-events-shape.mjs before building this.
 const backgroundTasks = new Map();
+const TERMINAL_TASK_STATUSES = new Set(["completed", "failed"]);
 // Ad-hoc listeners for a specific launchId that isn't tied to a pane's normal
 // display flow — used by "Summarize & carry over" to capture a resumed
 // session's summary reply without it needing to occupy a visible pane.
@@ -590,9 +591,12 @@ function openFreshDraftInPane(cwd, draftText) {
 
 async function summarizeAndCarryOver(session) {
   const statusIndex = focusedPaneIndex;
+  const statusPane = panes[statusIndex]; // identity check below: focus/reset can change during the await
   setPaneBusyUIRaw(statusIndex, `● Summarizing "${session.title}"…`);
   const result = await summarizeSession(session);
-  setPaneBusyUIRaw(statusIndex, "");
+  if (panes[statusIndex] === statusPane) {
+    setPaneBusyUIRaw(statusIndex, "");
+  }
   if (result.error) {
     openFreshDraftInPane(session.cwd, `⚠ Failed to summarize: ${result.error}`);
     return;
@@ -1511,7 +1515,7 @@ async function sendFromPane(index, els) {
   // different session in this same pane slot before a late event (the judge)
   // arrives, panes[index] will no longer be this object, and we can tell not
   // to misattribute the result to the new session.
-  launchPaneHistory.set(res.launchId, { index, pane });
+  launchPaneHistory.set(res.launchId, { index, pane, startedAt: Date.now() });
 }
 
 // Rebuilds every pane's DOM. Only call this when the NUMBER of panes changes
@@ -1573,6 +1577,20 @@ async function refresh() {
   applySidebarMode();
   renderSidebar();
   renderQuota(state.quota);
+  pruneStaleLaunchHistory();
+}
+
+// The modelFit event is the normal way launchPaneHistory entries get cleaned
+// up, but if the judge is disabled (config.modelFitJudge.enabled: false) or
+// errors before emitting one, that never happens — this is the backstop so
+// the map doesn't grow forever over a long-running session.
+function pruneStaleLaunchHistory() {
+  const cutoff = Date.now() - 10 * 60 * 1000;
+  for (const [launchId, entry] of launchPaneHistory) {
+    if ((entry.startedAt || 0) < cutoff) {
+      launchPaneHistory.delete(launchId);
+    }
+  }
 }
 
 function applyViewMode() {
@@ -1931,6 +1949,8 @@ window.maestro.onSessionEvent((evt) => {
     const cb = pendingLaunchCallbacks.get(evt.launchId);
     if (evt.kind === "assistant") {
       cb.assistantText += evt.text;
+    } else if (evt.kind === "session") {
+      cb.cliSessionId = evt.sessionId; // not used by summarizeSession today, but kept for future extension
     } else if (evt.kind === "done" || evt.kind === "error") {
       pendingLaunchCallbacks.delete(evt.launchId);
       cb.onDone(cb.assistantText, evt.kind === "error" ? evt.message : null);
@@ -1942,6 +1962,7 @@ window.maestro.onSessionEvent((evt) => {
   // paneLaunchMap, so this needs the longer-lived launchPaneHistory instead.
   if (evt.kind === "modelFit") {
     const entry = launchPaneHistory.get(evt.launchId);
+    launchPaneHistory.delete(evt.launchId); // this is the only consumer; always one-shot
     if (!entry || panes[entry.index] !== entry.pane) {
       return; // pane was reused for a different session in the meantime
     }
@@ -1971,7 +1992,10 @@ window.maestro.onSessionEvent((evt) => {
   }
   if (evt.kind === "task_updated") {
     const t = backgroundTasks.get(evt.taskId);
-    if (t) {
+    // Ignore an out-of-order/delayed update trying to un-finish a task that
+    // already reached a terminal state (e.g. via task_done) — a duplicate or
+    // reordered IPC message shouldn't make a completed task look running again.
+    if (t && !TERMINAL_TASK_STATUSES.has(t.status)) {
       t.status = evt.status || t.status;
       renderBackgroundTasksBadge();
     }
