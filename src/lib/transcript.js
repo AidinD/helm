@@ -35,8 +35,13 @@ export function readTranscript(transcriptPath, { maxTurns = 4000 } = {}) {
     try {
       const start = size - MAX_READ_BYTES;
       const buffer = Buffer.alloc(MAX_READ_BYTES);
-      fs.readSync(fd, buffer, 0, MAX_READ_BYTES, start);
-      raw = buffer.toString("utf8");
+      // readSync can return fewer bytes than requested (Node docs: "not safe
+      // to assume the entire buffer was filled"). Decode only what was
+      // actually read — otherwise the zero-filled tail of the Buffer.alloc
+      // becomes NUL chars appended to the last line, which then fails
+      // JSON.parse and silently drops the most recent turn(s).
+      const bytesRead = fs.readSync(fd, buffer, 0, MAX_READ_BYTES, start);
+      raw = buffer.toString("utf8", 0, bytesRead);
     } finally {
       fs.closeSync(fd);
     }
