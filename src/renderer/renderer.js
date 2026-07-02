@@ -1131,11 +1131,20 @@ function sectionEl({ label, sessions, collapsed, pinned, droppable, emptyHint, i
     head.addEventListener("dragstart", (e) => {
       e.stopPropagation();
       wrap.classList.add("dragging");
+      // Collapse every session list to just its header for the duration of a
+      // category drag (Aidin's ask) — with sessions expanded, reordering
+      // categories means dragging past long lists and losing sight of the
+      // order; header-only makes the target position obvious. One class on
+      // the scroll body, CSS hides the .section-list children; removed on
+      // dragend. Layout settles once here at dragstart, before any dragover,
+      // so it doesn't disturb the drop-position math.
+      document.getElementById("sidebarBody").classList.add("dragging-category");
       e.dataTransfer.setData("text/category-label", label);
       e.dataTransfer.effectAllowed = "move";
     });
     head.addEventListener("dragend", () => {
       wrap.classList.remove("dragging");
+      document.getElementById("sidebarBody").classList.remove("dragging-category");
       clearCategoryDropIndicators();
       categoryDropTarget = null;
     });
@@ -1246,6 +1255,11 @@ function renderSidebar() {
   const pinned = document.getElementById("sidebarPinned");
   body.innerHTML = "";
   pinned.innerHTML = "";
+  // Defensive: the category-drag "collapse lists to headers" class lives on
+  // this persistent element, cleared on dragend. If dragend ever fails to
+  // fire (odd HTML5-drag cancel path), a full re-render must not leave every
+  // session list stuck hidden.
+  body.classList.remove("dragging-category");
 
   const hiddenIds = new Set(state.config.hiddenSessions || []);
   const visible = state.sessions

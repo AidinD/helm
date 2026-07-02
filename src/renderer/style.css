@@ -434,6 +434,13 @@ h1 {
   display: none;
 }
 
+/* While a category header is being dragged to reorder, collapse every
+   session list to just its header so the category order is clear (set by
+   the category dragstart handler, removed on dragend). */
+#sidebarBody.dragging-category .section-list {
+  display: none;
+}
+
 .empty-hint {
   color: var(--text-faint);
   font-size: 11.5px;
