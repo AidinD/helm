@@ -22,6 +22,7 @@ function freshPane() {
     loading: false,
     busy: false,
     currentLaunchId: null,
+    stopRequested: false,
     isOrchestrator: false,
   };
 }
@@ -121,31 +122,40 @@ document.addEventListener("contextmenu", (e) => {
 });
 
 // ============================== Category CRUD ==============================
+//
+// window.prompt()/confirm() turned out to be unreliable in this Electron
+// build (renaming silently failed, and the OS cursor got stuck once). Rename
+// is now inline double-click editing everywhere, and delete is a two-step
+// context-menu confirm — no native synchronous dialogs anywhere.
+
+function nextCategoryLabel() {
+  const existing = new Set((state.config.groups || []).map((g) => g.label));
+  if (!existing.has("New category")) {
+    return "New category";
+  }
+  let n = 2;
+  while (existing.has(`New category ${n}`)) {
+    n++;
+  }
+  return `New category ${n}`;
+}
 
 async function createCategory() {
-  const label = window.prompt("New category name:");
-  if (!label || !label.trim()) {
-    return;
-  }
-  const groups = [...(state.config.groups || []), { label: label.trim(), sessionIds: [], collapsed: false }];
+  const groups = [...(state.config.groups || []), { label: nextCategoryLabel(), sessionIds: [], collapsed: false }];
   state.config = await window.maestro.setConfig({ groups });
   renderSidebar();
 }
 
-async function renameCategory(oldLabel) {
-  const label = window.prompt("Rename category:", oldLabel);
-  if (!label || !label.trim() || label === oldLabel) {
+async function renameCategoryTo(oldLabel, newLabel) {
+  if (!newLabel || !newLabel.trim() || newLabel === oldLabel) {
     return;
   }
-  const groups = (state.config.groups || []).map((g) => (g.label === oldLabel ? { ...g, label: label.trim() } : g));
+  const groups = (state.config.groups || []).map((g) => (g.label === oldLabel ? { ...g, label: newLabel.trim() } : g));
   state.config = await window.maestro.setConfig({ groups });
   renderSidebar();
 }
 
 async function deleteCategory(label) {
-  if (!window.confirm(`Delete category "${label}"? Sessions move to Unsorted.`)) {
-    return;
-  }
   const groups = (state.config.groups || []).filter((g) => g.label !== label);
   state.config = await window.maestro.setConfig({ groups });
   renderSidebar();
@@ -153,14 +163,49 @@ async function deleteCategory(label) {
 
 // Display-only rename — never writes to the desktop app's own session files,
 // so it can't corrupt live state there; it just overrides what Maestro shows.
-async function renameSession(session) {
-  const label = window.prompt("Rename chat (display only, doesn't touch the original):", session.title);
-  if (!label || !label.trim() || label === session.title) {
+async function renameSessionTo(session, newTitle) {
+  if (!newTitle || !newTitle.trim() || newTitle === session.title) {
     return;
   }
-  const titleOverrides = { ...(state.config.titleOverrides || {}), [session.sessionId]: label.trim() };
+  const titleOverrides = { ...(state.config.titleOverrides || {}), [session.sessionId]: newTitle.trim() };
   state.config = await window.maestro.setConfig({ titleOverrides });
   refresh();
+}
+
+// Replaces `labelEl` with a text input pre-filled with its current text.
+// Enter/blur commits via onCommit(value); Escape cancels. Restores the
+// original element afterward either way — this never leaves a stray input.
+function makeInlineEditable(labelEl, currentValue, onCommit) {
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "inline-edit";
+  input.value = currentValue;
+  labelEl.replaceWith(input);
+  input.focus();
+  input.select();
+
+  let done = false;
+  const finish = (commit) => {
+    if (done) {
+      return;
+    }
+    done = true;
+    input.replaceWith(labelEl);
+    if (commit) {
+      onCommit(input.value.trim());
+    }
+  };
+  input.addEventListener("keydown", (e) => {
+    e.stopPropagation();
+    if (e.key === "Enter") {
+      finish(true);
+    } else if (e.key === "Escape") {
+      finish(false);
+    }
+  });
+  input.addEventListener("blur", () => finish(true));
+  input.addEventListener("click", (e) => e.stopPropagation());
+  input.addEventListener("dblclick", (e) => e.stopPropagation());
 }
 
 // ============================== Drag and drop (VS Code style) ==============================
@@ -241,7 +286,17 @@ function rowEl(session) {
     row.append(j);
   }
 
-  row.addEventListener("click", () => openSessionInPane(session, focusedPaneIndex));
+  // Single click opens the session, but only after a short delay so a second
+  // click (making this a double-click) can cancel it in favor of renaming.
+  row.addEventListener("click", () => {
+    clearTimeout(row._openTimer);
+    row._openTimer = setTimeout(() => openSessionInPane(session, focusedPaneIndex), 250);
+  });
+  title.addEventListener("dblclick", (e) => {
+    e.stopPropagation();
+    clearTimeout(row._openTimer);
+    makeInlineEditable(title, session.title, (v) => renameSessionTo(session, v));
+  });
 
   row.addEventListener("contextmenu", (e) => {
     e.preventDefault();
@@ -250,7 +305,7 @@ function rowEl(session) {
     showContextMenu(e.clientX, e.clientY, [
       { label: "Open here", onClick: () => openSessionInPane(session, focusedPaneIndex) },
       { label: "Open in split pane", onClick: () => openSessionInPane(session, focusedPaneIndex === 0 ? 1 : 0, true) },
-      { label: "Rename chat", onClick: () => renameSession(session) },
+      { label: "Rename chat (or double-click it)", onClick: () => makeInlineEditable(title, session.title, (v) => renameSessionTo(session, v)) },
       { sep: true },
       {
         label: "Move to category",
@@ -371,8 +426,13 @@ function sectionEl({ label, sessions, collapsed, pinned, droppable, emptyHint, i
   const wrap = document.createElement("div");
   wrap.className = "section";
 
+  const hasActiveSession = sessions.some((s) => s.sessionId === selectedSessionId);
   const head = document.createElement("div");
-  head.className = "section-head" + (pinned ? " attention-head" : "") + (collapsed ? " collapsed" : "");
+  head.className =
+    "section-head" +
+    (pinned ? " attention-head" : "") +
+    (collapsed ? " collapsed" : "") +
+    (isCategory && hasActiveSession ? " active-category" : "");
   const caret = document.createElement("span");
   caret.className = "caret";
   caret.textContent = "▾";
@@ -398,22 +458,44 @@ function sectionEl({ label, sessions, collapsed, pinned, droppable, emptyHint, i
     sortByAttention(sessions).forEach((s) => list.append(rowEl(s)));
   }
 
+  // Same click-then-dblclick-cancels debounce as session rows, so a double
+  // click on the label renames instead of just toggling collapse twice.
   head.addEventListener("click", () => {
-    head.classList.toggle("collapsed");
-    list.classList.toggle("hidden");
-    if (isCategory) {
-      persistCollapsed(label, head.classList.contains("collapsed"));
-    }
+    clearTimeout(head._toggleTimer);
+    head._toggleTimer = setTimeout(() => {
+      head.classList.toggle("collapsed");
+      list.classList.toggle("hidden");
+      if (isCategory) {
+        persistCollapsed(label, head.classList.contains("collapsed"));
+      }
+    }, 250);
   });
 
   if (isCategory) {
+    name.addEventListener("dblclick", (e) => {
+      e.stopPropagation();
+      clearTimeout(head._toggleTimer);
+      makeInlineEditable(name, label, (v) => renameCategoryTo(label, v));
+    });
     head.dataset.hasMenu = "1";
     head.addEventListener("contextmenu", (e) => {
       e.preventDefault();
       e.stopPropagation();
-      showContextMenu(e.clientX, e.clientY, [
-        { label: "Rename category", onClick: () => renameCategory(label) },
-        { label: "Delete category", danger: true, onClick: () => deleteCategory(label) },
+      const x = e.clientX;
+      const y = e.clientY;
+      showContextMenu(x, y, [
+        { label: "Rename category (or double-click it)", onClick: () => makeInlineEditable(name, label, (v) => renameCategoryTo(label, v)) },
+        {
+          label: "Delete category",
+          danger: true,
+          onClick: () => {
+            // Re-opens the menu with an explicit confirm step instead of a
+            // native window.confirm() dialog (unreliable in this build).
+            showContextMenu(x, y, [
+              { label: `Confirm delete "${label}"`, danger: true, onClick: () => deleteCategory(label) },
+            ]);
+          },
+        },
       ]);
     });
     // Dropping directly on the header appends to the end of that category.
@@ -529,9 +611,77 @@ function renderMarkdownInto(container, text) {
       pre.textContent = segment.replace(/^[ \t]*\S*\n/, "");
       container.append(pre);
     } else if (segment) {
-      renderInlineLines(container, segment);
+      renderTextBlock(container, segment);
     }
   });
+}
+
+const TABLE_ROW = /^\s*\|.*\|\s*$/;
+const TABLE_SEPARATOR = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/;
+
+// Splits a non-code segment into GFM table blocks (rendered as real <table>
+// elements, matching the desktop app) and plain lines.
+function renderTextBlock(container, text) {
+  const lines = text.split("\n");
+  let i = 0;
+  let plainRun = [];
+  const flushPlain = () => {
+    if (plainRun.length) {
+      renderInlineLines(container, plainRun.join("\n"));
+      plainRun = [];
+    }
+  };
+  while (i < lines.length) {
+    if (TABLE_ROW.test(lines[i]) && i + 1 < lines.length && TABLE_SEPARATOR.test(lines[i + 1])) {
+      flushPlain();
+      const tableLines = [lines[i]];
+      let j = i + 2;
+      while (j < lines.length && TABLE_ROW.test(lines[j])) {
+        tableLines.push(lines[j]);
+        j++;
+      }
+      container.append(tableEl(lines[i], tableLines.slice(1)));
+      i = j;
+    } else {
+      plainRun.push(lines[i]);
+      i++;
+    }
+  }
+  flushPlain();
+}
+
+function tableCells(line) {
+  return line
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((c) => c.trim());
+}
+
+function tableEl(headerLine, bodyLines) {
+  const table = document.createElement("table");
+  table.className = "md-table";
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  tableCells(headerLine).forEach((cell) => {
+    const th = document.createElement("th");
+    th.append(...inlineFormat(cell));
+    headRow.append(th);
+  });
+  thead.append(headRow);
+  const tbody = document.createElement("tbody");
+  bodyLines.forEach((line) => {
+    const tr = document.createElement("tr");
+    tableCells(line).forEach((cell) => {
+      const td = document.createElement("td");
+      td.append(...inlineFormat(cell));
+      tr.append(td);
+    });
+    tbody.append(tr);
+  });
+  table.append(thead, tbody);
+  return table;
 }
 
 function renderInlineLines(container, text) {
@@ -601,33 +751,33 @@ function turnEl(turn) {
   return wrap;
 }
 
-// Consecutive tool_use turns render as a single wrapping row of compact
-// pills (Halyard-style: rounded-full, thin border) instead of stacked lines.
-function toolPillRow(group) {
-  const row = document.createElement("div");
-  row.className = "tool-pill-row";
-  group.forEach((t) => {
-    const pill = document.createElement("span");
-    pill.className = "tool-pill";
-    pill.textContent = `🔧 ${t.toolName}`;
-    if (t.toolInput) {
-      pill.title = t.toolInput;
-    }
-    row.append(pill);
-  });
-  return row;
+// A tool call renders as a collapsed, expandable pill (Halyard-style
+// rounded chip as the closed state, matching the desktop app's clickable
+// "Bash"/"Read" summaries that expand to show the actual output).
+function toolCallEl(useTurn, resultTurn) {
+  const details = document.createElement("details");
+  details.className = "tool-call";
+  const summary = document.createElement("summary");
+  summary.textContent = `🔧 ${useTurn.toolName}${useTurn.toolInput ? " · " + useTurn.toolInput : ""}`;
+  details.append(summary);
+  if (resultTurn) {
+    const pre = document.createElement("pre");
+    pre.className = "tool-call-output";
+    pre.textContent = resultTurn.text;
+    details.append(pre);
+  }
+  return details;
 }
 
 function appendTurns(scroll, turns) {
   let i = 0;
   while (i < turns.length) {
     if (turns[i].kind === "tool_use") {
-      const group = [];
-      while (i < turns.length && turns[i].kind === "tool_use") {
-        group.push(turns[i]);
-        i++;
-      }
-      scroll.append(toolPillRow(group));
+      const useTurn = turns[i];
+      const next = turns[i + 1];
+      const resultTurn = next && next.kind === "tool_result" ? next : null;
+      scroll.append(toolCallEl(useTurn, resultTurn));
+      i += resultTurn ? 2 : 1;
     } else {
       scroll.append(turnEl(turns[i]));
       i++;
@@ -675,30 +825,28 @@ function renderPane(index) {
     scroll.append(empty);
   } else {
     appendTurns(scroll, pane.turns);
-    wireEditableLastUserTurn(index, scroll);
+    wireEditableUserTurns(index, scroll);
   }
   scroll.scrollTop = scroll.scrollHeight;
 }
 
-// Double-click the most recent user message to copy it back into the prompt
-// box for editing + resend. Does not alter history — the CLI can't retract a
-// turn via --resume, so this is "edit and send again," not a true rewrite.
-function wireEditableLastUserTurn(index, scroll) {
-  const userBubbles = scroll.querySelectorAll(".turn.user .turn-bubble");
-  if (userBubbles.length === 0) {
-    return;
-  }
-  const last = userBubbles[userBubbles.length - 1];
-  last.classList.add("editable");
-  last.title = "Double-click to edit and resend";
-  last.addEventListener("dblclick", () => {
-    const paneEl = document.querySelector(`.pane[data-pane="${index}"]`);
-    const promptEl = paneEl?.querySelector(".pane-composer textarea");
-    if (promptEl) {
-      promptEl.value = last.textContent;
-      promptEl.focus();
-      promptEl.dispatchEvent(new Event("input"));
-    }
+// Double-click ANY past user message to copy it back into the prompt box for
+// editing + resend. Does not alter history — the CLI can't retract a turn via
+// --resume, so this is "edit and send again" (appends as a new turn), not a
+// true rewind/branch like the desktop app's retry icon.
+function wireEditableUserTurns(index, scroll) {
+  scroll.querySelectorAll(".turn.user .turn-bubble").forEach((bubble) => {
+    bubble.classList.add("editable");
+    bubble.title = "Double-click to edit and resend";
+    bubble.addEventListener("dblclick", () => {
+      const paneEl = document.querySelector(`.pane[data-pane="${index}"]`);
+      const promptEl = paneEl?.querySelector(".pane-composer textarea");
+      if (promptEl) {
+        promptEl.value = bubble.textContent;
+        promptEl.focus();
+        promptEl.dispatchEvent(new Event("input"));
+      }
+    });
   });
 }
 
@@ -725,6 +873,24 @@ function paneHeaderEl(index) {
   const status = document.createElement("span");
   status.className = "pane-status";
   header.append(status);
+
+  const actions = document.createElement("span");
+  actions.className = "pane-actions";
+  if (pane.sessionId) {
+    const resetBtn = document.createElement("button");
+    resetBtn.className = "icon-btn";
+    resetBtn.textContent = "+";
+    resetBtn.title = "Start a new chat in this pane";
+    resetBtn.addEventListener("click", () => {
+      panes[index] = freshPane();
+      if (selectedSessionId === pane.sessionId) {
+        selectedSessionId = null;
+      }
+      renderSinglePane(index);
+      renderSidebar();
+    });
+    actions.append(resetBtn);
+  }
   if (index === 1) {
     const close = document.createElement("button");
     close.className = "pane-close icon-btn";
@@ -735,8 +901,9 @@ function paneHeaderEl(index) {
       document.getElementById("workspace").classList.remove("split");
       renderWorkspace();
     });
-    header.append(close);
+    actions.append(close);
   }
+  header.append(actions);
   return header;
 }
 
@@ -745,54 +912,44 @@ function paneComposerEl(index) {
   const wrap = document.createElement("div");
   wrap.className = "pane-composer";
 
-  const banner = document.createElement("div");
-  banner.className = "resume-banner" + (pane.sessionId ? "" : " hidden");
-  banner.innerHTML = `Continuing <strong>${escapeHtml(pane.title || "")}</strong>`;
-  const newBtn = document.createElement("button");
-  newBtn.textContent = "✕ new session instead";
-  newBtn.addEventListener("click", () => {
-    panes[index] = freshPane();
-    if (selectedSessionId === pane.sessionId) {
-      selectedSessionId = null;
-    }
-    renderSinglePane(index);
-    renderSidebar();
-  });
-  banner.append(newBtn);
-  wrap.append(banner);
+  // One unified rounded "shell" (textarea on top, controls below), closer to
+  // the desktop app's single-pill composer instead of stacked separate fields.
+  const shell = document.createElement("div");
+  shell.className = "composer-shell";
 
-  const folderRow = document.createElement("div");
-  folderRow.className = "folder-row";
+  const promptEl = document.createElement("textarea");
+  promptEl.rows = 2;
+  promptEl.placeholder = pane.sessionId ? `Continue "${pane.title}"…` : "What should this session do?";
+  shell.append(promptEl);
+
+  const controls = document.createElement("div");
+  controls.className = "composer-controls";
+
   const cwdInput = document.createElement("input");
   cwdInput.type = "text";
+  cwdInput.className = "cwd-input";
   cwdInput.placeholder = "D:\\Repo\\...";
   cwdInput.value = pane.cwd || "";
+  cwdInput.title = pane.cwd || "Repo folder this session roots in";
   cwdInput.addEventListener("input", (e) => {
     pane.cwd = e.target.value;
+    cwdInput.title = e.target.value;
   });
   const pickBtn = document.createElement("button");
-  pickBtn.textContent = "Pick…";
+  pickBtn.className = "icon-btn";
+  pickBtn.textContent = "📁";
+  pickBtn.title = "Pick repo folder";
   pickBtn.addEventListener("click", async () => {
     const folder = await window.maestro.pickFolder();
     if (folder) {
       pane.cwd = folder;
       cwdInput.value = folder;
+      cwdInput.title = folder;
     }
   });
-  folderRow.append(cwdInput, pickBtn);
-  wrap.append(folderRow);
 
-  const promptEl = document.createElement("textarea");
-  promptEl.rows = 3;
-  promptEl.placeholder = pane.sessionId ? `Continue "${pane.title}"…` : "What should this session do?";
-  wrap.append(promptEl);
-
-  const suggestRow = document.createElement("div");
-  suggestRow.className = "suggest-row";
-  const badge = document.createElement("span");
-  badge.className = "suggest-badge";
-  badge.textContent = "Suggested: —";
   const modelSel = document.createElement("select");
+  modelSel.className = "meta-pill";
   ["claude-sonnet-5", "claude-opus-4-8", "claude-haiku-4-5-20251001"].forEach((m) => {
     const opt = document.createElement("option");
     opt.value = m;
@@ -800,6 +957,7 @@ function paneComposerEl(index) {
     modelSel.append(opt);
   });
   const effortSel = document.createElement("select");
+  effortSel.className = "meta-pill";
   ["low", "medium", "high", "xhigh", "max"].forEach((eff) => {
     const opt = document.createElement("option");
     opt.value = eff;
@@ -809,28 +967,22 @@ function paneComposerEl(index) {
     }
     effortSel.append(opt);
   });
-  suggestRow.append(badge, modelSel, effortSel);
-  wrap.append(suggestRow);
-
-  let suggestTimer = null;
-  promptEl.addEventListener("input", () => {
-    clearTimeout(suggestTimer);
-    suggestTimer = setTimeout(async () => {
-      const suggestion = await window.maestro.suggestModelEffort(promptEl.value);
-      badge.textContent = `Suggested: ${suggestion.model.replace("claude-", "")} · ${suggestion.effort}`;
-      badge.title = suggestion.reason;
-      modelSel.value = suggestion.model;
-      effortSel.value = suggestion.effort;
-    }, 300);
-  });
 
   const sendBtn = document.createElement("button");
-  sendBtn.className = "primary";
-  sendBtn.textContent = pane.sessionId ? "Continue" : "Start session";
+  sendBtn.className = "send-btn";
+  sendBtn.textContent = "➤";
+  sendBtn.title = pane.sessionId ? "Continue (Enter)" : "Start session (Enter)";
+
+  controls.append(pickBtn, cwdInput, modelSel, effortSel, sendBtn);
+  shell.append(controls);
+  wrap.append(shell);
+
   const els = { cwdInput, promptEl, modelSel, effortSel, sendBtn };
   const handleSendOrStop = () => {
     if (pane.busy) {
       if (pane.currentLaunchId) {
+        pane.stopRequested = true;
+        setPaneBusyUI(index, "● Stopping…");
         window.maestro.stopSession(pane.currentLaunchId);
       }
     } else {
@@ -838,16 +990,32 @@ function paneComposerEl(index) {
     }
   };
   sendBtn.addEventListener("click", handleSendOrStop);
-  wrap.append(sendBtn);
 
+  let suggestTimer = null;
+  promptEl.addEventListener("input", () => {
+    clearTimeout(suggestTimer);
+    suggestTimer = setTimeout(async () => {
+      const suggestion = await window.maestro.suggestModelEffort(promptEl.value);
+      modelSel.value = suggestion.model;
+      effortSel.value = suggestion.effort;
+      modelSel.title = `Suggested: ${suggestion.reason}`;
+      effortSel.title = modelSel.title;
+      modelSel.dataset.suggested = suggestion.model;
+      effortSel.dataset.suggested = suggestion.effort;
+    }, 300);
+  });
+
+  // Enter sends; Shift+Enter inserts a newline (matches the desktop app).
   promptEl.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
       handleSendOrStop();
     }
   });
 
   if (pane.busy) {
-    sendBtn.textContent = "Stop";
+    sendBtn.textContent = "■";
+    sendBtn.title = "Stop";
   }
 
   return wrap;
@@ -861,10 +1029,11 @@ function setPaneBusyUI(index, statusText) {
     return;
   }
   const pane = panes[index];
-  const btn = paneEl.querySelector(".pane-composer .primary");
+  const btn = paneEl.querySelector(".pane-composer .send-btn");
   const status = paneEl.querySelector(".pane-status");
   if (btn) {
-    btn.textContent = pane.busy ? "Stop" : pane.sessionId ? "Continue" : "Start session";
+    btn.textContent = pane.busy ? "■" : "➤";
+    btn.title = pane.busy ? "Stop" : pane.sessionId ? "Continue (Enter)" : "Start session (Enter)";
   }
   if (status) {
     status.textContent = statusText || "";
@@ -893,6 +1062,8 @@ async function sendFromPane(index, els) {
     model,
     effort,
     resumeSessionId: pane.cliSessionId,
+    suggestedModel: els.modelSel.dataset.suggested || null,
+    suggestedEffort: els.effortSel.dataset.suggested || null,
   });
   if (!res.ok) {
     pane.busy = false;
@@ -942,12 +1113,6 @@ function scrollContainer() {
   return div;
 }
 
-function escapeHtml(text) {
-  const div = document.createElement("div");
-  div.textContent = text;
-  return div.innerHTML;
-}
-
 // ============================== Quota + top controls ==============================
 
 function renderQuota(quota) {
@@ -985,6 +1150,46 @@ document.getElementById("search").addEventListener("input", (e) => {
 });
 
 document.getElementById("newCategory").addEventListener("click", createCategory);
+
+document.getElementById("newChat").addEventListener("click", () => {
+  panes[focusedPaneIndex] = freshPane();
+  selectedSessionId = null;
+  renderSinglePane(focusedPaneIndex);
+  renderSidebar();
+});
+
+document.getElementById("skillsBtn").addEventListener("click", async (e) => {
+  e.stopPropagation();
+  const cwd = panes[focusedPaneIndex]?.cwd || "";
+  const { global, project } = await window.maestro.listSkills(cwd);
+  const toItems = (names) =>
+    names.length ? names.map((n) => ({ label: n })) : [{ label: "(none found)" }];
+  showContextMenu(e.clientX, e.clientY, [
+    { label: `Global (~/.claude/skills) · ${global.length}`, submenu: toItems(global) },
+    {
+      label: `This pane's project · ${project.length}${cwd ? "" : " (no folder set)"}`,
+      submenu: toItems(project),
+    },
+  ]);
+});
+
+document.getElementById("usageBtn").addEventListener("click", async (e) => {
+  e.stopPropagation();
+  const summary = await window.maestro.getUsageSummary();
+  const modelItems = Object.entries(summary.byModel)
+    .sort((a, b) => b[1] - a[1])
+    .map(([model, count]) => ({ label: `${model.replace("claude-", "")} · ${count}` }));
+  const toolItems = Object.entries(summary.byTool)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([tool, count]) => ({ label: `${tool} · ${count}` }));
+  showContextMenu(e.clientX, e.clientY, [
+    { label: `${summary.totalRuns} runs · $${summary.totalCostUsd.toFixed(2)} total` },
+    { sep: true },
+    { label: "By model", submenu: modelItems.length ? modelItems : [{ label: "(no data yet)" }] },
+    { label: "Top tools", submenu: toolItems.length ? toolItems : [{ label: "(no data yet)" }] },
+  ]);
+});
 
 document.getElementById("viewToggle").addEventListener("click", async (e) => {
   const btn = e.target.closest("button[data-mode]");
@@ -1058,7 +1263,16 @@ window.maestro.onSessionEvent((evt) => {
       pane.currentLaunchId = null;
       paneLaunchMap.delete(evt.launchId);
       setPaneBusyUI(index, "");
-      loadTranscriptInto(index).then(refresh);
+      if (pane.stopRequested) {
+        // A killed process may not have flushed its in-progress turn to disk
+        // yet — reloading the transcript here would silently drop whatever
+        // text already streamed live. Keep what's on screen instead.
+        pane.stopRequested = false;
+        pane.turns.push({ role: "assistant", kind: "text", text: "⏹ Stopped." });
+        renderPane(index);
+      } else {
+        loadTranscriptInto(index).then(refresh);
+      }
       break;
     default:
       break;
