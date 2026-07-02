@@ -24,10 +24,10 @@ export function appendUsageLog(entry) {
  */
 export function readUsageSummary() {
   if (!fs.existsSync(logPath)) {
-    return { totalRuns: 0, totalCostUsd: 0, byModel: {}, byTool: {} };
+    return { totalRuns: 0, totalCostUsd: 0, byModel: {}, byTool: {}, bySkill: {} };
   }
   const lines = fs.readFileSync(logPath, "utf8").split("\n").filter(Boolean);
-  const summary = { totalRuns: 0, totalCostUsd: 0, byModel: {}, byTool: {} };
+  const summary = { totalRuns: 0, totalCostUsd: 0, byModel: {}, byTool: {}, bySkill: {} };
   for (const line of lines) {
     let entry;
     try {
@@ -42,6 +42,11 @@ export function readUsageSummary() {
     }
     for (const tool of entry.toolsUsed || []) {
       summary.byTool[tool] = (summary.byTool[tool] || 0) + 1;
+    }
+    // Text-pattern guess (leading "/skill-name" in the prompt), not a real
+    // event from the CLI — see the comment where this is set in main.js.
+    if (entry.skillInvoked) {
+      summary.bySkill[entry.skillInvoked] = (summary.bySkill[entry.skillInvoked] || 0) + 1;
     }
   }
   return summary;

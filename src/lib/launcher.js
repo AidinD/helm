@@ -36,7 +36,7 @@ function resolveClaudeBinary() {
  * Returns { child, done } where `done` resolves with a summary once the process
  * exits. Emits normalized events: { kind, ...fields }.
  */
-export function startSession({ cwd, prompt, model, effort, resumeSessionId, onEvent }) {
+export function startSession({ cwd, prompt, model, effort, permissionMode, resumeSessionId, onEvent }) {
   const args = [
     "-p",
     prompt,
@@ -49,6 +49,15 @@ export function startSession({ cwd, prompt, model, effort, resumeSessionId, onEv
   }
   if (effort) {
     args.push("--effort", effort);
+  }
+  // User-confirmed default is "auto" (matches what Aidin already runs daily
+  // in the desktop app); UI exposes the full mode list from the composer.
+  // Maestro's -p invocation has no live channel to answer an interactive
+  // approval prompt, so a stricter mode that genuinely needs to ask mid-run
+  // could still stall — untested beyond "default" not blocking in this
+  // environment's existing broad allowlists.
+  if (permissionMode) {
+    args.push("--permission-mode", permissionMode);
   }
   if (resumeSessionId) {
     args.push("--resume", resumeSessionId);
