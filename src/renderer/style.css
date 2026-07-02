@@ -648,22 +648,25 @@ body.advanced .row-jot {
   white-space: pre-wrap;
 }
 
-/* Model-fit judge verdict — a subtle, muted footnote under the reply, not a
-   loud banner, since it appears after every completed prompt. */
-.model-fit {
-  align-self: flex-start;
-  max-width: 92%;
+/* Model-fit judge verdict — lives under the composer (not in the chat
+   scrollback, to keep the conversation itself uncluttered), a subtle muted
+   line since it appears after every completed prompt. */
+.model-fit-line {
   font-size: 11px;
   font-style: italic;
   color: var(--text-faint);
-  padding: 2px 4px;
+  padding: 4px 16px 0;
 }
 
-.model-fit-too_weak {
+.model-fit-line:empty {
+  display: none;
+}
+
+.model-fit-line.model-fit-too_weak {
   color: var(--waiting);
 }
 
-.model-fit-too_strong {
+.model-fit-line.model-fit-too_strong {
   color: var(--active);
 }
 
@@ -934,6 +937,34 @@ button.primary {
   background: var(--bg-card);
   border-radius: 12px;
   padding: 16px 18px;
+}
+
+.settings-block {
+  max-width: 480px;
+}
+
+.settings-toggle-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  cursor: pointer;
+}
+
+.settings-toggle-row input {
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+
+.settings-toggle-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 3px;
+}
+
+.settings-toggle-desc {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.5;
 }
 
 .analysis-block h3 {

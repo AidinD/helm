@@ -792,12 +792,6 @@ function turnEl(turn) {
     el.textContent = turn.text;
     return el;
   }
-  if (turn.kind === "model_fit") {
-    const el = document.createElement("div");
-    el.className = `model-fit model-fit-${turn.verdict}`;
-    el.textContent = `${MODEL_FIT_ICON[turn.verdict] || "⚖"} ${MODEL_FIT_LABEL[turn.verdict] || turn.verdict}: ${turn.reason}`;
-    return el;
-  }
   const wrap = document.createElement("div");
   wrap.className = "turn " + turn.role;
   const bubble = document.createElement("div");
@@ -1093,6 +1087,13 @@ function paneComposerEl(index) {
   shell.append(suggestHint);
   wrap.append(shell);
 
+  // Model-fit judge verdict lives here, under the composer — not in the chat
+  // scrollback — per Aidin's ask, and to keep the conversation itself
+  // uncluttered. Cleared on each new send, filled in once the judge resolves.
+  const modelFitLine = document.createElement("div");
+  modelFitLine.className = "model-fit-line";
+  wrap.append(modelFitLine);
+
   const els = { cwdInput, promptEl, modelSel, effortSel, permissionSel, sendBtn };
   const handleSendOrStop = () => {
     if (pane.busy) {
@@ -1163,6 +1164,16 @@ function setPaneBusyUI(index, statusText) {
   }
 }
 
+function setModelFitLine(index, text, verdict) {
+  const paneEl = document.querySelector(`.pane[data-pane="${index}"]`);
+  const line = paneEl?.querySelector(".model-fit-line");
+  if (!line) {
+    return;
+  }
+  line.textContent = text || "";
+  line.className = "model-fit-line" + (verdict ? ` model-fit-${verdict}` : "");
+}
+
 async function sendFromPane(index, els) {
   const pane = panes[index];
   const cwd = els.cwdInput.value.trim();
@@ -1187,6 +1198,7 @@ async function sendFromPane(index, els) {
   els.promptEl.value = "";
   pane.busy = true;
   setPaneBusyUI(index, "● Working…");
+  setModelFitLine(index, "");
   renderPane(index);
 
   const res = await window.maestro.startSession({
@@ -1310,13 +1322,54 @@ document.getElementById("pageToggle").addEventListener("click", (e) => {
     return;
   }
   document.querySelectorAll("#pageToggle button").forEach((b) => b.classList.toggle("active", b === btn));
-  const isAnalysis = btn.dataset.page === "analysis";
-  document.getElementById("chatPage").classList.toggle("hidden", isAnalysis);
-  document.getElementById("analysisPage").classList.toggle("hidden", !isAnalysis);
-  if (isAnalysis) {
+  const page = btn.dataset.page;
+  document.getElementById("chatPage").classList.toggle("hidden", page !== "chat");
+  document.getElementById("analysisPage").classList.toggle("hidden", page !== "analysis");
+  document.getElementById("settingsPage").classList.toggle("hidden", page !== "settings");
+  if (page === "analysis") {
     renderAnalysisPage();
+  } else if (page === "settings") {
+    renderSettingsPage();
   }
 });
+
+// ============================== Settings page ==============================
+
+function renderSettingsPage() {
+  const page = document.getElementById("settingsPage");
+  page.innerHTML = "";
+
+  const header = document.createElement("h2");
+  header.textContent = "Settings";
+  page.append(header);
+
+  const block = document.createElement("div");
+  block.className = "analysis-block settings-block";
+
+  const row = document.createElement("label");
+  row.className = "settings-toggle-row";
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.checked = state.config.modelFitJudge?.enabled !== false;
+  checkbox.addEventListener("change", async () => {
+    state.config = await window.maestro.setConfig({
+      modelFitJudge: { ...(state.config.modelFitJudge || {}), enabled: checkbox.checked },
+    });
+  });
+  const labelText = document.createElement("div");
+  labelText.className = "settings-toggle-text";
+  const title = document.createElement("div");
+  title.textContent = "Model-fit judge";
+  title.className = "settings-toggle-title";
+  const desc = document.createElement("div");
+  desc.className = "settings-toggle-desc";
+  desc.textContent =
+    "Runs a cheap Haiku call after every completed prompt to flag whether the model/effort choice was too weak, too strong, or appropriate. Adds ~$0.015 per prompt. Shown under the composer, not in the chat history.";
+  labelText.append(title, desc);
+  row.append(checkbox, labelText);
+  block.append(row);
+  page.append(block);
+}
 
 function barRow(label, count, max) {
   const row = document.createElement("div");
@@ -1522,8 +1575,8 @@ window.maestro.onSessionEvent((evt) => {
     if (!entry || panes[entry.index] !== entry.pane) {
       return; // pane was reused for a different session in the meantime
     }
-    entry.pane.turns.push({ role: "assistant", kind: "model_fit", verdict: evt.verdict, reason: evt.reason });
-    renderPane(entry.index);
+    const text = `${MODEL_FIT_ICON[evt.verdict] || "⚖"} ${MODEL_FIT_LABEL[evt.verdict] || evt.verdict}: ${evt.reason}`;
+    setModelFitLine(entry.index, text, evt.verdict);
     return;
   }
 
