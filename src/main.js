@@ -8,6 +8,8 @@ import { startSession } from "./lib/launcher.js";
 import { suggestModelEffort } from "./lib/suggest.js";
 import { readTranscript } from "./lib/transcript.js";
 import { findTranscriptPath } from "./lib/paths.js";
+import { listSkills } from "./lib/skills.js";
+import { appendUsageLog, readUsageSummary } from "./lib/usage.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -73,6 +75,12 @@ ipcMain.handle("config:set", (_event, patch) => {
 // --- Model/effort suggestion for a given prompt ---
 ipcMain.handle("suggest:modelEffort", (_event, prompt) => suggestModelEffort(prompt));
 
+// --- Skills available to a pane, split global vs project-specific ---
+ipcMain.handle("skills:list", (_event, cwd) => listSkills(cwd));
+
+// --- Aggregate usage summary (models + tools most used) ---
+ipcMain.handle("usage:summary", () => readUsageSummary());
+
 // --- Full chat history for a session (for the pane view) ---
 ipcMain.handle("transcript:get", (_event, { cliSessionId, sessionId }) => {
   const transcriptPath = findTranscriptPath([cliSessionId, sessionId]);
@@ -92,36 +100,59 @@ ipcMain.handle("dialog:pickFolder", async () => {
 });
 
 // --- Start (or resume) a rooted session; stream events to the renderer ---
-ipcMain.handle("session:start", (_event, { cwd, prompt, model, effort, resumeSessionId }) => {
-  if (!cwd || !prompt) {
-    return { ok: false, error: "cwd and prompt are required" };
-  }
-  const launchId = ++launchSeq;
-  const send = (payload) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send("session:event", { launchId, ...payload });
+ipcMain.handle(
+  "session:start",
+  (_event, { cwd, prompt, model, effort, resumeSessionId, suggestedModel, suggestedEffort }) => {
+    if (!cwd || !prompt) {
+      return { ok: false, error: "cwd and prompt are required" };
     }
-  };
-  const { child, done } = startSession({
-    cwd,
-    prompt,
-    model,
-    effort,
-    resumeSessionId,
-    onEvent: (evt) => {
-      if (evt.kind === "quota" && evt.quota) {
-        latestQuota = evt.quota;
+    const launchId = ++launchSeq;
+    const send = (payload) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("session:event", { launchId, ...payload });
       }
-      send(evt);
-    },
-  });
-  liveChildren.set(launchId, child);
-  done.then((summary) => {
-    liveChildren.delete(launchId);
-    send({ kind: "done", summary });
-  });
-  return { ok: true, launchId };
-});
+    };
+    const meta = { toolsUsed: [], costUsd: 0, numTurns: 0, actualModel: model || null };
+    const { child, done } = startSession({
+      cwd,
+      prompt,
+      model,
+      effort,
+      resumeSessionId,
+      onEvent: (evt) => {
+        if (evt.kind === "quota" && evt.quota) {
+          latestQuota = evt.quota;
+        } else if (evt.kind === "tool_use" && evt.toolName) {
+          meta.toolsUsed.push(evt.toolName);
+        } else if (evt.kind === "result") {
+          meta.costUsd = evt.costUsd || 0;
+          meta.numTurns = evt.numTurns || 0;
+        } else if (evt.kind === "system" && evt.model) {
+          meta.actualModel = evt.model;
+        }
+        send(evt);
+      },
+    });
+    liveChildren.set(launchId, child);
+    done.then((summary) => {
+      liveChildren.delete(launchId);
+      appendUsageLog({
+        timestamp: Date.now(),
+        cwd,
+        model: meta.actualModel,
+        effort: effort || null,
+        suggestedModel: suggestedModel || null,
+        suggestedEffort: suggestedEffort || null,
+        followedSuggestion: !suggestedModel || suggestedModel === meta.actualModel,
+        costUsd: meta.costUsd,
+        numTurns: meta.numTurns,
+        toolsUsed: meta.toolsUsed,
+      });
+      send({ kind: "done", summary });
+    });
+    return { ok: true, launchId };
+  }
+);
 
 // --- Stop a running session ---
 ipcMain.handle("session:stop", (_event, { launchId }) => {

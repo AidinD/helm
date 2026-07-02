@@ -129,10 +129,43 @@ h1 {
   min-height: 0;
 }
 
+.new-chat-btn {
+  margin: 10px 10px 0;
+  background: var(--accent);
+  border: none;
+  color: #1a1a1a;
+  font-weight: 600;
+  border-radius: 8px;
+  padding: 7px 10px;
+}
+
+.new-chat-btn:hover {
+  filter: brightness(1.08);
+}
+
 .sidebar-toolbar {
   display: flex;
   gap: 6px;
   padding: 10px 10px 4px;
+}
+
+/* Inline rename input — replaces a label in place, matches its surrounding
+   text style so it doesn't look like a different control. */
+.inline-edit {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  font: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  padding: 0 3px;
+  min-width: 60px;
+  flex: 1;
+}
+
+.inline-edit:focus {
+  outline: none;
 }
 
 .sidebar-mode-toggle {
@@ -184,6 +217,14 @@ h1 {
 
 .section-head.attention-head {
   color: var(--waiting);
+}
+
+/* The category currently holding the open/focused session — a stronger cue
+   than just the row highlight, per feedback that the active category wasn't
+   obvious enough. */
+.section-head.active-category {
+  color: var(--accent);
+  font-weight: 700;
 }
 
 .section-head .caret {
@@ -397,8 +438,10 @@ body.advanced .row-jot {
   display: none;
 }
 
-.pane-header .pane-close {
+.pane-actions {
   margin-left: auto;
+  display: flex;
+  gap: 6px;
 }
 
 .pane-scroll {
@@ -477,6 +520,25 @@ body.advanced .row-jot {
   padding-left: 2px;
 }
 
+.turn-bubble .md-table {
+  border-collapse: collapse;
+  margin: 6px 0;
+  font-size: 11.5px;
+  width: 100%;
+}
+
+.turn-bubble .md-table th,
+.turn-bubble .md-table td {
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+  text-align: left;
+}
+
+.turn-bubble .md-table th {
+  background: #1c1c1c;
+  font-weight: 600;
+}
+
 .turn-bubble code {
   background: rgba(0, 0, 0, 0.25);
   border-radius: 4px;
@@ -489,24 +551,47 @@ body.advanced .row-jot {
   background: rgba(0, 0, 0, 0.15);
 }
 
-/* Tool-call pills, styled after Reinmaker's rounded usage-pill (999px radius,
-   thin border, muted text) instead of stacked code-block-looking lines. */
-.tool-pill-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
+/* Expandable tool call — closed state is a Reinmaker-style rounded pill
+   (999px radius, thin border, muted text); opening reveals the actual output,
+   matching the desktop app's clickable "Bash"/"Read" summaries. */
+.tool-call {
   align-self: flex-start;
   max-width: 100%;
 }
 
-.tool-pill {
+.tool-call summary {
+  cursor: pointer;
+  list-style: none;
   font-size: 11px;
   color: var(--text-dim);
   border: 1px solid var(--border);
   border-radius: 999px;
   padding: 2px 10px;
-  white-space: nowrap;
+  display: inline-block;
   font-family: "Cascadia Code", "Consolas", monospace;
+}
+
+.tool-call summary::-webkit-details-marker {
+  display: none;
+}
+
+.tool-call[open] summary {
+  border-radius: 8px 8px 0 0;
+}
+
+.tool-call-output {
+  margin: 0;
+  background: #141414;
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 8px 8px;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--text-faint);
+  font-family: "Cascadia Code", "Consolas", monospace;
+  white-space: pre-wrap;
+  max-height: 240px;
+  overflow-y: auto;
 }
 
 .turn-tool-result {
@@ -521,79 +606,97 @@ body.advanced .row-jot {
   white-space: pre-wrap;
 }
 
-/* --- Pane composer --- */
+/* --- Pane composer: one unified rounded "shell", closer to the desktop
+   app's single-pill composer than a stack of separate boxes. --- */
 .pane-composer {
-  border-top: 1px solid var(--border);
   padding: 10px 14px 12px;
+}
+
+.composer-shell {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 10px 12px 8px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-}
-
-.resume-banner {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  background: rgba(78, 161, 217, 0.1);
-  border: 1px solid var(--active);
-  color: var(--active);
-  border-radius: 6px;
-  padding: 5px 10px;
-  font-size: 11.5px;
-}
-
-.resume-banner.hidden {
-  display: none;
-}
-
-.resume-banner button {
-  margin-left: auto;
-  background: transparent;
-  border: 1px solid var(--active);
-  color: var(--active);
-  padding: 1px 7px;
-  font-size: 10.5px;
-}
-
-.pane-composer input,
-.pane-composer select,
-.pane-composer textarea {
-  background: var(--bg-card);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 6px 8px;
-  font: inherit;
-  font-size: 12px;
-}
-
-.folder-row {
-  display: flex;
   gap: 6px;
 }
 
-.folder-row input {
+.composer-shell textarea {
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  resize: none;
+  padding: 2px 2px 4px;
+}
+
+.composer-shell textarea:focus {
+  outline: none;
+}
+
+.composer-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cwd-input {
   flex: 1;
   min-width: 0;
+  background: transparent;
+  border: none;
+  color: var(--text-faint);
+  font-size: 11px;
+  padding: 4px 6px;
 }
 
-.suggest-row {
+.cwd-input:focus {
+  outline: none;
+  color: var(--text);
+}
+
+/* Model/effort selects styled as text pills (Reinmaker's .meta-pill: rounded
+   border, bold small text, no visible "dropdown box" chrome). */
+.meta-pill {
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-dim);
+  font: inherit;
+  font-weight: 600;
+  font-size: 11.5px;
+  padding: 4px 10px;
+  cursor: pointer;
+  text-align: center;
+}
+
+.meta-pill:hover {
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+
+.send-btn {
+  background: var(--accent);
+  border: none;
+  color: #1a1a1a;
+  border-radius: 50%;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  font-size: 13px;
   display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: center;
+  padding: 0;
+  cursor: pointer;
 }
 
-.suggest-badge {
-  font-size: 10.5px;
-  color: var(--text-dim);
-  background: #2e2e2e;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  padding: 4px 8px;
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.send-btn:hover {
+  filter: brightness(1.08);
 }
 
 /* --- Context menu --- */
