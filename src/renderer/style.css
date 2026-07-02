@@ -610,8 +610,36 @@ body.advanced .row-jot {
   min-height: 0;
 }
 
+/* Three columns when split: left pane, a draggable 1px divider, right pane.
+   The fr shares come from --left-fr/--right-fr set inline by
+   applySplitRatio(); they default to an even split if JS hasn't set them
+   yet. gap:0 here (overriding the base 1px) so the divider IS the single
+   seam rather than the grid drawing extra gap-seams on either side of it. */
 .workspace.split {
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: var(--left-fr, 1fr) 1px var(--right-fr, 1fr);
+  gap: 0;
+}
+
+.pane-divider {
+  position: relative;
+  cursor: col-resize;
+  background: var(--border);
+}
+
+/* A wider invisible hit area than the 1px grid gap, so the thin seam is
+   actually grabbable without pixel-perfect aim. */
+.pane-divider::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  right: -3px;
+}
+
+.pane-divider:hover,
+.pane-divider.dragging {
+  background: var(--accent);
 }
 
 .pane {

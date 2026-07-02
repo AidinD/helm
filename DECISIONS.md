@@ -1,5 +1,25 @@
 # Decisions
 
+## 2026-07-02 — Resizable split panes (the contained half of the split-view ask)
+
+**Decision:** Split the "split view ska kunna drag-and-dropas som i VS Code +
+kunna justeras i bredd" backlog item into its two halves and shipped the
+tractable one: a draggable divider between the two panes that adjusts their
+relative width (module-level `splitRatio`, clamped 0.2–0.8, applied via
+`--left-fr`/`--right-fr` grid vars). The other half — full VS Code-style
+dockable/rearrangeable panes — is genuinely larger UI work and stays open
+for its own focused session. Pointer-capture drag so tracking survives the
+cursor leaving the thin divider mid-drag. `splitRatio` is in-memory (survives
+split toggles within a session, resets on restart) — persisting to config is
+a noted possible follow-up, deliberately not done to keep v1 contained.
+
+Passed an independent review (pane indexing unaffected by inserting the
+divider element between panes, pointer-handler cleanup leak-free, single-pane
+layout ignores the stale fr vars). Review flagged one cosmetic issue — a
+0-width divider column drew a faint double-seam via the base 1px grid gap on
+both sides — fixed by making the divider a real 1px column that IS the seam,
+with gap:0 on the split grid.
+
 ## 2026-07-02 — Deadline-aware attention sorting from Jot
 
 **Decision:** Jot todos carry an optional `deadline` (epoch ms) — now factored

@@ -2319,13 +2319,27 @@ function fireQueuedPromptIfAny(index, pane) {
   sendFromPane(index, pane.els);
 }
 
+// Left pane's share of the split, 0..1. Module-level (not per-pane, not
+// persisted) so it survives split toggles within a session but resets on
+// restart — a reasonable v1; persisting to config is a possible follow-up.
+let splitRatio = 0.5;
+const MIN_SPLIT_RATIO = 0.2;
+const MAX_SPLIT_RATIO = 0.8;
+
+function applySplitRatio() {
+  const workspace = document.getElementById("workspace");
+  workspace.style.setProperty("--left-fr", `${splitRatio}fr`);
+  workspace.style.setProperty("--right-fr", `${1 - splitRatio}fr`);
+}
+
 // Rebuilds every pane's DOM. Only call this when the NUMBER of panes changes
 // (split on/off) — it discards any in-progress typing in every pane.
 function renderWorkspace() {
   const workspace = document.getElementById("workspace");
-  workspace.classList.toggle("split", panes.length > 1);
+  const split = panes.length > 1;
+  workspace.classList.toggle("split", split);
   workspace.innerHTML = "";
-  panes.forEach((_, index) => {
+  const makePane = (index) => {
     const paneEl = document.createElement("section");
     paneEl.className = "pane";
     paneEl.dataset.pane = String(index);
@@ -2334,7 +2348,52 @@ function renderWorkspace() {
     });
     workspace.append(paneEl);
     renderSinglePane(index);
+  };
+  makePane(0);
+  if (split) {
+    workspace.append(paneDividerEl());
+    applySplitRatio();
+    makePane(1);
+  } else {
+    // Clear any leftover split sizing so a future single-pane layout isn't
+    // constrained by stale fr variables.
+    workspace.style.removeProperty("--left-fr");
+    workspace.style.removeProperty("--right-fr");
+  }
+}
+
+// Draggable divider between the two split panes — adjusts their relative
+// width. Pointer events (not mouse) so a capture keeps tracking even if the
+// cursor briefly leaves the thin divider mid-drag.
+function paneDividerEl() {
+  const divider = document.createElement("div");
+  divider.className = "pane-divider";
+  divider.title = "Drag to resize";
+  divider.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    const workspace = document.getElementById("workspace");
+    divider.setPointerCapture(e.pointerId);
+    divider.classList.add("dragging");
+    const onMove = (ev) => {
+      const rect = workspace.getBoundingClientRect();
+      if (rect.width <= 0) {
+        return;
+      }
+      const raw = (ev.clientX - rect.left) / rect.width;
+      splitRatio = Math.min(MAX_SPLIT_RATIO, Math.max(MIN_SPLIT_RATIO, raw));
+      applySplitRatio();
+    };
+    const onUp = () => {
+      divider.classList.remove("dragging");
+      divider.removeEventListener("pointermove", onMove);
+      divider.removeEventListener("pointerup", onUp);
+      divider.removeEventListener("pointercancel", onUp);
+    };
+    divider.addEventListener("pointermove", onMove);
+    divider.addEventListener("pointerup", onUp);
+    divider.addEventListener("pointercancel", onUp);
   });
+  return divider;
 }
 
 // Rebuilds ONE pane's header/scroll/composer in place. Use this for anything
