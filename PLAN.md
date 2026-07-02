@@ -160,6 +160,16 @@ diagnosis was Opus-shaped, the localized fixes were Sonnet-shaped).
     judgment is auditable, not a black box), a timeline of status changes
     per session, or just a debug view during early development before
     deciding it's worth a permanent UI surface at all.
+  - **Two more periodic checks folded in here rather than getting their own
+    mechanism** (2026-07-02 decision — avoid a third separate loop when this
+    one already sweeps every session): auto-`/compact` when a session is
+    active but idle and has used more than X context (feasibility not yet
+    verified — does headless `-p` even support invoking the CLI's built-in
+    `/compact` the way it expands skill slash-commands? needs a spike before
+    committing to this); and the model/effort suggestion-accuracy review
+    (the on-demand "Suggestion accuracy" report on the Analysis page already
+    covers checking this manually — this is specifically about making it
+    proactive instead of pull-based).
 - **Multi-model** — bring in Gemini when it fits (Jot task "Gemini vid
   behov?"), gated on the existing Antigravity-backend scaffolding
   ([[project-gemini-artist-mode]]) rather than a fresh integration.
