@@ -657,6 +657,14 @@ body.advanced .row-jot {
   color: var(--text);
 }
 
+.cwd-input.cwd-missing {
+  color: var(--accent);
+}
+
+.cwd-input.cwd-missing::placeholder {
+  color: var(--accent);
+}
+
 /* Model/effort selects styled as text pills (Halyard's .meta-pill: rounded
    border, bold small text, no visible "dropdown box" chrome). */
 .meta-pill {
