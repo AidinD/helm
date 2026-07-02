@@ -149,6 +149,17 @@ export function startSession({ cwd, prompt, model, effort, permissionMode, resum
     } else if (type === "rate_limit_event") {
       lastQuota = evt.rate_limit_info || null;
       emit({ kind: "quota", quota: lastQuota });
+    } else if (type === "system" && evt.subtype === "task_started") {
+      // A background Task-tool subagent was spawned — verified schema via
+      // spike/test-task-events-shape.mjs. taskId links task_progress/
+      // task_updated/task_notification for the SAME background task.
+      emit({ kind: "task_started", taskId: evt.task_id, description: evt.description, subagentType: evt.subagent_type });
+    } else if (type === "system" && evt.subtype === "task_progress") {
+      emit({ kind: "task_progress", taskId: evt.task_id, lastToolName: evt.last_tool_name, tokens: evt.usage?.total_tokens });
+    } else if (type === "system" && evt.subtype === "task_updated") {
+      emit({ kind: "task_updated", taskId: evt.task_id, status: evt.patch?.status });
+    } else if (type === "system" && evt.subtype === "task_notification") {
+      emit({ kind: "task_done", taskId: evt.task_id, status: evt.status, summary: evt.summary });
     } else if (type === "system") {
       emit({ kind: "system", subtype: evt.subtype, model: evt.model });
     }
