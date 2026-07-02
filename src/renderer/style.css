@@ -485,6 +485,40 @@ body.advanced .row-jot {
   color: var(--waiting);
 }
 
+.archive-suggest-pill {
+  align-self: flex-start;
+  margin-left: 14px;
+  margin-top: 2px;
+  font-size: 10px;
+  color: var(--text-faint);
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  padding: 1px 6px;
+  cursor: pointer;
+}
+
+.archive-suggest-pill:hover {
+  color: var(--text);
+  border-color: var(--text-faint);
+  border-style: solid;
+}
+
+.toast {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 12px;
+  color: var(--text);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  z-index: 1000;
+}
+
 /* --- Workspace: 1 or 2 conversation panes --- */
 .workspace {
   display: grid;
@@ -805,6 +839,42 @@ body.advanced .row-jot {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.composer-attachments {
+  display: none;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 2px 2px;
+}
+
+.attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg-sidebar);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 4px 2px 10px;
+  font-size: 11px;
+  color: var(--text-faint);
+  max-width: 220px;
+}
+
+.attachment-remove {
+  background: transparent;
+  border: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 999px;
+}
+
+.attachment-remove:hover {
+  color: var(--text);
+  background: var(--bg-card);
 }
 
 .suggest-hint {

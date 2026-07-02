@@ -21,7 +21,7 @@ const TERMINAL_TASK_STATUSES = new Set(["completed", "failed"]);
 const pendingLaunchCallbacks = new Map();
 
 // Each pane: { sessionId, cliSessionId, cwd, title, turns, hiddenCount, loading,
-//              busy, currentLaunchId, isOrchestrator }
+//              busy, currentLaunchId, isOrchestrator, pendingImages }
 let panes = [freshPane()];
 
 function freshPane() {
@@ -37,6 +37,7 @@ function freshPane() {
     currentLaunchId: null,
     stopRequested: false,
     isOrchestrator: false,
+    pendingImages: [], // [{ path, name }] — pasted images attached to the next send
   };
 }
 
@@ -93,6 +94,31 @@ async function removeFromMaestro(session) {
   const hidden = [...(state.config.hiddenSessions || []), session.sessionId];
   state.config = await window.maestro.setConfig({ hiddenSessions: hidden });
   refresh();
+}
+
+// Real archiving: flips isArchived in the desktop app's OWN local_*.json
+// file (unlike removeFromMaestro, which only ever touches Maestro's config).
+// Always a direct response to an explicit click — either the manual context
+// menu action, or the user clicking a suggested-archive pill — never fired
+// on a timer or any other unattended trigger.
+async function archiveSession(session) {
+  const res = await window.maestro.archiveSession(session.sessionId, true);
+  if (!res.ok) {
+    console.error("[maestro] archive failed:", res.error);
+    showToast(`Couldn't archive "${session.title}": ${res.error}`);
+    return;
+  }
+  refresh();
+}
+
+// Small transient message for failures with no natural home (e.g. no pane to
+// write into) — not for routine feedback, just so a failure is never silent.
+function showToast(text) {
+  const el = document.createElement("div");
+  el.className = "toast";
+  el.textContent = text;
+  document.body.append(el);
+  setTimeout(() => el.remove(), 4000);
 }
 
 // Exclusive (radio-button, not checkbox) — per "shouldn't there just be ONE
@@ -418,6 +444,31 @@ function rowEl(session) {
     row.append(j);
   }
 
+  // "Orchestrator proposes, you approve" — only ever a suggestion. Clicking
+  // this pill IS the approval step; nothing archives without it. Only shown
+  // for genuinely idle sessions with no open Jot work, and never for a
+  // Maestro-building session (idle between long autonomous stretches doesn't
+  // mean done).
+  const hasOpenJotWork =
+    session.jot && (session.jot.review > 0 || session.jot.inProgress > 0 || session.jot.open > 0);
+  if (
+    state.config.archiveSuggestions?.enabled === true &&
+    session.status === "idle" &&
+    !hasOpenJotWork &&
+    !isOrchestratorSession(session)
+  ) {
+    const suggest = document.createElement("button");
+    suggest.type = "button";
+    suggest.className = "archive-suggest-pill";
+    suggest.textContent = "Archive?";
+    suggest.title = "Suggested: this session looks idle with no open Jot work. Click to archive.";
+    suggest.addEventListener("click", (e) => {
+      e.stopPropagation();
+      archiveSession(session);
+    });
+    row.append(suggest);
+  }
+
   // Single click opens the session, but only after a short delay so a second
   // click (making this a double-click) can cancel it in favor of renaming.
   row.addEventListener("click", () => {
@@ -433,8 +484,10 @@ function rowEl(session) {
   row.addEventListener("contextmenu", (e) => {
     e.preventDefault();
     e.stopPropagation();
+    const x = e.clientX;
+    const y = e.clientY;
     const groupLabels = (state.config.groups || []).map((g) => g.label);
-    showContextMenu(e.clientX, e.clientY, [
+    showContextMenu(x, y, [
       { label: "Open here", onClick: () => openSessionInPane(session, focusedPaneIndex) },
       { label: "Open in split pane", onClick: () => openSessionInPane(session, focusedPaneIndex === 0 ? 1 : 0, true) },
       { label: "Rename chat (or double-click it)", onClick: () => makeInlineEditable(title, session.title, (v) => renameSessionTo(session, v)) },
@@ -455,6 +508,18 @@ function rowEl(session) {
         ],
       },
       { sep: true },
+      {
+        label: "Archive session",
+        danger: true,
+        onClick: () => {
+          // Re-opens with an explicit confirm step (no native window.confirm()
+          // — unreliable in this build) since this writes to the desktop
+          // app's OWN session file, not just Maestro's local config.
+          showContextMenu(x, y, [
+            { label: `Confirm archive "${session.title}"`, danger: true, onClick: () => archiveSession(session) },
+          ]);
+        },
+      },
       {
         label: "Remove from Maestro",
         danger: true,
@@ -1263,6 +1328,70 @@ function paneComposerEl(index) {
   promptEl.placeholder = pane.sessionId ? `Continue "${pane.title}"…` : "What should this session do?";
   shell.append(promptEl);
 
+  // Pasted-image chips, shown between the textarea and the control row.
+  // Populated by the paste handler below, cleared on send.
+  const attachmentsEl = document.createElement("div");
+  attachmentsEl.className = "composer-attachments";
+  shell.append(attachmentsEl);
+  function renderAttachments() {
+    attachmentsEl.innerHTML = "";
+    attachmentsEl.style.display = pane.pendingImages.length ? "flex" : "none";
+    pane.pendingImages.forEach((img, i) => {
+      const chip = document.createElement("span");
+      chip.className = "attachment-chip";
+      chip.textContent = "🖼 " + img.name;
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "attachment-remove";
+      remove.textContent = "×";
+      remove.title = "Remove attachment";
+      remove.addEventListener("click", () => {
+        pane.pendingImages.splice(i, 1);
+        renderAttachments();
+      });
+      chip.append(remove);
+      attachmentsEl.append(chip);
+    });
+  }
+  renderAttachments();
+
+  // Saves a pasted image to disk and attaches its path — Claude Code's own
+  // Read tool picks up an image from a plain file-path mention in the prompt
+  // text, verified in spike/test-image-via-path.mjs. No base64-in-stream-json,
+  // no SDK migration; the existing -p/--resume flow is untouched.
+  promptEl.addEventListener("paste", async (e) => {
+    const items = e.clipboardData?.items;
+    if (!items) {
+      return;
+    }
+    const imageItems = Array.from(items).filter((it) => it.type && it.type.startsWith("image/"));
+    if (imageItems.length === 0) {
+      return;
+    }
+    e.preventDefault();
+    for (const item of imageItems) {
+      const file = item.getAsFile();
+      if (!file) {
+        continue;
+      }
+      const ext = (file.type.split("/")[1] || "png").replace("jpeg", "jpg");
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(file);
+      });
+      const base64 = dataUrl.split(",")[1] || "";
+      const res = await window.maestro.saveImage(base64, ext);
+      // Pane may have been reset/reused while the save round-tripped through
+      // main — don't attach a stale paste to whatever now occupies this slot.
+      if (res.ok && panes[index] === pane) {
+        pane.pendingImages.push({ path: res.path, name: file.name || `pasted.${ext}` });
+        renderAttachments();
+      }
+    }
+  });
+
   const controls = document.createElement("div");
   controls.className = "composer-controls";
 
@@ -1359,7 +1488,7 @@ function paneComposerEl(index) {
   modelFitLine.className = "model-fit-line";
   wrap.append(modelFitLine);
 
-  const els = { cwdInput, promptEl, modelDD, effortDD, permissionDD, sendBtn };
+  const els = { cwdInput, promptEl, modelDD, effortDD, permissionDD, sendBtn, renderAttachments };
   const handleSendOrStop = async () => {
     if (pane.busy) {
       if (pane.currentLaunchId) {
@@ -1451,7 +1580,7 @@ function setModelFitLine(index, text, verdict) {
 async function sendFromPane(index, els) {
   const pane = panes[index];
   const cwd = els.cwdInput.value.trim();
-  const prompt = els.promptEl.value.trim();
+  const typedText = els.promptEl.value.trim();
   if (pane.busy) {
     return;
   }
@@ -1462,9 +1591,17 @@ async function sendFromPane(index, els) {
     els.cwdInput.focus();
     return;
   }
-  if (!prompt) {
+  if (!typedText && pane.pendingImages.length === 0) {
     return;
   }
+  // Image attachments become plain file-path mentions ahead of the typed
+  // text — Claude Code's own Read tool fetches them from there (see
+  // spike/test-image-via-path.mjs). This is what actually gets sent AND what
+  // gets shown in history, so the turn matches what the model received.
+  const imagePrefix = pane.pendingImages.map((img) => `[Attached image: ${img.path}]`).join("\n");
+  const prompt = imagePrefix ? `${imagePrefix}\n\n${typedText}` : typedText;
+  pane.pendingImages = [];
+  els.renderAttachments();
   pane.cwd = cwd;
   pane.turns.push({ role: "user", kind: "text", text: prompt });
   els.promptEl.value = "";
@@ -1694,6 +1831,20 @@ function renderSettingsPage() {
       state.config.notifyOnComplete !== false,
       async (checked) => {
         state.config = await window.maestro.setConfig({ notifyOnComplete: checked });
+      }
+    )
+  );
+
+  block.append(
+    settingsToggleRow(
+      "Suggest archiving idle sessions",
+      "Shows an \"Archive?\" pill on idle sessions with no open Jot review/in-progress/open work. Archiving still needs your click — this only surfaces the suggestion, it never archives on its own.",
+      state.config.archiveSuggestions?.enabled === true,
+      async (checked) => {
+        state.config = await window.maestro.setConfig({
+          archiveSuggestions: { ...(state.config.archiveSuggestions || {}), enabled: checked },
+        });
+        refresh();
       }
     )
   );

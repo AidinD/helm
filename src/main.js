@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, Notification, clipboard } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { readAllSessions, enrichWithJot } from "./lib/sessions.js";
+import { readAllSessions, enrichWithJot, setSessionArchived } from "./lib/sessions.js";
 import { loadJot } from "./lib/jot.js";
 import { loadConfig, writeConfig } from "./lib/config.js";
 import { startSession } from "./lib/launcher.js";
@@ -11,6 +11,7 @@ import { findTranscriptPath } from "./lib/paths.js";
 import { listSkills, skillMdPath } from "./lib/skills.js";
 import { appendUsageLog, readUsageSummary } from "./lib/usage.js";
 import { judgeModelFit } from "./lib/judge.js";
+import { savePastedImage, prunePastedImages } from "./lib/images.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -94,6 +95,26 @@ ipcMain.handle("skills:open", (_event, { name, origin, cwd }) => {
 ipcMain.handle("clipboard:write", (_event, text) => {
   clipboard.writeText(text || "");
   return { ok: true };
+});
+
+// --- Archive/unarchive a session in the desktop app's own state. Always a
+// direct response to an explicit click in the renderer (manual "Archive", or
+// approving an orchestrator-proposed suggestion) — never called on a timer or
+// any other unattended trigger. ---
+ipcMain.handle("session:archive", (_event, { sessionId, archived }) => {
+  return setSessionArchived(sessionId, archived !== false);
+});
+
+// --- Save a pasted image to disk and hand back its path, so a prompt can
+// reference it by file path — verified in spike/test-image-via-path.mjs that
+// Claude Code's own Read tool picks it up from the path with no other
+// architecture change. ---
+ipcMain.handle("image:save", (_event, { base64Data, ext }) => {
+  try {
+    return { ok: true, path: savePastedImage(base64Data, ext) };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
 });
 
 // --- Aggregate usage summary (models + tools most used) ---
@@ -242,7 +263,10 @@ function truncateForNotification(text) {
   return oneLine.length > 100 ? oneLine.slice(0, 100) + "…" : oneLine;
 }
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  prunePastedImages();
+  createWindow();
+});
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
