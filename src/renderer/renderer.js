@@ -14,6 +14,10 @@ const launchPaneHistory = new Map();
 // (task_started -> task_progress* -> task_updated/task_done), keyed by taskId.
 // Schema verified via spike/test-task-events-shape.mjs before building this.
 const backgroundTasks = new Map();
+// Ad-hoc listeners for a specific launchId that isn't tied to a pane's normal
+// display flow — used by "Summarize & carry over" to capture a resumed
+// session's summary reply without it needing to occupy a visible pane.
+const pendingLaunchCallbacks = new Map();
 
 // Each pane: { sessionId, cliSessionId, cwd, title, turns, hiddenCount, loading,
 //              busy, currentLaunchId, isOrchestrator }
@@ -437,6 +441,10 @@ function rowEl(session) {
         label: isOrchestratorSession(session) ? "Unmark as Maestro chat" : "Mark as Maestro chat",
         onClick: () => toggleManualMaestroTag(session),
       },
+      {
+        label: "Summarize & carry over to new chat",
+        onClick: () => summarizeAndCarryOver(session),
+      },
       { sep: true },
       {
         label: "Move to category",
@@ -512,6 +520,97 @@ function spanEl(text) {
   const el = document.createElement("span");
   el.textContent = text;
   return el;
+}
+
+// ============================== Fas 2: summarize & carry over ==============================
+// Lets a session be archived without losing the thread: resume it once with a
+// hidden "summarize yourself" prompt, then seed a fresh session's composer
+// with that summary. Never touches the original session or any real file —
+// purely additive (one more turn on the old session, one new draft prompt).
+
+const CARRY_OVER_PROMPT =
+  "Please write a concise handoff summary of this entire conversation so a " +
+  "brand-new session could pick up seamlessly: current state, key decisions " +
+  "made and why, and concrete next steps. This will be pasted as the opening " +
+  "message of a new session, so write it as context FOR that new session, " +
+  "not as a message to me.";
+
+function summarizeSession(session) {
+  return new Promise(async (resolve) => {
+    const res = await window.maestro.startSession({
+      cwd: session.cwd,
+      prompt: CARRY_OVER_PROMPT,
+      model: "claude-sonnet-5",
+      effort: "medium",
+      resumeSessionId: session.cliSessionId || session.sessionId,
+    });
+    if (!res.ok) {
+      resolve({ error: res.error });
+      return;
+    }
+    pendingLaunchCallbacks.set(res.launchId, {
+      assistantText: "",
+      onDone: (text, error) => resolve(error ? { error } : { text }),
+    });
+  });
+}
+
+// Prefers an existing empty pane over forcing a new split, so this doesn't
+// clutter the workspace when one is already free.
+function pickDraftTargetPane() {
+  const emptyIndex = panes.findIndex((p) => !p.sessionId && p.turns.length === 0 && !p.busy);
+  if (emptyIndex !== -1) {
+    return { index: emptyIndex, addedPane: false };
+  }
+  if (panes.length < 2) {
+    panes.push(freshPane());
+    return { index: panes.length - 1, addedPane: true };
+  }
+  return { index: focusedPaneIndex, addedPane: false };
+}
+
+function openFreshDraftInPane(cwd, draftText) {
+  const { index, addedPane } = pickDraftTargetPane();
+  panes[index] = { ...freshPane(), cwd: cwd || "" };
+  focusedPaneIndex = index;
+  if (addedPane) {
+    renderWorkspace(); // handles the .split class itself; pane count changed
+  } else {
+    renderSinglePane(index);
+  }
+  const paneEl = document.querySelector(`.pane[data-pane="${index}"]`);
+  const promptEl = paneEl?.querySelector(".pane-composer textarea");
+  if (promptEl) {
+    promptEl.value = draftText;
+    promptEl.focus();
+    promptEl.dispatchEvent(new Event("input"));
+  }
+  return index;
+}
+
+async function summarizeAndCarryOver(session) {
+  const statusIndex = focusedPaneIndex;
+  setPaneBusyUIRaw(statusIndex, `● Summarizing "${session.title}"…`);
+  const result = await summarizeSession(session);
+  setPaneBusyUIRaw(statusIndex, "");
+  if (result.error) {
+    openFreshDraftInPane(session.cwd, `⚠ Failed to summarize: ${result.error}`);
+    return;
+  }
+  const draft = `Continuing from "${session.title}". Summary of prior context:\n\n${result.text.trim()}\n\nPlease continue from here.`;
+  openFreshDraftInPane(session.cwd, draft);
+}
+
+// Sets just the status text on whichever pane is currently focused, without
+// requiring that pane to be running its own launch (setPaneBusyUI assumes
+// pane.busy reflects THIS pane's own send, which isn't true while summarizing
+// happens via a detached background launch).
+function setPaneBusyUIRaw(index, statusText) {
+  const paneEl = document.querySelector(`.pane[data-pane="${index}"]`);
+  const status = paneEl?.querySelector(".pane-status");
+  if (status) {
+    status.textContent = statusText || "";
+  }
 }
 
 function openSessionInPane(session, paneIndex, forceSplit) {
@@ -1797,6 +1896,19 @@ document.getElementById("backgroundTasksBtn").addEventListener("click", (e) => {
 });
 
 window.maestro.onSessionEvent((evt) => {
+  // Ad-hoc one-off launch (e.g. a summarization call) not tied to any pane's
+  // normal display — captured entirely here instead of routing further down.
+  if (pendingLaunchCallbacks.has(evt.launchId)) {
+    const cb = pendingLaunchCallbacks.get(evt.launchId);
+    if (evt.kind === "assistant") {
+      cb.assistantText += evt.text;
+    } else if (evt.kind === "done" || evt.kind === "error") {
+      pendingLaunchCallbacks.delete(evt.launchId);
+      cb.onDone(cb.assistantText, evt.kind === "error" ? evt.message : null);
+    }
+    return;
+  }
+
   // Handled separately: the judge resolves well after "done" already cleared
   // paneLaunchMap, so this needs the longer-lived launchPaneHistory instead.
   if (evt.kind === "modelFit") {

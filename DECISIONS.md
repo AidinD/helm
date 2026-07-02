@@ -1,5 +1,28 @@
 # Decisions
 
+## 2026-07-02 — Fas 2 core built: "Summarize & carry over," real archiving deliberately NOT touched
+
+**Decision:** Built the context-flow half of Fas 2 (right-click a session ->
+"Summarize & carry over to new chat") — resumes the session once with a hidden
+handoff-summary prompt, captures the reply, and pre-fills a fresh session's
+composer with it. Verified end-to-end on a throwaway test conversation before
+shipping: the summary was genuinely well-structured and even pulled in
+ambient repo context (git branch, uncommitted files) beyond the literal
+chat history.
+
+**Deliberately did NOT build:** an in-Maestro "Archive" action. Real archiving
+means flipping `isArchived` in the desktop app's own `local_*.json` session
+file — writing to another app's live state, which is exactly the kind of
+action flagged as needing explicit confirmation, not something to do
+autonomously while Aidin is away. Maestro's existing "Remove from Maestro"
+(hides via config.json only) remains the only session-hiding mechanism until
+real archiving is explicitly requested and scoped carefully.
+
+**Why this order:** the context-flow half directly unblocks Aidin's stated
+goal ("archive more aggressively once I don't lose the thread") without
+touching anything outside Maestro's own repo — pure upside, no destructive
+risk. Real archiving is a separate, smaller, but riskier follow-up.
+
 ## 2026-07-02 — Model-fit judge: Haiku, non-bare, cost reduced ~78% by stripping tools/MCP
 
 **Decision:** After every completed prompt, fire a separate cheap `claude -p`
