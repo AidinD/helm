@@ -1,5 +1,24 @@
 # Decisions
 
+## 2026-07-03 — Added a repo-root CLAUDE.md, closing the "on-ramp" gap for this repo
+
+**Decision:** Direct follow-through on the strategic reorientation below -
+a fresh short-lived session needs a cheap way to bootstrap "what is this
+project, what's the current phase, what's already been decided" without
+the user re-explaining it. `PLAN.md`/`DECISIONS.md` already held that
+content, but neither auto-loads the way a repo-root `CLAUDE.md` does, so a
+new session had no path to them unless told. Added `CLAUDE.md` (repo root):
+a short pointer to both files plus the one genuinely repo-specific footgun
+(the `taskkill /IM electron.exe` / Halyard collision, see the 2026-07-02
+entry below) - deliberately NOT duplicating anything already covered by
+The captain's global personal `CLAUDE.md` (git conventions, testing discipline,
+etc.). Also closes the Jot tasks "länk till personlig och projekt claude.md"
+and "CLAUDE.md-trim -> skills" (the trim/skills side was done tonight on the
+global file - see that file's own history for the Jot-section-to-skill
+move) and directly answers "fix a better claude.md" and "Bryter vår auto
+compact mot kortlivade sessioner filosofin?" (answered in the reorientation
+entry immediately below - kept, de-prioritized as a strategy, not removed).
+
 ## 2026-07-03 — Strategic reorientation: ephemeral sessions, not a durable fleet
 
 **Decision:** the captain realized he's been working wrong — long-lived sessions,
