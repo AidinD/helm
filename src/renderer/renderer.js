@@ -1877,7 +1877,12 @@ function wireScrollToBottomButton(scroll) {
   btn.type = "button";
   btn.className = "scroll-to-bottom-btn";
   btn.title = "Scroll to bottom";
-  btn.textContent = "↓";
+  // Inline SVG rather than the "↓" text glyph — text arrows have asymmetric
+  // font metrics that no amount of flex-centering fixes (it kept looking
+  // slightly high). A viewBox'd SVG is geometrically symmetric, so it
+  // centers perfectly.
+  btn.innerHTML =
+    '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg>';
   btn.addEventListener("click", () => {
     scroll.scrollTo({ top: scroll.scrollHeight, behavior: "smooth" });
   });
