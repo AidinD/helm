@@ -1,5 +1,26 @@
 # Decisions
 
+## 2026-07-02 — Review feedback: category-drag regression fixed, mouse back/forward wired
+
+Aidin's review of the backlog batch surfaced two concrete issues (plus a
+rewind design question handled separately):
+
+1. **Regression — "can't drag a list anymore."** The drag-collapse feature
+   (hide session lists to headers during a category drag) broke dragging
+   entirely: hiding the `.section-list` elements SYNCHRONOUSLY inside the
+   `dragstart` handler reflows the drag source, which Chromium/Electron
+   treats as grounds to cancel the drag outright. Classic gotcha. Fixed by
+   deferring the collapse to a `requestAnimationFrame` after dragstart
+   finishes (dataTransfer.setData/effectAllowed stay synchronous — they must
+   — only the visual collapse is deferred), with a guard against the drag
+   already having ended by then. Worth noting: the cumulative review had
+   reasoned about whether the collapse disturbed the drop-position MATH
+   (it didn't) but not whether the reflow ABORTS the drag — a real-hands-on
+   failure a static review couldn't catch.
+2. **Mouse back/forward buttons** now drive the focused pane's chat history,
+   same as the ←/→ header buttons — a document-level `mouseup` listener on
+   `e.button === 3` (back) / `4` (forward).
+
 ## 2026-07-02 — Cumulative integration review of the whole backlog batch; one glitch fixed
 
 Aidin asked for a review of all the backlog-pass fixes before his own manual
