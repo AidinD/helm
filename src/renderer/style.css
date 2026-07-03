@@ -701,6 +701,48 @@ body.advanced .row-jot {
   gap: 10px;
 }
 
+/* Sticky + zero-height so it pins to the bottom of the SCROLLED viewport
+   (tracks the user as they scroll) without consuming layout space or adding
+   to the column's gap — the actual button is positioned via flex centering
+   inside this zero-height shell, not via absolute positioning. */
+.scroll-to-bottom-wrap {
+  position: sticky;
+  bottom: 4px;
+  height: 0;
+  overflow: visible;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.scroll-to-bottom-btn {
+  pointer-events: auto;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  width: 26px;
+  height: 26px;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.scroll-to-bottom-wrap.visible .scroll-to-bottom-btn {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.scroll-to-bottom-btn:hover {
+  color: var(--text);
+  border-color: var(--text-faint);
+}
+
 .pane-empty {
   color: var(--text-faint);
   font-size: 12.5px;
@@ -732,7 +774,7 @@ body.advanced .row-jot {
 .turn-bubble {
   border-radius: 10px;
   padding: 7px 11px;
-  font-size: 12.5px;
+  font-size: 13.5px;
   font-weight: 500;
   line-height: 1.5;
   white-space: pre-wrap;

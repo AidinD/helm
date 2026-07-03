@@ -1,5 +1,25 @@
 # Decisions
 
+## 2026-07-03 — Scroll-to-bottom button + slightly larger chat font
+
+**Decision:** Two quick asks. (1) "öka fontstorlek i chatten aningen" —
+`.turn-bubble`'s font-size bumped 12.5px → 13.5px; left markdown code-
+block/table sizes untouched (their own smaller size is a deliberate density
+choice for dense content, not something "aningen" was asking to change).
+(2) "scroll to bottom knapp" — a floating "↓" button, hidden by default,
+appears once you've manually scrolled more than 80px away from the bottom
+(e.g. to reread earlier history), click smooth-scrolls back down.
+
+Implementation note/bug caught before shipping: `.pane-scroll` is the SAME
+persistent DOM node across every `renderPane()` call (only its innerHTML
+gets cleared) — a plain `addEventListener("scroll", ...)` inside the wiring
+function would have piled up a new listener on every single render (every
+streamed chunk, every poll-triggered update) forever, each stale one still
+closing over its own now-detached button from a past render. Fixed by
+stashing the listener function on the element and removing the previous one
+before attaching a new one — exactly one live listener at a time, no matter
+how many times the pane re-renders.
+
 ## 2026-07-02 — Done checkmark is now toggleable (un-ack undoes it)
 
 **Decision:** Aidin: "checkmarken bör gå att ta bort också (?) eller?" Agreed
