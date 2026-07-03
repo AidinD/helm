@@ -1130,6 +1130,9 @@ async function loadTranscriptInto(paneIndex) {
   pane.turns = turns;
   pane.hiddenCount = hiddenCount || 0;
   pane.contextTokens = typeof contextTokens === "number" ? contextTokens : null;
+  // The composer was built before this async load finished, so its gauge
+  // rendered empty — refresh it now that we have the number.
+  pane.els?.renderContextGauge?.();
   // Whether this view is missing earlier turns (turn-cap or byte-tail cap).
   // Rewind needs the full transcript from turn 0 — the rendered index it
   // passes to the fork counts from the first shown bubble, but the fork
@@ -2125,20 +2128,6 @@ function paneHeaderEl(index) {
     sub.textContent = pane.cwd;
     header.append(sub);
   }
-  // Context-size gauge (the captain's ask, like Claude Desktop's context readout).
-  // Absolute token estimate, not a %: the % would need the model's context-
-  // window size, which varies (200k / 1M / ...) and isn't reliably known per
-  // session here — showing a made-up denominator would mislead. The number
-  // reuses estimateSessionContextTokens (same proxy auto-compact uses), so
-  // it's consistent with when auto-compact would fire.
-  if (pane.sessionId && typeof pane.contextTokens === "number") {
-    const ctx = document.createElement("span");
-    ctx.className = "pane-context";
-    const k = pane.contextTokens / 1000;
-    ctx.textContent = `◱ ${k >= 10 ? Math.round(k) : k.toFixed(1)}k ctx`;
-    ctx.title = "Estimated context currently in use for this session (approximate). The same measure that drives auto-compact.";
-    header.append(ctx);
-  }
   const actions = document.createElement("span");
   actions.className = "pane-actions";
   if (pane.sessionId) {
@@ -2420,6 +2409,25 @@ function paneComposerEl(index) {
   controls.append(pickBtn, cwdInput, attachBtn, permissionDD.el, modelDD.el, effortDD.el, sendBtn);
   shell.append(controls);
 
+  // Context-size gauge, under the model/effort row (the captain's placement — he
+  // didn't spot it up in the pane header). Its own render closure because the
+  // composer is built once but pane.contextTokens arrives later, async, from
+  // loadTranscriptInto — which calls this to fill it in (and it's called once
+  // here for the already-loaded case).
+  const contextGauge = document.createElement("div");
+  contextGauge.className = "composer-context";
+  const renderContextGauge = () => {
+    if (typeof pane.contextTokens === "number") {
+      const k = pane.contextTokens / 1000;
+      contextGauge.textContent = `◱ ${k >= 10 ? Math.round(k) : k.toFixed(1)}k context`;
+      contextGauge.title = "Estimated context currently in use for this session (approximate). The same measure that drives auto-compact.";
+    } else {
+      contextGauge.textContent = "";
+    }
+  };
+  renderContextGauge();
+  shell.append(contextGauge);
+
   // Visible reasoning, not just a hover tooltip — a suggestion nobody reads
   // isn't a suggestion. Explicitly says so even when it just confirms your
   // current pick, per "always decide, and if it's already right, say so."
@@ -2435,7 +2443,7 @@ function paneComposerEl(index) {
   modelFitLine.className = "model-fit-line";
   wrap.append(modelFitLine);
 
-  const els = { cwdInput, promptEl, modelDD, effortDD, permissionDD, sendBtn, renderAttachments, renderQueuedPrompt };
+  const els = { cwdInput, promptEl, modelDD, effortDD, permissionDD, sendBtn, renderAttachments, renderQueuedPrompt, renderContextGauge };
   // Lets the "done" event handler (which only has the pane object, not this
   // composer's closure) trigger a queued prompt through the exact same send
   // path — reusing sendFromPane's cwd/attachment/suggestion handling instead
@@ -3164,7 +3172,7 @@ function renderSettingsPage() {
   block.append(
     settingsToggleRow(
       "Auto-compact large idle sessions (Fas 3)",
-      `Automatically runs /compact on a session left idle for ~${state.config.autoCompact?.idleMinutes || 30} min whose context has grown past ~${Math.round((state.config.autoCompact?.thresholdTokens || 150000) / 1000)}k tokens (checked on the ~15 min sweep). Time-based, so it won't fire mid-work — only after you've stepped away. Unlike everything else here this ACTS on its own — it summarizes the session's context (lossy, but the full history stays in the transcript on disk). A small note appears on the row after it happens.`,
+      `Automatically runs /compact on a session left idle for ~${state.config.autoCompact?.idleMinutes || 10} min whose context has grown past ~${Math.round((state.config.autoCompact?.thresholdTokens || 150000) / 1000)}k tokens (checked on the ~15 min sweep). Time-based, so it won't fire mid-work — only after you've stepped away. Unlike everything else here this ACTS on its own — it summarizes the session's context (lossy, but the full history stays in the transcript on disk). A small note appears on the row after it happens.`,
       state.config.autoCompact?.enabled === true,
       async (checked) => {
         state.config = await window.maestro.setConfig({
