@@ -83,6 +83,7 @@ function freshPane() {
     pendingAttachments: [], // [{ path, name }] — pasted images attached to the next send
     queuedPrompt: null, // text to auto-send once the current busy run finishes
     els: null, // the currently-live composer's element refs, set by paneComposerEl
+    lastTurnStats: null, // { durationMs, totalTokens, costUsd } for the reply that just completed — consumed once by wireTurnStatsOnLastReply
   };
 }
 
@@ -1092,7 +1093,7 @@ function openFreshDraftInPane(cwd, draftText, opts = {}) {
 async function summarizeAndCarryOver(session) {
   const statusIndex = focusedPaneIndex;
   const statusPane = panes[statusIndex]; // identity check below: focus/reset can change during the await
-  setPaneBusyUIRaw(statusIndex, `● Summarizing "${session.title}"…`);
+  setPaneBusyUIRaw(statusIndex, `Summarizing "${session.title}"…`);
   const result = await summarizeSession(session);
   if (panes[statusIndex] === statusPane) {
     setPaneBusyUIRaw(statusIndex, "");
@@ -1951,6 +1952,7 @@ function renderPane(index) {
     appendTurns(scroll, pane.turns);
     wireEditableUserTurns(index, scroll);
     wireDoneButtonOnLastReply(index, scroll);
+    wireTurnStatsOnLastReply(index, scroll);
   }
   wireScrollToBottomButton(scroll);
   scroll.scrollTop = scroll.scrollHeight;
@@ -2134,6 +2136,62 @@ function wireDoneButtonOnLastReply(index, scroll) {
   // its LEFT, shifting the checkmark sideways. Leading position keeps the
   // checkmark's spot fixed regardless of hover state.
   actions.prepend(done);
+}
+
+// "12.3s · 1.2k tokens" readout under the reply that JUST completed —
+// Aidin's ask, modeled on Claude Desktop's small per-reply stats line. Reuses
+// data already flowing through the app rather than adding new plumbing:
+// durationMs/totalTokens/costUsd ride along on the "done" event's summary
+// (launcher.js's own result-event fields, the same authoritative source
+// already used for the usage log and the context-window learning). Only
+// meaningful for the reply from the run that JUST finished in THIS pane —
+// there's no per-turn usage parsed out of a reloaded transcript (see
+// transcript.js), so older replies (and a freshly reopened session) simply
+// show no stats line, same as Claude Desktop only ever showing this for the
+// turn that just streamed in.
+//
+// Deliberately NON-destructive (unlike an earlier version of this function,
+// which nulled pane.lastTurnStats out the first time it was read): a queued
+// prompt can fire and trigger an intermediate renderPane() BEFORE the
+// transcript reload that follows a "done" event resolves (see the "done"
+// handler — loadTranscriptInto is not awaited before fireQueuedPromptIfAny
+// runs). If this function had consumed the stats on that first, intermediate
+// render, they'd already be gone by the time the reload's OWN renderPane call
+// redraws the same reply from scratch (scroll.innerHTML="" every time) —
+// visually flashing the stats in and then losing them. Recomputing on every
+// render instead (same pattern as wireDoneButtonOnLastReply's isAcked check)
+// makes it reliably reattach until sendFromPane explicitly clears it once a
+// NEW turn starts (the point where "the reply that just completed" is no
+// longer the last one).
+function wireTurnStatsOnLastReply(index, scroll) {
+  const pane = panes[index];
+  const stats = pane.lastTurnStats;
+  if (!stats) {
+    return;
+  }
+  const bubbles = scroll.querySelectorAll(".turn.assistant .turn-bubble");
+  const lastBubble = bubbles[bubbles.length - 1];
+  const actions = lastBubble?.parentElement.querySelector(".turn-actions");
+  if (!actions) {
+    return;
+  }
+  const parts = [];
+  if (typeof stats.durationMs === "number") {
+    parts.push(`${(stats.durationMs / 1000).toFixed(1)}s`);
+  }
+  if (typeof stats.totalTokens === "number") {
+    parts.push(stats.totalTokens >= 1000 ? `${(stats.totalTokens / 1000).toFixed(1)}k tokens` : `${stats.totalTokens} tokens`);
+  }
+  if (parts.length === 0) {
+    return;
+  }
+  const meta = document.createElement("span");
+  meta.className = "turn-stats";
+  meta.textContent = parts.join(" · ");
+  if (typeof stats.costUsd === "number" && stats.costUsd > 0) {
+    meta.title = `$${stats.costUsd.toFixed(4)}`;
+  }
+  actions.append(meta);
 }
 
 // Real "rewind to here" via transcript forking (verified in
@@ -2596,7 +2654,7 @@ function paneComposerEl(index) {
     if (pane.busy) {
       if (pane.currentLaunchId) {
         pane.stopRequested = true;
-        setPaneBusyUI(index, "● Stopping…");
+        setPaneBusyUI(index, "Stopping…");
         const res = await window.maestro.stopSession(pane.currentLaunchId);
         // The process may have finished naturally in the tiny window between
         // the click and this call landing in main — its "done" event is then
@@ -2662,13 +2720,23 @@ function paneComposerEl(index) {
     sendBtn.textContent = "■";
     sendBtn.title = "Stop";
     sendBtn.classList.add("stopping");
+    // No per-pane status text survives a DOM rebuild (it's only ever pushed
+    // live via setPaneBusyUI as events stream in) — "Working…" is the same
+    // generic fallback sendFromPane itself uses the instant a send starts,
+    // so a pane rebuilt mid-run (e.g. by renderWorkspace) still shows the
+    // thinking indicator instead of a blank status row until the next event.
+    status.append(Object.assign(document.createElement("span"), { className: "pane-status-icon" }));
+    status.append(document.createTextNode("Working…"));
   }
 
   return wrap;
 }
 
 // Toggles the Send/Stop button + status text for a pane without rebuilding
-// its DOM (which would drop typed-but-unsent text in that pane).
+// its DOM (which would drop typed-but-unsent text in that pane). Also draws
+// the "thinking" indicator (a small pulsing dot, Claude Desktop-style) next
+// to the status text while pane.busy is true — the exact same busy flag the
+// send/stop button already reflects, not a separate signal.
 function setPaneBusyUI(index, statusText) {
   const paneEl = document.querySelector(`.pane[data-pane="${index}"]`);
   if (!paneEl) {
@@ -2683,7 +2751,18 @@ function setPaneBusyUI(index, statusText) {
     btn.classList.toggle("stopping", pane.busy);
   }
   if (status) {
-    status.textContent = statusText || "";
+    // Built as child nodes (not a plain textContent string) only when there's
+    // something to show — an empty .pane-status has zero children, so the
+    // CSS :empty rule that hides the row entirely still applies unchanged.
+    status.innerHTML = "";
+    if (statusText) {
+      if (pane.busy) {
+        const dot = document.createElement("span");
+        dot.className = "pane-status-icon";
+        status.append(dot);
+      }
+      status.append(document.createTextNode(statusText));
+    }
   }
 }
 
@@ -2729,7 +2808,12 @@ async function sendFromPane(index, els) {
   pane.turns.push({ role: "user", kind: "text", text: prompt });
   els.promptEl.value = "";
   pane.busy = true;
-  setPaneBusyUI(index, "● Working…");
+  // A new turn is starting — whatever reply lastTurnStats described is no
+  // longer "the last one," so its stats readout must not keep reattaching to
+  // it (wireTurnStatsOnLastReply is otherwise non-destructive and would
+  // happily redraw it on every render forever).
+  pane.lastTurnStats = null;
+  setPaneBusyUI(index, "Working…");
   setModelFitLine(index, "");
   renderPane(index);
 
@@ -3762,13 +3846,13 @@ window.maestro.onSessionEvent((evt) => {
   if (!entry || panes[entry.index] !== entry.pane) {
     return;
   }
-  const { index, pane } = entry;
+  const { index, pane, startedAt } = entry;
   switch (evt.kind) {
     case "session":
       pane.cliSessionId = evt.sessionId;
       break;
     case "tool_use":
-      setPaneBusyUI(index, `● Working — ${evt.toolName}`);
+      setPaneBusyUI(index, `Working — ${evt.toolName}`);
       break;
     case "assistant":
       pane.turns.push({ role: "assistant", kind: "text", text: evt.text });
@@ -3834,6 +3918,19 @@ window.maestro.onSessionEvent((evt) => {
         renderPane(index);
       } else {
         pane.stopRequested = false;
+        // Feeds wireTurnStatsOnLastReply's "12.3s · 1.2k tokens" readout on
+        // the reply that just landed. durationMs/totalTokens come straight
+        // from the CLI's own result event (launcher.js) — the authoritative
+        // per-turn numbers, already collected for the usage log, just not
+        // previously surfaced in the UI. durationMs falls back to a
+        // wall-clock measurement (startedAt was stamped at send time in
+        // launchPaneHistory) for the rare case the CLI didn't report one
+        // (e.g. sawResult false) but the run still produced a reply.
+        pane.lastTurnStats = {
+          durationMs: typeof evt.summary?.durationMs === "number" ? evt.summary.durationMs : Date.now() - startedAt,
+          totalTokens: evt.summary?.totalTokens ?? null,
+          costUsd: evt.summary?.costUsd ?? null,
+        };
         loadTranscriptInto(index).then(refresh);
         fireQueuedPromptIfAny(index, pane);
       }

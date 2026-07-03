@@ -174,11 +174,24 @@ export function startSession({ cwd, prompt, model, effort, permissionMode, resum
           }
         }
       }
+      // evt.usage is the CLI's own aggregate token count for the whole turn
+      // (input + output, cache reads/writes tracked separately) — the same
+      // authoritative source as contextWindows above, just a different field
+      // on the same result event. Used for the "12.3s · 1.2k tokens" readout
+      // under a completed reply; no separate token-counting logic needed.
+      const usage = evt.usage || {};
+      const totalTokens =
+        (usage.input_tokens || 0) +
+        (usage.output_tokens || 0) +
+        (usage.cache_creation_input_tokens || 0) +
+        (usage.cache_read_input_tokens || 0);
       emit({
         kind: "result",
         subtype: evt.subtype,
         costUsd: evt.total_cost_usd,
         numTurns: evt.num_turns,
+        durationMs: evt.duration_ms,
+        totalTokens: totalTokens > 0 ? totalTokens : null,
         contextWindows,
       });
     } else if (type === "rate_limit_event") {

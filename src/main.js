@@ -284,7 +284,7 @@ ipcMain.handle(
         mainWindow.webContents.send("session:event", { launchId, ...payload });
       }
     };
-    const meta = { toolsUsed: [], costUsd: 0, numTurns: 0, actualModel: model || null, lastAssistantText: "", contextWindows: {} };
+    const meta = { toolsUsed: [], costUsd: 0, numTurns: 0, durationMs: null, totalTokens: null, actualModel: model || null, lastAssistantText: "", contextWindows: {} };
     const { child, done } = startSession({
       cwd,
       prompt,
@@ -302,6 +302,8 @@ ipcMain.handle(
         } else if (evt.kind === "result") {
           meta.costUsd = evt.costUsd || 0;
           meta.numTurns = evt.numTurns || 0;
+          meta.durationMs = evt.durationMs ?? null;
+          meta.totalTokens = evt.totalTokens ?? null;
           if (evt.contextWindows) {
             Object.assign(meta.contextWindows, evt.contextWindows);
           }
@@ -324,7 +326,15 @@ ipcMain.handle(
       // Previously this came after appendUsageLog — if that threw, the
       // renderer never got its "done" event and the pane stayed "running"
       // forever with no way to recover short of restarting Maestro.
-      send({ kind: "done", summary });
+      // durationMs/totalTokens/costUsd ride along on the same summary object
+      // so the renderer can show a "12.3s · 1.2k tokens" readout under the
+      // reply that just completed, reusing the CLI's own result-event numbers
+      // (already collected into `meta` for the usage log) instead of adding a
+      // new plumbing path just for display.
+      send({
+        kind: "done",
+        summary: { ...summary, durationMs: meta.durationMs, totalTokens: meta.totalTokens, costUsd: meta.costUsd },
+      });
 
       // Learn model→context-window from what the CLI reported (done even for
       // internal launches — they run real models, so their reported windows

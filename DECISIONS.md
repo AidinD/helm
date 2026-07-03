@@ -1,7 +1,73 @@
 # Decisions
 
-## 2026-07-03 — firstmate/gnhf source studied; a dispatched research agent
-## recursively self-delegated 5 generations deep before landing real results
+## 2026-07-03 — Thinking indicator + per-reply time/token readout; verified the Done-checkmark bug stays fixed
+
+**Built two small UI additions, both hooked into existing state rather than
+inventing new tracking:**
+
+1. **"Thinking" pulsing dot** — `.pane-status-icon` (style.css), a small
+   animated dot shown next to the pane's status text while `pane.busy` is
+   true. Wired into `setPaneBusyUI` (the one existing chokepoint that already
+   toggles the send/stop button between "➤"/"■") and the composer's
+   initial-render busy branch, so it can never drift out of sync with the
+   button it sits beside. Dropped the literal `"● "` bullet character that
+   used to prefix status strings ("● Working…", "● Working — ToolName", "●
+   Stopping…") — redundant now that a real animated dot renders the same
+   meaning.
+2. **"12.3s · 1.2k tokens" readout** on the reply that just completed
+   (`.turn-stats`, appended to the same `.turn-actions` row Copy/Done already
+   live in). Sourced from data already flowing through the app: `launcher.js`
+   now also extracts `duration_ms` and a summed token count (input + output +
+   cache create/read) from the CLI's own `result` event, alongside the
+   `costUsd`/`numTurns` it already pulled from the same event for the usage
+   log. `main.js` rides these along on the existing `"done"` event's
+   `summary` object (previously `costUsd`/`numTurns` stayed main-process-only,
+   never reaching the renderer) — no new IPC channel. Only shown for the
+   reply belonging to the run that JUST finished in that pane; a reloaded/
+   reopened session shows no stats line, since per-turn usage isn't parsed
+   out of historical transcripts (`transcript.js` doesn't extract `usage`
+   today, and doing so was out of scope for this pass).
+
+**Bug caught and fixed before shipping (self-review, not live testing —
+caught by tracing the code, not by reproducing it):** the first version
+nulled `pane.lastTurnStats` out the instant `wireTurnStatsOnLastReply` read
+it, mirroring the (unrelated) single-consume shape of nothing else in this
+file. That broke under one real sequence: a queued prompt firing
+immediately after "done" triggers `sendFromPane`'s own synchronous
+`renderPane()` call BEFORE the "done" handler's own `loadTranscriptInto(...)
+.then(refresh)` resolves — so the stats got consumed (and their DOM span
+drawn) on that intermediate render, then silently lost when the reload's own
+`renderPane` call rebuilt the scroll area from scratch
+(`scroll.innerHTML=""` on every call) with nothing left to reattach. Fixed by
+making the function non-destructive — it recomputes on every render, the
+same pattern `wireDoneButtonOnLastReply`'s `isAcked` check already uses —
+and instead clearing `pane.lastTurnStats` explicitly in `sendFromPane` the
+moment a genuinely NEW turn starts (the point where "the reply that just
+completed" is no longer the last one).
+
+**Verification:** `node --check` on all three edited JS files, a CSS
+brace-balance check, and a full boot-test via `scripts/restart-dev.sh` (clean
+log, confirmed via `Get-Process` that only Maestro's own PIDs were recycled —
+the pre-existing Reinmaker instance's PIDs were untouched, consistent with
+the documented safe-restart behavior). No live click-through was possible
+beyond that — this is a native Electron app, not a browser-servable dev
+server, so the usual preview tooling doesn't apply; Aidin will confirm
+visually.
+
+**Third ask — re-verified the "Done checkmark follows along" bug (2026-07-02
+entries) stays fixed, no code change:** traced every path that pushes new
+assistant content into a pane against `wireDoneButtonOnLastReply`'s
+`isAcked` check. All five paths that push a new assistant-role turn
+(`"assistant"` stream event, `"error"` event, the switch-folder failure, the
+start failure, and the "Stopped" path) call `bumpSessionActivity` before
+`renderPane()`, keeping `state.sessions`' `lastActivityAt` fresh at render
+time. The one path that does NOT call it — the normal successful completion,
+which just does `loadTranscriptInto(index).then(refresh)` — doesn't need to:
+`launcher.js` always emits the reply's actual text via a separate
+`"assistant"` stream event before the CLI process exits and `"done"` fires
+(confirmed by re-reading `launcher.js`'s stdout-line handler), so
+`bumpSessionActivity` has already run for that exact content by the time the
+success branch's reload happens. No remaining gap; nothing changed here.
 
 **Context:** Aidin asked me to act as orchestrator and dispatch agents
 against the open Maestro backlog rather than build everything inline in
