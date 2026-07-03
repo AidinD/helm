@@ -724,7 +724,7 @@ body.advanced .row-jot {
    sits entirely ABOVE the edge, fully visible. */
 .scroll-to-bottom-wrap {
   position: sticky;
-  bottom: 10px;
+  bottom: 6px;
   height: 0;
   overflow: visible;
   display: flex;
@@ -736,6 +736,13 @@ body.advanced .row-jot {
 
 .scroll-to-bottom-btn {
   pointer-events: auto;
+  /* Flex-center the arrow glyph — relying on line-height alone left the "↓"
+     sitting off-center in the circle (feedback: "pilen är inte centrerad").
+     padding:0 so the fixed 26px box centers cleanly. */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 999px;
