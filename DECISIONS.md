@@ -1,5 +1,32 @@
 # Decisions
 
+## 2026-07-03 — restart-dev.sh's kill step was silently a no-op all session — rewritten in PowerShell
+
+**Bug:** the captain noticed a new Maestro window opening without the old one
+closing. Investigated instead of guessing: `restart-dev.sh`'s kill step
+(`wmic ... | grep -i "$REPO_PATH_WIN"`, built earlier today specifically to
+stop boot-tests from killing Halyard) had a real bug — `grep`'s regex mode
+interprets a literal Windows path's backslashes as escape sequences (`\R`,
+`\T`, `\m`...), so matching `D:\Repo\Tools\maestro` against wmic's CSV output
+silently failed on EVERY invocation, and `|| true` swallowed the failure
+with zero visible error. Every restart-dev.sh call this session launched a
+NEW Maestro instance on top of whatever was already running instead of
+replacing it — confirmed live: found 3 stray Maestro instances (12 stray
+electron.exe processes) piled up by the time the captain caught it.
+
+`grep -F` (fixed-string) was tried next and still failed/crashed against the
+real wmic output in this environment (a `grep` abort, not investigated
+further — not worth chasing when a cleaner tool was available). Rewrote the
+kill step in PowerShell (`scripts/kill-maestro.ps1`, invoked via
+`-File` — nesting the PS one-liner inside a bash single-quoted `-Command`
+argument mis-parsed `-Filter` on the first attempt, a second quoting layer
+not worth fighting): `Get-CimInstance Win32_Process` + a plain `-like`
+string match, no regex-escaping ambiguity. Verified live end-to-end twice —
+first run correctly found nothing to kill (fresh baseline) and started one
+instance; second run correctly found and killed that exact instance (all 4
+of its child processes) before starting a new one, with Halyard's 4
+processes confirmed untouched both times.
+
 ## 2026-07-03 — Spiked persistent-process architecture: doesn't unlock what we wanted
 
 **Decision:** Both "a real input box when Claude needs an answer mid-turn"

@@ -5,26 +5,27 @@
 # the whole machine — any Electron app running unpackaged in dev mode (e.g.
 # Halyard via `electron .`) shows up under the exact same name and gets
 # killed too. That silently closed the captain's live Halyard session every time
-# this repo's boot-test used a blind image-name kill. This scopes the kill to
-# PIDs whose command line actually points at THIS repo before terminating
-# anything, and only kills the app's own top-level electron.exe (image-name
-# taskkill would also be needed for child renderer/gpu/utility processes, but
-# Windows tree-kills those automatically when the parent that spawned them
-# exits, via /T).
+# this repo's boot-test used a blind image-name kill.
+#
+# FIRST attempt scoped this via `wmic ... | grep -i "$REPO_PATH_WIN"` — but
+# grep interprets a literal Windows path's backslashes as regex escape
+# sequences (`\R`, `\T`, `\m`...), so the match silently failed EVERY time
+# (`|| true` swallowed the failure with no visible error) and every restart
+# launched a NEW Maestro instance on top of the old one instead of replacing
+# it. The captain caught this live — three stray Maestro instances had piled up.
+# `grep -F` (fixed-string) was tried next and still failed/crashed against
+# the real wmic output in this environment. Switched to PowerShell's
+# Get-CimInstance + a plain `-like` string match instead: no regex escaping
+# ambiguity, and verified live (killed exactly the Maestro PIDs, left
+# Halyard's 4 untouched). The PowerShell logic lives in its own
+# kill-maestro.ps1, invoked via -File rather than inlined via -Command —
+# nesting a PowerShell string literal inside a bash single-quoted argument
+# mis-parsed the -Filter argument (a second quoting layer to avoid, not a
+# problem worth fighting inline).
 set -euo pipefail
 cd "$(dirname "$0")/.."
-REPO_PATH_WIN=$(pwd -W | sed 's#/#\\#g')
 
-pids=$(wmic process where "name='electron.exe'" get ProcessId,CommandLine /format:csv 2>/dev/null \
-  | grep -i "$REPO_PATH_WIN" \
-  | awk -F',' '{print $NF}' \
-  | tr -d '\r' \
-  | grep -E '^[0-9]+$' || true)
-
-for pid in $pids; do
-  echo "Killing Maestro electron.exe PID $pid"
-  taskkill //F //T //PID "$pid" 2>/dev/null || true
-done
+powershell.exe -NoProfile -File "$(pwd -W)/scripts/kill-maestro.ps1"
 
 sleep 1
 (npm start > /tmp/maestro-boot.log 2>&1 &)
