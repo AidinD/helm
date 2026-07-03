@@ -1,5 +1,51 @@
 # Decisions
 
+## 2026-07-02 — Boot-test restarts were silently killing Reinmaker
+
+**Bug (mine):** every boot-test in this repo restarted Maestro via
+`taskkill /F /IM electron.exe` — matches by image name only, machine-wide.
+Aidin reported "Appen stängdes, jag tror du och reinmaker slåss om samma
+port." Investigated instead of guessing: no port conflict — Maestro's source
+has zero `listen()`/`createServer()` calls anywhere. The real cause: Reinmaker
+(tgs-reinmaker) runs unpackaged in dev mode via `electron .`, so its process
+also shows up as bare `electron.exe` in Task Manager, indistinguishable by
+name from Maestro's own dev process. Every blind image-name kill this
+session silently closed Aidin's live Reinmaker session too — confirmed live:
+found 4 running `electron.exe` PIDs, all four traced via `wmic ... get
+CommandLine` to `tgs-reinmaker\node_modules\electron\dist\electron.exe`, none
+to Maestro.
+
+**Fix:** `scripts/restart-dev.sh` — resolves the repo's own path, queries
+`wmic process where "name='electron.exe'"` for CommandLine, and only kills
+PIDs whose command line actually points at THIS repo before restarting.
+Verified live: ran it while Reinmaker's 4 processes were up — Maestro
+restarted cleanly and all 4 Reinmaker PIDs were untouched afterward. This is
+now the only sanctioned way to restart Maestro during dev work; a bare
+`taskkill /IM electron.exe` must not be used again in this repo.
+
+## 2026-07-02 — Done button: check icon beside Copy, hover-only, persists as a checkmark once clicked
+
+**Decision:** Follow-up on the per-reply Done button (previous entry):
+"kan vi lägga den som en liten check ikon bredvid copy ikonen som endast
+dyker upp på hoover. Och när den är checkan dyker en checkmark upp på
+svaret." Redesigned:
+- `turnEl()` now wraps the assistant reply's Copy button in a `.turn-actions`
+  row (previously appended directly to the `.turn` column) so a second
+  button sits BESIDE it, not stacked underneath.
+- The Done button reuses the `copy-btn` class, giving it the exact same
+  hover-only opacity behavior as Copy — invisible until you hover the reply.
+- Once clicked (or on a re-render of an already-acknowledged reply — checked
+  via exact equality between `config.acknowledgedSessions[sessionId]` and
+  the session's current `lastActivityAt`), it gets an `.acked` class that
+  forces it permanently visible and accent-colored, and gets disabled — a
+  persistent checkmark confirming that specific reply was marked done,
+  matching the copy button's own instant-feedback pattern but WITHOUT
+  reverting afterward (since the underlying state, unlike a copy action,
+  actually changed).
+- Backend (config.acknowledgedSessions, the main.js status-override ordering
+  fix) is completely unchanged — only the affordance's visual treatment and
+  DOM position moved.
+
 ## 2026-07-02 — Performance + token usage audit; one real fix applied
 
 **Decision:** Aidin's Jot task "performance + token usage granskning av
