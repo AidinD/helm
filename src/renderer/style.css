@@ -574,6 +574,18 @@ body.advanced .row-jot {
   font-weight: 600;
 }
 
+.row-orchestrator-tag {
+  font-size: 10px;
+  color: var(--text-faint);
+  align-self: flex-start;
+  margin-left: 14px;
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
 .archive-suggest-pill {
   align-self: flex-start;
   margin-left: 14px;
