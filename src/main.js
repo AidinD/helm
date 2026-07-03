@@ -3,7 +3,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { execFile, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { readAllSessions, enrichWithJot, setSessionArchived } from "./lib/sessions.js";
+import { readAllSessions, enrichWithJot, setSessionArchived, forkTranscriptAtUserMessage } from "./lib/sessions.js";
 import { loadJot } from "./lib/jot.js";
 import { loadConfig, writeConfig } from "./lib/config.js";
 import { startSession } from "./lib/launcher.js";
@@ -145,6 +145,14 @@ ipcMain.handle("clipboard:write", (_event, text) => {
 // any other unattended trigger. ---
 ipcMain.handle("session:archive", (_event, { sessionId, archived }) => {
   return setSessionArchived(sessionId, archived !== false);
+});
+
+// --- "Rewind to here": fork a session's transcript, truncated to just before
+// the given user message, and return the new forked cliSessionId to --resume.
+// Verified buildable in spike/test-rewind-fork.mjs. Never touches the
+// original transcript — writes a new file beside it. ---
+ipcMain.handle("session:fork", (_event, { cliSessionId, userMsgIndex }) => {
+  return forkTranscriptAtUserMessage(cliSessionId, userMsgIndex);
 });
 
 // --- Save a pasted image to disk and hand back its path, so a prompt can

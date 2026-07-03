@@ -1,5 +1,49 @@
 # Decisions
 
+## 2026-07-02 — Rewind rebuilt as real transcript-forking (the true desktop behavior)
+
+**Decision:** Second round of rewind feedback: "all history still disappears
+— in the desktop app only the messages AFTER the rewind point vanish." The
+same-pane-with-text-replay approach still dumped everything into a draft
+blob; the prior conversation didn't stay as real rendered history. To get the
+actual desktop behavior I first had to answer whether it's even buildable on
+the CLI.
+
+**Spike (`spike/test-rewind-fork.mjs`) — PASS.** Created a throwaway session
+(favorite color blue → changed to red), hand-truncated a fork of its
+transcript to before the "red" turn, wrote it as a new `<uuid>.jsonl`, and
+`--resume`d it: it answered "blue." So `claude --resume` reads a
+hand-authored truncated transcript with NO desktop metadata, and
+post-truncation turns are genuinely gone from the model's context. Real
+rewind is buildable. (First run was inconclusive — I'd used a "secret code"
+probe that Haiku refused as suspicious; swapped to an innocuous favorite-
+color fact and it worked. Test-design fix, not a mechanism problem.)
+
+**Built:** `forkTranscriptAtUserMessage(cliSessionId, userMsgIndex)` in
+sessions.js writes a truncated fork beside the original (never touches it);
+IPC `session:fork`; `rewindToTurn` loads the fork IN THE SAME pane, so the
+prior turns render as REAL bubbles (they're in the forked transcript), later
+turns are gone, and the clicked message drops into the composer to edit.
+Exactly the desktop behavior.
+
+**Two off-by-one bugs caught (one by me pre-review, one by the review) —
+both about the rendered-bubble index the button passes NOT matching the
+fork's transcript line count:** (1) the fork counted `<task-notification>`
+and empty user lines that transcript.js does NOT render as user bubbles —
+common in an orchestrator that spawns subagents — so it'd cut at the wrong
+message; fixed by mirroring pushUserTurn's exact predicate. (2) On a
+tail-truncated view of a very long session, rendered bubbles start at a
+non-zero turn while the fork counts from absolute 0; fixed by gating rewind
+to only appear when the full transcript is loaded (`!transcriptTruncated`),
+and stopping the "show earlier" handler from hardcoding hiddenCount=0.
+Truncation logic unit-tested standalone (incl. task-notif/empty/tool_result
+exclusion); async safety, file-write safety, and no-metadata handling all
+reviewed clean.
+
+**Known limitation:** the fork has no desktop `local_*.json`, so it won't
+appear in the sidebar's session list — it's a working branch, resumable in
+its pane but not (yet) catalogued.
+
 ## 2026-07-02 — Rewind now happens in the SAME pane (the captain's call on the constraint tradeoff)
 
 **Decision:** the captain's review: rewind "switches to a new session instead of
