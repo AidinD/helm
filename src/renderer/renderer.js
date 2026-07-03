@@ -73,6 +73,7 @@ function freshPane() {
     turns: [],
     hiddenCount: 0,
     transcriptTruncated: false, // true when the loaded view is missing earlier turns (gates rewind)
+    contextTokens: null, // estimated context tokens in use, for the pane-header gauge
     loading: false,
     busy: false,
     currentLaunchId: null,
@@ -1118,7 +1119,7 @@ async function loadTranscriptInto(paneIndex) {
   if (!pane || !pane.cliSessionId) {
     return;
   }
-  const { turns, hiddenCount, truncated } = await window.maestro.getTranscript({
+  const { turns, hiddenCount, truncated, contextTokens } = await window.maestro.getTranscript({
     cliSessionId: pane.cliSessionId,
     sessionId: pane.sessionId,
   });
@@ -1127,6 +1128,7 @@ async function loadTranscriptInto(paneIndex) {
   }
   pane.turns = turns;
   pane.hiddenCount = hiddenCount || 0;
+  pane.contextTokens = typeof contextTokens === "number" ? contextTokens : null;
   // Whether this view is missing earlier turns (turn-cap or byte-tail cap).
   // Rewind needs the full transcript from turn 0 — the rendered index it
   // passes to the fork counts from the first shown bubble, but the fork
@@ -2116,6 +2118,20 @@ function paneHeaderEl(index) {
     sub.className = "pane-sub";
     sub.textContent = pane.cwd;
     header.append(sub);
+  }
+  // Context-size gauge (the captain's ask, like Claude Desktop's context readout).
+  // Absolute token estimate, not a %: the % would need the model's context-
+  // window size, which varies (200k / 1M / ...) and isn't reliably known per
+  // session here — showing a made-up denominator would mislead. The number
+  // reuses estimateSessionContextTokens (same proxy auto-compact uses), so
+  // it's consistent with when auto-compact would fire.
+  if (pane.sessionId && typeof pane.contextTokens === "number") {
+    const ctx = document.createElement("span");
+    ctx.className = "pane-context";
+    const k = pane.contextTokens / 1000;
+    ctx.textContent = `◱ ${k >= 10 ? Math.round(k) : k.toFixed(1)}k ctx`;
+    ctx.title = "Estimated context currently in use for this session (approximate). The same measure that drives auto-compact.";
+    header.append(ctx);
   }
   const actions = document.createElement("span");
   actions.className = "pane-actions";

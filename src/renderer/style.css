@@ -686,6 +686,16 @@ body.advanced .row-jot {
   font-size: 11px;
 }
 
+/* Context gauge in the pane header — pushed to the right (margin-left:auto),
+   sitting just before the pane actions. */
+.pane-context {
+  margin-left: auto;
+  font-weight: 400;
+  color: var(--text-faint);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 .pane-status {
   font-weight: 500;
   color: var(--active);

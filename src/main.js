@@ -223,7 +223,12 @@ ipcMain.handle("app:version", () => computeVersionString());
 // --- Full chat history for a session (for the pane view) ---
 ipcMain.handle("transcript:get", (_event, { cliSessionId, sessionId }) => {
   const transcriptPath = findTranscriptPath([cliSessionId, sessionId]);
-  return readTranscript(transcriptPath);
+  const result = readTranscript(transcriptPath);
+  // Also hand back the context-size estimate so the pane header can show a
+  // "how full is this session" marker (like Claude Desktop's context gauge).
+  // One extra tail read, only on transcript load — not per poll.
+  result.contextTokens = estimateSessionContextTokens(cliSessionId, sessionId);
+  return result;
 });
 
 // --- Pick a repo folder to root a new session in ---
