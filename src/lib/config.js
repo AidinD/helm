@@ -28,6 +28,16 @@ const DEFAULT_CONFIG = {
   // affordance in the sidebar row — still a manual click to confirm, never
   // an automatic write. This is the "orchestrator proposes, I approve" path.
   archiveSuggestions: { enabled: false },
+  // Manual "I'm done with this" for a session sitting in "waiting" (needs
+  // attention) that genuinely has nothing left to do — e.g. it ended with an
+  // answer to a question, not an open loop. Maps sessionId -> the
+  // lastActivityAt it was acknowledged at; a session whose lastActivityAt has
+  // since moved past that value (new activity happened) is treated as
+  // unacknowledged again automatically, so this can't permanently hide a
+  // session that comes back to life. The captain's own words: "jag hoppas fas 3
+  // orkestratorn löser detta men man kanske också ska stoppa en manuell check
+  // på varje svar" — this IS that manual check, ahead of the Fas 3 automation.
+  acknowledgedSessions: {}, // { "<sessionId>": lastActivityAtMs }
   jot: {
     enabled: true,
     path: "D:\\Dropbox\\jot\\todos.json",

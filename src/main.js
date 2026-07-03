@@ -88,6 +88,22 @@ ipcMain.handle("sessions:get", () => {
   const config = loadConfig();
   const attentionWindowMs = (config.attentionWindowHours || 24) * 60 * 60 * 1000;
   const { error, sessions } = readAllSessions({ attentionWindowMs });
+  // The manual-ack downgrade MUST happen BEFORE enrichWithJot: its scoring
+  // (attentionScore/needsAttention) reads session.status, so applying this
+  // after scoring would leave an acknowledged session's score/spotlight
+  // stuck at full "waiting" weight even though it displays as idle (caught
+  // in review — scoring silently used the pre-downgrade status).
+  const acknowledged = config.acknowledgedSessions || {};
+  for (const session of sessions) {
+    // A "waiting" session the user manually marked done stays downgraded to
+    // "idle" ONLY while the ack is still current — if lastActivityAt has
+    // moved past the timestamp it was acknowledged at, new activity arrived
+    // since, so the ack is stale and the session goes back to needing
+    // attention on its own, with no extra bookkeeping required here.
+    if (session.status === "waiting" && acknowledged[session.sessionId] >= session.lastActivityAt) {
+      session.status = "idle";
+    }
+  }
   const jotIndex = loadJot(config.jot || {});
   enrichWithJot(sessions, jotIndex, config.jot?.weights || {});
   // Title overrides are applied AFTER Jot matching so a renamed display title

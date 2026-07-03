@@ -1,5 +1,29 @@
 # Decisions
 
+## 2026-07-02 — Manual "✓ Done" button on waiting sessions
+
+**Decision:** the captain's ask: "jag hoppas fas 3 orkestratorn löser detta men man
+kanske också ska stoppa en manuell check på varje svar så att jag med den kan
+ange - jag är klar med denna" (a session that ended with a real answer, e.g.
+"here's what to tell your colleagues," has nothing left to do but still sits
+in "Needs you" until the attention window expires — he wants a manual check
+ahead of the Fas 3 orchestrator eventually automating it). Built a "✓ Done"
+pill on any "waiting" sidebar row: one click downgrades it to idle
+immediately. Stored as `config.acknowledgedSessions[sessionId] =
+lastActivityAt` (the value AT ack time) — if the session gets new activity
+afterward, `lastActivityAt` moves past the stored value and the ack is
+automatically stale, so it reverts to "Needs you" on its own with no cleanup
+code. Reuses the exact config-patching pattern already established by
+`titleOverrides`.
+
+Review caught a real ordering bug before it shipped: `sessions:get` ran
+`enrichWithJot` (which computes `attentionScore`/`needsAttention` off
+`session.status`) BEFORE this override loop, so an acknowledged session's
+score/spotlight stayed stuck at full "waiting" weight even though it
+displayed as idle. Fixed by moving the ack downgrade to run before
+`enrichWithJot`, keeping the pre-existing title-override pass (which
+correctly must run AFTER Jot matching) where it was.
+
 ## 2026-07-02 — Collapse/expand-all-categories button (the "list-sorting view")
 
 **Decision:** the captain's follow-up on the (now-working) category drag-reorder:

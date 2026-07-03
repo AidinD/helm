@@ -653,6 +653,29 @@ function rowEl(session) {
     }
   }
 
+  // Manual "I'm done with this" — the captain's ask: a session can end with a real
+  // answer (e.g. "here's what to tell your colleagues") that needs nothing
+  // further, but still sits in "Needs you" until the attention window
+  // expires. One click downgrades it to idle right away. Only shown for
+  // "waiting" sessions — the exact ones this is for.
+  if (session.status === "waiting") {
+    const done = document.createElement("button");
+    done.type = "button";
+    done.className = "ack-done-pill";
+    done.textContent = "✓ Done";
+    done.title = "Nothing left to do here — dismiss from \"Needs you\" (comes back automatically if new activity happens).";
+    done.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const acknowledgedSessions = {
+        ...(state.config.acknowledgedSessions || {}),
+        [session.sessionId]: session.lastActivityAt,
+      };
+      state.config = await window.maestro.setConfig({ acknowledgedSessions });
+      refresh();
+    });
+    row.append(done);
+  }
+
   // "Orchestrator proposes, you approve" — only ever a suggestion. Clicking
   // this pill IS the approval step; nothing archives without it. Only shown
   // for genuinely idle sessions with no open Jot work, and never for a
