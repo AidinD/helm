@@ -1127,15 +1127,26 @@ function openSessionInPane(session, paneIndex, forceSplit, fromHistoryNav) {
   if (addedPane) {
     panes.push(freshPane());
   }
-  panes[paneIndex] = {
-    ...freshPane(),
-    sessionId: session.sessionId,
-    cliSessionId: session.cliSessionId || session.sessionId,
-    cwd: session.cwd || "",
-    title: session.title,
-    loading: true,
-    isOrchestrator: isOrchestratorSession(session),
-  };
+  // Re-opening the session ALREADY showing in this exact pane (e.g.
+  // navigating to a different session and back) is a no-op for the pane's
+  // own in-memory state — rebuilding from scratch silently discarded any
+  // in-progress edit. Real bug this fixed: picking a new root folder via
+  // "…", navigating away and back, then sending reverted to the OLD folder
+  // with zero warning (see DECISIONS.md — the captain caught this live). Skipping
+  // the reset here also happens to preserve any unsent draft prompt text for
+  // the same scenario.
+  const alreadyOpenHere = !addedPane && panes[paneIndex]?.sessionId === session.sessionId;
+  if (!alreadyOpenHere) {
+    panes[paneIndex] = {
+      ...freshPane(),
+      sessionId: session.sessionId,
+      cliSessionId: session.cliSessionId || session.sessionId,
+      cwd: session.cwd || "",
+      title: session.title,
+      loading: true,
+      isOrchestrator: isOrchestratorSession(session),
+    };
+  }
   if (!fromHistoryNav) {
     pushNavHistory(paneIndex, session.sessionId);
   }
