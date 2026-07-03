@@ -1895,7 +1895,12 @@ function wireDoneButtonOnLastReply(index, scroll) {
     state.config = await window.maestro.setConfig({ acknowledgedSessions });
     refresh();
   });
-  actions.append(done);
+  // prepend, not append: Done sits BEFORE Copy in the row. With append, the
+  // acked (always-visible) checkmark would sit to the RIGHT of Copy's
+  // hover-only slot — so on an acked reply, hovering makes Copy pop in to
+  // its LEFT, shifting the checkmark sideways. Leading position keeps the
+  // checkmark's spot fixed regardless of hover state.
+  actions.prepend(done);
 }
 
 // Real "rewind to here" via transcript forking (verified in
