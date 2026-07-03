@@ -1,5 +1,41 @@
 # Decisions
 
+## 2026-07-03 — Spiked persistent-process architecture: doesn't unlock what we wanted
+
+**Decision:** Both "a real input box when Claude needs an answer mid-turn"
+and "interject info into a PROGRESS run" were blocked on the same
+architecture question — a persistent `claude -p --input-format stream-json`
+process per pane instead of one process per turn — and it was unverified
+whether either use case is even possible headlessly. Aidin approved running
+a spike before deciding whether the architecture change is worth it
+(`spike/test-persistent-process-blocking-input.mjs`,
+`spike/test-permission-deny-path.mjs`).
+
+**Result — negative for both, and NOT an investment question anymore:**
+1. Headless `-p` mode has NO pause-and-ask primitive at all. A tool call
+   either runs or gets denied synchronously based on flags
+   (`--allowed-tools`/`--permission-mode`) — no stream-json event type pauses
+   the turn and waits for a stdin-supplied decision, with or without a
+   persistent process. Confirmed with both an allowed-tool run (ran
+   immediately, no permission event) and a should-be-restricted run (also
+   ran immediately, no block, no hang, no permission event — `-p` mode's
+   permission model just isn't an interactive round-trip).
+2. A second stdin message written 1.5s into a 14-second-long first turn
+   (while it was still actively generating) was NOT folded into that
+   turn's output — the CLI ran the first turn to full completion, THEN
+   processed the second message as an entirely separate next turn. This is
+   functionally identical to Maestro's existing "queue next prompt"
+   (already built via a fresh process per turn) — a persistent process adds
+   no new capability here.
+
+**Conclusion:** this isn't "is the architecture change worth it" — it's "the
+architecture change doesn't solve the problem" for either feature, given the
+CLI's actual headless behavior. Both items stay parked, now with a
+conclusive technical reason instead of an open question. (Multi-turn on one
+persistent process DOES work correctly for strictly sequential turns — just
+not for anything resembling a live mid-turn interjection or a blocking
+question.)
+
 ## 2026-07-03 — Scroll-to-bottom button + slightly larger chat font
 
 **Decision:** Two quick asks. (1) "öka fontstorlek i chatten aningen" —
