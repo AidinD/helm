@@ -895,12 +895,12 @@ function summarizeSession(session) {
 
 // Prefers an existing empty pane over forcing a new split, so this doesn't
 // clutter the workspace when one is already free. `avoidIndex` is a pane
-// that must NOT be clobbered — the rewind button lives INSIDE a pane, so
-// without this the all-panes-full fallback used to overwrite the very pane
-// you clicked in, wiping the conversation you were rewinding FROM (found in
-// review; a latent gap the summarize feature shared but rarely hit). The
-// target pane's in-memory view is replaced, but the underlying session/
-// transcript on disk is untouched and still reopenable from the sidebar.
+// that must NOT be auto-clobbered — used by "Summarize & carry over", whose
+// all-panes-full fallback would otherwise overwrite the pane you're looking
+// at. (Rewind does NOT use this — it deliberately targets its own source
+// pane via openFreshDraftInPane's forceIndex.) The chosen pane's in-memory
+// view is replaced, but the replaced session's transcript on disk is
+// untouched and still reopenable from the sidebar.
 function pickDraftTargetPane(avoidIndex) {
   const emptyIndex = panes.findIndex((p) => !p.sessionId && p.turns.length === 0 && !p.busy);
   if (emptyIndex !== -1) {
@@ -917,8 +917,22 @@ function pickDraftTargetPane(avoidIndex) {
   return { index: alternative !== -1 ? alternative : focusedPaneIndex, addedPane: false };
 }
 
-function openFreshDraftInPane(cwd, draftText, avoidIndex) {
-  const { index, addedPane } = pickDraftTargetPane(avoidIndex);
+// opts.forceIndex — drop the draft into THIS exact pane, replacing whatever's
+// there (used by rewind: Aidin wants it in the SAME pane, feeling like going
+// back in the current conversation, not a new pane popping up). opts.avoidIndex
+// — a pane that must NOT be auto-picked (summarize's safety so it doesn't
+// clobber the pane you're looking at). With neither, pickDraftTargetPane
+// prefers an empty/new pane. Either way the target pane's in-memory view is
+// replaced by a fresh draft; the replaced session's transcript on disk is
+// untouched and reopenable from the sidebar.
+function openFreshDraftInPane(cwd, draftText, opts = {}) {
+  let index;
+  let addedPane = false;
+  if (typeof opts.forceIndex === "number") {
+    index = opts.forceIndex;
+  } else {
+    ({ index, addedPane } = pickDraftTargetPane(opts.avoidIndex));
+  }
   panes[index] = { ...freshPane(), cwd: cwd || "" };
   focusedPaneIndex = index;
   if (addedPane) {
@@ -1748,10 +1762,13 @@ function renderPane(index) {
 // true rewind/branch like the desktop app's retry icon.
 //
 // The real "rewind to here" (mirroring the desktop app's own icon) is the
-// separate button added below: it opens a FRESH session/pane whose draft
-// replays the conversation up to (not including) this message, then the
-// message itself — future context is genuinely left out, not just visually
-// hidden, since --resume has no way to retract turns from the OLD session.
+// separate button added below: it replaces the CURRENT pane in place with a
+// fresh draft that replays the conversation up to (not including) this
+// message, then the message itself. Per Aidin's review it stays in the same
+// pane (feels like going back in this conversation, not a new pane popping
+// up) — but underneath it's a fresh forked session, because --resume can't
+// retract turns, so this is the only way to genuinely drop future context
+// rather than just hide it.
 function wireEditableUserTurns(index, scroll) {
   const pane = panes[index];
   // Correlates 1:1 and in DOM order with ".turn.user .turn-bubble" elements:
@@ -1829,9 +1846,13 @@ function buildRewindDraft(pane, turnGlobalIndex) {
 function rewindToTurn(index, turnGlobalIndex) {
   const pane = panes[index];
   const draft = buildRewindDraft(pane, turnGlobalIndex);
-  // Pass the source pane so the fresh draft never overwrites the very pane
-  // the rewind was clicked in (would wipe the conversation being rewound).
-  openFreshDraftInPane(pane.cwd, draft, index);
+  // Force the SAME pane (per Aidin's review — it should feel like going back
+  // in this conversation, not open a new pane). The pane's current session
+  // view is replaced by the fresh draft; sending it starts a new forked
+  // session (freshPane has no cliSessionId, so sendFromPane won't --resume),
+  // with the prior context replayed in the draft. Its old transcript stays
+  // on disk, reopenable from the sidebar.
+  openFreshDraftInPane(pane.cwd, draft, { forceIndex: index });
 }
 
 function paneHeaderEl(index) {
