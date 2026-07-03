@@ -1,5 +1,23 @@
 # Decisions
 
+## 2026-07-03 — Per-session context-size gauge in the pane header
+
+**Decision:** Aidin's ask (with a Claude-Desktop screenshot showing "Context
+window 429.1k / 1.0M (43%)"): a context-usage readout. Added a "◱ Nk ctx"
+chip to the pane header for the open session, reusing
+`estimateSessionContextTokens` (the same proxy auto-compact keys off — so the
+gauge and auto-compact stay consistent). `transcript:get` now also returns
+`contextTokens`; the pane stores it and the header renders it.
+
+Deliberately absolute tokens, NOT a percentage/bar like the reference: the %
+needs the model's context-window size (200k / 1M / …), which varies and isn't
+reliably known per session here — a made-up denominator would mislead. The
+honest absolute number ships now; a real %/bar is a refinement for if/when
+the window size is reliably readable (the transcript's `result` events carry
+`contextWindow`, but not in every format — left for later). Distinct from the
+compaction pill (which marks WHERE a compaction happened); this is the
+live "how full right now" readout.
+
 ## 2026-07-03 — Fas 3 auto-compact shipped + a compaction pill in the chat
 
 **Built** the auto-compact feature (Aidin chose automatic-not-propose):
