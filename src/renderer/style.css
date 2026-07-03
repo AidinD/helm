@@ -1507,6 +1507,18 @@ button.primary {
   font-size: 12px;
 }
 
+.archive-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 16px;
+  max-width: 420px;
+}
+
+.archive-search .search {
+  flex: 1;
+}
+
 .archive-row {
   display: flex;
   align-items: center;
