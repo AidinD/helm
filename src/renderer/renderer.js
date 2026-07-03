@@ -2,6 +2,7 @@ const STATUS_LABEL = { waiting: "Needs you", active: "Working", idle: "Idle", ar
 
 let state = { sessions: [], config: { groups: [], viewMode: "simple" }, quota: null };
 let searchTerm = "";
+let archiveSearchTerm = ""; // filters the Archive page's two lists by title/folder
 let selectedSessionId = null;
 let focusedPaneIndex = 0;
 let dragSessionId = null;
@@ -2983,14 +2984,64 @@ function renderArchivePage() {
   header.textContent = "Archive";
   page.append(header);
 
-  const archived = state.sessions.filter((s) => s.isArchived);
+  // Search box (with a clear button) — the archive can accumulate a lot of
+  // sessions and there was no way to find one. Mirrors the sidebar search.
+  const searchWrap = document.createElement("div");
+  searchWrap.className = "archive-search";
+  const searchInput = document.createElement("input");
+  searchInput.type = "text";
+  searchInput.className = "search";
+  searchInput.placeholder = "Search archived sessions…";
+  searchInput.value = archiveSearchTerm;
+  searchInput.addEventListener("input", (e) => {
+    archiveSearchTerm = e.target.value.trim().toLowerCase();
+    renderArchivePage();
+    // Re-focus + restore caret to end after the re-render replaced the node.
+    const fresh = document.querySelector(".archive-search input");
+    if (fresh) {
+      fresh.focus();
+      fresh.setSelectionRange(fresh.value.length, fresh.value.length);
+    }
+  });
+  searchWrap.append(searchInput);
+  const clearBtn = document.createElement("button");
+  clearBtn.className = "icon-btn";
+  clearBtn.textContent = "✕";
+  clearBtn.title = "Clear search";
+  clearBtn.disabled = archiveSearchTerm === "";
+  clearBtn.addEventListener("click", () => {
+    archiveSearchTerm = "";
+    renderArchivePage();
+    const fresh = document.querySelector(".archive-search input");
+    if (fresh) {
+      fresh.focus();
+    }
+  });
+  searchWrap.append(clearBtn);
+  page.append(searchWrap);
+
+  const matchesArchiveSearch = (s) => {
+    if (!archiveSearchTerm) {
+      return true;
+    }
+    return (
+      (s.title || "").toLowerCase().includes(archiveSearchTerm) ||
+      (s.cwd || "").toLowerCase().includes(archiveSearchTerm)
+    );
+  };
+
+  const archived = state.sessions.filter((s) => s.isArchived).filter(matchesArchiveSearch);
   const hiddenIds = state.config.hiddenSessions || [];
   // Excludes anything also archived — the two flags are independent, so a
   // session could be both, and listing it (with two unrelated "get it back"
   // actions) in both sections at once would just be confusing. Archived is
   // the more definitive state; unarchiving it is enough to see it again here
   // even if it's still separately hidden from Maestro's own sidebar view.
-  const hidden = hiddenIds.map(sessionById).filter(Boolean).filter((s) => !s.isArchived);
+  const hidden = hiddenIds
+    .map(sessionById)
+    .filter(Boolean)
+    .filter((s) => !s.isArchived)
+    .filter(matchesArchiveSearch);
 
   const grid = document.createElement("div");
   grid.className = "analysis-grid";
