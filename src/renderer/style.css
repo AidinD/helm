@@ -689,11 +689,11 @@ body.advanced .row-jot {
 /* Context gauge under the composer's model/effort row (Aidin's placement),
    right-aligned. A clickable bar + % that opens the context/quota popover. */
 .composer-context {
-  align-self: flex-end;
   display: flex;
   align-items: center;
   gap: 6px;
-  margin: 4px 2px 0 auto;
+  margin-left: auto;
+  flex-shrink: 0;
   padding: 2px 4px;
   background: transparent;
   border: none;
@@ -1295,10 +1295,23 @@ body.advanced .row-jot {
   background: var(--bg-card);
 }
 
+/* Suggest-hint + context gauge share one row (Aidin's ask — they used to
+   stack as two separate full-width lines). No justify-content: space-between
+   here — .composer-context's own margin-left:auto handles pinning it right,
+   which (unlike space-between) still works correctly when .suggest-hint is
+   empty and display:none removes it from the row entirely. */
+.composer-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 2px 0;
+}
+
 .suggest-hint {
   font-size: 11px;
   color: var(--text-faint);
-  padding: 4px 2px 0;
+  flex: 1;
+  min-width: 0;
 }
 
 .suggest-hint:empty {
