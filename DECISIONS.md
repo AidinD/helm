@@ -1,5 +1,76 @@
 # Decisions
 
+## 2026-07-03 — firstmate/gnhf source studied; a dispatched research agent
+## recursively self-delegated 5 generations deep before landing real results
+
+**Context:** Aidin asked me to act as orchestrator and dispatch agents
+against the open Maestro backlog rather than build everything inline in
+this one long session. Triaged the open Jot items first (see the entry
+below) into safe-to-dispatch vs. stale vs. gated-on-a-decision, then
+launched two agents: a background research agent to study firstmate +
+gnhf SOURCE (the task PLAN.md's Phase 4 section had been flagging since
+the video-summary pass), and a worktree-isolated coding agent for a small
+UI-polish bundle.
+
+**Incident:** The research agent, asked to "clone both repos and read
+their source," repeatedly interpreted that as a delegation task instead of
+doing the work itself: it spawned a sub-agent and reported "completed"
+with no findings, five times in a row (each generation's own result was
+some variant of "I've launched an agent to do this, I'll report back" —
+one generation even fanned out to 2 parallel children instead of 1,
+widening rather than just chaining). `TaskStop` against each completed
+generation's id correctly reported "not running" — there is no way to
+reach into a chain like this and kill a live but not-yet-surfaced
+descendant, matching the standing memory note on agent-fanout risk. Total
+cost across the misfire: roughly 435k combined subagent output tokens
+before real work appeared, against a task that should have been a single
+well-scoped call.
+
+**Resolution:** Rather than send a 6th corrective message into an already
+overgrown tree, abandoned that lineage entirely (any further orphaned
+notifications from it are harmless — wasted tokens, no destructive action)
+and did the research directly in the main conversation via `gh api`
+(reading key files from both repos without cloning) — got a solid,
+directionally-correct recommendation from that alone. The two orphaned
+generations 5/6 THEN separately reported back with real, deeply-read
+findings (they had, it turned out, actually done the work — just five
+generations later than they should have and at enormous token cost). Their
+findings were meaningfully more thorough than the direct `gh api` pass
+(full grep sweeps, git history, exact line citations, and two decision-
+relevant facts the quick pass missed entirely: firstmate is macOS/Linux-
+only, and gnhf has zero exported library API) — folded into PLAN.md's
+Phase 4 section, superseding the faster first-pass findings.
+
+**Lesson for future research-style dispatches:** the failure mode was
+specific and repeatable — a general-purpose agent given a multi-repo
+"clone and deeply read" task defaults to delegating rather than executing.
+Next time, state explicitly in the prompt: "do this yourself in this turn
+using Bash/gh directly — do not call the Agent tool or delegate to another
+agent." Cheap insurance against a 400k-token misfire for what should be a
+single agent's work.
+
+## 2026-07-03 — Jot triage before dispatch: most of the open backlog wasn't
+## actually ready for blind agent fan-out
+
+**Decision:** Before dispatching any agents against the ~20 open Maestro
+Jot items, read each one against DECISIONS.md's own history rather than
+assume "open in Jot" means "ready to build." Found four real buckets:
+already-resolved-but-not-closed (2 items — a duplicate of an already-
+`done` model/effort-analysis decision, and the mid-turn-input-box question
+already conclusively answered negative by the 2026-07-03 persistent-
+process spike), too-vague-to-delegate (advanced-view redesign, "Routines
+section?" — need Aidin's specifics first), gated-on-the-firstmate-decision
+(gnhf, no-mistakes, half of worktree-automation — building these before
+the strategic question above is answered would bypass the very human-
+gating principle PLAN.md itself calls for), and genuinely-safe-to-dispatch
+(a thinking-indicator icon, a time/tokens chat readout, re-verifying an
+old checkmark bug, plus the firstmate/gnhf research above). Closed the two
+stale duplicates with a note pointing at the superseding decision, left
+the vague ones untouched, and only dispatched agents against the last
+bucket. This triage-before-dispatch step is itself an orchestrator
+behavior (per PLAN.md's own "orchestrator vs. worker" framing) — sensing
+and routing before delegating, not fan-out as a default.
+
 ## 2026-07-03 — Added a repo-root CLAUDE.md, closing the "on-ramp" gap for this repo
 
 **Decision:** Direct follow-through on the strategic reorientation below -

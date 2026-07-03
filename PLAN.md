@@ -288,9 +288,73 @@ SENSING status — a Maestro-with-firstmate-inside is coherent. The real fork
 is: does Maestro (a) take inspiration and build its own GUI-native dispatch,
 (b) wrap/embed firstmate as its dispatch engine while Maestro owns the GUI +
 sensing/coaching, or (c) treat firstmate as a separate tool and NOT
-reinvent it? This is a decision for Aidin, not something to presume. Until
-it's answered, the parallel-dispatch items below (gnhf, treehouse's role in
-parallelism) are partly on hold.
+reinvent it? This is a decision for Aidin, not something to presume.
+
+**2026-07-03 — source-level findings (both repos actually cloned and read
+line-by-line, not just READMEs or a skim — see DECISIONS.md for the full
+incident notes and per-repo file citations):**
+- **Firstmate only runs on macOS/Linux** (hard `tmux` + POSIX `stat`/`ps`
+  dependency throughout, no Windows path) — a hard blocker on Aidin's actual
+  machine, not a "worse fit." It also isn't a CLI or program in any
+  importable sense: there's no `package.json`, no binary, no process
+  boundary. It's a 938-line prompt file (`AGENTS.md`, symlinked as
+  `CLAUDE.md`) plus ~46 bash helper scripts, meant to be *interpreted* by an
+  already-agentic terminal CLI (Claude Code, Codex, opencode...) that's
+  given shell access — the README says so explicitly ("This is not... a
+  CLI"). It also has a hard, unvendored dependency on a whole sibling-tool
+  ecosystem (treehouse, no-mistakes, tasks-axi, gh-axi, chrome-devtools-axi,
+  lavish-axi), each separately `npm install -g`'d.
+- Firstmate's "zero-token supervision" is real but narrower than the
+  README's framing: `bin/fm-watch.sh` is a plain bash polling loop
+  (`sleep 15`, forever) that pattern-matches pane/process state and only
+  costs an LLM turn when something is genuinely actionable — zero *token*
+  cost while idle, but a real always-on background OS process, and it
+  depends on the host CLI supporting a background-task/wake primitive.
+  "Escalate only real decisions" is mostly **pure prompt engineering, not
+  code** — `AGENTS.md` repeats "anything destructive, irreversible, or
+  security-sensitive escalates" three times in prose; the only actual code
+  gate is a refusal in `fm-pr-merge.sh`/`fm-teardown.sh` against specific
+  destructive git ops. Its own lead-agent conversation has NO
+  compaction/reset logic of its own either — it leans entirely on the host
+  CLI's native auto-compaction plus an advisory (not enforced) `/stow`
+  ritual that sweeps durable knowledge to disk before an anticipated reset.
+- gnhf's "fresh context per step" is real for its CLI-subprocess agent
+  family (Claude, Codex, Copilot, Rovodev, Pi) — confirmed: each iteration
+  is a brand-new `claude -p --output-format stream-json` subprocess (the
+  SAME mechanism Maestro's own `launcher.js` already uses), with only a
+  `notes.md` file carried forward. **Exception: its ACP agent family (e.g.
+  Gemini) explicitly keeps a persistent session across iterations** —
+  contradicts the tool's own headline claim for that one agent type.
+- gnhf has **zero exported library API** (no `main`/`exports`/`.d.ts` in
+  `package.json`) despite an internally clean, decoupled `Orchestrator`
+  EventEmitter class — "embed" in practice means vendoring the relevant
+  `src/core/*.ts` files into Maestro's own codebase (unversioned, no
+  upstream contract), not adding a dependency. Its worktree support is also
+  thinner than assumed: worktrees are opt-in (default mode runs on a branch
+  in the main repo), one worktree per run with no pooling, and **no
+  dependency-install or `.env`-sync into a fresh worktree at all** — a new
+  worktree only has tracked files, so the first iteration has to notice and
+  fix missing `node_modules`/secrets itself. Failure detection is agent
+  self-report (`success: false`) + process exit code only, no independent
+  build/test verification gate. The repo's own git history stops at
+  2026-06-09 (single author, ~1 month stale relative to today) — a frozen
+  snapshot to adapt from, not a live dependency to track.
+- Worktrees: firstmate itself delegates this entirely to the sibling tool
+  `treehouse` — independently confirms treehouse is the right prerequisite
+  regardless of how the rest of this question resolves.
+
+**Recommendation (not yet confirmed by Aidin), revised after the deep read
+above: firstmate → pattern only (option a) — there was never really a
+wrap/embed option on the table given the OS incompatibility and the total
+absence of a program boundary; take the bash-triage-before-LLM-call idea,
+the wake-classification-regex approach, and the stow-before-reset ritual,
+not the code. gnhf → vendor/adapt its `Orchestrator` source directly into
+Maestro's own codebase rather than treat it as a live dependency (no
+package boundary exists to depend on cleanly, and the project is stalled
+anyway) — go in aware of the ACP persistent-session exception, the
+worktree/env-install gap, and the weak agent-self-report-only failure
+detection. treehouse → build/adopt regardless, confirmed as its own
+prerequisite even inside firstmate.**
 
 ### (A) Validates / extends existing Maestro direction
 - **firstmate** — the reference architecture for Point 11 (which PLAN
@@ -299,8 +363,9 @@ parallelism) are partly on hold.
   blocking prompt — instead pre-set project modes (`no-mistakes` /
   `direct-PR` / `local-only`, optional `+yolo`) per project before launch,
   and escalate only real decisions via an event watcher. That may be exactly
-  the missing piece. → task: study firstmate + gnhf SOURCE (not just
-  READMEs) and decide the relationship above.
+  the missing piece. Source studied 2026-07-03 (see finding above) — the
+  actual implementation is a bash/tmux daemon, not something to embed
+  directly, but the escalation design is sound and worth reproducing.
 
 ### (B) Concrete new features Maestro lacks
 - **treehouse** (worktree pool automation) — "manage worktrees without
