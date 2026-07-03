@@ -275,7 +275,7 @@ ipcMain.handle(
         mainWindow.webContents.send("session:event", { launchId, ...payload });
       }
     };
-    const meta = { toolsUsed: [], costUsd: 0, numTurns: 0, actualModel: model || null, lastAssistantText: "" };
+    const meta = { toolsUsed: [], costUsd: 0, numTurns: 0, actualModel: model || null, lastAssistantText: "", contextWindows: {} };
     const { child, done } = startSession({
       cwd,
       prompt,
@@ -293,6 +293,9 @@ ipcMain.handle(
         } else if (evt.kind === "result") {
           meta.costUsd = evt.costUsd || 0;
           meta.numTurns = evt.numTurns || 0;
+          if (evt.contextWindows) {
+            Object.assign(meta.contextWindows, evt.contextWindows);
+          }
         } else if (evt.kind === "system" && evt.model) {
           meta.actualModel = evt.model;
         }
@@ -313,6 +316,25 @@ ipcMain.handle(
       // renderer never got its "done" event and the pane stayed "running"
       // forever with no way to recover short of restarting Maestro.
       send({ kind: "done", summary });
+
+      // Learn model→context-window from what the CLI reported (done even for
+      // internal launches — they run real models, so their reported windows
+      // are just as valid). Persist only when something new/changed, so this
+      // is a no-op write on the steady state.
+      if (Object.keys(meta.contextWindows).length > 0) {
+        const cfg = loadConfig();
+        const known = cfg.modelContextWindows || {};
+        let changed = false;
+        for (const [m, w] of Object.entries(meta.contextWindows)) {
+          if (known[m] !== w) {
+            known[m] = w;
+            changed = true;
+          }
+        }
+        if (changed) {
+          writeConfig({ ...cfg, modelContextWindows: known });
+        }
+      }
 
       // Maestro-internal launches (e.g. the hidden "summarize & carry over"
       // resume) are not real user turns: they must not be usage-logged,
