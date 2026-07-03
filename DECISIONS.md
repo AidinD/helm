@@ -1,5 +1,56 @@
 # Decisions
 
+## 2026-07-03 — "Switch root folder" + stop silently dropping CLI failures
+
+**Decision:** Aidin noticed the "…" folder-picker is always clickable, even
+on an already-resumed session, and asked what it actually does there ("kan
+en session byta root folder? diskussion"). Investigated rather than
+guessing: `claude --resume` scopes its own session lookup by cwd — spiked
+resuming from a different folder and got "No conversation found with
+session ID" outright. Worse: Maestro had NO handling anywhere for CLI
+stderr — the error vanished completely (no case in the renderer's event
+switch), so picking a new folder on an existing session and sending
+silently ate the message with the pane just going back to idle. Chose to
+build the real feature (verified buildable — copying the transcript into the
+target folder's own project dir first, same trick as rewind-to-here) rather
+than just closing the trap.
+
+**Built:**
+- `stderrText` now flows through launcher.js's `done` summary; the renderer's
+  `"done"` handler gained a branch for genuine failures
+  (`!sawResult && code !== 0`) that surfaces a visible `⚠` error turn instead
+  of silently reloading an unchanged transcript. This is a general safety
+  net, not just for this one failure mode.
+- `switchSessionRootFolder()` (sessions.js): copies (never moves) the
+  transcript into `newCwd`'s own encoded project dir
+  (`paths.js`'s new `encodeProjectDir`, mirroring the CLI's own naming).
+  `sendFromPane` calls this first when a resumed pane's folder was changed,
+  before `startSession`.
+- `findTranscriptPath` changed from "first directory match" to "most
+  recently modified match" — after a switch, the same session id briefly
+  exists in two project dirs, and directory-enumeration order isn't
+  meaningfully "correct."
+- **Bug caught by a standalone test before shipping**: `fs.copyFileSync`
+  PRESERVES the source's mtime on Windows — without an explicit
+  `fs.utimesSync` bump on the copy, the new mtime-based tie-break sometimes
+  still resolved to the STALE pre-switch copy. Fixed; re-verified 4/4 checks
+  (switch succeeds, resolves to the fresh copy, `--resume` works from the
+  new folder, still resolves correctly after a real new turn).
+- **Review caught two more before shipping**: (1) the switch-success path was
+  missing the `panes[index] === pane` identity guard every other await
+  boundary in `sendFromPane` uses — added for consistency (pane could've
+  been reset/reassigned during the switch's await). (2) A spawn-level
+  failure (binary not found) resolves with `{error: err.message}` and no
+  `stderrText` — the new error branch now falls back to `evt.summary?.error`
+  instead of dropping that message for a generic "exit code -1" text.
+
+**Where a session's context/CLAUDE.md/settings get enforced after a
+switch**: same as any Maestro-launched session — resolved per-invocation
+from the CLI process's cwd, not baked in at session creation. So yes,
+switching folders and sending genuinely changes which project's CLAUDE.md,
+settings, and skills apply going forward — not something Maestro implements
+itself, just a consequence of how `-p` already works for every session.
+
 ## 2026-07-03 — Merge suggest-hint and context gauge onto one row
 
 **Decision:** Aidin: "kan du lägga dessa på samma rad" (screenshot showing

@@ -87,6 +87,15 @@ export function startSession({ cwd, prompt, model, effort, permissionMode, resum
   let sessionId = null;
   let sawResult = false;
   let lastQuota = null;
+  // Accumulated for the "closed" summary, NOT emitted live per-chunk — a
+  // failed run's real error (e.g. "No conversation found with session ID")
+  // goes here, but plenty of benign stderr noise happens on every run too
+  // (e.g. the "no stdin data received" warning), so the caller decides
+  // whether it's worth surfacing based on whether the run actually failed
+  // (summary.code !== 0 && !summary.sawResult), not on stderr output alone.
+  // Capped so a runaway/looping process can't grow this unboundedly.
+  let stderrText = "";
+  const STDERR_CAP = 4000;
 
   const emit = (evt) => {
     try {
@@ -109,13 +118,15 @@ export function startSession({ cwd, prompt, model, effort, permissionMode, resum
   });
 
   child.stderr.on("data", (chunk) => {
-    emit({ kind: "stderr", text: chunk.toString("utf8") });
+    if (stderrText.length < STDERR_CAP) {
+      stderrText = (stderrText + chunk.toString("utf8")).slice(0, STDERR_CAP);
+    }
   });
 
   const done = new Promise((resolve) => {
     child.on("close", (code) => {
       emit({ kind: "closed", code, sessionId, sawResult });
-      resolve({ code, sessionId, sawResult, quota: lastQuota });
+      resolve({ code, sessionId, sawResult, quota: lastQuota, stderrText });
     });
     child.on("error", (err) => {
       emit({ kind: "error", message: err.message });

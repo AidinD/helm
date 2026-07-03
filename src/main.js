@@ -3,7 +3,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { execFile, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { readAllSessions, enrichWithJot, setSessionArchived, forkTranscriptAtUserMessage } from "./lib/sessions.js";
+import { readAllSessions, enrichWithJot, setSessionArchived, forkTranscriptAtUserMessage, switchSessionRootFolder } from "./lib/sessions.js";
 import { loadJot } from "./lib/jot.js";
 import { loadConfig, writeConfig } from "./lib/config.js";
 import { startSession } from "./lib/launcher.js";
@@ -198,6 +198,15 @@ ipcMain.handle("session:archive", (_event, { sessionId, archived }) => {
 // original transcript — writes a new file beside it. ---
 ipcMain.handle("session:fork", (_event, { cliSessionId, userMsgIndex }) => {
   return forkTranscriptAtUserMessage(cliSessionId, userMsgIndex);
+});
+
+// --- "Switch root folder": copy a session's transcript into a new folder's
+// own project directory so --resume can find it there. `claude --resume`
+// scopes lookup by cwd (verified in spike/test-cwd-switch.mjs — resuming
+// from a different folder fails outright), and the copy trick is verified in
+// spike/test-cwd-switch-copy.mjs. Never touches the original transcript. ---
+ipcMain.handle("session:switchRootFolder", (_event, { cliSessionId, sessionId, newCwd }) => {
+  return switchSessionRootFolder(cliSessionId, sessionId, newCwd);
 });
 
 // --- Save a pasted image to disk and hand back its path, so a prompt can
