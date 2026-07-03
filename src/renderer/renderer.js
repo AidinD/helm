@@ -2172,6 +2172,32 @@ async function rewindToTurn(index, userMsgIndex, messageText) {
   loadTranscriptInto(index); // renders the truncated prior history as real bubbles
 }
 
+// paneHeaderEl builds `.pane-sub` (the folder path next to the title) ONCE,
+// but renderPane() only ever rebuilds the SCROLL area, never the header — so
+// picking a new folder, typing one, or completing a root-folder switch never
+// updated the visible path (caught via Aidin's "path bredvid titeln
+// ändrades aldrig" observation). Queries the live DOM for the header's own
+// pane-sub span and updates/creates/removes it directly, without touching
+// anything else in the header.
+function updatePaneSubText(index, cwd) {
+  const paneEl = document.querySelector(`.pane[data-pane="${index}"]`);
+  const header = paneEl?.querySelector(".pane-header");
+  if (!header) {
+    return;
+  }
+  let sub = header.querySelector(".pane-sub");
+  if (!cwd) {
+    sub?.remove();
+    return;
+  }
+  if (!sub) {
+    sub = document.createElement("span");
+    sub.className = "pane-sub";
+    header.append(sub);
+  }
+  sub.textContent = cwd;
+}
+
 function paneHeaderEl(index) {
   const pane = panes[index];
   const header = document.createElement("div");
@@ -2398,6 +2424,7 @@ function paneComposerEl(index) {
     pane.cwd = e.target.value;
     cwdInput.title = e.target.value;
     cwdInput.classList.remove("cwd-missing");
+    updatePaneSubText(index, e.target.value);
   });
   const pickBtn = document.createElement("button");
   pickBtn.className = "icon-btn";
@@ -2412,6 +2439,7 @@ function paneComposerEl(index) {
       pane.cwd = folder;
       cwdInput.value = folder;
       cwdInput.title = folder;
+      updatePaneSubText(index, folder);
     }
   });
 
@@ -2686,6 +2714,7 @@ async function sendFromPane(index, els) {
   pane.pendingAttachments = [];
   els.renderAttachments();
   pane.cwd = cwd;
+  updatePaneSubText(index, cwd);
   pane.turns.push({ role: "user", kind: "text", text: prompt });
   els.promptEl.value = "";
   pane.busy = true;
