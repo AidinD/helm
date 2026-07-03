@@ -1,5 +1,42 @@
 # Decisions
 
+## 2026-07-03 — Root-folder switch didn't stick: session.cwd lives in a file the switch never touched
+
+**Bug (the real one, found via two rounds of live testing):** the captain tested
+the switch feature twice. First test: pick a new folder, navigate away and
+back — folder reverted (fixed below by preserving pane state — but that
+fix alone didn't solve it). Second test: pick a new folder, send a real
+message, WAIT for the reply, then navigate away and back — folder STILL
+reverted. That ruled out the pane-state theory as the root cause.
+
+Root cause: `session.cwd` — read by literally every part of the app that
+shows or reuses a session's folder (sidebar rows, pane header, the
+composer's cwd field on open) — comes from `buildSession`'s `cwd: meta.cwd`,
+where `meta` is the DESKTOP APP'S OWN `local_<uuid>.json` sidecar metadata
+file. `switchSessionRootFolder` only ever copied the `.jsonl` transcript; it
+never touched that sidecar. So the switch worked for exactly one immediate
+`--resume`, but the moment the session was reopened, Maestro re-read the
+still-stale old `cwd` from the sidecar and the switch silently evaporated —
+regardless of how many real turns had run from the new folder.
+
+**Fix:** extracted `setSessionArchived`'s existing careful mutation pattern
+(find the sidecar by sessionId, re-read fresh right before writing to
+shrink the race window against the desktop app's own concurrent writes,
+patch one field, write via temp-file + atomic rename) into a shared
+`patchSessionMeta(sessionId, patchFn)` helper — `setSessionArchived` is now
+a one-line wrapper over it. `switchSessionRootFolder` calls
+`patchSessionMeta(sessionId, meta => { meta.cwd = newCwd })` on every
+invocation (not just when the transcript copy was needed — an earlier
+attempt, made before this fix existed, could leave a correctly-placed
+transcript with still-stale metadata). Verified live against a real session
+(Jot): `session.cwd` now updates immediately after the switch call, with no
+new turn needing to run. Review came back fully clean (setSessionArchived
+behaviorally identical post-refactor, no race with the CLI process since the
+switch is awaited before `startSession` spawns anything, double-switching an
+already-broken session is safe). Re-ran the fixed switch for all 14 sessions
+touched tonight (13 + this session's own) so they're now genuinely durable,
+not just transcript-copied. The captain confirmed live: "nu verkar det fungera!"
+
 ## 2026-07-03 — Pane header's folder path never updated live
 
 **Bug:** the captain: "vi borde fixa pathen vid titeln" — after picking a new

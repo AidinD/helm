@@ -136,7 +136,22 @@ export function enrichWithJot(sessions, jotIndex, weightsOverride = {}) {
  * response to an explicit user action (a manual "Archive" click, or an
  * orchestrator-proposed suggestion the user approved), never automatically.
  */
-export function setSessionArchived(sessionId, archived) {
+/**
+ * Shared safe-mutation path for the desktop app's OWN local_<uuid>.json
+ * session metadata — the one place Maestro writes into another app's live
+ * state, so every caller goes through this same careful sequence: find the
+ * file by sessionId, re-read it fresh right before writing (the desktop app
+ * could still be flushing a turn to it — this can't fully eliminate the
+ * race, but shrinks the window from "the whole directory scan" to "one read
+ * + one write"), apply `patchFn` to just the fields it needs, then write via
+ * a temp file + atomic rename rather than a direct writeFileSync (which
+ * truncates before writing the new content — a crash/full-disk/killed
+ * process mid-write would otherwise leave the desktop app's OWN session file
+ * half-written and unparseable; fs.renameSync on the same volume is atomic,
+ * so the real file is always either fully old or fully new, never a torn
+ * mix). `patchFn(freshMeta)` mutates the object in place.
+ */
+function patchSessionMeta(sessionId, patchFn) {
   const dir = findSessionsDir();
   if (!dir) {
     return { ok: false, error: "Could not locate Claude session files." };
@@ -154,26 +169,10 @@ export function setSessionArchived(sessionId, archived) {
       continue;
     }
     try {
-      // Re-reads right before writing, rather than reusing the copy from the
-      // directory scan above — the desktop app owns this file and could still
-      // be flushing a turn to it (idle sessions aren't guaranteed quiescent).
-      // This can't fully eliminate the race, but shrinks the window from "the
-      // whole scan" to "one read + one write," and only ever touches
-      // isArchived instead of writing back a possibly-stale full object.
       const freshMeta = readMeta(filePath) || scanMeta;
-      freshMeta.isArchived = archived;
+      patchFn(freshMeta);
       // Matches the app's own compact (non-pretty-printed) format, so this
       // write doesn't needlessly reformat a file another app owns.
-      //
-      // Written via a temp file + rename rather than a direct writeFileSync
-      // (which truncates the file before writing the new content). A crash,
-      // full disk, or killed process mid-write would leave the desktop
-      // app's OWN session file half-written and unparseable — this is the
-      // one place Maestro mutates another app's live state, so a torn write
-      // there is a real risk, not a theoretical one. fs.renameSync is
-      // atomic when the temp file is on the same volume (same directory),
-      // so the real file is always either fully the old content or fully
-      // the new content, never a partial mix of both.
       const tmpPath = path.join(dir, `.${file}.${crypto.randomBytes(4).toString("hex")}.tmp`);
       try {
         fs.writeFileSync(tmpPath, JSON.stringify(freshMeta), "utf8");
@@ -194,6 +193,12 @@ export function setSessionArchived(sessionId, archived) {
     }
   }
   return { ok: false, error: "Session file not found." };
+}
+
+export function setSessionArchived(sessionId, archived) {
+  return patchSessionMeta(sessionId, (meta) => {
+    meta.isArchived = archived;
+  });
 }
 
 /**
@@ -287,6 +292,17 @@ export function forkTranscriptAtUserMessage(cliSessionId, userMsgIndex) {
  * Copies rather than moves: the original stays fully intact and resumable
  * from its original folder, matching every other "branch, don't destroy"
  * operation in this codebase (rewind, archive, hide).
+ *
+ * ALSO patches the desktop app's own local_<uuid>.json metadata (`cwd`
+ * field) via patchSessionMeta — caught live (the captain tested this exact thing):
+ * `session.cwd` (what the sidebar/pane read every time a session is opened,
+ * see buildSession in this file) comes ONLY from that metadata file, never
+ * from the transcript itself. Copying the transcript alone made --resume
+ * WORK once, but the switch didn't stick: opening the session again (even
+ * right after a successful send from the new folder) re-read the metadata's
+ * still-OLD cwd and silently reverted. Without this patch, "switch root
+ * folder" would only ever be a one-shot fix for the CURRENT message, not an
+ * actual durable change to where Maestro considers the session rooted.
  */
 export function switchSessionRootFolder(cliSessionId, sessionId, newCwd) {
   const transcriptPath = findTranscriptPath([cliSessionId, sessionId]);
@@ -300,23 +316,36 @@ export function switchSessionRootFolder(cliSessionId, sessionId, newCwd) {
     return { ok: false, error: `Failed to create target project folder: ${err.message}` };
   }
   const targetPath = path.join(targetDir, path.basename(transcriptPath));
-  if (path.resolve(targetPath) === path.resolve(transcriptPath)) {
-    // Already rooted there (picking the same folder again) — nothing to do.
-    return { ok: true };
+  // Only copy if not ALREADY rooted there (picking the same folder again) —
+  // but the metadata patch below still needs to run regardless, since an
+  // old switch performed before this patch existed could have a correctly-
+  // located transcript with still-stale metadata.
+  if (path.resolve(targetPath) !== path.resolve(transcriptPath)) {
+    try {
+      fs.copyFileSync(transcriptPath, targetPath);
+      // fs.copyFileSync PRESERVES the source's mtime on the copy (verified —
+      // Windows CopyFileW behavior carries through Node) — without this, the
+      // fresh copy ties with the original on mtime, and findTranscriptPath's
+      // "most recently modified wins" tie-break would inconsistently still
+      // pick the OLD copy depending on directory-listing order (caught before
+      // shipping: a standalone test found this exact failure). Explicitly
+      // bumping the copy's mtime to now makes it unambiguously the winner.
+      const now = new Date();
+      fs.utimesSync(targetPath, now, now);
+    } catch (err) {
+      return { ok: false, error: `Failed to copy transcript: ${err.message}` };
+    }
   }
-  try {
-    fs.copyFileSync(transcriptPath, targetPath);
-    // fs.copyFileSync PRESERVES the source's mtime on the copy (verified —
-    // Windows CopyFileW behavior carries through Node) — without this, the
-    // fresh copy ties with the original on mtime, and findTranscriptPath's
-    // "most recently modified wins" tie-break would inconsistently still
-    // pick the OLD copy depending on directory-listing order (caught before
-    // shipping: a standalone test found this exact failure). Explicitly
-    // bumping the copy's mtime to now makes it unambiguously the winner.
-    const now = new Date();
-    fs.utimesSync(targetPath, now, now);
-  } catch (err) {
-    return { ok: false, error: `Failed to copy transcript: ${err.message}` };
+  if (sessionId) {
+    const metaRes = patchSessionMeta(sessionId, (meta) => {
+      meta.cwd = newCwd;
+    });
+    if (!metaRes.ok) {
+      // The transcript-level switch still succeeded (--resume will work from
+      // the new folder for THIS session) — only the "stick on next open"
+      // part failed, worth surfacing but not worth failing the whole action.
+      return { ok: true, warning: `Folder switched, but couldn't persist it for next time: ${metaRes.error}` };
+    }
   }
   return { ok: true };
 }
