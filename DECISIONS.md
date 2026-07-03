@@ -1,5 +1,30 @@
 # Decisions
 
+## 2026-07-02 — Fixed: the Done checkmark was "following along" onto new replies
+
+**Bug:** the captain: "nästan rätt. Min avsikt var att checkmarken skulle betyda,
+jag är klar till det här läget. Men om jag sen fortsätter prompta tillkommer
+nya saker och då ska inte checkmarken följa med." Root cause: `isAcked` in
+`wireDoneButtonOnLastReply` compares `config.acknowledgedSessions[sessionId]`
+against `session.lastActivityAt` — but `session` comes from `state.sessions`,
+which is ONLY refreshed by the 30s poll / explicit `refresh()`, never
+updated live as a run streams. When a new reply streamed in mid-conversation,
+the pane's live `pane.turns` already had the new content, but
+`state.sessions`' `lastActivityAt` for that session was still the OLD
+(pre-new-reply) value — which could still exactly equal the earlier ack
+timestamp, making `isAcked` wrongly true and painting the checkmark onto a
+reply it was never placed on.
+
+**Fix:** `bumpSessionActivity(sessionId)` mutates the matching
+`state.sessions` entry's `lastActivityAt` to `Date.now()` the INSTANT new
+content actually streams into a pane — called right before `renderPane()` in
+all four places a pane pushes a new assistant-role turn (`"assistant"`
+event, `"error"` event, the "⚠ Failed to start" path, and the "⏹ Stopped."
+path). This invalidates any stale ack match immediately, without waiting for
+the next poll. Verified with a standalone sequence simulation (4/4): ack
+holds through no-op time passing, clears the instant new content streams in,
+and stays correctly un-acked once the real poll's timestamp catches up.
+
 ## 2026-07-02 — Swapped Done/Copy icon order (Done first)
 
 **Decision:** "vi borde byta plats på checkbox och copy ikonen, annars ser
