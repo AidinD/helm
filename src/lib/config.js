@@ -57,7 +57,7 @@ const DEFAULT_CONFIG = {
   // time-since-last-activity gate (not the coarse waiting/idle status) is
   // both what he asked for and inherently safe — 30+ min of silence means
   // it's definitely not mid-turn.
-  autoCompact: { enabled: false, thresholdTokens: 150000, idleMinutes: 30 },
+  autoCompact: { enabled: false, thresholdTokens: 150000, idleMinutes: 10 },
   jot: {
     enabled: true,
     path: "D:\\Dropbox\\jot\\todos.json",
