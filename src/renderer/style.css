@@ -593,10 +593,13 @@ body.advanced .row-jot {
   border-style: solid;
 }
 
+/* Sits under the LAST assistant reply's bubble (see wireDoneButtonOnLastReply) —
+   deliberately always visible, unlike .copy-btn/.rewind-btn's hover-only
+   opacity, since this is a status affordance (like .archive-suggest-pill),
+   not a hover utility. */
 .ack-done-pill {
   align-self: flex-start;
-  margin-left: 14px;
-  margin-top: 2px;
+  margin-top: 4px;
   font-size: 10px;
   color: var(--text-faint);
   background: transparent;

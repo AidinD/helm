@@ -38,29 +38,35 @@ standalone (7/7: status change, group rename, collapse toggle, new session,
 deadline change, archiveSuggestions toggle, and identical-data-stays-
 identical all behave correctly).
 
-## 2026-07-02 — Manual "✓ Done" button on waiting sessions
+## 2026-07-02 — Manual "✓ Done" button on the last reply (not a sidebar pill)
 
 **Decision:** Aidin's ask: "jag hoppas fas 3 orkestratorn löser detta men man
 kanske också ska stoppa en manuell check på varje svar så att jag med den kan
 ange - jag är klar med denna" (a session that ended with a real answer, e.g.
 "here's what to tell your colleagues," has nothing left to do but still sits
 in "Needs you" until the attention window expires — he wants a manual check
-ahead of the Fas 3 orchestrator eventually automating it). Built a "✓ Done"
-pill on any "waiting" sidebar row: one click downgrades it to idle
-immediately. Stored as `config.acknowledgedSessions[sessionId] =
-lastActivityAt` (the value AT ack time) — if the session gets new activity
-afterward, `lastActivityAt` moves past the stored value and the ack is
-automatically stale, so it reverts to "Needs you" on its own with no cleanup
-code. Reuses the exact config-patching pattern already established by
-`titleOverrides`.
+ahead of the Fas 3 orchestrator eventually automating it). First built it as
+a "✓ Done" pill on the sidebar ROW. Feedback: "Nej, inte riktigt vad jag
+tänkt mig. Jag vill ha den per svar inte per session" — he'd literally said
+"per svar" (per reply) in the original ask and I'd read it as "per session."
+Moved the button to the reply itself: it now sits under the LAST assistant
+bubble in the pane (only that one — it's the only reply whose ack actually
+changes the session's status, since status is derived from the last
+message's role/age; an older reply already has a newer one after it).
+Backend unchanged — same `config.acknowledgedSessions[sessionId] =
+lastActivityAt` mechanism (stale-checks itself on new activity, no cleanup
+code needed), same recipe as `titleOverrides`. Only the affordance's
+LOCATION changed, from `rowEl()` (sidebar) to `wireDoneButtonOnLastReply()`
+(pane, alongside `wireEditableUserTurns`) — deliberately always-visible
+(unlike `.copy-btn`/`.rewind-btn`'s hover-only opacity) since it's a status
+affordance like `.archive-suggest-pill`, not a hover utility.
 
-Review caught a real ordering bug before it shipped: `sessions:get` ran
-`enrichWithJot` (which computes `attentionScore`/`needsAttention` off
-`session.status`) BEFORE this override loop, so an acknowledged session's
-score/spotlight stayed stuck at full "waiting" weight even though it
-displayed as idle. Fixed by moving the ack downgrade to run before
-`enrichWithJot`, keeping the pre-existing title-override pass (which
-correctly must run AFTER Jot matching) where it was.
+Before the relocation, review caught a real ordering bug in the backend:
+`sessions:get` ran `enrichWithJot` (computes `attentionScore`/
+`needsAttention` off `session.status`) BEFORE the ack-downgrade loop, so an
+acknowledged session's score/spotlight stayed stuck at full "waiting" weight
+even though it displayed as idle. Fixed by moving the downgrade before
+`enrichWithJot` — this fix carried over unchanged through the relocation.
 
 ## 2026-07-02 — Collapse/expand-all-categories button (the "list-sorting view")
 
