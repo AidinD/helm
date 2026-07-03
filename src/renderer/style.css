@@ -715,15 +715,21 @@ body.advanced .row-jot {
 
 /* Sticky + zero-height so it pins to the bottom of the SCROLLED viewport
    (tracks the user as they scroll) without consuming layout space or adding
-   to the column's gap — the actual button is positioned via flex centering
-   inside this zero-height shell, not via absolute positioning. */
+   to the column's gap — the actual button is positioned inside this
+   zero-height shell, not via absolute positioning.
+   align-items: flex-end (not center) is load-bearing: on a zero-height flex
+   box, center would hang the button's bottom half BELOW the sticky anchor
+   line, where the scroll viewport's bottom edge clips it in half (the
+   "delvis dold" bug). flex-end pins the button's bottom to the anchor so it
+   sits entirely ABOVE the edge, fully visible. */
 .scroll-to-bottom-wrap {
   position: sticky;
-  bottom: 4px;
+  bottom: 10px;
   height: 0;
   overflow: visible;
   display: flex;
   justify-content: center;
+  align-items: flex-end;
   pointer-events: none;
   z-index: 5;
 }
