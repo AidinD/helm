@@ -219,13 +219,18 @@ diagnosis was Opus-shaped, the localized fixes were Sonnet-shaped).
   - **Two more periodic checks folded in here rather than getting their own
     mechanism** (2026-07-02 decision — avoid a third separate loop when this
     one already sweeps every session): auto-`/compact` when a session is
-    active but idle and has used more than X context (feasibility not yet
-    verified — does headless `-p` even support invoking the CLI's built-in
-    `/compact` the way it expands skill slash-commands? needs a spike before
-    committing to this); and the model/effort suggestion-accuracy review
-    (the on-demand "Suggestion accuracy" report on the Analysis page already
-    covers checking this manually — this is specifically about making it
-    proactive instead of pull-based).
+    active but idle and has used more than X context — **shipped** (see
+    DECISIONS.md 2026-07-03, "Fas 3 auto-compact shipped"); and the
+    model/effort suggestion-accuracy review, i.e. making the existing
+    on-demand "Suggestion accuracy" report on the Analysis page proactive
+    instead of pull-based — **shipped** (see DECISIONS.md 2026-07-03,
+    "Model/effort suggestion-accuracy check made proactive"): the sweep now
+    periodically re-checks the SAME metric the on-demand report already
+    computes (reused, not reinvented) and surfaces a dismissible finding on
+    the Analysis page when overriding the suggestion has been judged
+    "appropriate" meaningfully more often than following it. Sensing +
+    surfacing only — it never changes `suggest.js`'s heuristic itself; doing
+    that automatically would be a bigger, separate follow-up.
 - **Multi-model** — bring in Gemini when it fits (Jot task "Gemini vid
   behov?"), gated on the existing Antigravity-backend scaffolding
   ([[project-gemini-artist-mode]]) rather than a fresh integration.
