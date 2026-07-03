@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import fs from "node:fs";
 import { resolveClaudeBinary } from "./launcher.js";
 import { findTranscriptPath } from "./paths.js";
 import { readTranscript } from "./transcript.js";
@@ -161,4 +162,173 @@ function truncate(text, max) {
     return "";
   }
   return text.length > max ? text.slice(0, max) + "…" : text;
+}
+
+// How much of the transcript tail to scan for the most recent token-usage
+// numbers. The last usage block is always near the end; 256KB is plenty
+// without reading a possibly-huge whole file.
+const CONTEXT_TAIL_BYTES = 256 * 1024;
+
+/**
+ * Best-effort estimate of a session's CURRENT context occupancy, for the
+ * auto-compact threshold. Reads the transcript tail and takes the LAST
+ * usage block's input + cache_creation + cache_read tokens — that final API
+ * call of the most recent turn read the full accumulated context once, so
+ * it's the freshest occupancy snapshot on disk.
+ *
+ * A proxy, not exact: it can over-count on turns with many internal tool
+ * iterations, and the CLI's own /compact reports a somewhat smaller
+ * `pre_tokens` for the same state. That's fine — the auto-compact threshold
+ * is tunable and only needs a monotonic "this session is big" signal, and a
+ * successful compact drops this number far below any sane threshold so it
+ * won't immediately re-fire. Returns null if no usage is found (e.g. a
+ * brand-new or unreadable session).
+ */
+export function estimateSessionContextTokens(cliSessionId, sessionId) {
+  const transcriptPath = findTranscriptPath([cliSessionId, sessionId]);
+  if (!transcriptPath) {
+    return null;
+  }
+  let text;
+  try {
+    const size = fs.statSync(transcriptPath).size;
+    if (size <= CONTEXT_TAIL_BYTES) {
+      text = fs.readFileSync(transcriptPath, "utf8");
+    } else {
+      const fd = fs.openSync(transcriptPath, "r");
+      try {
+        const buffer = Buffer.alloc(CONTEXT_TAIL_BYTES);
+        const bytesRead = fs.readSync(fd, buffer, 0, CONTEXT_TAIL_BYTES, size - CONTEXT_TAIL_BYTES);
+        text = buffer.toString("utf8", 0, bytesRead);
+      } finally {
+        fs.closeSync(fd);
+      }
+    }
+  } catch {
+    return null;
+  }
+  // Anchor on the LAST cache_read_input_tokens (present in every usage
+  // block), then pull its sibling fields from a small window around it.
+  // Field-level regex rather than JSON.parse of the whole usage object,
+  // which is brittle across the two transcript formats (interactive vs
+  // headless stream-json) and the nested server_tool_use sub-object.
+  const readMatches = [...text.matchAll(/"cache_read_input_tokens":(\d+)/g)];
+  if (readMatches.length === 0) {
+    return null;
+  }
+  const last = readMatches[readMatches.length - 1];
+  const windowText = text.slice(Math.max(0, last.index - 400), last.index + 100);
+  const cacheRead = parseInt(last[1], 10);
+  const inputMatch = windowText.match(/"input_tokens":(\d+)/);
+  const cacheCreationMatch = windowText.match(/"cache_creation_input_tokens":(\d+)/);
+  const input = inputMatch ? parseInt(inputMatch[1], 10) : 0;
+  const cacheCreation = cacheCreationMatch ? parseInt(cacheCreationMatch[1], 10) : 0;
+  return input + cacheCreation + cacheRead;
+}
+
+/**
+ * Current byte size of a session's transcript, or null if not found. Used as
+ * the auto-compact "has anything happened since I last compacted this?"
+ * signal: it's more reliable than lastActivityAt (a headless /compact APPENDS
+ * to the transcript and may itself bump lastActivityAt) because the caller
+ * samples it right AFTER its own compaction, so any later growth is
+ * necessarily real new activity, not the compaction's own append.
+ */
+export function getTranscriptSize(cliSessionId, sessionId) {
+  const transcriptPath = findTranscriptPath([cliSessionId, sessionId]);
+  if (!transcriptPath) {
+    return null;
+  }
+  try {
+    return fs.statSync(transcriptPath).size;
+  } catch {
+    return null;
+  }
+}
+
+// Compaction took ~13s in the spike; give it generous headroom for a large
+// session before treating a silent hang as failure.
+const COMPACT_TIMEOUT_MS = 90_000;
+
+/**
+ * Runs the CLI's built-in /compact on a session headlessly (verified
+ * possible in spike/test-compact-headless.mjs). Resolves to
+ * { ok:true, preTokens, postTokens } on a confirmed compaction, or null on
+ * any failure — never throws. Success is keyed off the `compact_boundary`
+ * stream event's metadata, NOT file size (compaction APPENDS to the
+ * append-only transcript, so bytes go up, not down).
+ */
+export function compactSession({ cwd, cliSessionId, sessionId }) {
+  return new Promise((resolve) => {
+    const resumeId = cliSessionId || sessionId;
+    if (!resumeId) {
+      resolve(null);
+      return;
+    }
+    const args = ["--resume", resumeId, "-p", "/compact", "--output-format", "stream-json", "--verbose"];
+    const claudePath = resolveClaudeBinary();
+    let child;
+    try {
+      child = spawn(claudePath, args, {
+        cwd,
+        shell: !claudePath.toLowerCase().endsWith(".exe"),
+        env: process.env,
+      });
+    } catch {
+      resolve(null);
+      return;
+    }
+    // /compact with -p otherwise waits ~3s for stdin that never comes; close
+    // it immediately so the compaction starts without that stall.
+    try {
+      child.stdin.end();
+    } catch {
+      // best-effort
+    }
+
+    let buf = "";
+    let boundary = null;
+    let settled = false;
+    const finish = (result) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeoutId);
+      resolve(result);
+    };
+    const timeoutId = setTimeout(() => {
+      child.kill();
+      finish(null);
+    }, COMPACT_TIMEOUT_MS);
+
+    child.stdout.on("data", (c) => {
+      buf += c.toString("utf8");
+      let nl;
+      while ((nl = buf.indexOf("\n")) !== -1) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (!line) {
+          continue;
+        }
+        let evt;
+        try {
+          evt = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        if (evt.type === "system" && evt.subtype === "compact_boundary" && evt.compact_metadata) {
+          boundary = evt.compact_metadata;
+        }
+      }
+    });
+    child.on("error", () => finish(null));
+    child.on("close", () => {
+      if (boundary) {
+        finish({ ok: true, preTokens: boundary.pre_tokens ?? null, postTokens: boundary.post_tokens ?? null });
+      } else {
+        finish(null);
+      }
+    });
+  });
 }

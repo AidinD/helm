@@ -44,6 +44,14 @@ const DEFAULT_CONFIG = {
   // modelFitJudge/archiveSuggestions. Its output only ever sharpens an
   // existing suggestion (the archive-suggest pill) — never acts on its own.
   orchestratorHelper: { enabled: false },
+  // Fas 3 auto-compact: when on, the same periodic sweep runs the CLI's
+  // built-in /compact on idle/waiting sessions whose estimated context has
+  // grown past thresholdTokens. Off by default and separately toggled from
+  // orchestratorHelper — unlike the read-only classifier, this MUTATES what
+  // a resumed session sees (lossy summary; the original stays in the
+  // append-only transcript). The captain chose automatic (not propose-a-pill) for
+  // this one, matching the original "kör en /compact när ... idle" ask.
+  autoCompact: { enabled: false, thresholdTokens: 150000 },
   jot: {
     enabled: true,
     path: "D:\\Dropbox\\jot\\todos.json",
@@ -80,6 +88,7 @@ export function loadConfig() {
       modelFitJudge: { ...DEFAULT_CONFIG.modelFitJudge, ...parsed.modelFitJudge },
       archiveSuggestions: { ...DEFAULT_CONFIG.archiveSuggestions, ...parsed.archiveSuggestions },
       orchestratorHelper: { ...DEFAULT_CONFIG.orchestratorHelper, ...parsed.orchestratorHelper },
+      autoCompact: { ...DEFAULT_CONFIG.autoCompact, ...parsed.autoCompact },
       jot: { ...DEFAULT_CONFIG.jot, ...parsed.jot },
     };
   } catch {

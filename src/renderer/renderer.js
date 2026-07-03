@@ -690,6 +690,20 @@ function rowEl(session) {
     tag.textContent = `◎ ${session.orchestratorTag.reason}`;
     row.append(tag);
   }
+  // Auto-compact note — the helper compacted this session automatically (per
+  // the captain's choice of automatic-not-propose for compaction). Shown so a
+  // silent background compaction is at least visible after the fact, until
+  // the next real activity clears it (main.js gates that on transcript size).
+  if (session.autoCompacted) {
+    const c = document.createElement("div");
+    c.className = "row-orchestrator-tag";
+    c.title = "The orchestrator helper auto-compacted this session's context (the full history is still on disk).";
+    const pre = session.autoCompacted.preTokens;
+    const post = session.autoCompacted.postTokens;
+    const fmt = (n) => (typeof n === "number" ? `${Math.round(n / 1000)}k` : "?");
+    c.textContent = post !== null ? `⊟ Auto-compacted (${fmt(pre)} → ${fmt(post)} tokens)` : "⊟ Auto-compacted";
+    row.append(c);
+  }
   // "Orchestrator proposes, you approve" — only ever a suggestion. Clicking
   // this pill IS the approval step; nothing archives without it. Sessions
   // still sitting in "waiting" (inside the attention window) but that the
@@ -1645,6 +1659,9 @@ function turnEl(turn) {
   if (turn.kind === "task_notification") {
     return taskNotificationEl(turn.text);
   }
+  if (turn.kind === "compact_boundary") {
+    return compactBoundaryEl(turn);
+  }
   const wrap = document.createElement("div");
   wrap.className = "turn " + turn.role;
   const bubble = document.createElement("div");
@@ -1713,6 +1730,29 @@ function taskNotificationEl(rawText) {
 
 function truncateText(text, max) {
   return text.length > max ? text.slice(0, max) + "…" : text;
+}
+
+// A centered divider marking where the conversation was compacted — shown
+// for ANY compaction found in the transcript: the CLI's own auto-compact
+// when the window fills (trigger "auto"), Maestro's Fas 3 auto-compact, or a
+// manual /compact (both "manual"). Mirrors the desktop app showing where
+// context was summarized. The captain's ask: "skriv även ut i chatten med en pill
+// att compacting skett."
+function compactBoundaryEl(turn) {
+  const wrap = document.createElement("div");
+  wrap.className = "compact-boundary";
+  const pill = document.createElement("span");
+  pill.className = "compact-boundary-pill";
+  const triggerLabel = turn.trigger === "auto" ? "auto" : "manual";
+  const fmt = (n) => (typeof n === "number" ? `${Math.round(n / 1000)}k` : "?");
+  const sizePart =
+    typeof turn.preTokens === "number" && typeof turn.postTokens === "number"
+      ? ` · ${fmt(turn.preTokens)} → ${fmt(turn.postTokens)} tokens`
+      : "";
+  pill.textContent = `⊟ Context compacted (${triggerLabel})${sizePart}`;
+  pill.title = "The conversation before this point was summarized to free up context. The full history is still on disk.";
+  wrap.append(pill);
+  return wrap;
 }
 
 function toolGroupEl(pairs) {
@@ -2718,6 +2758,8 @@ function computeSidebarFingerprint(sessions, config) {
         s.jot?.nearestDeadline,
         s.orchestratorTag?.statusTag,
         s.orchestratorTag?.reason,
+        s.autoCompacted?.preTokens,
+        s.autoCompacted?.postTokens,
       ].join(":")
     )
     .join("|");
@@ -3021,6 +3063,20 @@ function renderSettingsPage() {
       async (checked) => {
         state.config = await window.maestro.setConfig({
           orchestratorHelper: { ...(state.config.orchestratorHelper || {}), enabled: checked },
+        });
+        refresh();
+      }
+    )
+  );
+
+  block.append(
+    settingsToggleRow(
+      "Auto-compact large idle sessions (Fas 3)",
+      `Automatically runs /compact on idle/waiting sessions whose context grows past ~${Math.round((state.config.autoCompact?.thresholdTokens || 150000) / 1000)}k tokens (checked on the same ~15 min sweep). Unlike everything else here this ACTS on its own — it summarizes the session's context (lossy, but the full history stays in the transcript on disk). A small note appears on the row after it happens.`,
+      state.config.autoCompact?.enabled === true,
+      async (checked) => {
+        state.config = await window.maestro.setConfig({
+          autoCompact: { ...(state.config.autoCompact || {}), enabled: checked },
         });
         refresh();
       }

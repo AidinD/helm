@@ -13,7 +13,7 @@ import { findTranscriptPath } from "./lib/paths.js";
 import { listSkills, skillMdPath } from "./lib/skills.js";
 import { appendUsageLog, readUsageSummary } from "./lib/usage.js";
 import { judgeModelFit } from "./lib/judge.js";
-import { classifySessionStatus } from "./lib/orchestratorHelper.js";
+import { classifySessionStatus, estimateSessionContextTokens, compactSession, getTranscriptSize } from "./lib/orchestratorHelper.js";
 import { savePastedImage, prunePastedImages } from "./lib/images.js";
 import { computeVersionString } from "./lib/version.js";
 
@@ -28,6 +28,13 @@ const liveChildren = new Map(); // launchId -> child process, for the Stop butto
 // signal). classifiedAtActivity lets the sweep skip re-spending on a session
 // that hasn't changed since its last classification.
 const sessionClassifications = new Map();
+// Fas 3 auto-compact results, sessionId -> { preTokens, postTokens,
+// compactedTranscriptSize }. compactedTranscriptSize (the transcript's byte
+// size sampled right after compaction) is the "has real activity happened
+// since?" guard — see getTranscriptSize's rationale. Lets the sweep avoid
+// re-compacting an already-compacted-and-untouched session, and lets the
+// row surface a "was auto-compacted" note until the next real activity.
+const sessionCompactions = new Map();
 
 // child.kill() only signals the top-level claude.exe — it does NOT kill the
 // process tree. claude.exe spawns its own children (the model runtime, any
@@ -125,6 +132,16 @@ ipcMain.handle("sessions:get", () => {
     // never something that mutates status here. null when never classified
     // (helper disabled, or hasn't reached this session yet).
     session.orchestratorTag = sessionClassifications.get(session.sessionId) || null;
+    // autoCompacted: surfaced so an automatic (silent) compaction isn't a
+    // total black box — the row shows a small note until the next real
+    // activity grows the transcript past its post-compaction size.
+    const compaction = sessionCompactions.get(session.sessionId);
+    if (compaction) {
+      const currentSize = getTranscriptSize(session.cliSessionId, session.sessionId);
+      session.autoCompacted = currentSize !== null && currentSize <= compaction.compactedTranscriptSize ? compaction : null;
+    } else {
+      session.autoCompacted = null;
+    }
   }
   return {
     error,
@@ -407,6 +424,11 @@ const ORCHESTRATOR_SWEEP_INTERVAL_MS = 15 * 60 * 1000;
 // them every sweep at ~$0.015 each would add up; caps a single sweep's
 // spend and wall-clock time. The rest simply wait for the next sweep.
 const MAX_CLASSIFICATIONS_PER_SWEEP = 15;
+// Auto-compact is far more expensive per call than classification (~13s +
+// real token cost each, and it MUTATES the session) — cap it much tighter.
+// The rest wait for the next sweep; nothing is lost, a large session stays
+// large one more cycle.
+const MAX_COMPACTIONS_PER_SWEEP = 3;
 // setInterval doesn't know whether the PREVIOUS sweep is still running — up
 // to MAX_CLASSIFICATIONS_PER_SWEEP sequential calls, each with its own 30s
 // timeout backstop, stay comfortably under one interval in the stated worst
@@ -422,73 +444,143 @@ async function runOrchestratorSweep() {
     return;
   }
   const config = loadConfig();
-  if (config.orchestratorHelper?.enabled !== true) {
+  const classifyOn = config.orchestratorHelper?.enabled === true;
+  const compactOn = config.autoCompact?.enabled === true;
+  if (!classifyOn && !compactOn) {
     return;
   }
   sweepInFlight = true;
   try {
-    await runOrchestratorSweepBody(config);
+    await runOrchestratorSweepBody(config, { classifyOn, compactOn });
   } finally {
     sweepInFlight = false;
   }
 }
 
-async function runOrchestratorSweepBody(config) {
+async function runOrchestratorSweepBody(config, { classifyOn, compactOn }) {
   const attentionWindowMs = (config.attentionWindowHours || 24) * 60 * 60 * 1000;
   const { sessions } = readAllSessions({ attentionWindowMs });
-  // "active" sessions have work genuinely in flight — nothing to classify
-  // mid-stream. Archived sessions are done by definition. Everything else
-  // ("waiting" or "idle") is exactly where the heuristic is weakest: it
-  // can't tell "asked a real question" from "gave a final answer," or
-  // "genuinely stuck" from "genuinely idle."
+  // "active" sessions have work genuinely in flight — never touch them.
+  // Archived sessions are done by definition. Classification looks at both
+  // "waiting" and "idle"; compaction is restricted to "idle" ONLY (below) —
+  // "waiting" means the assistant spoke recently (within the attention
+  // window), which is the one status that could still be a session actively
+  // streaming a turn run OUTSIDE Maestro, and compacting a live session
+  // would be a real problem. "idle" (aged past the window) is safely parked,
+  // and matches the captain's "aktiv men idle" framing for what to auto-compact.
   const candidates = sessions.filter((s) => !s.isArchived && (s.status === "waiting" || s.status === "idle"));
-  // Skip re-spending on a session that hasn't changed since it was last
-  // classified — classifiedAtActivity mirrors the ack mechanism's own
-  // staleness check (config.acknowledgedSessions), just for this map.
-  const eligible = candidates.filter((s) => {
-    const prior = sessionClassifications.get(s.sessionId);
-    return !prior || prior.classifiedAtActivity !== s.lastActivityAt;
-  });
-  const jotIndex = loadJot(config.jot || {});
-  enrichWithJot(eligible, jotIndex, config.jot?.weights || {});
 
-  for (const session of eligible.slice(0, MAX_CLASSIFICATIONS_PER_SWEEP)) {
-    const jotSummary = session.jot
-      ? `${session.jot.category} (${
-          [
-            session.jot.review > 0 ? `${session.jot.review} review` : null,
-            session.jot.inProgress > 0 ? `${session.jot.inProgress} in progress` : null,
-            session.jot.open > 0 ? `${session.jot.open} open` : null,
-          ]
-            .filter(Boolean)
-            .join(", ") || "no open items"
-        })`
-      : null;
-    let result;
-    try {
-      result = await classifySessionStatus({
-        cwd: session.cwd,
-        cliSessionId: session.cliSessionId,
-        sessionId: session.sessionId,
-        title: session.title,
-        jotSummary,
-      });
-    } catch (err) {
-      console.error("[maestro] orchestrator helper classification failed:", err);
-      continue;
-    }
-    if (!result) {
-      continue;
-    }
-    sessionClassifications.set(session.sessionId, { ...result, classifiedAtActivity: session.lastActivityAt });
-    appendUsageLog({
-      type: "orchestratorClassification",
-      sessionId: session.sessionId,
-      timestamp: Date.now(),
-      statusTag: result.statusTag,
-      reason: result.reason,
-      classifierCostUsd: result.costUsd,
+  if (classifyOn) {
+    // Jot data is only used by the classifier's per-session summary — enrich
+    // only when actually classifying (the compaction pass never reads it).
+    const jotIndex = loadJot(config.jot || {});
+    enrichWithJot(candidates, jotIndex, config.jot?.weights || {});
+    // Skip re-spending on a session that hasn't changed since it was last
+    // classified — classifiedAtActivity mirrors the ack mechanism's own
+    // staleness check (config.acknowledgedSessions), just for this map.
+    const toClassify = candidates.filter((s) => {
+      const prior = sessionClassifications.get(s.sessionId);
+      return !prior || prior.classifiedAtActivity !== s.lastActivityAt;
     });
+    for (const session of toClassify.slice(0, MAX_CLASSIFICATIONS_PER_SWEEP)) {
+      const jotSummary = session.jot
+        ? `${session.jot.category} (${
+            [
+              session.jot.review > 0 ? `${session.jot.review} review` : null,
+              session.jot.inProgress > 0 ? `${session.jot.inProgress} in progress` : null,
+              session.jot.open > 0 ? `${session.jot.open} open` : null,
+            ]
+              .filter(Boolean)
+              .join(", ") || "no open items"
+          })`
+        : null;
+      let result;
+      try {
+        result = await classifySessionStatus({
+          cwd: session.cwd,
+          cliSessionId: session.cliSessionId,
+          sessionId: session.sessionId,
+          title: session.title,
+          jotSummary,
+        });
+      } catch (err) {
+        console.error("[maestro] orchestrator helper classification failed:", err);
+        continue;
+      }
+      if (!result) {
+        continue;
+      }
+      sessionClassifications.set(session.sessionId, { ...result, classifiedAtActivity: session.lastActivityAt });
+      appendUsageLog({
+        type: "orchestratorClassification",
+        sessionId: session.sessionId,
+        timestamp: Date.now(),
+        statusTag: result.statusTag,
+        reason: result.reason,
+        classifierCostUsd: result.costUsd,
+      });
+    }
+  }
+
+  if (compactOn) {
+    const threshold = config.autoCompact?.thresholdTokens || 150000;
+    // Idle only (not "waiting") — the safely-parked set, never a session
+    // that might be mid-turn outside Maestro (see the candidate comment).
+    const compactCandidates = candidates.filter((s) => s.status === "idle");
+    // Only sessions not already compacted at this same activity level, and
+    // whose estimated context is over the threshold. The estimate is cheap
+    // (a transcript tail read, no model call), so it's fine to check every
+    // candidate; the expensive /compact only fires for those over the line.
+    const toCompact = [];
+    for (const session of compactCandidates) {
+      // Skip a session already compacted whose transcript hasn't grown since
+      // (no real activity to warrant re-compacting). This — not the token
+      // estimate — is the reliable guard, because a /compact-only run writes
+      // no fresh low-token usage block, so the estimate would still read the
+      // stale pre-compaction number and re-fire endlessly otherwise.
+      const prior = sessionCompactions.get(session.sessionId);
+      if (prior) {
+        const currentSize = getTranscriptSize(session.cliSessionId, session.sessionId);
+        if (currentSize !== null && currentSize <= prior.compactedTranscriptSize) {
+          continue;
+        }
+      }
+      const tokens = estimateSessionContextTokens(session.cliSessionId, session.sessionId);
+      if (tokens !== null && tokens > threshold) {
+        toCompact.push({ session, tokens });
+      }
+    }
+    for (const { session, tokens } of toCompact.slice(0, MAX_COMPACTIONS_PER_SWEEP)) {
+      let result;
+      try {
+        result = await compactSession({
+          cwd: session.cwd,
+          cliSessionId: session.cliSessionId,
+          sessionId: session.sessionId,
+        });
+      } catch (err) {
+        console.error("[maestro] auto-compact failed:", err);
+        continue;
+      }
+      if (!result || !result.ok) {
+        continue;
+      }
+      // Sample the transcript size AFTER compaction (its own append already
+      // included) — any later growth is real new activity, which re-enables
+      // compaction and clears the row note.
+      sessionCompactions.set(session.sessionId, {
+        preTokens: result.preTokens ?? tokens,
+        postTokens: result.postTokens ?? null,
+        compactedTranscriptSize: getTranscriptSize(session.cliSessionId, session.sessionId) ?? 0,
+      });
+      appendUsageLog({
+        type: "orchestratorAutoCompact",
+        sessionId: session.sessionId,
+        timestamp: Date.now(),
+        preTokens: result.preTokens ?? tokens,
+        postTokens: result.postTokens ?? null,
+      });
+    }
   }
 }
 

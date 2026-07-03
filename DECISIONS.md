@@ -1,5 +1,45 @@
 # Decisions
 
+## 2026-07-03 — Fas 3 auto-compact shipped + a compaction pill in the chat
+
+**Built** the auto-compact feature (the captain chose automatic-not-propose):
+- `estimateSessionContextTokens()` — transcript-tail proxy for current
+  context size (last usage block's input+cache_creation+cache_read).
+  Verified within ~1% of the CLI's own pre_tokens on a real compaction.
+- `compactSession()` — `--resume -p "/compact"`, confirms via the
+  `compact_boundary` event. Verified end-to-end (ok, pre 33132 → post 2125).
+- Folded into the periodic sweep, own `autoCompact.enabled` toggle (off by
+  default) + `thresholdTokens` (150k default). Re-compaction guard keyed on
+  transcript BYTE SIZE (not lastActivityAt, not the token estimate — a
+  /compact-only run writes no fresh low-token usage block, so the estimate
+  stays stale-high; and compaction may bump lastActivityAt): a session is
+  re-eligible only once its transcript grows past the size sampled right
+  after its last compaction. A small "⊟ Auto-compacted (X→Y)" row note
+  surfaces it (the captain's concern about silent compaction).
+
+**Review was fully clean** on all six probes; applied its two minor notes:
+compaction is now restricted to `idle` sessions only (not `waiting` — the
+one status that could be a session streaming a turn OUTSIDE Maestro; also
+matches the captain's "aktiv men idle" framing), and `enrichWithJot` now runs only
+in the classify branch (the compaction pass never reads Jot).
+
+**Q: does the CLI's own auto-compact-when-full still work in Maestro
+sessions?** Yes — verified this session's transcript carries 2
+`trigger:"auto"` compact_boundary events. Maestro never touches context
+management, so the built-in fires normally near the limit; Fas 3
+auto-compact is a separate, earlier proactive trigger (`trigger:"manual"`,
+150k, idle). They coexist.
+
+**Compaction pill in the chat** (the captain's ask "skriv även ut i chatten med en
+pill att compacting skett"): `transcript.js` now emits a `compact_boundary`
+marker turn wherever the transcript has one, and the renderer draws a
+centered divider pill "⊟ Context compacted (auto/manual · X→Y tokens)".
+Works for ALL triggers uniformly (CLI built-in, Fas 3 auto, manual). Handles
+BOTH transcript formats — headless stream-json (`compact_metadata`,
+snake_case) and interactive desktop (`compactMetadata`, camelCase) — since
+Maestro reads sessions from both. Verified parsing against a real transcript
+(trigger:"auto", pre 917979 → post 53922).
+
 ## 2026-07-03 — Spike: headless /compact works (auto-compact is buildable)
 
 **Decision:** Before building the Fas 3 auto-compact feature, spiked whether
