@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { resolveClaudeBinary } from "./launcher.js";
 import { findTranscriptPath } from "./paths.js";
 import { readTranscript } from "./transcript.js";
@@ -28,15 +30,14 @@ const TAG_SCHEMA = JSON.stringify({
   required: ["statusTag", "reason"],
 });
 
-const CLASSIFIER_SYSTEM_PROMPT =
-  "You are a terse session-status classifier for a coding assistant orchestrator dashboard. " +
-  "Given the last few messages of a coding session and its linked task info, classify its CURRENT status:\n" +
-  '- "waiting_for_input": the assistant asked a real question or is blocked on a decision only the human can make.\n' +
-  '- "stuck": the assistant appears to be failing/erroring/looping without making progress.\n' +
-  '- "done_not_archived": the assistant gave a final answer/result; nothing further is needed from either side.\n' +
-  '- "blocked_external": waiting on something outside the conversation (a human reviewing a PR, a deploy, an external service).\n' +
-  '- "genuinely_active": there is real unfinished work in flight that the human should know is still moving.\n' +
-  "Respond only in the requested JSON schema. reason MUST be under 12 words, one short clause, no filler — this is a compact UI label, not an explanation.";
+// The orchestrator's own operating manual — a third layer distinct from
+// Aidin's global personal CLAUDE.md and each project's repo CLAUDE.md (see
+// that file's own header comment, and PLAN.md's Phase 3 write-up, for the
+// full rationale). Loaded at runtime rather than inlined so it can grow
+// (dispatch/escalation/coaching instructions) without touching this module's
+// code.
+const INSTRUCTIONS_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), "orchestrator-instructions.md");
+const CLASSIFIER_SYSTEM_PROMPT = fs.readFileSync(INSTRUCTIONS_PATH, "utf8");
 
 // This mirrors judgeModelFit's exact cost-optimized recipe (judge.js) almost
 // line for line: --system-prompt + --allowed-tools "" + empty
