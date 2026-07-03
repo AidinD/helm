@@ -1,5 +1,30 @@
 # Decisions
 
+## 2026-07-03 — firstmate/gnhf relationship CONFIRMED; worktree-rooting question resolved
+
+**Decision:** the captain confirmed the recommendation from the deep source read
+(see the entry below): firstmate → reference only, not code (impossible to
+run on Windows regardless, tmux/POSIX-locked); gnhf → vendor/adapt its
+`Orchestrator` source into Maestro's own codebase; treehouse → build first,
+independent of the rest. "Reuse the code" for firstmate specifically means
+reuse the SOURCE-LEVEL KNOWLEDGE of how it solved wake-classification,
+escalation, and worktree hand-off — not running its bash.
+
+**Also resolved a real technical question the captain raised:** if Maestro's own
+future orchestrator dispatches work across many different projects, it
+can't itself be "rooted" in all of them at once — so how would it create a
+worktree for a project it isn't rooted in? Answer: it doesn't need to be.
+The constraint hit earlier tonight (Agent-tool worktree isolation failing
+because it infers the target repo from the calling session's own cwd) is
+specific to that one convenience feature in Claude Code's own tooling, not
+a property of git worktrees in general. Confirmed directly in both repos'
+source: `treehouse get` takes an explicit project reference regardless of
+firstmate's own cwd, and gnhf's `createWorktree` (`git.ts`) takes an
+explicit repo/path argument. Maestro already tracks `session.cwd` per
+project, so its own orchestrator can run `git -C <projectPath> worktree add
+<worktreePath> -b <branch>` directly against the right repo from wherever
+the orchestrator process itself happens to run — no rooting requirement.
+
 ## 2026-07-03 — Thinking indicator + per-reply time/token readout; verified the Done-checkmark bug stays fixed
 
 **Built two small UI additions, both hooked into existing state rather than
