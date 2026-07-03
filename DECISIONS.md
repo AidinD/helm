@@ -1,5 +1,17 @@
 # Decisions
 
+## 2026-07-02 — Collapse/expand-all-categories button (the "list-sorting view")
+
+**Decision:** the captain's follow-up on the (now-working) category drag-reorder:
+"needs a dedicated view for list sorting — sounds like a simple collapse/
+expand-all button." Built exactly that: a toolbar button that toggles all
+categories collapsed↔expanded at once (if all are already collapsed, expand;
+else collapse), so you can drop the whole sidebar to just category headers,
+see and reorder the list order at a glance, then expand back. Persists via
+each group's existing `collapsed` flag — no new state. Deliberately the
+lightweight option over a separate modal/settings-page reorder UI (the two
+heavier ideas from the discussion), matching the captain's "simple button" framing.
+
 ## 2026-07-02 — Rewind rebuilt as real transcript-forking (the true desktop behavior)
 
 **Decision:** Second round of rewind feedback: "all history still disappears

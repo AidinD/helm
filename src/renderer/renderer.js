@@ -2602,6 +2602,23 @@ document.getElementById("search").addEventListener("input", (e) => {
 
 document.getElementById("newCategory").addEventListener("click", createCategory);
 
+// Collapse/expand ALL categories at once — the lightweight "list-sorting
+// view" the captain asked for: collapse everything to headers to see the whole
+// category order at a glance (and reorder), then expand back. Toggles based
+// on current state: if every category is already collapsed, expand all;
+// otherwise collapse all. Persists via each group's `collapsed` flag, same
+// as the per-header toggle.
+document.getElementById("collapseAll").addEventListener("click", async () => {
+  const groups = state.config.groups || [];
+  if (groups.length === 0) {
+    return;
+  }
+  const allCollapsed = groups.every((g) => g.collapsed);
+  const next = groups.map((g) => ({ ...g, collapsed: !allCollapsed }));
+  state.config = await window.maestro.setConfig({ groups: next });
+  renderSidebar();
+});
+
 document.getElementById("newChat").addEventListener("click", () => {
   panes[focusedPaneIndex] = freshPane();
   // A brand-new chat is a new browsing context for this slot — without
