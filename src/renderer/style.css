@@ -593,27 +593,6 @@ body.advanced .row-jot {
   border-style: solid;
 }
 
-/* Sits under the LAST assistant reply's bubble (see wireDoneButtonOnLastReply) —
-   deliberately always visible, unlike .copy-btn/.rewind-btn's hover-only
-   opacity, since this is a status affordance (like .archive-suggest-pill),
-   not a hover utility. */
-.ack-done-pill {
-  align-self: flex-start;
-  margin-top: 4px;
-  font-size: 10px;
-  color: var(--text-faint);
-  background: transparent;
-  border: 1px dashed var(--border);
-  border-radius: 4px;
-  padding: 1px 6px;
-  cursor: pointer;
-}
-
-.ack-done-pill:hover {
-  color: var(--text);
-  border-color: var(--text-faint);
-  border-style: solid;
-}
 
 .toast {
   position: fixed;
@@ -809,6 +788,35 @@ body.advanced .row-jot {
 .copy-btn.copied {
   color: var(--active);
   opacity: 1;
+}
+
+.copy-btn:disabled {
+  cursor: default;
+}
+
+/* Row (not the .turn column itself) so the Done button added by
+   wireDoneButtonOnLastReply sits BESIDE Copy, not stacked under it —
+   the captain's ask: "en check ikon bredvid copy ikonen." Every assistant reply
+   gets this row (see turnEl); most only ever contain the Copy button. */
+.turn-actions {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 2px;
+  align-self: flex-start;
+  margin-top: 2px;
+}
+
+.turn-actions .copy-btn {
+  margin-top: 0;
+}
+
+/* Once clicked, the Done button stops being a hover-only action (like Copy)
+   and becomes a permanent, always-visible confirmation on that reply —
+   the captain's ask: "när den är checkad dyker en checkmark upp på svaret." */
+.done-btn.acked {
+  opacity: 1;
+  color: var(--active);
 }
 
 .turn-bubble .md-code-block {
