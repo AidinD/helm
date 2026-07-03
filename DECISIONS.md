@@ -1,5 +1,43 @@
 # Decisions
 
+## 2026-07-02 — Performance + token usage audit; one real fix applied
+
+**Decision:** Aidin's Jot task "performance + token usage granskning av
+appen" — ran an audit (two agents, renderer perf + Maestro's own internal
+LLM-call costs) rather than guessing. Verdict: the app is already well-
+optimized at its actual single-user scale (~9 groups, ~35 grouped + ~100
+total sessions). Token/cost axis fully clean — the model-fit judge (Haiku,
+per completed run) uses the established cheap-call recipe correctly, is
+gated off `internal:true` launches, and costs ~$0.015/run;
+`suggestModelEffort` isn't an LLM call at all (pure regex, also debounced);
+Fas 2's summarize-and-carry-over correctly does NOT use the cheap recipe
+(it's a real generative Sonnet call by necessity) and only fires on an
+explicit user click. No cost leaks found anywhere.
+
+**One real, worth-fixing finding on the renderer side**: the 30s
+`setInterval` poll unconditionally called `renderSidebar()` (full
+`innerHTML=""` + rebuild) even when nothing the sidebar displays had
+changed since the last poll — 100% wasted work most ticks, all day, every
+day the app is open. (Everything else flagged — an O(n²)-shaped grouping
+loop, transcript re-reads, potential memory-leak shapes in
+pendingLaunchCallbacks/launchPaneHistory/paneNavHistory — checked out fine
+at this app's real scale; no action needed on those.)
+
+**Fix**: `computeSidebarFingerprint(sessions, config)` builds a cheap string
+from exactly the fields renderSidebar()'s OUTPUT depends on (session
+identity/status/model/archived + the Jot badge fields + config.groups/
+sidebarMode/archiveSuggestions/hideArchived) — deliberately not a full
+JSON.stringify of the whole payload, since most session fields (turns, cwd,
+etc.) don't affect a sidebar row and would cause false-positive "changed."
+`refresh()` compares this against the previous poll's fingerprint and skips
+`renderSidebar()` when unchanged. Every OTHER call site that renders on a
+real user action (search, category CRUD, opening a session, drag-reorder,
+...) still calls `renderSidebar()` directly and is unaffected by this cache
+— it only guards the unconditional 30s timer tick. Sensitivity verified
+standalone (7/7: status change, group rename, collapse toggle, new session,
+deadline change, archiveSuggestions toggle, and identical-data-stays-
+identical all behave correctly).
+
 ## 2026-07-02 — Manual "✓ Done" button on waiting sessions
 
 **Decision:** Aidin's ask: "jag hoppas fas 3 orkestratorn löser detta men man
