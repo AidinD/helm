@@ -13,6 +13,7 @@ import { findTranscriptPath } from "./lib/paths.js";
 import { listSkills, skillMdPath } from "./lib/skills.js";
 import { appendUsageLog, readUsageSummary } from "./lib/usage.js";
 import { judgeModelFit } from "./lib/judge.js";
+import { classifySessionStatus } from "./lib/orchestratorHelper.js";
 import { savePastedImage, prunePastedImages } from "./lib/images.js";
 import { computeVersionString } from "./lib/version.js";
 
@@ -21,6 +22,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 let mainWindow = null;
 let latestQuota = null;
 const liveChildren = new Map(); // launchId -> child process, for the Stop button
+// Fas 3 orchestrator-helper classifier results, sessionId -> { statusTag,
+// reason, classifiedAtActivity }. In-memory only (lost on restart — a fresh
+// sweep re-populates it soon after; not worth persisting for a v1 ambient
+// signal). classifiedAtActivity lets the sweep skip re-spending on a session
+// that hasn't changed since its last classification.
+const sessionClassifications = new Map();
 
 // child.kill() only signals the top-level claude.exe — it does NOT kill the
 // process tree. claude.exe spawns its own children (the model runtime, any
@@ -113,6 +120,11 @@ ipcMain.handle("sessions:get", () => {
     if (overrides[session.sessionId]) {
       session.title = overrides[session.sessionId];
     }
+    // orchestratorTag is the Fas 3 helper's own read of the content — a
+    // proposal the renderer can use to sharpen the archive-suggestion pill,
+    // never something that mutates status here. null when never classified
+    // (helper disabled, or hasn't reached this session yet).
+    session.orchestratorTag = sessionClassifications.get(session.sessionId) || null;
   }
   return {
     error,
@@ -384,9 +396,106 @@ function truncateForNotification(text) {
   return oneLine.length > 100 ? oneLine.slice(0, 100) + "…" : oneLine;
 }
 
+// Fas 3 orchestrator-helper: a periodic, stateless sweep that reads recent
+// content to classify sessions today's purely time/role-based status
+// heuristic can't tell apart (see PLAN.md Phase 3, DECISIONS.md 2026-07-03).
+// Off by default (config.orchestratorHelper.enabled); extends this existing
+// process rather than adding a new triggering mechanism, same reasoning as
+// the model-fit judge.
+const ORCHESTRATOR_SWEEP_INTERVAL_MS = 15 * 60 * 1000;
+// Cost/time safety valve — with many eligible sessions, classifying all of
+// them every sweep at ~$0.015 each would add up; caps a single sweep's
+// spend and wall-clock time. The rest simply wait for the next sweep.
+const MAX_CLASSIFICATIONS_PER_SWEEP = 15;
+// setInterval doesn't know whether the PREVIOUS sweep is still running — up
+// to MAX_CLASSIFICATIONS_PER_SWEEP sequential calls, each with its own 30s
+// timeout backstop, stay comfortably under one interval in the stated worst
+// case (15 * 30s = 7.5min < 15min), but that's a coincidental margin, not an
+// enforced one (a slow/hung `claude` spawn, slow disk I/O, etc. could push
+// a sweep past 15min). Without this guard, a second sweep starting while
+// the first is still in flight would double the concurrent `claude`
+// spawns and spend with no lock (caught in review before shipping).
+let sweepInFlight = false;
+
+async function runOrchestratorSweep() {
+  if (sweepInFlight) {
+    return;
+  }
+  const config = loadConfig();
+  if (config.orchestratorHelper?.enabled !== true) {
+    return;
+  }
+  sweepInFlight = true;
+  try {
+    await runOrchestratorSweepBody(config);
+  } finally {
+    sweepInFlight = false;
+  }
+}
+
+async function runOrchestratorSweepBody(config) {
+  const attentionWindowMs = (config.attentionWindowHours || 24) * 60 * 60 * 1000;
+  const { sessions } = readAllSessions({ attentionWindowMs });
+  // "active" sessions have work genuinely in flight — nothing to classify
+  // mid-stream. Archived sessions are done by definition. Everything else
+  // ("waiting" or "idle") is exactly where the heuristic is weakest: it
+  // can't tell "asked a real question" from "gave a final answer," or
+  // "genuinely stuck" from "genuinely idle."
+  const candidates = sessions.filter((s) => !s.isArchived && (s.status === "waiting" || s.status === "idle"));
+  // Skip re-spending on a session that hasn't changed since it was last
+  // classified — classifiedAtActivity mirrors the ack mechanism's own
+  // staleness check (config.acknowledgedSessions), just for this map.
+  const eligible = candidates.filter((s) => {
+    const prior = sessionClassifications.get(s.sessionId);
+    return !prior || prior.classifiedAtActivity !== s.lastActivityAt;
+  });
+  const jotIndex = loadJot(config.jot || {});
+  enrichWithJot(eligible, jotIndex, config.jot?.weights || {});
+
+  for (const session of eligible.slice(0, MAX_CLASSIFICATIONS_PER_SWEEP)) {
+    const jotSummary = session.jot
+      ? `${session.jot.category} (${
+          [
+            session.jot.review > 0 ? `${session.jot.review} review` : null,
+            session.jot.inProgress > 0 ? `${session.jot.inProgress} in progress` : null,
+            session.jot.open > 0 ? `${session.jot.open} open` : null,
+          ]
+            .filter(Boolean)
+            .join(", ") || "no open items"
+        })`
+      : null;
+    let result;
+    try {
+      result = await classifySessionStatus({
+        cwd: session.cwd,
+        cliSessionId: session.cliSessionId,
+        sessionId: session.sessionId,
+        title: session.title,
+        jotSummary,
+      });
+    } catch (err) {
+      console.error("[maestro] orchestrator helper classification failed:", err);
+      continue;
+    }
+    if (!result) {
+      continue;
+    }
+    sessionClassifications.set(session.sessionId, { ...result, classifiedAtActivity: session.lastActivityAt });
+    appendUsageLog({
+      type: "orchestratorClassification",
+      sessionId: session.sessionId,
+      timestamp: Date.now(),
+      statusTag: result.statusTag,
+      reason: result.reason,
+      classifierCostUsd: result.costUsd,
+    });
+  }
+}
+
 app.whenReady().then(() => {
   prunePastedImages();
   createWindow();
+  setInterval(runOrchestratorSweep, ORCHESTRATOR_SWEEP_INTERVAL_MS);
 });
 
 // Without this, quitting Maestro while any prompt is still running leaves

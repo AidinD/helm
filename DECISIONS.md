@@ -1,5 +1,47 @@
 # Decisions
 
+## 2026-07-03 — Fas 3 first slice: the orchestrator-helper classifier
+
+**Decision:** Aidin approved starting Fas 3 ("börja bygga nu"), scoped down
+per his own preference to the smallest self-contained first slice: just the
+periodic session-status classifier (the "sensor"), NOT auto-compact, NOT the
+model/effort-accuracy loop, NOT the visualizer — those stay for later passes
+per PLAN.md's own framing.
+
+**Built:** `src/lib/orchestratorHelper.js` — `classifySessionStatus()`,
+mirroring `judge.js`'s cost-optimized recipe almost line for line (same
+`--system-prompt` + `--allowed-tools ""` + empty `--strict-mcp-config`,
+Haiku, structured JSON schema output). Reads the last 6 turns of a session's
+transcript + its Jot task summary, classifies into
+`waiting_for_input`/`stuck`/`done_not_archived`/`blocked_external`/
+`genuinely_active`. `main.js`'s `runOrchestratorSweep()` runs this every 15
+minutes (off by default via `config.orchestratorHelper.enabled`) over
+non-archived `waiting`/`idle` sessions, skipping any unchanged since its last
+classification, capped at 15 classifications/sweep. Results merge into
+`sessions:get`'s response as `session.orchestratorTag`. The renderer shows
+the tag's `reason` as a small note on the row (the plan's own "auditable,
+not a black box" principle — a minimal stand-in for the full visualizer,
+which stays deferred until there's real behavior to design a UI around) and
+sharpens the existing "Archive?" pill: it now also fires when the classifier
+says `done_not_archived`, even before the session has aged into "idle" —
+replacing the old blunt idle-and-no-Jot-work proxy with something that's
+actually read the content, per the plan's own framing.
+
+Also fixed a stale PLAN.md claim: Point 11's write-up said the mid-turn-
+interjection spike had "confirmed working" — that was true as of the
+2026-07-02 spike note but got FLIPPED by today's fuller spike (see below);
+corrected before it misled a future read of the plan.
+
+**Review caught one real issue before shipping**: `setInterval` doesn't know
+whether a previous sweep is still running — up to 15 sequential classifier
+calls (each with its own 30s timeout) stay under the 15-minute interval in
+the stated worst case, but that's a coincidental margin, not an enforced
+one. Added a `sweepInFlight` guard so a slow sweep can't overlap a second
+one and double the concurrent spend. Everything else review checked
+(cost/rate safety, staleness-check correctness, archive-pill condition
+safety, fingerprint completeness, object-isolation between the sweep's and
+the IPC handler's separate `readAllSessions()` calls) came back clean.
+
 ## 2026-07-03 — restart-dev.sh's kill step was silently a no-op all session — rewritten in PowerShell
 
 **Bug:** Aidin noticed a new Maestro window opening without the old one

@@ -38,6 +38,12 @@ const DEFAULT_CONFIG = {
   // orkestratorn löser detta men man kanske också ska stoppa en manuell check
   // på varje svar" — this IS that manual check, ahead of the Fas 3 automation.
   acknowledgedSessions: {}, // { "<sessionId>": lastActivityAtMs }
+  // Fas 3's periodic session-status classifier (PLAN.md "orchestrator
+  // helper"). Off by default — it's a recurring background cost (one cheap
+  // Haiku call per eligible session per sweep), same opt-in posture as
+  // modelFitJudge/archiveSuggestions. Its output only ever sharpens an
+  // existing suggestion (the archive-suggest pill) — never acts on its own.
+  orchestratorHelper: { enabled: false },
   jot: {
     enabled: true,
     path: "D:\\Dropbox\\jot\\todos.json",
@@ -73,6 +79,7 @@ export function loadConfig() {
       ...parsed,
       modelFitJudge: { ...DEFAULT_CONFIG.modelFitJudge, ...parsed.modelFitJudge },
       archiveSuggestions: { ...DEFAULT_CONFIG.archiveSuggestions, ...parsed.archiveSuggestions },
+      orchestratorHelper: { ...DEFAULT_CONFIG.orchestratorHelper, ...parsed.orchestratorHelper },
       jot: { ...DEFAULT_CONFIG.jot, ...parsed.jot },
     };
   } catch {

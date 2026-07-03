@@ -108,12 +108,16 @@ diagnosis was Opus-shaped, the localized fixes were Sonnet-shaped).
 ### Concrete features (mapped to the 3 vision points)
 
 - **Point 11 — Run several sessions in parallel, watch live, approve tool
-  prompts centrally.** Builds directly on the Background Tasks panel
-  (subagent visibility, already shipped) and the mid-turn-interjection spike
-  (confirmed working, architecture not yet built — see DECISIONS.md
-  2026-07-02). A "control room" view: several sessions' live status in one
-  place, a single place to answer a permission prompt regardless of which
-  session raised it.
+  prompts centrally.** Builds on the Background Tasks panel (subagent
+  visibility, already shipped). NOTE: a 2026-07-03 spike found headless `-p`
+  mode has no pause-and-ask primitive at all — a permission decision is
+  either allowed or denied synchronously by flags, never a live round-trip,
+  and a persistent process doesn't change that (see DECISIONS.md
+  2026-07-03). So "approve tool prompts centrally" can't mean answering a
+  live blocking prompt the way Claude Desktop does — it has to mean
+  something else (e.g. pre-setting permission modes/allowed-tools per
+  session before launch, or reviewing what already ran). Needs rethinking
+  before this point is built, not just architecture.
 - **Point 8 — Split work + prioritize focus.** A goal-to-tasks breakdown
   view, backed by Jot (which already tracks tasks) rather than a second
   parallel task system. Session-level "needs attention" scoring already

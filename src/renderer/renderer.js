@@ -677,9 +677,31 @@ function rowEl(session) {
   // mean done).
   const hasOpenJotWork =
     session.jot && (session.jot.review > 0 || session.jot.inProgress > 0 || session.jot.open > 0);
+  // Fas 3 orchestrator-helper tag — a periodic Haiku classifier's read of
+  // the actual conversation content (see main.js's runOrchestratorSweep,
+  // PLAN.md Phase 3). Shown whenever present so its judgment is auditable,
+  // not a black box (the full visualizer is deliberately deferred until
+  // there's real behavior to design around — this is the minimal version:
+  // just show what it concluded and why, right on the row it's about).
+  if (session.orchestratorTag) {
+    const tag = document.createElement("div");
+    tag.className = "row-orchestrator-tag";
+    tag.title = "Orchestrator helper's read of this session's content (a proposal, never acts on its own).";
+    tag.textContent = `◎ ${session.orchestratorTag.reason}`;
+    row.append(tag);
+  }
+  // "Orchestrator proposes, you approve" — only ever a suggestion. Clicking
+  // this pill IS the approval step; nothing archives without it. Sessions
+  // still sitting in "waiting" (inside the attention window) but that the
+  // helper has actually READ and concluded are genuinely done skip the wait
+  // for the window to expire into "idle" — this is what "replaces the idle
+  // proxy with something that's actually read the content" (PLAN.md) means
+  // in practice. Never shown for a Maestro-building session (idle between
+  // long autonomous stretches doesn't mean done).
+  const classifierSaysDone = session.orchestratorTag?.statusTag === "done_not_archived";
   if (
     state.config.archiveSuggestions?.enabled === true &&
-    session.status === "idle" &&
+    (session.status === "idle" || classifierSaysDone) &&
     !hasOpenJotWork &&
     !isOrchestratorSession(session)
   ) {
@@ -687,7 +709,9 @@ function rowEl(session) {
     suggest.type = "button";
     suggest.className = "archive-suggest-pill";
     suggest.textContent = "Archive?";
-    suggest.title = "Suggested: this session looks idle with no open Jot work. Click to archive.";
+    suggest.title = classifierSaysDone
+      ? "Suggested: the orchestrator helper read this conversation and concluded it's done. Click to archive."
+      : "Suggested: this session looks idle with no open Jot work. Click to archive.";
     suggest.addEventListener("click", (e) => {
       e.stopPropagation();
       archiveSession(session);
@@ -2692,6 +2716,8 @@ function computeSidebarFingerprint(sessions, config) {
         s.jot?.open,
         s.jot?.category,
         s.jot?.nearestDeadline,
+        s.orchestratorTag?.statusTag,
+        s.orchestratorTag?.reason,
       ].join(":")
     )
     .join("|");
@@ -2981,6 +3007,20 @@ function renderSettingsPage() {
       async (checked) => {
         state.config = await window.maestro.setConfig({
           archiveSuggestions: { ...(state.config.archiveSuggestions || {}), enabled: checked },
+        });
+        refresh();
+      }
+    )
+  );
+
+  block.append(
+    settingsToggleRow(
+      "Orchestrator helper (Fas 3)",
+      "Periodically reads recent messages in idle/waiting sessions (a cheap Haiku call, ~15 min intervals) to tell apart a real open question from a finished answer, or genuinely stuck from genuinely idle. Sharpens the archive suggestion above and shows its read as a small note on the session row. A proposal only — never archives or acts on its own.",
+      state.config.orchestratorHelper?.enabled === true,
+      async (checked) => {
+        state.config = await window.maestro.setConfig({
+          orchestratorHelper: { ...(state.config.orchestratorHelper || {}), enabled: checked },
         });
         refresh();
       }
