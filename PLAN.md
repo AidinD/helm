@@ -373,6 +373,32 @@ can issue `git -C <projectPath> worktree add <worktreePath> -b <branch>`
 directly against the right repo regardless of where the orchestrator
 process itself runs from — it doesn't need to be rooted anywhere.
 
+**Self-hosting hazard (Aidin raised this, worth designing around before
+dispatch is built, not after): a dispatched worker must not be a child
+process of Maestro's own Electron main process.** Today every `claude`
+session Maestro launches IS a direct child of the Electron main process
+(the same architecture behind the earlier "quit sweep kills children"
+fix). That's fine for tonight's actual dev workflow — agents developing
+Maestro run as ordinary Claude Code CLI processes, completely independent
+of the Maestro-app-under-test's own process tree, so restarting that app
+under test never touches the process doing the work. But once Maestro's
+own first-mate-style dispatch exists and gets used to develop Maestro
+itself, a dispatched worker that restarts Maestro (as part of its own
+boot-test workflow) would kill its own parent process — and therefore
+itself — mid-task. Same self-referential category as the earlier
+auto-mode-classifier block on switching this very session's own root
+folder. Firstmate avoids this by running crewmates in detached tmux panes,
+never as children of its own process — Windows has no tmux equivalent to
+copy directly. Recommended near-term fix, consistent with tonight's
+file-over-process-state theme: don't make workers un-killable, make them
+CHEAP to kill — keep dispatched work units small and git-commit-
+checkpointed (gnhf's own iteration model), so an untimely restart only
+costs the current small step, resumable from the last commit, not the
+whole task. Full process-detachment (a real Windows equivalent of
+firstmate's tmux-pane independence) is the fuller fix but meaningfully
+more work — worth deferring until a lost iteration actually proves costly
+in practice, not building preemptively.
+
 ### (A) Validates / extends existing Maestro direction
 - **firstmate** — the reference architecture for Point 11 (which PLAN
   currently marks "needs rethinking" after the no-live-approval spike).
