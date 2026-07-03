@@ -196,6 +196,81 @@ export function setSessionArchived(sessionId, archived) {
   return { ok: false, error: "Session file not found." };
 }
 
+/**
+ * "Rewind to here": creates a forked session transcript containing the
+ * conversation UP TO (not including) the user message at `userMsgIndex`
+ * (0-based, counting only real user-typed messages — string content, not
+ * tool_results), and returns its new cliSessionId. Resuming that id via the
+ * CLI continues from the truncated history — everything after the rewind
+ * point is genuinely dropped, not just hidden (verified in
+ * spike/test-rewind-fork.mjs: `claude --resume` reads a hand-authored
+ * truncated transcript with no desktop metadata, and post-truncation turns
+ * are gone from the model's context).
+ *
+ * Writes a new <uuid>.jsonl beside the original in the same projects dir —
+ * never touches the original transcript. The fork has no desktop local_*.json
+ * metadata, so it won't show in the sidebar's session list until (if ever)
+ * the desktop app records it; it's a working branch, resumable by id.
+ */
+export function forkTranscriptAtUserMessage(cliSessionId, userMsgIndex) {
+  const transcriptPath = findTranscriptPath([cliSessionId]);
+  if (!transcriptPath) {
+    return { ok: false, error: "Transcript not found for that session." };
+  }
+  let lines;
+  try {
+    lines = fs.readFileSync(transcriptPath, "utf8").split("\n").filter((l) => l.trim());
+  } catch (err) {
+    return { ok: false, error: `Failed to read transcript: ${err.message}` };
+  }
+  // Find the line where the userMsgIndex-th real user message begins; keep
+  // everything before it. A rendered "turn" spans several jsonl lines
+  // (user line, assistant thinking/tool_use/text lines, tool_result lines),
+  // so we anchor on the user-message lines.
+  //
+  // CRITICAL: this must count EXACTLY what renders as a ".turn.user
+  // .turn-bubble" in the UI — because the rewind button passes its index
+  // among those bubbles. transcript.js's pushUserTurn only emits a
+  // user/text turn when the string content is non-empty AND does NOT start
+  // with "<task-notification>" (a subagent-completion notification, which it
+  // routes to a system turn instead). Counting those here would desync the
+  // index and truncate at the WRONG message in any session that ran a
+  // background task — so mirror pushUserTurn's exact conditions.
+  const isRenderedUserMessage = (obj) => {
+    if (obj.type !== "user" || typeof obj.message?.content !== "string") {
+      return false;
+    }
+    const trimmed = obj.message.content.trim();
+    return trimmed !== "" && !trimmed.startsWith("<task-notification>");
+  };
+  let userIdx = -1;
+  let cutAt = lines.length;
+  for (let i = 0; i < lines.length; i++) {
+    let obj;
+    try {
+      obj = JSON.parse(lines[i]);
+    } catch {
+      continue;
+    }
+    if (isRenderedUserMessage(obj)) {
+      userIdx += 1;
+      if (userIdx === userMsgIndex) {
+        cutAt = i;
+        break;
+      }
+    }
+  }
+  const truncated = lines.slice(0, cutAt);
+  const forkId = crypto.randomUUID();
+  const forkPath = path.join(path.dirname(transcriptPath), `${forkId}.jsonl`);
+  try {
+    fs.writeFileSync(forkPath, truncated.join("\n") + "\n", "utf8");
+  } catch (err) {
+    return { ok: false, error: `Failed to write fork transcript: ${err.message}` };
+  }
+  return { ok: true, forkId };
+}
+
 function readMeta(filePath) {
   try {
     const raw = fs.readFileSync(filePath, "utf8");

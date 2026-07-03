@@ -72,6 +72,7 @@ function freshPane() {
     title: "New session",
     turns: [],
     hiddenCount: 0,
+    transcriptTruncated: false, // true when the loaded view is missing earlier turns (gates rewind)
     loading: false,
     busy: false,
     currentLaunchId: null,
@@ -1062,7 +1063,7 @@ async function loadTranscriptInto(paneIndex) {
   if (!pane || !pane.cliSessionId) {
     return;
   }
-  const { turns, hiddenCount } = await window.maestro.getTranscript({
+  const { turns, hiddenCount, truncated } = await window.maestro.getTranscript({
     cliSessionId: pane.cliSessionId,
     sessionId: pane.sessionId,
   });
@@ -1071,6 +1072,12 @@ async function loadTranscriptInto(paneIndex) {
   }
   pane.turns = turns;
   pane.hiddenCount = hiddenCount || 0;
+  // Whether this view is missing earlier turns (turn-cap or byte-tail cap).
+  // Rewind needs the full transcript from turn 0 — the rendered index it
+  // passes to the fork counts from the first shown bubble, but the fork
+  // counts from the file's absolute start, so a truncated view would cut at
+  // the wrong message. Rewind is only offered when this is false.
+  pane.transcriptTruncated = !!truncated;
   pane.loading = false;
   renderPane(paneIndex);
 }
@@ -1733,12 +1740,17 @@ function renderPane(index) {
     btn.className = "load-earlier";
     btn.textContent = `Show ${pane.hiddenCount} earlier messages`;
     btn.addEventListener("click", async () => {
-      const { turns } = await window.maestro.getTranscript({
+      const { turns, hiddenCount, truncated } = await window.maestro.getTranscript({
         cliSessionId: pane.cliSessionId,
         sessionId: pane.sessionId,
       });
       pane.turns = turns;
-      pane.hiddenCount = 0;
+      // Reflect the reload's ACTUAL state rather than hardcoding 0 — on a
+      // genuinely huge session the reload can still be byte-capped, and
+      // pretending it's complete would wrongly re-enable rewind (which needs
+      // a from-turn-0 view to index correctly).
+      pane.hiddenCount = hiddenCount || 0;
+      pane.transcriptTruncated = !!truncated;
       renderPane(index);
     });
     scroll.append(btn);
@@ -1794,65 +1806,71 @@ function wireEditableUserTurns(index, scroll) {
     if (!turn || !wrap) {
       return;
     }
-    const rewindBtn = document.createElement("button");
-    rewindBtn.className = "copy-btn rewind-btn";
-    rewindBtn.title = "Rewind to here — start a fresh chat with the conversation up to this point, drop everything after it";
-    rewindBtn.textContent = "⤺";
-    rewindBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const turnGlobalIndex = pane.turns.indexOf(turn);
-      if (turnGlobalIndex !== -1) {
-        rewindToTurn(index, turnGlobalIndex);
-      }
-    });
-    wrap.append(rewindBtn);
+    // `i` is exactly this message's index among real user messages — the same
+    // count the main-process fork uses to find the truncation point. Only
+    // offer rewind on a real (resumable) session AND when the FULL transcript
+    // is loaded from turn 0 — on a truncated (tail-capped) view the rendered
+    // index wouldn't match the fork's absolute count, so it'd cut at the
+    // wrong message.
+    if (pane.cliSessionId && !pane.transcriptTruncated) {
+      const rewindBtn = document.createElement("button");
+      rewindBtn.className = "copy-btn rewind-btn";
+      rewindBtn.title = "Rewind to here — go back to this point, dropping everything after it";
+      rewindBtn.textContent = "⤺";
+      rewindBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        rewindToTurn(index, i, turn.text);
+      });
+      wrap.append(rewindBtn);
+    }
   });
 }
 
-// How much prior context "rewind to here" replays verbatim before the target
-// message — capped so rewinding deep into a very long conversation doesn't
-// build a pathologically large draft prompt. Deliberately NOT summarized via
-// an LLM call (unlike Fas 2's carry-over) — a rewind is usually to somewhere
-// recent, where the raw exchange is more useful and faithful than a lossy
-// summary, and skipping the call keeps this instant and free.
-const MAX_REWIND_PRIOR_TURNS = 30;
-const MAX_REWIND_TURN_CHARS = 500;
-
-function buildRewindDraft(pane, turnGlobalIndex) {
-  const priorTurns = pane.turns
-    .slice(0, turnGlobalIndex)
-    .filter((t) => (t.role === "user" || t.role === "assistant") && t.kind === "text");
-  const targetTurn = pane.turns[turnGlobalIndex];
-  const omittedCount = Math.max(0, priorTurns.length - MAX_REWIND_PRIOR_TURNS);
-  const shown = priorTurns.slice(-MAX_REWIND_PRIOR_TURNS);
-
-  const lines = [
-    "[Rewinding to an earlier point in this conversation — everything that " +
-      "happened AFTER this point is intentionally left out, since the message " +
-      "below is being revised. Prior context:]",
-    "",
-  ];
-  if (omittedCount > 0) {
-    lines.push(`[${omittedCount} earlier turn(s) omitted]`, "");
-  }
-  for (const t of shown) {
-    lines.push(`${t.role === "user" ? "User" : "Assistant"}: ${truncateText(t.text, MAX_REWIND_TURN_CHARS)}`, "");
-  }
-  lines.push("[End of prior context — edit the message below and send when ready:]", "");
-  lines.push(targetTurn.text);
-  return lines.join("\n");
-}
-
-function rewindToTurn(index, turnGlobalIndex) {
+// Real "rewind to here" via transcript forking (verified in
+// spike/test-rewind-fork.mjs): ask main to fork the session's transcript
+// truncated to just before user message #userMsgIndex, then load that fork
+// IN THE SAME pane. The result is exactly the desktop app's behavior —
+// messages before the rewind point stay as real rendered history (they're
+// in the forked transcript), everything after is genuinely gone (the model
+// never sees it on resume), and the clicked message drops into the composer
+// to edit and re-send. `messageText` prefills that composer.
+//
+// Known limitation: the fork has no desktop local_*.json metadata, so it
+// won't appear in the sidebar's session list — it's a working branch,
+// resumable in this pane but not (yet) catalogued.
+async function rewindToTurn(index, userMsgIndex, messageText) {
   const pane = panes[index];
-  const draft = buildRewindDraft(pane, turnGlobalIndex);
-  // Force the SAME pane (per Aidin's review — it should feel like going back
-  // in this conversation, not open a new pane). The pane's current session
-  // view is replaced by the fresh draft; sending it starts a new forked
-  // session (freshPane has no cliSessionId, so sendFromPane won't --resume),
-  // with the prior context replayed in the draft. Its old transcript stays
-  // on disk, reopenable from the sidebar.
-  openFreshDraftInPane(pane.cwd, draft, { forceIndex: index });
+  const sourcePane = pane; // identity-check the async result against this
+  const res = await window.maestro.forkSession(pane.cliSessionId, userMsgIndex);
+  if (!res.ok) {
+    showToast(`Couldn't rewind: ${res.error}`);
+    return;
+  }
+  // Pane may have been reset/reused during the await — don't hijack whatever
+  // now occupies this slot.
+  if (panes[index] !== sourcePane) {
+    return;
+  }
+  panes[index] = {
+    ...freshPane(),
+    sessionId: res.forkId,
+    cliSessionId: res.forkId,
+    cwd: sourcePane.cwd,
+    title: sourcePane.title, // same conversation, just rewound
+    loading: true,
+  };
+  focusedPaneIndex = index;
+  renderSinglePane(index); // builds header + empty composer + scroll
+  // Prefill the composer with the rewound message to edit/re-send. Safe to
+  // do synchronously right after renderSinglePane — loadTranscriptInto below
+  // only rebuilds .pane-scroll, never the composer.
+  const promptEl = document.querySelector(`.pane[data-pane="${index}"] .pane-composer textarea`);
+  if (promptEl) {
+    promptEl.value = messageText || "";
+    promptEl.focus();
+    promptEl.dispatchEvent(new Event("input"));
+  }
+  loadTranscriptInto(index); // renders the truncated prior history as real bubbles
 }
 
 function paneHeaderEl(index) {

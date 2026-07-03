@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld("maestro", {
   copyToClipboard: (text) => ipcRenderer.invoke("clipboard:write", text),
   saveImage: (base64Data, ext) => ipcRenderer.invoke("image:save", { base64Data, ext }),
   archiveSession: (sessionId, archived) => ipcRenderer.invoke("session:archive", { sessionId, archived }),
+  forkSession: (cliSessionId, userMsgIndex) => ipcRenderer.invoke("session:fork", { cliSessionId, userMsgIndex }),
   getUsageSummary: () => ipcRenderer.invoke("usage:summary"),
   getVersion: () => ipcRenderer.invoke("app:version"),
   pickFolder: () => ipcRenderer.invoke("dialog:pickFolder"),
