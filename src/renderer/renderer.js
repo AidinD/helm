@@ -1887,28 +1887,33 @@ function wireDoneButtonOnLastReply(index, scroll) {
   done.type = "button";
   // "copy-btn" gives it the same hover-only reveal as the Copy button beside
   // it (the captain's ask: "en check ikon bredvid copy ikonen som endast dyker upp
-  // på hover"). ".acked" (added below once clicked, or immediately here if
-  // this render already reflects a past ack) overrides that to always-
-  // visible + accent-colored — a persistent checkmark on the reply itself
-  // ("när den är checkad dyker en checkmark upp på svaret"), not just a
-  // transient hover flash.
-  done.className = "copy-btn done-btn" + (isAcked ? " acked" : "");
+  // på hover"). ".acked" overrides that to always-visible + accent-colored —
+  // a persistent checkmark on the reply itself ("när den är checkad dyker en
+  // checkmark upp på svaret"), not just a transient hover flash. Toggleable
+  // (the captain: "checkmarken bör gå att ta bort också, eller?") — a checkbox you
+  // can't uncheck would be an odd affordance, and un-acking is exactly
+  // "actually, this does need attention again," the same real state
+  // acknowledgedSessions already models.
+  let acked = isAcked;
+  const applyAckedVisual = () => {
+    done.classList.toggle("acked", acked);
+    done.title = acked ? "Marked done — click to undo" : "Nothing left to do here — mark done (comes back automatically if new activity happens).";
+  };
+  done.className = "copy-btn done-btn";
   done.textContent = "✓";
-  done.disabled = isAcked;
-  done.title = isAcked
-    ? "Marked done"
-    : "Nothing left to do here — dismiss from \"Needs you\" (comes back automatically if new activity happens).";
+  applyAckedVisual();
   done.addEventListener("click", async (e) => {
     e.stopPropagation();
     // Instant local feedback, same pattern as the copy button's own
     // immediate icon swap, ahead of the async round-trip settling for real.
-    done.classList.add("acked");
-    done.disabled = true;
-    done.title = "Marked done";
-    const acknowledgedSessions = {
-      ...(state.config.acknowledgedSessions || {}),
-      [session.sessionId]: session.lastActivityAt,
-    };
+    acked = !acked;
+    applyAckedVisual();
+    const acknowledgedSessions = { ...(state.config.acknowledgedSessions || {}) };
+    if (acked) {
+      acknowledgedSessions[session.sessionId] = session.lastActivityAt;
+    } else {
+      delete acknowledgedSessions[session.sessionId];
+    }
     state.config = await window.maestro.setConfig({ acknowledgedSessions });
     refresh();
   });
