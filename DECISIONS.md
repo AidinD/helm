@@ -1,5 +1,106 @@
 # Decisions
 
+## 2026-07-03 — Live time/tokens ticker, "needs your input" flag, CLAUDE.md quick-links
+
+Three independently-scoped UI fixes bundled into one pass (all touch
+renderer.js/style.css) rather than three parallel agents, to avoid concurrent
+edits to the same files.
+
+**1. The time/tokens readout is now LIVE, not static.** The captain's feedback on
+the just-shipped version: "den här är inte rolig eller särskilt animerande,
+och den räknar inte upp varken tokens eller tid" — it only ever showed a
+number after the fact, from the final `result` event.
+
+- `launcher.js` now also reads `evt.message.usage` off every `"assistant"`
+  stream-json event (not just the final `result` event) and emits a new
+  `{kind: "usage", totalTokens}` event per the CLI's own per-message usage
+  snapshot. Verified via the claude-api skill that each assistant message's
+  `usage` is that message's own token count, not a cumulative running total —
+  so summing across every assistant event in a turn (each is one real API
+  call in the underlying agentic loop) gives the correct turn total with no
+  double-counting.
+- Renderer: `pane.runStartedAt`/`pane.liveTokens` (new `freshPane()` fields),
+  a `startLiveStatsTicker`/`stopLiveStatsTicker` pair (module-level map keyed
+  by pane INDEX, same pattern as `paneNavHistory` — looks up `panes[index]`
+  fresh every 250ms tick so it naturally goes inert once that slot no longer
+  holds the run it was started for), and `renderLiveStats` which appends a
+  ticking "Ns · Nk tokens" span to `.pane-status`. Started at the true send
+  moment in `sendFromPane` (not inside `setPaneBusyUI`, which also fires on
+  every intermediate tool_use — that would reset the clock each time) and
+  stopped at every point a run ends (`done`, `error`, stop-button, switch-
+  folder failure, start failure) and at every point a pane gets replaced
+  wholesale (new chat, split close, rewind, session navigation) so no ticker
+  is ever left running against a discarded pane.
+- The existing final-summary logic (`pane.lastTurnStats` /
+  `wireTurnStatsOnLastReply`) is untouched — the live ticker hands off to it
+  the moment `pane.busy` goes false, matching the ask ("don't remove the
+  current final-summary logic, make it update live before that point").
+- "Thinking" dot now visibly reacts to each new event: `pulsePaneStatusIcon`
+  toggles a `.pane-status-icon-ping` class (a one-shot brighter/bigger CSS
+  animation, self-clearing since it's driven by the animation itself, not a
+  toggled state) on `tool_use`, `usage`, and `assistant` events, layered on
+  top of the existing ambient pulse rather than replacing it — simplest
+  change that reads as "more animated" per the ask not to over-engineer this
+  part.
+
+**2. Flag a completed reply that's actually asking the user something.**
+Context: a 2026-07-03 spike (see the persistent-process entry below)
+already conclusively established headless `-p` has no live pause-and-ask
+mechanism — a real Claude-Desktop-style blocking dialog is architecturally
+impossible here, not something to attempt. This is the agreed approximation
+instead: a purely visual "don't miss this" flag, not a new input mechanism —
+the user still answers via the normal composer.
+
+- `looksLikeQuestion(text)` — cheap, synchronous, deliberately not an LLM
+  call: true if the last non-empty line ends in `?`, OR the last couple of
+  lines match a small set of common ask-for-input phrasings that don't
+  necessarily end in `?` (e.g. "Let me know how you'd like to proceed.").
+  Verified against 7 hand-picked cases including two deliberate near-misses
+  (a rhetorical question followed by a statement, a code snippet containing
+  `?.`) — 7/7 correct.
+- `wireQuestionFlagOnLastReply` applies it to the LAST assistant bubble
+  whenever the pane is not busy (mirrors the non-destructive/idempotent
+  pattern the other `wireX` helpers on `renderPane` already use, for the same
+  queued-prompt intermediate-render reason documented on
+  `wireTurnStatsOnLastReply`). When true: a `.needs-input` class tints the
+  bubble's existing border with `--waiting` (the same amber already meaning
+  "needs you" elsewhere in the app, e.g. the sidebar status) and a "❓ Needs
+  your input" badge is prepended inside the bubble.
+
+**3. Clickable links to open the captain's global and the current project's
+CLAUDE.md.** Re-does a prior pass that had misread this as a documentation-
+only fix — the actual want was in-app navigation.
+
+- `main.js`: three new IPC handlers — `claudeMd:openGlobal` (opens
+  `~/.claude/CLAUDE.md`, the thin stub, not the canonical Dropbox file it
+  `@imports` — Claude Code resolves the import automatically regardless of
+  which one is opened, and the stub is the one path every machine actually
+  has, so it's the more reliable fixed target; the captain can follow the `@import`
+  line himself for the canonical file), `claudeMd:openProject` (opens
+  `<cwd>/CLAUDE.md`), and `claudeMd:projectExists` (existence check so the
+  renderer can skip the affordance entirely rather than show a link that
+  errors on click). All via `shell.openPath`, same mechanism `skills:open`
+  already uses.
+- Renderer: `updateClaudeMdLinks(header, cwd)` renders two small icon-buttons
+  (🌐 global, 📄 project — reusing the `.icon-btn` class the header's
+  existing ←/→/+/✕ buttons use, sized down via a new `.claude-md-links` rule
+  since the header's full 26px icon size would dwarf the 11px `.pane-sub`
+  text it sits beside) next to the pane header's folder-path text. Called
+  from both `paneHeaderEl`'s initial build and `updatePaneSubText` (the
+  existing live-update path for cwd changes — folder pick, typing, a root-
+  folder switch) so the project link never points at a stale folder. The
+  project button is only appended after `projectClaudeMdExists(cwd)`
+  resolves true, per the ask to hide rather than error on a missing file.
+
+**Verification:** `node --check` on all four edited JS files, a CSS brace-
+balance check, and a full boot-test via `scripts/restart-dev.sh` (clean log,
+Halyard's pre-existing PIDs confirmed untouched). No live click-through was
+possible beyond that — native Electron app, no browser-servable dev server —
+so all three items still need the captain's own visual/interactive confirmation:
+the live ticker actually counting up during a real run, the question-flag
+badge/border rendering as expected on a real question reply, and both
+CLAUDE.md links actually opening the right file in his default editor.
+
 ## 2026-07-03 — Worktree automation v1 built (`src/lib/worktree.js`) — the Phase 4 prerequisite
 
 **Built:** a first version of the worktree-automation module PLAN.md's Phase

@@ -686,6 +686,22 @@ body.advanced .row-jot {
   font-size: 11px;
 }
 
+/* "Open CLAUDE.md" links next to the pane header's folder path — reuses
+   .icon-btn (same class the ←/→ nav and "+"/"✕" buttons in this header use)
+   but sized down to fit inline with the 11px .pane-sub text instead of the
+   header's full 26px icon-button size, which would dwarf it. */
+.claude-md-links {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.claude-md-links .icon-btn {
+  width: 20px;
+  height: 20px;
+  font-size: 11px;
+}
+
 /* Context gauge under the composer's model/effort row (the captain's placement),
    right-aligned. A clickable bar + % that opens the context/quota popover. */
 .composer-context {
@@ -812,6 +828,37 @@ body.advanced .row-jot {
     opacity: 1;
     transform: scale(1);
   }
+}
+
+/* Reacts to a real event landing (tool_use/usage/assistant chunk) — a quick
+   bright "ping" that overrides the ambient pulse above for one animation
+   cycle, then falls away on its own (animation, not a toggled state, so
+   nothing has to remove this class later). Makes the dot feel like it's
+   responding to activity, not just idling — the captain's ask for the indicator to
+   "feel more alive." */
+.pane-status-icon-ping {
+  animation: pane-status-ping 0.5s ease-out;
+}
+
+@keyframes pane-status-ping {
+  0% {
+    opacity: 1;
+    transform: scale(1.8);
+    box-shadow: 0 0 6px 1px var(--active);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+    box-shadow: none;
+  }
+}
+
+/* Live "Ns · Nk tokens" ticker appended to .pane-status while a pane is busy
+   (renderLiveStats) — same muted footnote treatment as .turn-stats once the
+   run finishes, so the live and final readouts look like the same feature. */
+.pane-live-stats {
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
 }
 
 .pane-actions {
@@ -1011,6 +1058,25 @@ body.advanced .row-jot {
   color: var(--text-faint);
   margin-left: 4px;
   font-variant-numeric: tabular-nums;
+}
+
+/* "Needs your input" flag on a completed reply that looks like it's asking
+   the user something (wireQuestionFlagOnLastReply). Headless -p mode has no
+   live pause-and-ask mechanism, so this is a purely visual "don't miss this"
+   nudge, not a new input mechanism — the user still answers via the normal
+   composer. --waiting reuses the same amber already meaning "needs you"
+   elsewhere (the sidebar's "Needs you" status), so the color reads
+   consistently across the app rather than introducing a new semantic color. */
+.turn-bubble.needs-input {
+  border-color: var(--waiting);
+}
+
+.needs-input-badge {
+  display: block;
+  color: var(--waiting);
+  font-size: 11px;
+  font-weight: 600;
+  margin-bottom: 4px;
 }
 
 .turn-bubble .md-code-block {

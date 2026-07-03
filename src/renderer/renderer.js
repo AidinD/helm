@@ -84,7 +84,67 @@ function freshPane() {
     queuedPrompt: null, // text to auto-send once the current busy run finishes
     els: null, // the currently-live composer's element refs, set by paneComposerEl
     lastTurnStats: null, // { durationMs, totalTokens, costUsd } for the reply that just completed — consumed once by wireTurnStatsOnLastReply
+    runStartedAt: null, // Date.now() at send time, drives the LIVE elapsed-time readout while busy (see startLiveStatsTicker)
+    liveTokens: 0, // running total summed from each turn's incremental "usage" events, reset per run
   };
+}
+
+// Live "Ns · Nk tokens" ticker while a pane is busy — the captain's feedback on the
+// first version of this readout ("den räknar inte upp varken tokens eller
+// tid," i.e. it doesn't count up): a plain per-second interval reading
+// pane.runStartedAt/pane.liveTokens (already updated live by the "usage"
+// event case below) is the simplest thing that reads as "ticking," no need
+// for anything fancier. Keyed by pane INDEX (mirrors paneNavHistory) since
+// the pane object gets replaced wholesale on reset/new-chat — the ticker
+// looks up panes[index] fresh on every tick rather than closing over a
+// specific pane object, so it naturally goes inert once that slot no longer
+// holds the run it was started for.
+const liveStatsTickers = new Map();
+
+function startLiveStatsTicker(index) {
+  stopLiveStatsTicker(index);
+  const timer = setInterval(() => {
+    const pane = panes[index];
+    if (!pane || !pane.busy || !pane.runStartedAt) {
+      stopLiveStatsTicker(index);
+      return;
+    }
+    renderLiveStats(index, pane);
+  }, 250);
+  liveStatsTickers.set(index, timer);
+}
+
+function stopLiveStatsTicker(index) {
+  const timer = liveStatsTickers.get(index);
+  if (timer) {
+    clearInterval(timer);
+    liveStatsTickers.delete(index);
+  }
+}
+
+// Renders the live elapsed-time + running-token status text for a busy pane,
+// without touching whatever tool-name text setPaneBusyUI's caller last set —
+// this appends its own trailing span instead, so "Working — ToolName" and
+// the ticking "12.3s · 1.2k tokens" coexist rather than fighting over the
+// same status line.
+function renderLiveStats(index, pane) {
+  const paneEl = document.querySelector(`.pane[data-pane="${index}"]`);
+  const status = paneEl?.querySelector(".pane-status");
+  if (!status) {
+    return;
+  }
+  let live = status.querySelector(".pane-live-stats");
+  if (!live) {
+    live = document.createElement("span");
+    live.className = "pane-live-stats";
+    status.append(live);
+  }
+  const elapsedS = (Date.now() - pane.runStartedAt) / 1000;
+  const parts = [`${elapsedS.toFixed(1)}s`];
+  if (pane.liveTokens > 0) {
+    parts.push(pane.liveTokens >= 1000 ? `${(pane.liveTokens / 1000).toFixed(1)}k tokens` : `${pane.liveTokens} tokens`);
+  }
+  live.textContent = " · " + parts.join(" · ");
 }
 
 // Converts a Windows absolute path to a file:// URL an <img> can load —
@@ -1073,6 +1133,7 @@ function openFreshDraftInPane(cwd, draftText, opts = {}) {
   } else {
     ({ index, addedPane } = pickDraftTargetPane(opts.avoidIndex));
   }
+  stopLiveStatsTicker(index);
   panes[index] = { ...freshPane(), cwd: cwd || "" };
   focusedPaneIndex = index;
   if (addedPane) {
@@ -1138,6 +1199,7 @@ function openSessionInPane(session, paneIndex, forceSplit, fromHistoryNav) {
   // the same scenario.
   const alreadyOpenHere = !addedPane && panes[paneIndex]?.sessionId === session.sessionId;
   if (!alreadyOpenHere) {
+    stopLiveStatsTicker(paneIndex);
     panes[paneIndex] = {
       ...freshPane(),
       sessionId: session.sessionId,
@@ -1953,6 +2015,7 @@ function renderPane(index) {
     wireEditableUserTurns(index, scroll);
     wireDoneButtonOnLastReply(index, scroll);
     wireTurnStatsOnLastReply(index, scroll);
+    wireQuestionFlagOnLastReply(index, scroll);
   }
   wireScrollToBottomButton(scroll);
   scroll.scrollTop = scroll.scrollHeight;
@@ -2194,6 +2257,68 @@ function wireTurnStatsOnLastReply(index, scroll) {
   actions.append(meta);
 }
 
+// Cheap, synchronous heuristic for "is this completed reply actually asking
+// the user something." Headless -p mode has NO live pause-and-ask mechanism
+// (see DECISIONS.md's 2026-07-03 persistent-process spike — confirmed
+// architecturally impossible here, not something to try to build), so a real
+// blocking input dialog like Claude Desktop's is off the table. This is the
+// agreed approximation: flag it visually so it's not mistaken for an
+// ordinary "here's the answer, nothing left to do" reply — the user still
+// answers via the normal composer either way, this only changes how the
+// reply is drawn. Deliberately NOT an LLM call (keep it cheap/synchronous):
+// ends-with-a-question-mark on the last non-empty line, PLUS a couple of
+// common phrasings that ask for input without necessarily ending in "?"
+// (e.g. "let me know which..."). A text heuristic will have false positives/
+// negatives (a rhetorical question, a code snippet ending in "?") — fine for
+// a "don't miss this" visual nudge, not a correctness-critical gate.
+const QUESTION_PHRASE_RE = /\b(let me know|which (one|option|approach)|should i|do you want|would you like|please (confirm|choose|clarify|specify))\b/i;
+function looksLikeQuestion(text) {
+  if (!text) {
+    return false;
+  }
+  const lines = text.trim().split("\n").filter((l) => l.trim());
+  const lastLine = lines[lines.length - 1] || "";
+  if (/\?\s*$/.test(lastLine)) {
+    return true;
+  }
+  // Also check the last couple of lines for a common ask-for-input phrasing
+  // that doesn't end in "?" (e.g. "Let me know how you'd like to proceed.").
+  const tail = lines.slice(-2).join(" ");
+  return QUESTION_PHRASE_RE.test(tail);
+}
+
+// Flags the LAST assistant reply with a distinct visual treatment when it
+// looks like it's asking the user something — see looksLikeQuestion above.
+// Restricted to the last reply of a pane that's currently NOT busy (a
+// mid-run streamed chunk isn't "a completed turn" yet, and only the final
+// reply of a finished turn is the one actually awaiting the user's answer).
+// Non-destructive/idempotent like the other wireX helpers here — recomputed
+// on every render rather than consumed once, so it survives the same
+// queued-prompt intermediate-render hazard documented on
+// wireTurnStatsOnLastReply above.
+function wireQuestionFlagOnLastReply(index, scroll) {
+  const pane = panes[index];
+  if (pane.busy) {
+    return;
+  }
+  const bubbles = scroll.querySelectorAll(".turn.assistant .turn-bubble");
+  const lastBubble = bubbles[bubbles.length - 1];
+  if (!lastBubble) {
+    return;
+  }
+  const lastTurn = pane.turns.filter((t) => t.role === "assistant" && t.kind === "text").at(-1);
+  const isQuestion = looksLikeQuestion(lastTurn?.text);
+  lastBubble.classList.toggle("needs-input", isQuestion);
+  if (isQuestion && !lastBubble.querySelector(".needs-input-badge")) {
+    const badge = document.createElement("span");
+    badge.className = "needs-input-badge";
+    badge.textContent = "❓ Needs your input";
+    lastBubble.prepend(badge);
+  } else if (!isQuestion) {
+    lastBubble.querySelector(".needs-input-badge")?.remove();
+  }
+}
+
 // Real "rewind to here" via transcript forking (verified in
 // spike/test-rewind-fork.mjs): ask main to fork the session's transcript
 // truncated to just before user message #userMsgIndex, then load that fork
@@ -2219,6 +2344,7 @@ async function rewindToTurn(index, userMsgIndex, messageText) {
   if (panes[index] !== sourcePane) {
     return;
   }
+  stopLiveStatsTicker(index);
   panes[index] = {
     ...freshPane(),
     sessionId: res.forkId,
@@ -2257,14 +2383,66 @@ function updatePaneSubText(index, cwd) {
   let sub = header.querySelector(".pane-sub");
   if (!cwd) {
     sub?.remove();
-    return;
+  } else {
+    if (!sub) {
+      sub = document.createElement("span");
+      sub.className = "pane-sub";
+      header.append(sub);
+    }
+    sub.textContent = cwd;
   }
-  if (!sub) {
-    sub = document.createElement("span");
-    sub.className = "pane-sub";
-    header.append(sub);
+  updateClaudeMdLinks(header, cwd);
+}
+
+// Small clickable affordances to open the captain's global personal CLAUDE.md and
+// the current session's own project CLAUDE.md — his ask for easy navigation
+// to both from inside the app, matching the existing header icon-button
+// pattern (same "icon-btn" class/size as the ←/→ nav and "+"/"✕" buttons
+// beside it). Rebuilt whenever the header's own cwd changes (picking a
+// folder, typing one, a root-folder switch), same trigger points
+// updatePaneSubText already reacts to — a stale project link pointing at the
+// PREVIOUS folder would be worse than not showing one.
+function updateClaudeMdLinks(header, cwd) {
+  header.querySelector(".claude-md-links")?.remove();
+  const links = document.createElement("span");
+  links.className = "claude-md-links";
+
+  const globalBtn = document.createElement("button");
+  globalBtn.className = "icon-btn";
+  globalBtn.textContent = "🌐";
+  globalBtn.title = "Open your global CLAUDE.md";
+  globalBtn.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    const res = await window.maestro.openGlobalClaudeMd();
+    if (!res.ok) {
+      showToast(res.error || "Couldn't open global CLAUDE.md");
+    }
+  });
+  links.append(globalBtn);
+
+  if (cwd) {
+    // Existence is checked before showing the button at all, rather than
+    // showing one that errors on click — per the ask, a project without a
+    // CLAUDE.md just shouldn't get this affordance.
+    window.maestro.projectClaudeMdExists(cwd).then((exists) => {
+      if (!exists || !links.isConnected) {
+        return;
+      }
+      const projectBtn = document.createElement("button");
+      projectBtn.className = "icon-btn";
+      projectBtn.textContent = "📄";
+      projectBtn.title = "Open this project's CLAUDE.md";
+      projectBtn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const res = await window.maestro.openProjectClaudeMd(cwd);
+        if (!res.ok) {
+          showToast(res.error || "Couldn't open project CLAUDE.md");
+        }
+      });
+      links.append(projectBtn);
+    });
   }
-  sub.textContent = cwd;
+  header.append(links);
 }
 
 function paneHeaderEl(index) {
@@ -2304,6 +2482,7 @@ function paneHeaderEl(index) {
     sub.textContent = pane.cwd;
     header.append(sub);
   }
+  updateClaudeMdLinks(header, pane.cwd);
   const actions = document.createElement("span");
   actions.className = "pane-actions";
   if (pane.sessionId) {
@@ -2316,6 +2495,7 @@ function paneHeaderEl(index) {
       // Same reasoning as the sidebar's "+ New chat" button — a fresh chat
       // is a new browsing context for this slot.
       paneNavHistory.delete(index);
+      stopLiveStatsTicker(index);
       if (selectedSessionId === pane.sessionId) {
         selectedSessionId = null;
       }
@@ -2343,6 +2523,7 @@ function paneHeaderEl(index) {
       // A future split reusing slot 1 is a new browsing context — don't let
       // it inherit back/forward history from whatever used to live there.
       paneNavHistory.delete(1);
+      stopLiveStatsTicker(1);
       panes = [panes[0]];
       document.getElementById("workspace").classList.remove("split");
       renderWorkspace();
@@ -2664,6 +2845,7 @@ function paneComposerEl(index) {
           pane.busy = false;
           pane.stopRequested = false;
           pane.currentLaunchId = null;
+          stopLiveStatsTicker(index);
           setPaneBusyUI(index, "");
         }
       }
@@ -2727,9 +2909,36 @@ function paneComposerEl(index) {
     // thinking indicator instead of a blank status row until the next event.
     status.append(Object.assign(document.createElement("span"), { className: "pane-status-icon" }));
     status.append(document.createTextNode("Working…"));
+    // A DOM rebuild mid-run (e.g. split-view toggle) tears down whatever
+    // ticker was targeting the OLD .pane-status node — restart it against the
+    // freshly-built one so the live readout keeps ticking instead of freezing
+    // at whatever it last showed. runStartedAt/liveTokens survive on the pane
+    // object itself, so this picks up exactly where it left off.
+    if (pane.runStartedAt) {
+      startLiveStatsTicker(index);
+      renderLiveStats(index, pane);
+    }
   }
 
   return wrap;
+}
+
+// Makes the "thinking" dot visibly react to a new event landing (tool_use,
+// incremental usage, or an assistant text chunk) instead of just running a
+// fixed generic CSS pulse forever — the captain's ask for the indicator to "feel
+// more alive." Briefly swaps in a faster/bigger "ping" animation via a class
+// toggle, then lets it fall back to the normal ambient pulse. Simplest thing
+// that reads as "reacting to activity," no per-event-type variation needed.
+function pulsePaneStatusIcon(index) {
+  const dot = document.querySelector(`.pane[data-pane="${index}"] .pane-status-icon`);
+  if (!dot) {
+    return;
+  }
+  dot.classList.remove("pane-status-icon-ping");
+  // Force a reflow so re-adding the class restarts the animation even if an
+  // event landed while the previous ping was still playing.
+  void dot.offsetWidth;
+  dot.classList.add("pane-status-icon-ping");
 }
 
 // Toggles the Send/Stop button + status text for a pane without rebuilding
@@ -2763,6 +2972,13 @@ function setPaneBusyUI(index, statusText) {
       }
       status.append(document.createTextNode(statusText));
     }
+  }
+  // setPaneBusyUI wipes .pane-status's innerHTML above, which would otherwise
+  // erase the live "Ns · Nk tokens" ticker span every time a tool_use event
+  // updates the status text (e.g. "Working — Read"). Re-append it immediately
+  // whenever busy, rather than waiting up to 250ms for the next tick.
+  if (pane.busy && pane.runStartedAt) {
+    renderLiveStats(index, pane);
   }
 }
 
@@ -2813,6 +3029,14 @@ async function sendFromPane(index, els) {
   // it (wireTurnStatsOnLastReply is otherwise non-destructive and would
   // happily redraw it on every render forever).
   pane.lastTurnStats = null;
+  // Drives the LIVE "Ns · Nk tokens" ticker (renderLiveStats) — stamped here,
+  // at the true start of the run, not inside setPaneBusyUI (which also fires
+  // on every intermediate tool_use/assistant event and must not reset the
+  // clock each time). liveTokens resets per run; incremental "usage" events
+  // (see the event switch below) add to it as the turn streams in.
+  pane.runStartedAt = Date.now();
+  pane.liveTokens = 0;
+  startLiveStatsTicker(index);
   setPaneBusyUI(index, "Working…");
   setModelFitLine(index, "");
   renderPane(index);
@@ -2836,6 +3060,7 @@ async function sendFromPane(index, els) {
     if (!switchRes.ok) {
       if (panes[index] === pane) {
         pane.busy = false;
+        stopLiveStatsTicker(index);
         setPaneBusyUI(index, "");
         pane.turns.push({ role: "assistant", kind: "text", text: "⚠ Couldn't switch to the new folder: " + switchRes.error });
         bumpSessionActivity(pane.sessionId);
@@ -2867,6 +3092,7 @@ async function sendFromPane(index, els) {
   if (!res.ok) {
     if (panes[index] === pane) {
       pane.busy = false;
+      stopLiveStatsTicker(index);
       setPaneBusyUI(index, "");
       pane.turns.push({ role: "assistant", kind: "text", text: "⚠ Failed to start: " + res.error });
       bumpSessionActivity(pane.sessionId);
@@ -3185,6 +3411,7 @@ document.getElementById("newChat").addEventListener("click", () => {
   // split-close handler already guards against for slot 1 (found in
   // review, was previously missing here and on the pane-header reset).
   paneNavHistory.delete(focusedPaneIndex);
+  stopLiveStatsTicker(focusedPaneIndex);
   selectedSessionId = null;
   renderSinglePane(focusedPaneIndex);
   renderSidebar();
@@ -3680,6 +3907,7 @@ function applySidebarMode() {
 document.getElementById("splitToggle").addEventListener("click", () => {
   const workspace = document.getElementById("workspace");
   if (panes.length > 1) {
+    stopLiveStatsTicker(1);
     panes = [panes[0]];
   } else {
     panes.push(freshPane());
@@ -3853,15 +4081,28 @@ window.maestro.onSessionEvent((evt) => {
       break;
     case "tool_use":
       setPaneBusyUI(index, `Working — ${evt.toolName}`);
+      pulsePaneStatusIcon(index);
+      break;
+    case "usage":
+      // Incremental per-message usage (launcher.js reads it straight off each
+      // "assistant" stream-json event's own evt.message.usage) — summed here
+      // into a running total so the live ticker's "Nk tokens" actually counts
+      // UP during the run instead of sitting blank until the final "result"
+      // event (the captain's exact complaint: "den räknar inte upp ... tokens").
+      pane.liveTokens += evt.totalTokens || 0;
+      renderLiveStats(index, pane);
+      pulsePaneStatusIcon(index);
       break;
     case "assistant":
       pane.turns.push({ role: "assistant", kind: "text", text: evt.text });
       bumpSessionActivity(pane.sessionId);
       renderPane(index);
+      pulsePaneStatusIcon(index);
       break;
     case "error":
       pane.busy = false;
       pane.currentLaunchId = null;
+      stopLiveStatsTicker(index);
       setPaneBusyUI(index, "");
       pane.turns.push({ role: "assistant", kind: "text", text: "⚠ " + evt.message });
       bumpSessionActivity(pane.sessionId);
@@ -3870,6 +4111,7 @@ window.maestro.onSessionEvent((evt) => {
     case "done":
       pane.busy = false;
       pane.currentLaunchId = null;
+      stopLiveStatsTicker(index);
       setPaneBusyUI(index, "");
       // stopRequested alone isn't reliable: the process can finish naturally
       // in the small window between clicking Stop and that IPC call actually
