@@ -1686,6 +1686,211 @@ button.primary {
   border-color: var(--text-faint);
 }
 
+/* ===== Focus page (Point 8) — ranked Jot goals + goal breakdown ===== */
+.focus-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 760px;
+}
+
+.focus-divider {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  margin: 14px 0 2px;
+}
+
+.focus-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+/* The top-ranked goals get the accent edge — the actual "work on this now"
+   recommendation, distinguished from the also-active list below. */
+.focus-card-top {
+  border-left: 3px solid var(--accent);
+}
+
+.focus-card-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  cursor: pointer;
+}
+
+.focus-card-head:hover {
+  background: var(--bg-card-hover);
+}
+
+.focus-caret {
+  color: var(--text-faint);
+  font-size: 11px;
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.focus-title-wrap {
+  flex: 1;
+  min-width: 0;
+}
+
+.focus-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+
+.focus-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.focus-chip {
+  font-size: 10.5px;
+  color: var(--text-dim);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 6px;
+  white-space: nowrap;
+}
+
+.focus-chip-cat {
+  color: var(--text);
+}
+
+.focus-chip-deadline {
+  color: var(--waiting);
+  border-color: var(--waiting);
+}
+
+.focus-chip-overdue {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.focus-chip-review {
+  color: var(--waiting);
+  border-color: var(--waiting);
+}
+
+.focus-score {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  margin-top: 1px;
+}
+
+.focus-breakdown {
+  padding: 0 14px 14px 34px;
+  border-top: 1px solid var(--border);
+}
+
+.focus-desc {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.5;
+  margin: 12px 0;
+  white-space: pre-wrap;
+}
+
+.focus-sub-head {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  margin: 12px 0 8px;
+  font-weight: 600;
+}
+
+.focus-subtasks {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.focus-subtask {
+  display: flex;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--text);
+}
+
+.focus-subtask-status {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-dim);
+  min-width: 92px;
+}
+
+.focus-subtask-done .focus-subtask-text {
+  color: var(--text-faint);
+  text-decoration: line-through;
+}
+
+.focus-subtask-review .focus-subtask-status {
+  color: var(--waiting);
+}
+
+.focus-add-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.focus-add-input {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12.5px;
+  padding: 6px 9px;
+}
+
+.focus-add-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.focus-add-btn {
+  flex-shrink: 0;
+  background: var(--accent);
+  border: none;
+  color: #1a1a1a;
+  font-weight: 600;
+  border-radius: 6px;
+  padding: 6px 14px;
+  cursor: pointer;
+}
+
+.focus-add-btn:hover {
+  filter: brightness(1.08);
+}
+
+.focus-add-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.focus-add-err {
+  font-size: 11.5px;
+  color: var(--accent);
+  margin-top: 6px;
+}
+
 .analysis-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(280px, 1fr));
