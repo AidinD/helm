@@ -1631,7 +1631,14 @@ function turnEl(turn) {
         copyBtn.classList.remove("copied");
       }, 1200);
     });
-    wrap.append(copyBtn);
+    // A row, not a column — so a "Done" button (added later, only on the
+    // LAST reply, by wireDoneButtonOnLastReply) sits BESIDE copy, not
+    // stacked under it. Every reply gets this row; only the last one ever
+    // gets a second button in it.
+    const actions = document.createElement("div");
+    actions.className = "turn-actions";
+    actions.append(copyBtn);
+    wrap.append(actions);
   }
 
   return wrap;
@@ -1840,22 +1847,47 @@ function wireEditableUserTurns(index, scroll) {
 function wireDoneButtonOnLastReply(index, scroll) {
   const pane = panes[index];
   const session = sessionById(pane.sessionId);
-  if (!session || session.status !== "waiting") {
+  if (!session) {
+    return;
+  }
+  // isAcked is an EXACT match against the timestamp stored at ack time (see
+  // main.js's status-override loop, which uses >= for the same comparison —
+  // exact equality here is the more precise check for "is the reply I'm
+  // currently drawing the specific one that got acknowledged," since the ack
+  // value can never exceed the current lastActivityAt unless new activity
+  // moved it forward, at which point this is correctly false again).
+  const isAcked = state.config.acknowledgedSessions?.[session.sessionId] === session.lastActivityAt;
+  if (session.status !== "waiting" && !isAcked) {
     return;
   }
   const bubbles = scroll.querySelectorAll(".turn.assistant .turn-bubble");
   const lastBubble = bubbles[bubbles.length - 1];
-  const wrap = lastBubble?.parentElement;
-  if (!wrap) {
+  const actions = lastBubble?.parentElement.querySelector(".turn-actions");
+  if (!actions) {
     return;
   }
   const done = document.createElement("button");
   done.type = "button";
-  done.className = "ack-done-pill";
-  done.textContent = "✓ Done";
-  done.title = "Nothing left to do here — dismiss from \"Needs you\" (comes back automatically if new activity happens).";
+  // "copy-btn" gives it the same hover-only reveal as the Copy button beside
+  // it (Aidin's ask: "en check ikon bredvid copy ikonen som endast dyker upp
+  // på hover"). ".acked" (added below once clicked, or immediately here if
+  // this render already reflects a past ack) overrides that to always-
+  // visible + accent-colored — a persistent checkmark on the reply itself
+  // ("när den är checkad dyker en checkmark upp på svaret"), not just a
+  // transient hover flash.
+  done.className = "copy-btn done-btn" + (isAcked ? " acked" : "");
+  done.textContent = "✓";
+  done.disabled = isAcked;
+  done.title = isAcked
+    ? "Marked done"
+    : "Nothing left to do here — dismiss from \"Needs you\" (comes back automatically if new activity happens).";
   done.addEventListener("click", async (e) => {
     e.stopPropagation();
+    // Instant local feedback, same pattern as the copy button's own
+    // immediate icon swap, ahead of the async round-trip settling for real.
+    done.classList.add("acked");
+    done.disabled = true;
+    done.title = "Marked done";
     const acknowledgedSessions = {
       ...(state.config.acknowledgedSessions || {}),
       [session.sessionId]: session.lastActivityAt,
@@ -1863,7 +1895,7 @@ function wireDoneButtonOnLastReply(index, scroll) {
     state.config = await window.maestro.setConfig({ acknowledgedSessions });
     refresh();
   });
-  wrap.append(done);
+  actions.append(done);
 }
 
 // Real "rewind to here" via transcript forking (verified in
