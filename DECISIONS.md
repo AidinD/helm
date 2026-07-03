@@ -1,5 +1,31 @@
 # Decisions
 
+## 2026-07-03 — Orchestrator lifespan: no privileged "the orchestrator" session; land on a dashboard, start fresh orchestrator sessions
+
+**Decision:** Aidin flagged that two original UI choices — app opens directly
+onto "the orchestrator," and any session can be assigned as "the
+orchestrator" — were made before the ephemeral-sessions philosophy and now
+contradict it. Both treat the orchestrator as one durable, history-
+accumulating session-identity, which is the same megasession anti-pattern the
+strategic reorientation rejects, and also contradicts the already-made
+decision that the classifier is stateless (2026-07-02). Confirmed the
+redesign (full detail in PLAN.md's new "Orchestrator-lifespan redesign"
+subsection under Phase 3): (1) remove session-assignment — no privileged
+session IS the orchestrator; the sensor/sweep/dispatch runs headless in the
+main process; (2) app lands on the overview/dashboard (Phase 1's original
+vision), not a chat; (3) "open the orchestrator" becomes "start a NEW
+orchestrator session" — fresh each time, pre-loaded with orchestrator-
+instructions.md + a current-state brief (Jot, PLAN.md), never resumed
+history, reusing Phase 2's planned handoff mechanism. This session itself is
+the illustrating example: it worked as an orchestrator and became exactly the
+long everything-session we're moving away from.
+
+Not ripped out today (current default still works); it's the confirmed
+direction for new orchestrator UI work. Aidin explicitly delegated steering
+Maestro's direction along this philosophy to me from here, being newer to it
+himself — so this and future direction calls are made on that standing
+authority, still surfaced here for his review, not presumed silently.
+
 ## 2026-07-03 — Voice input v1: local offline Whisper (transformers.js), not OS speech API or whisper.cpp bindings
 
 **Context:** PLAN.md's Phase 4 candidate pool flags voice input as "the best

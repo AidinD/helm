@@ -121,6 +121,49 @@ Electron app, **reusing Session Radar's read layer** (`lib/sessions.js`,
 Lower stakes, added once the base stands. Aidin's goal here is to become a
 poweruser, not to solve a present pain.
 
+### Orchestrator-lifespan redesign (2026-07-03): no privileged "the orchestrator" session
+
+The original UI made two choices — **app opens directly onto "the
+orchestrator"**, and **any session can be assigned to be "the
+orchestrator"** — both made before the ephemeral-sessions philosophy landed.
+They treat the orchestrator as ONE durable session-identity: a specific,
+recurring conversation you accumulate history in. That's the exact
+megasession anti-pattern the strategic reorientation moves away from, just
+applied to the orchestrator instead of to a project. It also contradicts an
+architecture decision already made: the classifier is deliberately STATELESS
+(2026-07-02 — a periodic batch check, not a persistent helper session). The
+UI simply hadn't caught up to that.
+
+This very session is the proof: it acted as an orchestrator in practice
+(dispatching, reviewing, deciding) and became precisely the long,
+everything-accumulating session we wanted to avoid. Orchestrator-work-in-a-
+chat isn't the wrong idea — doing it in the SAME session every time is.
+
+**Redesign:**
+1. **Remove "assign a session to the orchestrator."** There is no privileged
+   session that *is* the orchestrator. The orchestrator's real work (the
+   sensor/sweep, and eventually dispatch) already runs in Maestro's main
+   process, headless — not in a chat pane.
+2. **App lands on an overview/dashboard, not a specific chat** — which is
+   already Phase 1's original vision (session list + status + attention
+   spotlight). The orchestrator is a background faculty of the app, not a
+   room you enter.
+3. **Replace "open the orchestrator" with "start a NEW orchestrator
+   session"** — a fresh session each time, pre-loaded with a pointer to
+   `orchestrator-instructions.md` plus a quick current-state brief (Jot,
+   PLAN.md), never resumed history. This is the SAME handoff mechanism
+   already planned for Phase 2 (summarize-and-carry-over), applied to
+   orchestrator work specifically: durable knowledge lives in the files it
+   reads, not in keeping one orchestrator conversation alive.
+4. Consistent with the self-hosting-hazard and worktree notes above: the
+   orchestrator is defined by the instructions it loads and the state files
+   it reads/writes, not by a long-lived process or conversation.
+
+Not urgent to rip out today (the current default-to-orchestrator still
+works), but this is the confirmed direction — new orchestrator UI work
+should build toward the dashboard-plus-fresh-session model, not deepen the
+privileged-session one.
+
 ### What "orchestrator" actually means here (2026-07-02 discussion)
 
 Before building anything, we worked out what an orchestrator's job actually
