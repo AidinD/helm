@@ -1,5 +1,30 @@
 # Decisions
 
+## 2026-07-02 — Rewind now happens in the SAME pane (the captain's call on the constraint tradeoff)
+
+**Decision:** the captain's review: rewind "switches to a new session instead of
+continuing in the same session." Surfaced the hard constraint to him —
+`--resume` takes the WHOLE transcript, so "same session" AND "drop future
+context" can't both hold; it's genuinely either/or. Asked which he wanted
+(AskUserQuestion, with the tradeoff spelled out). He chose **"same pane, fork
+underneath"**: rewind now replaces the CURRENT pane in place (no new pane
+pops up — feels like going back in this conversation), while underneath it's
+still a fresh forked session with prior context replayed, so future context
+is genuinely dropped, not just hidden. This is the option that keeps rewind's
+unique value (the other option — truly same session via --resume — would
+have made it a near-duplicate of the existing double-click-edit-resend, since
+it couldn't drop context).
+
+**Implementation:** `openFreshDraftInPane`'s 3rd arg went from a bare
+`avoidIndex` to an options object: `{ forceIndex }` (rewind — target this
+exact pane) or `{ avoidIndex }` (summarize — don't clobber the pane you're
+looking at). Rewind passes `forceIndex: sourceIndex`. The forced pane's view
+is replaced by a fresh draft; sending starts a new session (freshPane has no
+cliSessionId, so sendFromPane won't --resume) with the replayed context in
+the prompt. Rewinding a BUSY pane orphans its in-flight launch exactly like
+"+/new chat" already does — consistent, not a new failure mode. The replaced
+session's transcript stays on disk, reopenable from the sidebar.
+
 ## 2026-07-02 — Review feedback: category-drag regression fixed, mouse back/forward wired
 
 The captain's review of the backlog batch surfaced two concrete issues (plus a
