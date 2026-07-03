@@ -13,11 +13,12 @@ import { suggestModelEffort } from "./lib/suggest.js";
 import { readTranscript } from "./lib/transcript.js";
 import { findTranscriptPath } from "./lib/paths.js";
 import { listSkills, skillMdPath } from "./lib/skills.js";
-import { appendUsageLog, readUsageSummary } from "./lib/usage.js";
+import { appendUsageLog, readUsageSummary, computeSuggestionAccuracyVerdict } from "./lib/usage.js";
 import { judgeModelFit } from "./lib/judge.js";
 import { classifySessionStatus, estimateSessionContextTokens, compactSession, getTranscriptSize } from "./lib/orchestratorHelper.js";
 import { savePastedImage, prunePastedImages } from "./lib/images.js";
 import { computeVersionString } from "./lib/version.js";
+import { transcribeAudio } from "./lib/voice.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -91,6 +92,14 @@ function createWindow() {
     },
   });
   mainWindow.loadFile(path.join(__dirname, "renderer", "index.html"));
+  // Electron denies media (mic/camera) permission requests by default unless
+  // a handler explicitly grants them — needed for the composer's mic button
+  // (renderer's navigator.mediaDevices.getUserMedia). Scoped to this window's
+  // own session only, and to the "media" permission specifically — no blanket
+  // grant of other permission types.
+  mainWindow.webContents.session.setPermissionRequestHandler((_webContents, permission, callback) => {
+    callback(permission === "media");
+  });
   // Surface renderer console output (incl. errors) in the terminal — there is
   // no separate devtools console to watch when driving this headlessly.
   mainWindow.webContents.on("console-message", (_event, level, message, line, sourceId) => {
@@ -260,6 +269,23 @@ ipcMain.handle("image:save", (_event, { base64Data, ext }) => {
   try {
     return { ok: true, path: savePastedImage(base64Data, ext) };
   } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+// --- Voice input: transcribe recorded mic audio locally (offline Whisper via
+// @huggingface/transformers — see src/lib/voice.js for why this option was
+// picked over the OS speech API / whisper.cpp bindings / OpenSuperWhisper).
+// samples arrives as a plain array of floats (structured-clone can't carry a
+// Float32Array through contextBridge's IPC boundary as-is in every Electron
+// version, so the renderer sends Array.from(float32Array) and this rebuilds
+// the typed array main-process-side). ---
+ipcMain.handle("voice:transcribe", async (_event, { samples }) => {
+  try {
+    const text = await transcribeAudio(Float32Array.from(samples));
+    return { ok: true, text };
+  } catch (err) {
+    console.error("[maestro] voice transcription failed:", err);
     return { ok: false, error: err.message };
   }
 });
@@ -518,6 +544,19 @@ const MAX_CLASSIFICATIONS_PER_SWEEP = 15;
 // The rest wait for the next sweep; nothing is lost, a large session stays
 // large one more cycle.
 const MAX_COMPACTIONS_PER_SWEEP = 3;
+// How many NEW judged+suggested runs must accumulate since the last check
+// before the sweep re-computes the suggestion-accuracy verdict. This is a
+// data-volume trigger, not a wall-clock one (e.g. "weekly") — the captain's usage
+// is bursty (some nights many runs, some days none), so a fixed calendar
+// interval would either fire on stale/unchanged data or sit silent through
+// a heavy stretch. The check itself is nearly free (readUsageSummary parses
+// the local usage-log.jsonl already read for the on-demand report; no model
+// call), so the real cost this trigger controls isn't compute — it's how
+// often the captain gets re-nagged about a finding he already saw. 10 new judged
+// runs is enough to meaningfully move the followed/overridden appropriate-
+// rate (each run is a full data point in a typically low-N comparison)
+// without re-surfacing on every single prompt.
+const SUGGESTION_ACCURACY_CHECK_EVERY_N_RUNS = 10;
 // setInterval doesn't know whether the PREVIOUS sweep is still running — up
 // to MAX_CLASSIFICATIONS_PER_SWEEP sequential calls, each with its own 30s
 // timeout backstop, stay comfortably under one interval in the stated worst
@@ -535,18 +574,19 @@ async function runOrchestratorSweep() {
   const config = loadConfig();
   const classifyOn = config.orchestratorHelper?.enabled === true;
   const compactOn = config.autoCompact?.enabled === true;
-  if (!classifyOn && !compactOn) {
+  const accuracyCheckOn = config.suggestionAccuracyCheck?.enabled === true;
+  if (!classifyOn && !compactOn && !accuracyCheckOn) {
     return;
   }
   sweepInFlight = true;
   try {
-    await runOrchestratorSweepBody(config, { classifyOn, compactOn });
+    await runOrchestratorSweepBody(config, { classifyOn, compactOn, accuracyCheckOn });
   } finally {
     sweepInFlight = false;
   }
 }
 
-async function runOrchestratorSweepBody(config, { classifyOn, compactOn }) {
+async function runOrchestratorSweepBody(config, { classifyOn, compactOn, accuracyCheckOn }) {
   const attentionWindowMs = (config.attentionWindowHours || 24) * 60 * 60 * 1000;
   const { sessions } = readAllSessions({ attentionWindowMs });
   // "active" sessions have work genuinely in flight — never touch them.
@@ -678,6 +718,59 @@ async function runOrchestratorSweepBody(config, { classifyOn, compactOn }) {
       });
     }
   }
+
+  if (accuracyCheckOn) {
+    runSuggestionAccuracyCheck(config);
+  }
+}
+
+// Fas 3's proactive model/effort suggestion-accuracy review (PLAN.md Phase
+// 3 — "infogas i Fas 3:s orkestrator-helper istället för en egen separat
+// loop", 2026-07-02). Deliberately reuses computeSuggestionAccuracyVerdict
+// (usage.js) — the SAME metric the on-demand "Suggestion accuracy" report on
+// the Analysis page already computes — rather than inventing a new one; this
+// only changes WHEN the check happens (piggybacking on the existing sweep),
+// never what's being measured. No model call, no network, just parsing the
+// local usage-log.jsonl already read for the on-demand report — cheap enough
+// to check every sweep, gated below on data volume rather than time so it
+// doesn't re-nag on unchanged data.
+function runSuggestionAccuracyCheck(config) {
+  const summary = readUsageSummary();
+  const verdict = computeSuggestionAccuracyVerdict(summary);
+  if (!verdict) {
+    return;
+  }
+  const totalNow = verdict.followedTotal + verdict.overriddenTotal;
+  const checkState = config.suggestionAccuracyCheck || {};
+  const totalAtLastCheck = (checkState.lastCheckedFollowedTotal || 0) + (checkState.lastCheckedOverriddenTotal || 0);
+  if (totalNow - totalAtLastCheck < SUGGESTION_ACCURACY_CHECK_EVERY_N_RUNS) {
+    return;
+  }
+  const next = { ...config };
+  next.suggestionAccuracyCheck = {
+    ...checkState,
+    lastCheckedFollowedTotal: verdict.followedTotal,
+    lastCheckedOverriddenTotal: verdict.overriddenTotal,
+  };
+  // Only surface a notice when the heuristic looks meaningfully OFF
+  // (overriding did better than following — the "suggested Sonnet but Opus
+  // was used successfully" style signal) — a positive/neutral diff just
+  // confirms the heuristic is fine and isn't worth interrupting the captain about.
+  // A fresh finding always REPLACES a prior dismissed one (new data volume
+  // means a genuinely new read, not the same stale nag), but only when the
+  // verdict is actually still negative — this can also CLEAR a previously
+  // surfaced notice if enough new data flipped the verdict positive.
+  if (verdict.diffPoints < 0) {
+    next.suggestionAccuracyNotice = {
+      message: verdict.message,
+      diffPoints: verdict.diffPoints,
+      totalAtCheck: totalNow,
+      dismissed: false,
+    };
+  } else {
+    next.suggestionAccuracyNotice = null;
+  }
+  writeConfig(next);
 }
 
 app.whenReady().then(() => {

@@ -147,6 +147,88 @@ function renderLiveStats(index, pane) {
   live.textContent = " · " + parts.join(" · ");
 }
 
+// Voice input (PLAN.md Phase 4) — records via getUserMedia/MediaRecorder,
+// decodes+resamples in the renderer (Web Audio APIs are only available here,
+// not in the main process), then hands off a plain 16kHz mono Float32Array to
+// main's offline-Whisper transcriber (src/lib/voice.js). Keyed by pane INDEX,
+// same reasoning as liveStatsTickers above: a pane can be reset/replaced
+// while a recording is in flight, and looking panes[index] up fresh (rather
+// than closing over the pane object) means a stale recording naturally has
+// nowhere valid to insert its result.
+const activeRecordings = new Map(); // index -> { mediaRecorder, stream, chunks }
+
+async function toggleVoiceRecording(index, micBtn, promptEl) {
+  const active = activeRecordings.get(index);
+  if (active) {
+    active.mediaRecorder.stop();
+    return;
+  }
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (err) {
+    micBtn.title = `Microphone unavailable: ${err.message}`;
+    return;
+  }
+  const mediaRecorder = new MediaRecorder(stream);
+  const chunks = [];
+  mediaRecorder.addEventListener("dataavailable", (e) => {
+    if (e.data.size > 0) {
+      chunks.push(e.data);
+    }
+  });
+  mediaRecorder.addEventListener("stop", async () => {
+    stream.getTracks().forEach((track) => track.stop());
+    activeRecordings.delete(index);
+    micBtn.classList.remove("recording");
+    micBtn.textContent = "🎤";
+    micBtn.disabled = true;
+    micBtn.title = "Transcribing…";
+    try {
+      const samples = await decodeToMono16k(new Blob(chunks, { type: mediaRecorder.mimeType }));
+      const res = await window.maestro.transcribeVoice(Array.from(samples));
+      if (res.ok && res.text) {
+        // Append rather than replace — voice is an alternative way to ADD to
+        // what you're composing, not a destructive overwrite of anything
+        // already typed.
+        const existing = promptEl.value;
+        promptEl.value = existing && !existing.endsWith(" ") && !existing.endsWith("\n") ? `${existing} ${res.text}` : `${existing}${res.text}`;
+        promptEl.dispatchEvent(new Event("input", { bubbles: true }));
+        promptEl.focus();
+      } else if (!res.ok) {
+        micBtn.title = `Transcription failed: ${res.error}`;
+      }
+    } catch (err) {
+      micBtn.title = `Transcription failed: ${err.message}`;
+    } finally {
+      micBtn.disabled = false;
+    }
+  });
+  activeRecordings.set(index, { mediaRecorder, stream, chunks });
+  mediaRecorder.start();
+  micBtn.classList.add("recording");
+  micBtn.textContent = "⏹";
+  micBtn.title = "Stop recording";
+}
+
+// Decodes a recorded audio Blob (whatever codec MediaRecorder used, typically
+// webm/opus) into a mono Float32Array at 16kHz — the sample rate Whisper's
+// feature extractor expects. OfflineAudioContext does the resample for free
+// as part of the same decode step, no separate resampling library needed.
+async function decodeToMono16k(blob) {
+  const arrayBuffer = await blob.arrayBuffer();
+  const decodeCtx = new AudioContext();
+  const decoded = await decodeCtx.decodeAudioData(arrayBuffer);
+  decodeCtx.close();
+  const offlineCtx = new OfflineAudioContext(1, Math.ceil(decoded.duration * 16000), 16000);
+  const source = offlineCtx.createBufferSource();
+  source.buffer = decoded;
+  source.connect(offlineCtx.destination);
+  source.start();
+  const rendered = await offlineCtx.startRendering();
+  return rendered.getChannelData(0);
+}
+
 // Converts a Windows absolute path to a file:// URL an <img> can load —
 // forward slashes, percent-encoded per path segment (handles spaces and any
 // other special characters e.g. in "D:\Dropbox\Documents\..."). The
@@ -2760,12 +2842,23 @@ function paneComposerEl(index) {
     renderAttachments();
   });
 
+  // Voice input (PLAN.md Phase 4) — v1 scope is deliberately minimal: record,
+  // transcribe locally (offline Whisper, see src/lib/voice.js), insert into
+  // the composer. No language picker, no continuous dictation; that is a
+  // review-and-iterate pass once the captain has tried this.
+  const micBtn = document.createElement("button");
+  micBtn.type = "button";
+  micBtn.className = "icon-btn";
+  micBtn.textContent = "🎤";
+  micBtn.title = "Record voice input (transcribed locally, offline)";
+  micBtn.addEventListener("click", () => toggleVoiceRecording(index, micBtn, promptEl));
+
   const sendBtn = document.createElement("button");
   sendBtn.className = "send-btn";
   sendBtn.textContent = "➤";
   sendBtn.title = pane.sessionId ? "Continue (Enter)" : "Start session (Enter)";
 
-  controls.append(pickBtn, cwdInput, attachBtn, permissionDD.el, modelDD.el, effortDD.el, sendBtn);
+  controls.append(pickBtn, cwdInput, attachBtn, permissionDD.el, modelDD.el, effortDD.el, micBtn, sendBtn);
   shell.append(controls);
 
   // Context-size gauge — a bar + %, under the model/effort row (the captain's
@@ -3664,6 +3757,19 @@ function renderSettingsPage() {
     )
   );
 
+  block.append(
+    settingsToggleRow(
+      "Proactively check suggestion accuracy (Fas 3)",
+      "Periodically re-checks the same \"Suggestion accuracy\" comparison shown on the Analysis page (no extra cost — it's the existing usage log, no model call) and surfaces a dismissible note there when overriding the model/effort suggestion has been judged \"appropriate\" meaningfully more often than following it. Checked on the same sweep as the items above, after enough new judged runs accumulate. Never changes the suggestion heuristic itself — only tells you it might be worth revisiting.",
+      state.config.suggestionAccuracyCheck?.enabled === true,
+      async (checked) => {
+        state.config = await window.maestro.setConfig({
+          suggestionAccuracyCheck: { ...(state.config.suggestionAccuracyCheck || {}), enabled: checked },
+        });
+      }
+    )
+  );
+
   page.append(block);
 }
 
@@ -3741,6 +3847,34 @@ async function renderAnalysisPage() {
     `${summary.totalRuns} runs · $${summary.totalCostUsd.toFixed(2)} total` +
     (summary.judgeCostUsd ? ` · $${summary.judgeCostUsd.toFixed(2)} spent on model-fit judging` : "");
   page.append(totals);
+
+  // Fas 3's proactive suggestion-accuracy finding (main.js's periodic
+  // runSuggestionAccuracyCheck, folded into the orchestrator sweep — see
+  // PLAN.md Phase 3 / DECISIONS.md). Surfaced right above the "Suggestion
+  // accuracy" block it's about, since that's where the captain already looks to
+  // check this manually — the proactive version just means he doesn't have
+  // to remember to. Same "propose, never auto-act" posture as the archive
+  // pill: dismissing only hides THIS finding; a new one (computed from
+  // meaningfully more data) replaces it automatically.
+  const notice = state.config.suggestionAccuracyNotice;
+  if (notice && !notice.dismissed) {
+    const banner = document.createElement("div");
+    banner.className = "analysis-notice";
+    const text = document.createElement("span");
+    text.textContent = `◎ ${notice.message}`;
+    const dismiss = document.createElement("button");
+    dismiss.type = "button";
+    dismiss.className = "analysis-notice-dismiss";
+    dismiss.textContent = "Dismiss";
+    dismiss.addEventListener("click", async () => {
+      state.config = await window.maestro.setConfig({
+        suggestionAccuracyNotice: { ...notice, dismissed: true },
+      });
+      renderAnalysisPage();
+    });
+    banner.append(text, dismiss);
+    page.append(banner);
+  }
 
   const grid = document.createElement("div");
   grid.className = "analysis-grid";

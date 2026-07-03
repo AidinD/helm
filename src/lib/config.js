@@ -58,6 +58,26 @@ const DEFAULT_CONFIG = {
   // both what he asked for and inherently safe — 30+ min of silence means
   // it's definitely not mid-turn.
   autoCompact: { enabled: false, thresholdTokens: 150000, idleMinutes: 10 },
+  // Fas 3's proactive model/effort suggestion-accuracy check (PLAN.md Phase
+  // 3, "the model/effort suggestion-accuracy review"). Folded into the same
+  // periodic sweep as orchestratorHelper/autoCompact rather than a third
+  // timer (2026-07-02 decision, "infogas i Fas 3:s orkestrator-helper istället
+  // för en egen separat loop"). Off by default, same opt-in posture as the
+  // other sweep features. Reuses the EXACT metric the on-demand "Suggestion
+  // accuracy" report on the Analysis page already computes (see
+  // usage.js's computeSuggestionAccuracyVerdict) — this only changes WHEN
+  // it's checked (periodically vs. only when the captain opens the page), never
+  // what's computed. lastCheckedAt* remember the data volume as of the last
+  // check so the sweep only re-checks after enough new judged runs have
+  // accumulated to possibly change the verdict, not on every sweep tick.
+  suggestionAccuracyCheck: { enabled: false, lastCheckedFollowedTotal: 0, lastCheckedOverriddenTotal: 0 },
+  // The proactive finding surfaced on the Analysis page, dismissed the same
+  // way acknowledgedSessions dismisses a per-session row: keyed on the data
+  // volume it was computed from, so a dismissal only sticks until enough new
+  // judged runs arrive to possibly change the verdict (mirrors
+  // acknowledgedSessions' lastActivityAt staleness check, just for a global
+  // finding instead of a per-session one).
+  suggestionAccuracyNotice: null, // { message, diffPoints, totalAtCheck, dismissed }
   // Fallback context-window size for the gauge's %, used only for a model
   // Maestro hasn't yet learned a real window for (see modelContextWindows).
   // Defaulted to 1M to match the captain's current environment.
@@ -104,6 +124,7 @@ export function loadConfig() {
       archiveSuggestions: { ...DEFAULT_CONFIG.archiveSuggestions, ...parsed.archiveSuggestions },
       orchestratorHelper: { ...DEFAULT_CONFIG.orchestratorHelper, ...parsed.orchestratorHelper },
       autoCompact: { ...DEFAULT_CONFIG.autoCompact, ...parsed.autoCompact },
+      suggestionAccuracyCheck: { ...DEFAULT_CONFIG.suggestionAccuracyCheck, ...parsed.suggestionAccuracyCheck },
       jot: { ...DEFAULT_CONFIG.jot, ...parsed.jot },
     };
   } catch {

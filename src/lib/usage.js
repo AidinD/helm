@@ -96,3 +96,37 @@ export function readUsageSummary() {
   }
   return summary;
 }
+
+/**
+ * Shared "is the suggestion heuristic meaningfully off?" verdict, derived
+ * from readUsageSummary()'s suggestionAccuracy block. This is the SAME
+ * followed-vs-overridden appropriate-rate comparison the on-demand
+ * "Suggestion accuracy" report on the Analysis page already renders
+ * (renderer.js's renderAnalysisPage) — extracted here so the periodic
+ * orchestrator sweep (main.js's runOrchestratorSweepBody) can reuse the
+ * exact same metric instead of inventing a second one that could drift out
+ * of sync with what the captain sees when he checks manually.
+ *
+ * Returns null when there isn't enough judged+suggested data to say
+ * anything (mirrors the report's own "No judged runs with a suggestion yet"
+ * empty state), otherwise { followedTotal, overriddenTotal, followedRate,
+ * overriddenRate, diffPoints, message }. diffPoints > 0 means following the
+ * suggestion did better; < 0 means overriding it did better (the
+ * heuristic-looks-off case).
+ */
+export function computeSuggestionAccuracyVerdict(summary) {
+  const acc = summary.suggestionAccuracy || { followed: {}, overridden: {} };
+  const followedTotal = (acc.followed.too_weak || 0) + (acc.followed.appropriate || 0) + (acc.followed.too_strong || 0);
+  const overriddenTotal = (acc.overridden.too_weak || 0) + (acc.overridden.appropriate || 0) + (acc.overridden.too_strong || 0);
+  if (followedTotal === 0 || overriddenTotal === 0) {
+    return null;
+  }
+  const followedRate = (acc.followed.appropriate || 0) / followedTotal;
+  const overriddenRate = (acc.overridden.appropriate || 0) / overriddenTotal;
+  const diffPoints = Math.round((followedRate - overriddenRate) * 100);
+  const message =
+    diffPoints >= 0
+      ? `Following the suggestion was judged "appropriate" ${diffPoints} points more often than overriding it (${followedTotal} followed vs ${overriddenTotal} overridden).`
+      : `Overriding the suggestion was judged "appropriate" ${Math.abs(diffPoints)} points more often than following it (${overriddenTotal} overridden vs ${followedTotal} followed) — the suggestion heuristic may be worth revisiting.`;
+  return { followedTotal, overriddenTotal, followedRate, overriddenRate, diffPoints, message };
+}

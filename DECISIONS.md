@@ -1,5 +1,205 @@
 # Decisions
 
+## 2026-07-03 — Voice input v1: local offline Whisper (transformers.js), not OS speech API or whisper.cpp bindings
+
+**Context:** PLAN.md's Phase 4 candidate pool flags voice input as "the best
+first experiment" — Kun Chen uses OpenSuperWhisper as his PRIMARY prompt-
+composition method instead of typing. The captain asked for a spike first, then a
+minimal build, not upfront design certainty ("build a first prototype, then
+we review it together").
+
+**Spike — three options checked in the requested preference order:**
+1. **Windows' own OS-level speech recognition** (Windows Speech Recognition /
+   `Windows.Media.SpeechRecognition`) — not pursued past a quick check: there
+   is no simple Node/Electron binding for this WinRT API; reaching it would
+   mean either a native addon or a PowerShell/COM bridge, both meaningfully
+   more fragile and heavier than option 2 below for the same outcome.
+2. **A local whisper.cpp binary or an npm wrapper** — checked both
+   `nodejs-whisper` and `whisper-node`. Both compile whisper.cpp from source
+   at install/first-run time; their own Windows install docs require
+   MinGW-w64/MSYS2 (`make`/`cmake`) on PATH. Verified directly on this
+   machine: no `cmake` or `make` on PATH, only a bare `gcc.exe` from an
+   existing msys64 install (not the full toolchain either package's docs
+   ask for) — exactly the "exotic manual install" case the captain asked me to
+   flag rather than force through.
+   - Found a third path in the same family that DOES clear the bar:
+     **`@huggingface/transformers`** (transformers.js, the actively-maintained
+     successor to `@xenova/transformers`) runs Whisper via prebuilt
+     `onnxruntime-node`/`sharp` binaries — no C++ compile step at all.
+     `npm install` completed cleanly in ~8s with zero build tooling. This is
+     the option actually used (see below) — closer to option 2's spirit (a
+     real local Whisper model) than option 3, without its blocker.
+3. **OpenSuperWhisper itself** — the captain's actual daily tool. It is macOS-only
+   (a native macOS app); not installable or scriptable on this Windows
+   machine. Stated plainly rather than attempting to force it — matches the
+   ask.
+
+**Chosen: `@huggingface/transformers` running `Xenova/whisper-tiny.en`,
+inference in Maestro's own Electron MAIN process (Node), not the renderer.**
+Verified live end-to-end via a real spoken WAV (Windows SAPI
+`System.Speech.Synthesis` TTS used to generate a genuine speech waveform for
+the spike, since no live mic input is available to me): first call
+auto-downloaded the model (~151MB fp32 ONNX, two files — encoder + merged
+decoder — into `node_modules/@huggingface/transformers/.cache`, a one-time
+background download, not a blocking manual step) and transcribed correctly
+("Hello Maestro. Please open the project folder and start a new session.")
+in ~13s total (mostly the download); a second run with the model already
+cached loaded in ~1.4s and transcribed a short clip in ~1-2s. Picked
+`whisper-tiny.en` (smallest usable size, English-only) to match the
+deliberately minimal v1 scope — no language picker yet (see below).
+
+**Why main-process inference, not renderer:** keeps the renderer's strict CSP
+(`default-src 'self'`) completely irrelevant to the model/runtime — no WASM/
+worker CSP exceptions needed — and matches this repo's existing division of
+labor (all CLI/file-system/model work lives in `src/lib/*`, IPC-bridged to
+the renderer via `preload.cjs`, same shape as `judge.js`/`suggest.js`).
+
+**Built (minimal "record → transcribe → insert" loop only, per the ask —
+no language selection, no continuous dictation):**
+- `src/lib/voice.js` (new) — `transcribeAudio(float32Samples)`, lazily creates
+  and caches one `pipeline("automatic-speech-recognition", "Xenova/whisper-
+  tiny.en")` for the process lifetime (re-creating it per call would reload
+  the model from disk every time). A failed first load clears the cached
+  promise so a transient network error on the first-ever download doesn't
+  permanently wedge the feature.
+- `src/main.js` — a `mainWindow.webContents.session.setPermissionRequestHandler`
+  added in `createWindow()` (none existed before), scoped to only grant the
+  `"media"` permission (needed for the renderer's `getUserMedia`) and deny
+  everything else; Electron denies all media requests by default without an
+  explicit handler. New `voice:transcribe` IPC handler rebuilds a
+  `Float32Array` from the plain array the renderer sends (contextBridge's IPC
+  boundary carries a plain array more reliably across Electron versions than
+  a typed array) and calls `transcribeAudio`.
+- `src/preload.cjs` — `transcribeVoice(samples)` added to the exposed
+  `window.maestro` surface, same one-line-per-channel pattern as every other
+  entry.
+- `src/renderer/renderer.js` — a microphone icon-button (`.icon-btn`, same
+  class/size as the existing pick-folder/attach buttons) added to
+  `composer-controls`, immediately before the send button. Click starts
+  `getUserMedia({audio: true})` + `MediaRecorder`; click again (now showing a
+  stop icon) stops it. On stop: decodes the recorded Blob via
+  `AudioContext.decodeAudioData` then `OfflineAudioContext` (1 channel,
+  16kHz) to get the exact mono/16kHz `Float32Array` Whisper's feature
+  extractor expects — resampling falls out of the same decode step for free,
+  no separate resampling library needed — sends it to
+  `window.maestro.transcribeVoice`, and **appends** the returned text into
+  the composer's textarea (a trailing space/newline is added first only if
+  the existing text doesn't already end in one). Chose append over replace:
+  voice is meant as an alternative way to ADD to what you're composing, not a
+  silent overwrite of anything already typed. Recording state and the
+  in-flight `MediaRecorder`/stream are keyed by pane INDEX in a module-level
+  `activeRecordings` Map — same reasoning as the existing `liveStatsTickers`
+  map (a pane can be reset/replaced mid-recording; looking `panes[index]` up
+  fresh means a stale recording has nowhere valid to land).
+- `src/renderer/style.css` — `.icon-btn.recording` (red, same hex family as
+  `.send-btn.stopping`, for a consistent "something live/attention-needing"
+  cue) reuses the existing `pane-status-pulse` keyframe so it visibly pulses
+  while recording, no new animation needed.
+- `package.json` — added the one new runtime dependency,
+  `@huggingface/transformers` (`npm install`, no other package changes).
+
+**Verification:** `node --check` on all four edited/new JS files, a CSS
+brace-balance check, and a full boot-test via `scripts/restart-dev.sh` twice
+(clean both times; confirmed via `Get-CimInstance` that only Maestro's own 4
+PIDs recycled and Halyard's 4 PIDs were untouched throughout). Separately
+verified the actual shipped `src/lib/voice.js` module end-to-end against a
+real speech WAV via a standalone script importing it directly — confirmed
+correct transcription text, and confirmed the model cache lands in this
+repo's own `node_modules` (gitignored, so it never gets committed). **What
+this could NOT verify** (no live mic access, no browser-servable preview for
+a native Electron app — same limitation noted on every other UI change in
+this file): whether `getUserMedia` actually prompts for and receives real
+microphone permission end-to-end in the packaged app, whether the microphone
+button renders correctly alongside the other composer controls, and — most
+importantly — real transcription QUALITY against the captain's own voice, accent,
+and speaking environment (background noise, distance from mic, etc.). All of
+that needs the captain's own live test. Deferred by design, per the ask to keep v1
+to exactly "record, transcribe, insert": language selection, continuous/
+live dictation, a visible recording-duration indicator, and error-surfacing
+richer than a button tooltip.
+
+## 2026-07-03 — Model/effort suggestion-accuracy check made proactive, folded into the existing sweep
+
+**Context:** PLAN.md's Fas 3 write-up already named this as one of "two more
+periodic checks folded in here rather than getting their own mechanism"
+(2026-07-02 decision, "infogas i Fas 3:s orkestrator-helper istället för en
+egen separat loop") — the other being auto-compact, already shipped. Until
+now the model/effort suggestion-accuracy review only existed as an on-demand
+"Suggestion accuracy" report on the Analysis page (renderer.js's
+`renderAnalysisPage`, backed by `usage.js`'s `readUsageSummary`), which the captain
+has to remember to open. This closes that gap: the same periodic
+`runOrchestratorSweep` that already runs the session-status classifier and
+auto-compact now also periodically re-checks suggestion accuracy and
+surfaces a finding when it looks meaningfully off — sensing + surfacing
+only, per the task's own scope; changing the suggestion heuristic itself
+(`suggest.js`) stays a separate, bigger follow-up.
+
+**Built:**
+- `usage.js`'s `computeSuggestionAccuracyVerdict(summary)` — extracted the
+  EXACT followed-vs-overridden "appropriate" rate comparison the Analysis
+  page already computed inline, so the proactive sweep and the on-demand
+  report are provably the same metric, not two that could drift apart. Takes
+  `readUsageSummary()`'s output, returns `null` when there isn't at least one
+  judged run on each side (mirrors the report's own empty state), otherwise
+  `{ followedTotal, overriddenTotal, followedRate, overriddenRate,
+  diffPoints, message }`. Verified against hand-computed cases (a "heuristic
+  looks bad" case and a "heuristic looks fine" case) — output matches the
+  report's own arithmetic exactly.
+- `main.js`'s `runSuggestionAccuracyCheck(config)` — called from the end of
+  `runOrchestratorSweepBody` behind a new `config.suggestionAccuracyCheck.
+  enabled` toggle (off by default, same opt-in posture as the classifier and
+  auto-compact). No model call and no extra file I/O beyond what the
+  on-demand report already does (`readUsageSummary` parses the local
+  `usage-log.jsonl`), so cost isn't the reason it's gated — re-nagging the captain
+  about the same stale finding is. Gated on **data volume, not wall-clock
+  time**: `config.suggestionAccuracyCheck.lastCheckedFollowedTotal/
+  lastCheckedOverriddenTotal` remember the totals as of the last check, and
+  the sweep only re-evaluates once at least `SUGGESTION_ACCURACY_CHECK_
+  EVERY_N_RUNS` (10) new judged+suggested runs have accumulated since. A
+  fixed calendar interval (e.g. weekly) was considered and rejected — the captain's
+  usage is bursty, so a wall-clock trigger would either fire on completely
+  unchanged data during a quiet week or stay silent through a heavy one; a
+  count of new data points ties the check to when the verdict could actually
+  have moved.
+- The finding surfaces as `config.suggestionAccuracyNotice = { message,
+  diffPoints, totalAtCheck, dismissed }`, written only when `diffPoints < 0`
+  (overriding the suggestion did better than following it — the "suggested
+  Sonnet but Opus was judged appropriate more often" signal). A
+  positive/neutral diff clears any existing notice instead of leaving a
+  stale one around once new data shows the heuristic is fine again.
+  Dismissing (Analysis page) sets `dismissed: true`; the SAME staleness
+  pattern as `acknowledgedSessions` (keyed on a value that changes with real
+  new activity, here `totalAtCheck` instead of `lastActivityAt`) means a
+  dismissal only sticks until the next check finds enough new data to
+  produce a genuinely different reading, not forever.
+- Surfaced on the **Analysis page** (not a per-session row) since this is a
+  whole-heuristic finding, not about any one session — placed directly above
+  the existing "Suggestion accuracy" block it's derived from, using the same
+  dashed-border "propose, you decide" visual language as the archive-suggest
+  pill (`.analysis-notice`/`.analysis-notice-dismiss` in style.css). A new
+  settings toggle ("Proactively check suggestion accuracy (Fas 3)") sits
+  alongside the existing orchestrator-helper/auto-compact toggles rather than
+  a new settings section, matching the task's own instruction to keep this
+  small.
+- `config.js`: new `suggestionAccuracyCheck` (deep-merged like the other
+  nested toggles, so a partial `config.json` never silently drops
+  `lastCheckedFollowedTotal`/`lastCheckedOverriddenTotal`) and
+  `suggestionAccuracyNotice` defaults.
+
+**Verified:** `node --check` on all four changed JS files
+(`config.js`/`usage.js`/`main.js`/`renderer.js`); a standalone ESM
+exercise of `computeSuggestionAccuracyVerdict` against synthetic
+"heuristic looks bad"/"heuristic looks fine"/empty-data cases; a
+standalone exercise of the check's gating logic across four sequential
+calls (fires and sets a notice on enough new bad-heuristic data, skips on 0
+new runs, skips below the 10-run threshold, then fires again and CLEARS the
+notice once enough new data flips the verdict positive); a run of the real
+`computeSuggestionAccuracyVerdict` against this repo's actual
+`usage-log.jsonl` (correctly returns `null` today — no overridden+judged
+runs logged yet); and a full boot-test via `scripts/restart-dev.sh` (clean
+boot, no errors, twice — once before and once after an unrelated concurrent
+edit to `main.js` from other in-progress work).
+
 ## 2026-07-03 — Live time/tokens ticker, "needs your input" flag, CLAUDE.md quick-links
 
 Three independently-scoped UI fixes bundled into one pass (all touch
