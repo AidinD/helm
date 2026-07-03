@@ -343,18 +343,35 @@ incident notes and per-repo file citations):**
   `treehouse` — independently confirms treehouse is the right prerequisite
   regardless of how the rest of this question resolves.
 
-**Recommendation (not yet confirmed by Aidin), revised after the deep read
-above: firstmate → pattern only (option a) — there was never really a
-wrap/embed option on the table given the OS incompatibility and the total
-absence of a program boundary; take the bash-triage-before-LLM-call idea,
-the wake-classification-regex approach, and the stow-before-reset ritual,
-not the code. gnhf → vendor/adapt its `Orchestrator` source directly into
-Maestro's own codebase rather than treat it as a live dependency (no
-package boundary exists to depend on cleanly, and the project is stalled
-anyway) — go in aware of the ACP persistent-session exception, the
-worktree/env-install gap, and the weak agent-self-report-only failure
-detection. treehouse → build/adopt regardless, confirmed as its own
-prerequisite even inside firstmate.**
+**DECIDED (2026-07-03, Aidin confirmed):** firstmate → pattern only (option
+a) — there was never really a wrap/embed option on the table given the OS
+incompatibility and the total absence of a program boundary; take the
+bash-triage-before-LLM-call idea, the wake-classification-regex approach,
+and the stow-before-reset ritual, not the code. gnhf → vendor/adapt its
+`Orchestrator` source directly into Maestro's own codebase rather than
+treat it as a live dependency (no package boundary exists to depend on
+cleanly, and the project is stalled anyway) — go in aware of the ACP
+persistent-session exception, the worktree/env-install gap, and the weak
+agent-self-report-only failure detection. treehouse → build/adopt
+regardless, confirmed as its own prerequisite even inside firstmate. "Reuse
+the code" for firstmate specifically means reuse it AS REFERENCE (we now
+have source-level knowledge of exactly how it solved wake-classification,
+escalation, and worktree hand-off, so Maestro's own Windows/Electron-native
+version doesn't have to guess) — not literally running or porting its bash.
+
+**Worktree note (resolves a question Aidin raised: does Maestro's own
+orchestrator need to be "rooted" in a project to create a worktree for
+it?):** No — that constraint only applies to Claude Code's own Agent-tool
+worktree-isolation convenience feature (which infers the target repo from
+the calling session's own cwd), not to how git worktrees work in general.
+Confirmed directly in both repos' source: neither firstmate nor gnhf relies
+on their own cwd — `treehouse get` takes an explicit project reference,
+and gnhf's `createWorktree` (`git.ts`) takes an explicit repo/path
+argument. Maestro's own future orchestrator already knows which project
+each session belongs to (`session.cwd` is tracked per session today), so it
+can issue `git -C <projectPath> worktree add <worktreePath> -b <branch>`
+directly against the right repo regardless of where the orchestrator
+process itself runs from — it doesn't need to be rooted anywhere.
 
 ### (A) Validates / extends existing Maestro direction
 - **firstmate** — the reference architecture for Point 11 (which PLAN
