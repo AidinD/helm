@@ -180,6 +180,23 @@ function sessionById(id) {
   return state.sessions.find((s) => s.sessionId === id);
 }
 
+// state.sessions is only refreshed by the 30s poll / explicit refresh() —
+// it does NOT update live as a run streams. Without this, a reply that
+// streams in mid-conversation renders against the SESSION's stale
+// lastActivityAt, which can still exactly equal an earlier
+// acknowledgedSessions timestamp — making wireDoneButtonOnLastReply's
+// isAcked check wrongly true and the Done checkmark "follow along" onto a
+// brand new reply it was never actually placed on (caught by Aidin: "om jag
+// sen fortsätter prompta tillkommer nya saker och då ska inte checkmarken
+// följa med"). Bumping this the moment new content actually streams in
+// invalidates the stale match immediately, without waiting for a poll.
+function bumpSessionActivity(sessionId) {
+  const session = sessionById(sessionId);
+  if (session) {
+    session.lastActivityAt = Date.now();
+  }
+}
+
 // Sessions matched to the "Orchestrator" Jot list are Maestro-building work
 // itself — tagged distinctly so it's never confused with regular project
 // chats. The Jot-name match is fragile (breaks if that list is renamed), so
@@ -2453,6 +2470,7 @@ async function sendFromPane(index, els) {
       pane.busy = false;
       setPaneBusyUI(index, "");
       pane.turns.push({ role: "assistant", kind: "text", text: "⚠ Failed to start: " + res.error });
+      bumpSessionActivity(pane.sessionId);
       renderPane(index);
     }
     return;
@@ -3339,6 +3357,7 @@ window.maestro.onSessionEvent((evt) => {
       break;
     case "assistant":
       pane.turns.push({ role: "assistant", kind: "text", text: evt.text });
+      bumpSessionActivity(pane.sessionId);
       renderPane(index);
       break;
     case "error":
@@ -3346,6 +3365,7 @@ window.maestro.onSessionEvent((evt) => {
       pane.currentLaunchId = null;
       setPaneBusyUI(index, "");
       pane.turns.push({ role: "assistant", kind: "text", text: "⚠ " + evt.message });
+      bumpSessionActivity(pane.sessionId);
       renderPane(index);
       break;
     case "done":
@@ -3364,6 +3384,7 @@ window.maestro.onSessionEvent((evt) => {
         // text already streamed live. Keep what's on screen instead.
         pane.stopRequested = false;
         pane.turns.push({ role: "assistant", kind: "text", text: "⏹ Stopped." });
+        bumpSessionActivity(pane.sessionId);
         renderPane(index);
         // A queued prompt is deliberately NOT fired after an explicit stop —
         // you stopped this run for a reason, most likely to intervene, not
