@@ -213,6 +213,93 @@ Candidates to properly scope when Fas 3 starts, not built yet:
 None of the above is committed to build yet — this is the scoping the captain
 asked for when Fas 3 actually starts, not a build queue.
 
+## Phase 4 — Ideas from Kun Chen's agentic workflow (candidate pool, 2026-07-03)
+
+Source: Kun Chen's (ex-Meta L8) "Agentic Engineering Workflow" video +
+his open-source tools (github.com/kunchenguid). The captain flagged 8 items to
+work into Maestro. NONE committed yet — this is the analyzed candidate pool.
+They sort into three kinds: (A) validates/extends existing Maestro direction,
+(B) concrete new features Maestro lacks, (C) principles to apply, not build.
+
+**The one strategic question that gates the rest: what is Maestro's
+relationship to `firstmate`?** Firstmate ("Talk to one agent. Ship with a
+crew.") is a CLI/tmux tool that does *substantially what Maestro's Fas 3
+Point 11 wants to become* — a lead agent that dispatches a crew of
+sub-agents, each in an isolated git worktree, with event-driven zero-token
+supervision (sleeps until something needs attention, then wakes the lead),
+ship-vs-scout task typing, escalate-only-real-decisions, `/afk` away-mode,
+restart-proof on-disk state. Notably it went the *persistent-orchestrator-
+agent* route the captain originally proposed for the helper — the opposite of the
+stateless batch-classifier Maestro chose (see 2026-07-02). Those aren't in
+conflict: firstmate is about DISPATCHING work; Maestro's classifier is about
+SENSING status — a Maestro-with-firstmate-inside is coherent. The real fork
+is: does Maestro (a) take inspiration and build its own GUI-native dispatch,
+(b) wrap/embed firstmate as its dispatch engine while Maestro owns the GUI +
+sensing/coaching, or (c) treat firstmate as a separate tool and NOT
+reinvent it? This is a decision for the captain, not something to presume. Until
+it's answered, the parallel-dispatch items below (gnhf, treehouse's role in
+parallelism) are partly on hold.
+
+### (A) Validates / extends existing Maestro direction
+- **firstmate** — the reference architecture for Point 11 (which PLAN
+  currently marks "needs rethinking" after the no-live-approval spike).
+  Firstmate's answer to that same constraint: don't try to answer a live
+  blocking prompt — instead pre-set project modes (`no-mistakes` /
+  `direct-PR` / `local-only`, optional `+yolo`) per project before launch,
+  and escalate only real decisions via an event watcher. That may be exactly
+  the missing piece. → task: study firstmate + gnhf SOURCE (not just
+  READMEs) and decide the relationship above.
+
+### (B) Concrete new features Maestro lacks
+- **treehouse** (worktree pool automation) — "manage worktrees without
+  managing worktrees": drop into a ready worktree, deps installed, build
+  cache warm, env files synced. Maestro has ZERO worktree support today.
+  This is arguably the PREREQUISITE for safe parallel dispatch (can't run N
+  agents on one repo without it) — so it likely comes before any
+  firstmate/gnhf-style work regardless of the strategic answer.
+- **gnhf** ("good night, have fun") — long-running goal orchestrator:
+  decomposes a goal into steps, runs each in a FRESH context window,
+  auto-rolls-back failures, generates organized commits. Maps to Point 8
+  (split work) + the autonomous-stretch capability. Depends on the firstmate
+  decision + worktrees.
+- **no-mistakes** — automated review+git pipeline in fresh context: commit →
+  rebase onto main → peer-review agent in a fresh window → forced E2E test
+  with photographic evidence → auto-fix obvious, escalate ambiguous → lint/
+  docs → push → open PR → babysit CI. This AUTOMATES the exact manual pattern
+  we've run all night (implement → adversarial review agent → fix → commit).
+  Kun's stat: "68% of changes I pushed through no-mistakes had bugs." Strong
+  fit; overlaps with the `/review` skill already scoped in Fas 3 above.
+- **Lavish** (lavish-axi) — interactive HTML plans instead of markdown: the
+  agent renders a UI mockup in the project's own visual style, you click an
+  element and type feedback ON it ("make this a floating overlay") instead
+  of describing it in prose. Maestro shows plans as plain text today. Distinct
+  planning-phase UX feature.
+- **Voice input (OpenSuperWhisper / local Whisper)** — voice as the primary
+  prompt-composition method. Standalone, no architecture dependency, fastest
+  of everything here to prototype. Best first experiment.
+
+### (C) Principles to apply, not features to build
+- **AXI (Agent eXperience Interface)** — design agent-facing tools as
+  deliberately as human UIs: token-budget as a first-class constraint,
+  compact output, composable, chainable, higher accuracy + lower cost than
+  MCP or plain CLI. A LENS, not a build item — relevant if/when Maestro ever
+  exposes its own tools to agents (and worth remembering the cheap-utility-
+  call recipe already used by the judge/classifier is the same instinct).
+- **CLAUDE.md trim → skills** — keep CLAUDE.md lean; move situational/rarely-
+  needed instructions into skills (loaded on demand, shareable across
+  agents). Actionable as a one-off housekeeping audit of the captain's global +
+  project CLAUDE.md files, NOT a Maestro feature.
+
+**Rough sequencing (pending the captain's questions + the firstmate decision):**
+1. Voice input (independent, quick, high daily value).
+2. CLAUDE.md-trim audit (independent, cheap, improves everything else).
+3. Answer the firstmate strategic question (gates 4-6).
+4. Worktree automation (treehouse-style) — prerequisite for parallelism.
+5. no-mistakes-style review automation (builds on tonight's proven manual
+   pattern; overlaps the `/review` skill).
+6. gnhf-style long-running orchestration (needs 3 + 4).
+7. Lavish-style interactive plans (independent but larger UX lift; later).
+
 ## Open risks / to confirm
 
 - Subscription auth inheritance in a spawned subprocess (Phase 0).
