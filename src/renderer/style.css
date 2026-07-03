@@ -593,6 +593,25 @@ body.advanced .row-jot {
   border-style: solid;
 }
 
+.ack-done-pill {
+  align-self: flex-start;
+  margin-left: 14px;
+  margin-top: 2px;
+  font-size: 10px;
+  color: var(--text-faint);
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  padding: 1px 6px;
+  cursor: pointer;
+}
+
+.ack-done-pill:hover {
+  color: var(--text);
+  border-color: var(--text-faint);
+  border-style: solid;
+}
+
 .toast {
   position: fixed;
   bottom: 20px;
