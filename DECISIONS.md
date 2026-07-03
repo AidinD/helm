@@ -1,5 +1,44 @@
 # Decisions
 
+## 2026-07-03 — Strategic reorientation: ephemeral sessions, not a durable fleet
+
+**Decision:** the captain realized he's been working wrong — long-lived sessions,
+roughly one per PROJECT, when the real unit should be one per FEATURE/task.
+A session should carry only context relevant to what's happening now; durable
+knowledge belongs in files (CLAUDE.md, DECISIONS.md, memory), not in an
+indefinitely-kept-alive session. Full reasoning in PLAN.md's new "Strategic
+reorientation" section (placed right after the vision table, since it
+reprioritizes work across Phase 3/4, not just a footnote).
+
+Three concrete implications, discussed and agreed:
+1. **Auto-compact (Fas 3's proactive idle-session version) is a partial
+   anti-pattern** — it keeps a megasession alive-and-lean instead of
+   prompting an actual wrap-up. The context gauge is the pro-pattern tool
+   (nudges toward ending); auto-compact is a crutch for avoiding that.
+   Not removed (shipped, opt-in, genuinely useful for one legitimately long
+   task) — de-prioritized as a strategy going forward.
+2. **Session-list curation (drag-sort, categories, deadline-sort) is also
+   partly an anti-pattern** — it organizes sessions as durable objects worth
+   tending, when the real unit worth organizing is work/goals (already in
+   Jot). Not ripped out; let its importance fade as ephemeral sessions
+   become the norm rather than cutting it surgically now.
+3. **Re-ranks priority toward "on-ramp" tooling** — whatever makes a fresh
+   session cheap to start and cheap to feed context into (CLAUDE.md/skills,
+   Fas 2 handoff, DECISIONS.md/memory discipline, and from Phase 4:
+   treehouse, `/triage`, the handoff skill) now matters more than features
+   that make megasessions more pleasant to live in.
+
+Same fork as the already-flagged firstmate strategic question (Phase 4) —
+firstmate has no session list at all, just a crew + disposable worktrees,
+oriented around dispatch and goals. Both threads point the same direction.
+
+This session (this very transcript) is itself the illustrating example: a
+single "Maestro project" megasession spanning the classifier, auto-compact,
+context gauge, root-folder-switch debugging, CLAUDE.md consolidation, and
+this Phase 4 planning — already auto-compacted multiple times, expensive per
+turn. Split into per-feature sessions, each would have been sharp, cheap,
+and left a clean topical transcript.
+
 ## 2026-07-03 — Root-folder switch didn't stick: session.cwd lives in a file the switch never touched
 
 **Bug (the real one, found via two rounds of live testing):** the captain tested

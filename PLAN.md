@@ -24,6 +24,58 @@ skills, CLAUDE.md, settings, permissions, and MCP are preserved.
 | 13 | See my token/quota | 1 (investigate source) |
 | 14 | More later | reserved |
 
+## Strategic reorientation (2026-07-03): ephemeral sessions, not a durable fleet
+
+The captain's realization: he's been working in long-lived sessions, roughly one
+per PROJECT, when the actual unit should be one per FEATURE/task (or
+smaller) — a session should carry only the context relevant to what's
+happening now, not months of unrelated history. This isn't just a cost
+optimization; it's a quality one. A session stuffed with unrelated history
+dilutes signal (the model wades through noise to find what matters) — the
+same instinct behind Kun Chen's "fresh context per step" (Phase 4). Durable
+continuity should live in FILES (CLAUDE.md, DECISIONS.md, memory), not in
+keeping one session alive indefinitely — externalize, don't hoard.
+
+This reframes several things already built or planned tonight:
+
+- **Auto-compact is a partial anti-pattern.** The CLI's own built-in
+  auto-compact-at-the-limit stays essential (a safety net for a genuinely
+  long single task). But Fas 3's PROACTIVE auto-compact of idle sessions
+  props up the exact pattern this reorientation moves away from — it keeps
+  a megasession alive-and-lean instead of prompting the captain to actually wrap
+  up and start fresh. The context gauge (built the same night) is the
+  pro-pattern tool: it nudges toward ending a session; auto-compact is a
+  crutch for avoiding that. Not ripped out (it's shipped, opt-in, genuinely
+  useful for the "one legitimately long task" case) — just de-prioritized
+  as a strategy, and not something to lean on further.
+- **Session-list curation (drag-sort, categories, deadline-sort) is also
+  partly an anti-pattern.** Careful manual organization of many sessions
+  assumes sessions are durable objects worth tending — the opposite of
+  "spin up, finish, discard." The unit worth organizing isn't sessions, it's
+  WORK/GOALS — which already live in Jot. Lists aren't being removed (they
+  still serve however many durable sessions remain during the transition);
+  their importance should fade naturally as ephemeral sessions become the
+  norm, not be surgically cut now.
+- **Re-ranks Fas 3/4 priority toward "on-ramp" tooling** — whatever makes a
+  FRESH session cheap to start and cheap to feed context into matters more,
+  right now, than features that make megasessions more pleasant to live in.
+  This already-planned work moves up: kickoff/rooting (Phase 1, done), the
+  CLAUDE.md/skills consolidation (done 2026-07-03 — see the import-stub
+  fix), Fas 2's handoff/summarize-and-carry-over, DECISIONS.md + memory as
+  context carriers (already the established discipline), and from Phase 4:
+  treehouse (instant pre-warmed worktree), the `/triage` skill, and the
+  handoff skill. The live-status surfaces (Background Tasks panel, the
+  needs-attention spotlight) remain valid regardless — that's "what's in
+  motion right now," not curation of a durable list.
+- **Same fork as the firstmate strategic question (Phase 4).** Firstmate has
+  no session list to curate at all — a crew you supervise plus disposable
+  worktrees, oriented around dispatch and goals, not session management.
+  Both threads point the same direction.
+
+Not a rip-and-replace — a gradual shift in what gets built next and what
+The captain actually reaches for day to day, tracked here so future scoping
+weighs it.
+
 ## Phase 0 — Spike (de-risk before any UI)
 
 Prove the foundation with a throwaway script, no Electron yet:
