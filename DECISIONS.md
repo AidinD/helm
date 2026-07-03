@@ -1,5 +1,14 @@
 # Decisions
 
+## 2026-07-02 — Swapped Done/Copy icon order (Done first)
+
+**Decision:** "vi borde byta plats på checkbox och copy ikonen, annars ser
+det konstigt ut när den är ikryssad." With Done appended AFTER Copy, an
+acked (always-visible) checkmark sat to the right of Copy's hover-only slot
+— hovering made Copy pop in to its LEFT, visibly shifting the checkmark
+sideways. Switched to `actions.prepend(done)` so Done leads the row; its
+position stays fixed whether or not Copy is currently visible.
+
 ## 2026-07-02 — Boot-test restarts were silently killing Reinmaker
 
 **Bug (mine):** every boot-test in this repo restarted Maestro via
