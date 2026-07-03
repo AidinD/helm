@@ -51,7 +51,13 @@ const DEFAULT_CONFIG = {
   // a resumed session sees (lossy summary; the original stays in the
   // append-only transcript). The captain chose automatic (not propose-a-pill) for
   // this one, matching the original "kör en /compact när ... idle" ask.
-  autoCompact: { enabled: false, thresholdTokens: 150000 },
+  // idleMinutes: how long a session must sit with NO activity before it's
+  // eligible — the captain's refinement: don't compact mid-work, but a session
+  // left idle over lunch with half-full context should get tidied. This
+  // time-since-last-activity gate (not the coarse waiting/idle status) is
+  // both what he asked for and inherently safe — 30+ min of silence means
+  // it's definitely not mid-turn.
+  autoCompact: { enabled: false, thresholdTokens: 150000, idleMinutes: 30 },
   jot: {
     enabled: true,
     path: "D:\\Dropbox\\jot\\todos.json",

@@ -3072,7 +3072,7 @@ function renderSettingsPage() {
   block.append(
     settingsToggleRow(
       "Auto-compact large idle sessions (Fas 3)",
-      `Automatically runs /compact on idle/waiting sessions whose context grows past ~${Math.round((state.config.autoCompact?.thresholdTokens || 150000) / 1000)}k tokens (checked on the same ~15 min sweep). Unlike everything else here this ACTS on its own — it summarizes the session's context (lossy, but the full history stays in the transcript on disk). A small note appears on the row after it happens.`,
+      `Automatically runs /compact on a session left idle for ~${state.config.autoCompact?.idleMinutes || 30} min whose context has grown past ~${Math.round((state.config.autoCompact?.thresholdTokens || 150000) / 1000)}k tokens (checked on the ~15 min sweep). Time-based, so it won't fire mid-work — only after you've stepped away. Unlike everything else here this ACTS on its own — it summarizes the session's context (lossy, but the full history stays in the transcript on disk). A small note appears on the row after it happens.`,
       state.config.autoCompact?.enabled === true,
       async (checked) => {
         state.config = await window.maestro.setConfig({

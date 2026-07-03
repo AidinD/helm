@@ -524,9 +524,16 @@ async function runOrchestratorSweepBody(config, { classifyOn, compactOn }) {
 
   if (compactOn) {
     const threshold = config.autoCompact?.thresholdTokens || 150000;
-    // Idle only (not "waiting") — the safely-parked set, never a session
-    // that might be mid-turn outside Maestro (see the candidate comment).
-    const compactCandidates = candidates.filter((s) => s.status === "idle");
+    const idleMs = (config.autoCompact?.idleMinutes || 30) * 60 * 1000;
+    const now = Date.now();
+    // Time-since-last-activity gate (the captain's refinement) rather than the
+    // coarse waiting/idle status: don't compact a session being actively
+    // worked, but do tidy one left silent past idleMinutes (e.g. over
+    // lunch) even if it's technically still "waiting". This also makes the
+    // earlier "could it be mid-turn outside Maestro?" worry moot — 30+ min
+    // of transcript silence means it definitely isn't. `candidates` already
+    // excludes "active".
+    const compactCandidates = candidates.filter((s) => now - s.lastActivityAt >= idleMs);
     // Only sessions not already compacted at this same activity level, and
     // whose estimated context is over the threshold. The estimate is cheap
     // (a transcript tail read, no model call), so it's fine to check every
