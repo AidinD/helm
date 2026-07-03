@@ -1,5 +1,78 @@
 # Decisions
 
+## 2026-07-03 — Worktree automation v1 built (`src/lib/worktree.js`) — the Phase 4 prerequisite
+
+**Built:** a first version of the worktree-automation module PLAN.md's Phase
+4 section flags as the prerequisite for everything else in that roadmap
+(parallel dispatch, gnhf-style orchestration, no-mistakes-style pipelines) —
+nothing else there can safely run multiple agents against one repo without
+it. New module `src/lib/worktree.js`, exporting `createWorktree`,
+`removeWorktree`, `listWorktreePaths`, `worktreeExists`,
+`hasUncommittedChanges`, `worktreesRootFor`, `worktreePathFor`. Backend/
+library only — not wired into `main.js`'s IPC handlers or `renderer.js` yet;
+nothing consumes it today, on purpose, to stay clear of other in-flight
+renderer/main changes.
+
+**Shape, inspired by (not copying) treehouse/gnhf's actual source** (both
+studied 2026-07-03, see the entries below): every function takes an
+EXPLICIT `projectPath` argument and never touches this process's own cwd —
+the exact design question resolved in the "worktree-rooting" entry below.
+All git calls go through a local `runGit(projectPath, args)` helper that
+always shells out as `git -C <projectPath> ...`, using the codebase's
+existing `execFileSync("git", [...])` pattern from `version.js` rather than
+inventing a new way to shell out. Worktree location mirrors gnhf's own
+sibling-directory convention: `worktreesRootFor(projectPath)` resolves
+`<repo>-worktrees/` next to the repo itself (e.g.
+`D:\Repo\Tools\maestro-worktrees\<id>`), not nested inside the repo, so
+worktrees never show up as clutter in the very repo they're isolating work
+from. `createWorktree` runs `git worktree add <worktreePath> -b
+<branchName>` and returns `{ worktreePath, branchName, envFilesCopied }`.
+
+**Improved on gnhf's documented gap, kept simple:** gnhf's own `git.ts`
+(confirmed via source read) leaves a fresh worktree with only tracked files
+— no `node_modules`, no `.env` — and relies on the first agent iteration to
+notice and fix it. `createWorktree` closes the cheap half of that gap:
+after `git worktree add`, it copies any top-level `.env`/`.env.local` from
+the source repo into the new worktree (`copyEnvFiles`, top-level only, not
+recursive) so a fresh worktree isn't immediately broken for projects that
+need an env file just to boot. Deliberately did NOT attempt dependency
+install (`npm install` or otherwise) in this pass — genuinely more complex
+(registry access, install timing, per-project package-manager choice) and
+out of scope for v1; noted both here and inline in `createWorktree`'s doc
+comment as a clear follow-up once something actually dispatches work into
+these worktrees.
+
+**Fail-closed removal, matching firstmate/gnhf's own teardown principle:**
+`removeWorktree` refuses to remove a worktree with uncommitted changes
+(`hasUncommittedChanges`, via `git status --porcelain`) unless the caller
+explicitly passes `{ force: true }`. Also refuses to remove a path that
+isn't a currently-registered worktree at all (checked via
+`worktreeExists`/`listWorktreePaths`, both backed by `git worktree list
+--porcelain`) rather than silently no-op'ing — every failure mode throws
+instead of swallowing, so a caller always knows whether removal actually
+happened.
+
+**Verified with a real spike, not just "no error thrown":**
+`spike/test-worktree-lifecycle.mjs` creates a throwaway git repo under the
+OS temp dir (never Maestro's own working tree), then exercises the full
+lifecycle against it: create -> confirm the worktree directory exists on
+disk, the tracked file is present, `.env` was copied byte-for-byte, and
+`git worktree list --porcelain` independently agrees a new worktree exists
+on the right branch; list -> confirms both the new worktree and the
+project's own primary working tree are reported; a dirty-worktree removal
+attempt -> confirms it's correctly blocked and the directory survives;
+forced removal -> confirms the directory is actually gone from disk AND
+git no longer lists it; a second removal attempt on the now-gone worktree
+-> confirms a clear error rather than a silent no-op. All 20 assertions
+passed on a real run; the scratch repo and its worktrees directory are
+deleted at the end (via a `finally` block, so cleanup runs even on
+failure), and `git status`/`git branch --show-current` on Maestro's own
+repo were checked before and after — completely unaffected throughout.
+
+**Verification commands run:** `node --check` on both new files;
+`node spike/test-worktree-lifecycle.mjs` (full pass, real filesystem/git
+state inspected at each step, not just exit code).
+
 ## 2026-07-03 — Orchestrator instructions extracted into their own file (the third CLAUDE.md-shaped layer)
 
 **Context:** the captain asked a good architecture question while looking at
