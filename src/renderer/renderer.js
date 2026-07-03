@@ -2524,14 +2524,19 @@ function paneComposerEl(index) {
     e.stopPropagation();
     toggleContextPopover(contextGauge, pane);
   });
-  shell.append(contextGauge);
 
   // Visible reasoning, not just a hover tooltip — a suggestion nobody reads
   // isn't a suggestion. Explicitly says so even when it just confirms your
   // current pick, per "always decide, and if it's already right, say so."
   const suggestHint = document.createElement("div");
   suggestHint.className = "suggest-hint";
-  shell.append(suggestHint);
+
+  // the captain's ask: put the suggestion hint and the context gauge on the SAME
+  // row instead of stacking them (they were two separate full-width lines).
+  const metaRow = document.createElement("div");
+  metaRow.className = "composer-meta-row";
+  metaRow.append(suggestHint, contextGauge);
+  shell.append(metaRow);
   wrap.append(shell);
 
   // Model-fit judge verdict lives here, under the composer — not in the chat

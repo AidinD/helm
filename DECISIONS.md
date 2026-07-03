@@ -1,5 +1,16 @@
 # Decisions
 
+## 2026-07-03 — Merge suggest-hint and context gauge onto one row
+
+**Decision:** the captain: "kan du lägga dessa på samma rad" (screenshot showing
+the model-suggestion hint on its own line and the context gauge stacked
+below it). Wrapped both in a new `.composer-meta-row` flex row instead of
+two separate full-width lines. `.composer-context` keeps `margin-left: auto`
+(not `justify-content: space-between` on the row) specifically so it still
+pins to the right when `.suggest-hint` is empty and `display:none` removes
+it from the row — space-between would have left it sitting at the start
+with nothing to space between.
+
 ## 2026-07-03 — Learn real context-window per model from the CLI (not a hardcoded max)
 
 **Decision:** the captain: "går det inte att få ut kontext size från modell-
