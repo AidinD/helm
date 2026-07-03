@@ -2814,6 +2814,26 @@ async function refresh() {
   renderBackgroundTasksBadge();
 }
 
+// First-load: after sessions are in, auto-open the most-recently-active
+// orchestrator session in pane 0 (the captain's ask — Maestro is his orchestration
+// hub, so that session is almost always where he wants to land). Guarded so
+// it only fires when pane 0 is still the untouched fresh pane, never
+// clobbering anything the user has already opened, and only run once at
+// startup (not on the 30s refresh).
+async function startup() {
+  await refresh();
+  const pane0 = panes[0];
+  if (!pane0 || pane0.sessionId || pane0.turns.length > 0) {
+    return;
+  }
+  const orchestrator = state.sessions
+    .filter((s) => isOrchestratorSession(s) && !s.isArchived)
+    .sort((a, b) => (b.lastActivityAt || 0) - (a.lastActivityAt || 0))[0];
+  if (orchestrator) {
+    openSessionInPane(orchestrator, 0);
+  }
+}
+
 // The modelFit event is the normal way launchPaneHistory entries get cleaned
 // up, but if the judge is disabled (config.modelFitJudge.enabled: false) or
 // errors before emitting one, that never happens — this is the backstop so
@@ -3568,7 +3588,7 @@ window.maestro.onSessionEvent((evt) => {
 
 renderWorkspace();
 renderBackgroundTasksBadge();
-refresh();
+startup();
 setInterval(refresh, 30000);
 
 window.maestro.getVersion().then((v) => {
