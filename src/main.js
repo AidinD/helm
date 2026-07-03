@@ -1,5 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, Notification, clipboard } from "electron";
 import path from "node:path";
+import os from "node:os";
+import fs from "node:fs";
 import crypto from "node:crypto";
 import { execFile, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -182,6 +184,47 @@ ipcMain.handle("skills:open", (_event, { name, origin, cwd }) => {
 ipcMain.handle("clipboard:write", (_event, text) => {
   clipboard.writeText(text || "");
   return { ok: true };
+});
+
+// --- Open Aidin's global personal CLAUDE.md in the OS default app. This is
+// the thin ~/.claude/CLAUDE.md STUB, not the canonical Dropbox-synced file it
+// @imports — deliberately: Claude Code resolves the @import automatically for
+// every session regardless of which one you open, and the stub is the file
+// every machine actually has at this exact path, so it's the more reliable
+// thing for a fixed IPC handler to point at. Aidin can follow the @import
+// line himself if he specifically wants the canonical file. ---
+ipcMain.handle("claudeMd:openGlobal", () => {
+  const file = path.join(os.homedir(), ".claude", "CLAUDE.md");
+  if (!fs.existsSync(file)) {
+    return { ok: false, error: "Global CLAUDE.md not found at " + file };
+  }
+  shell.openPath(file);
+  return { ok: true };
+});
+
+// --- Open the current session's own project CLAUDE.md (cwd/CLAUDE.md), if it
+// exists. The renderer only shows this affordance when a lookup confirms the
+// file is actually there (see claudeMd:projectExists) rather than surfacing a
+// dead link that errors on click. ---
+ipcMain.handle("claudeMd:openProject", (_event, cwd) => {
+  if (!cwd) {
+    return { ok: false, error: "No project folder for this session" };
+  }
+  const file = path.join(cwd, "CLAUDE.md");
+  if (!fs.existsSync(file)) {
+    return { ok: false, error: "No CLAUDE.md in " + cwd };
+  }
+  shell.openPath(file);
+  return { ok: true };
+});
+
+// --- Cheap existence check so the renderer can hide/disable the project
+// CLAUDE.md link instead of showing one that errors on click. ---
+ipcMain.handle("claudeMd:projectExists", (_event, cwd) => {
+  if (!cwd) {
+    return false;
+  }
+  return fs.existsSync(path.join(cwd, "CLAUDE.md"));
 });
 
 // --- Archive/unarchive a session in the desktop app's own state. Always a

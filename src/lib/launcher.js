@@ -96,6 +96,16 @@ export function startSession({ cwd, prompt, model, effort, permissionMode, resum
   // Capped so a runaway/looping process can't grow this unboundedly.
   let stderrText = "";
   const STDERR_CAP = 4000;
+  // The CLI emits one "assistant" stream-json event PER CONTENT BLOCK when a
+  // message has more than one (e.g. a thinking block + a tool_use block),
+  // not one event per complete message — verified live (spike, 2026-07-03):
+  // two consecutive events shared the same message.id and carried byte-
+  // identical usage snapshots. Summing usage across every "assistant" event
+  // therefore double-counts any multi-block message. Deduping by message.id
+  // (only counting the first event seen for a given id) matched the CLI's
+  // own authoritative final result.usage exactly for input/cache tokens in
+  // that same spike.
+  const seenUsageMessageIds = new Set();
 
   const emit = (evt) => {
     try {
@@ -149,6 +159,27 @@ export function startSession({ cwd, prompt, model, effort, permissionMode, resum
     const type = evt.type;
     if (type === "assistant") {
       const blocks = evt.message?.content;
+      // Per the CLI's own stream-json format, each assistant message event
+      // carries its OWN usage snapshot (evt.message.usage) — not just the
+      // final `result` event. This is what lets the "Nk tokens" readout tick
+      // up live during a run instead of only appearing once at the very end.
+      // Only counted once per distinct message.id (see seenUsageMessageIds
+      // above) so a multi-block message's repeated usage snapshot isn't
+      // added more than once; the caller (main.js/renderer) sums these
+      // deduped per-message contributions across a turn's several messages.
+      const msgId = evt.message?.id;
+      const msgUsage = evt.message?.usage;
+      if (msgId && msgUsage && typeof msgUsage === "object" && !seenUsageMessageIds.has(msgId)) {
+        seenUsageMessageIds.add(msgId);
+        const tokens =
+          (msgUsage.input_tokens || 0) +
+          (msgUsage.output_tokens || 0) +
+          (msgUsage.cache_creation_input_tokens || 0) +
+          (msgUsage.cache_read_input_tokens || 0);
+        if (tokens > 0) {
+          emit({ kind: "usage", totalTokens: tokens });
+        }
+      }
       if (Array.isArray(blocks)) {
         for (const block of blocks) {
           if (block.type === "text" && block.text) {
