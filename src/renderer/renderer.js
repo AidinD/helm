@@ -1790,7 +1790,51 @@ function renderPane(index) {
     wireEditableUserTurns(index, scroll);
     wireDoneButtonOnLastReply(index, scroll);
   }
+  wireScrollToBottomButton(scroll);
   scroll.scrollTop = scroll.scrollHeight;
+}
+
+// A floating "↓" button that appears once the user has manually scrolled
+// away from the bottom (e.g. to reread earlier history) and disappears once
+// they're back at the bottom. renderPane rebuilds .pane-scroll's innerHTML
+// on every call, so this — like the other wireX helpers — has to be
+// re-attached every render, not wired once. Deliberately a sticky, zero-
+// height wrapper as the LAST child of .pane-scroll rather than an
+// absolutely-positioned sibling of the scroll container: it needs to sit
+// pinned to the bottom of the SCROLLED viewport (following the user as they
+// scroll), not to the pane's own fixed bottom edge.
+function wireScrollToBottomButton(scroll) {
+  const wrap = document.createElement("div");
+  wrap.className = "scroll-to-bottom-wrap";
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "scroll-to-bottom-btn";
+  btn.title = "Scroll to bottom";
+  btn.textContent = "↓";
+  btn.addEventListener("click", () => {
+    scroll.scrollTo({ top: scroll.scrollHeight, behavior: "smooth" });
+  });
+  wrap.append(btn);
+  scroll.append(wrap);
+
+  // `scroll` (.pane-scroll) is the SAME persistent DOM node across renders —
+  // only its innerHTML gets cleared, not the element itself — so a plain
+  // addEventListener here would pile up one more "scroll" listener on every
+  // single renderPane call (every streamed chunk, every poll-triggered
+  // update...) forever, each stale one still referencing its own
+  // now-detached `wrap` from a past render. Removing the previous listener
+  // (stashed on the element) before attaching the new one keeps exactly one
+  // live listener at a time.
+  if (scroll._scrollToBottomListener) {
+    scroll.removeEventListener("scroll", scroll._scrollToBottomListener);
+  }
+  const SHOW_THRESHOLD_PX = 80;
+  const listener = () => {
+    const distanceFromBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight;
+    wrap.classList.toggle("visible", distanceFromBottom > SHOW_THRESHOLD_PX);
+  };
+  scroll.addEventListener("scroll", listener);
+  scroll._scrollToBottomListener = listener;
 }
 
 // Double-click ANY past user message to copy it back into the prompt box for
