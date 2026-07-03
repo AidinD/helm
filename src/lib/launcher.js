@@ -151,11 +151,24 @@ export function startSession({ cwd, prompt, model, effort, permissionMode, resum
       }
     } else if (type === "result") {
       sawResult = true;
+      // The CLI reports each model's real context-window size here, keyed by
+      // model name (evt.modelUsage["claude-…"].contextWindow). This is the
+      // authoritative source Maestro uses to learn model→window (far better
+      // than a hardcoded guess) for the context gauge's percentage.
+      const contextWindows = {};
+      if (evt.modelUsage && typeof evt.modelUsage === "object") {
+        for (const [model, usage] of Object.entries(evt.modelUsage)) {
+          if (usage && typeof usage.contextWindow === "number" && usage.contextWindow > 0) {
+            contextWindows[model] = usage.contextWindow;
+          }
+        }
+      }
       emit({
         kind: "result",
         subtype: evt.subtype,
         costUsd: evt.total_cost_usd,
         numTurns: evt.num_turns,
+        contextWindows,
       });
     } else if (type === "rate_limit_event") {
       lastQuota = evt.rate_limit_info || null;

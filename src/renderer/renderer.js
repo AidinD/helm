@@ -182,6 +182,16 @@ function sessionById(id) {
   return state.sessions.find((s) => s.sessionId === id);
 }
 
+// Context-window size for a pane's session: prefer the real window Maestro
+// learned for that session's model (from the CLI's result events, stored in
+// config.modelContextWindows), fall back to the configurable default for a
+// model not yet seen. Used to turn the token estimate into the gauge's %.
+function contextWindowForPane(pane) {
+  const model = sessionById(pane.sessionId)?.model;
+  const learned = state.config.modelContextWindows || {};
+  return (model && learned[model]) || state.config.contextWindowTokens || 1000000;
+}
+
 // state.sessions is only refreshed by the 30s poll / explicit refresh() —
 // it does NOT update live as a run streams. Without this, a reply that
 // streams in mid-conversation renders against the SESSION's stale
@@ -331,7 +341,7 @@ function toggleContextPopover(anchor, pane) {
   pop.className = "context-popover";
   pop.addEventListener("click", (e) => e.stopPropagation()); // clicks inside don't close it
 
-  const windowTokens = state.config.contextWindowTokens || 1000000;
+  const windowTokens = contextWindowForPane(pane);
   const fmtK = (n) => (n >= 10000 ? `${Math.round(n / 1000)}k` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`);
   const fmtWindow = windowTokens >= 1000000 ? `${(windowTokens / 1000000).toFixed(windowTokens % 1000000 === 0 ? 0 : 1)}M` : `${Math.round(windowTokens / 1000)}k`;
 
@@ -2494,7 +2504,7 @@ function paneComposerEl(index) {
       return;
     }
     contextGauge.style.display = "";
-    const windowTokens = state.config.contextWindowTokens || 1000000;
+    const windowTokens = contextWindowForPane(pane);
     const pct = Math.min(100, Math.round((pane.contextTokens / windowTokens) * 100));
     contextGauge.innerHTML = "";
     const bar = document.createElement("span");

@@ -1,5 +1,24 @@
 # Decisions
 
+## 2026-07-03 — Learn real context-window per model from the CLI (not a hardcoded max)
+
+**Decision:** Aidin: "går det inte att få ut kontext size från modell-
+informationen?" Yes. The CLI's `result` event reports each model's real
+context window at `evt.modelUsage[model].contextWindow` (verified live:
+claude-haiku-4-5 → 200000). So instead of the hardcoded 1M guess for the
+gauge's %, Maestro now LEARNS the true window per model: the launcher
+extracts `contextWindows` from every result event, and the launch's done
+handler merges any new model→window into `config.modelContextWindows`
+(persisted; a no-op write once steady). Done even for internal launches
+(they run real models). The gauge's `contextWindowForPane()` prefers the
+learned window for the session's model and falls back to
+`config.contextWindowTokens` only for a model not yet seen.
+
+Self-correcting and authoritative: as Aidin runs each model through Maestro
+once, its window becomes exact. The 1M fallback just covers the gap until
+then (and for sessions only ever run outside Maestro, whose interactive
+transcripts carry no contextWindow field).
+
 ## 2026-07-03 — Context gauge → bar+% with a click-to-open context+quota popover
 
 **Decision:** Iterated the context gauge per Aidin's feedback (referencing

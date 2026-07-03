@@ -58,13 +58,15 @@ const DEFAULT_CONFIG = {
   // both what he asked for and inherently safe — 30+ min of silence means
   // it's definitely not mid-turn.
   autoCompact: { enabled: false, thresholdTokens: 150000, idleMinutes: 10 },
-  // Assumed model context-window size, used only to turn the pane's context
-  // estimate into a percentage for the gauge. Can't be read reliably per
-  // session from the transcript, and varies by model (200k / 1M / …), so
-  // it's a single configurable value — defaulted to 1M to match Aidin's
-  // current environment. The gauge always shows the absolute token count
-  // too, so a wrong max only skews the %/bar, never hides the real number.
+  // Fallback context-window size for the gauge's %, used only for a model
+  // Maestro hasn't yet learned a real window for (see modelContextWindows).
+  // Defaulted to 1M to match Aidin's current environment.
   contextWindowTokens: 1000000,
+  // model name -> real context-window size, LEARNED from the CLI's own
+  // result events (evt.modelUsage[model].contextWindow) as sessions run
+  // through Maestro. Authoritative per model; the gauge prefers this over
+  // the contextWindowTokens fallback. Grows as new models are used.
+  modelContextWindows: {},
   jot: {
     enabled: true,
     path: "D:\\Dropbox\\jot\\todos.json",
