@@ -371,6 +371,21 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
+// Mouse side buttons (back = button 3, forward = button 4) drive the focused
+// pane's chat history the same as the ←/→ header buttons — the captain asked for
+// the physical back/forward buttons to work too. Uses mouseup (fires for
+// these buttons in Chromium) and guards focusedPaneIndex being a live pane.
+document.addEventListener("mouseup", (e) => {
+  if (e.button !== 3 && e.button !== 4) {
+    return;
+  }
+  e.preventDefault();
+  if (!panes[focusedPaneIndex]) {
+    return;
+  }
+  navigateHistory(focusedPaneIndex, e.button === 3 ? -1 : 1);
+});
+
 // ============================== Category CRUD ==============================
 //
 // window.prompt()/confirm() turned out to be unreliable in this Electron
@@ -1142,18 +1157,31 @@ function sectionEl({ label, sessions, collapsed, pinned, droppable, emptyHint, i
     head.draggable = true;
     head.addEventListener("dragstart", (e) => {
       e.stopPropagation();
-      wrap.classList.add("dragging");
+      // dataTransfer is only writable synchronously inside dragstart, so
+      // these two MUST stay here.
+      e.dataTransfer.setData("text/category-label", label);
+      e.dataTransfer.effectAllowed = "move";
+      categoryDragStartedAt = Date.now();
       // Collapse every session list to just its header for the duration of a
       // category drag (the captain's ask) — with sessions expanded, reordering
       // categories means dragging past long lists and losing sight of the
-      // order; header-only makes the target position obvious. One class on
-      // the scroll body, CSS hides the .section-list children; removed on
-      // dragend. Layout settles once here at dragstart, before any dragover,
-      // so it doesn't disturb the drop-position math.
-      document.getElementById("sidebarBody").classList.add("dragging-category");
-      categoryDragStartedAt = Date.now();
-      e.dataTransfer.setData("text/category-label", label);
-      e.dataTransfer.effectAllowed = "move";
+      // order; header-only makes the target position obvious.
+      //
+      // Deferred to the next tick, NOT done synchronously here: hiding the
+      // .section-list elements mid-dragstart reflows the drag SOURCE, which
+      // Chromium/Electron treats as grounds to cancel the drag outright —
+      // that's the "can't drag a list anymore" regression this feature
+      // introduced. Letting dragstart finish first, then collapsing, keeps
+      // the drag alive. requestAnimationFrame over setTimeout(0) so the
+      // collapse paints on the very next frame with no visible flicker.
+      requestAnimationFrame(() => {
+        // Guard: the drag may have already ended (a very fast click-release)
+        // by the time this fires — don't collapse if we're no longer dragging.
+        if (categoryDragStartedAt !== null) {
+          wrap.classList.add("dragging");
+          document.getElementById("sidebarBody").classList.add("dragging-category");
+        }
+      });
     });
     head.addEventListener("dragend", () => {
       wrap.classList.remove("dragging");
