@@ -1,5 +1,32 @@
 # Decisions
 
+## 2026-07-03 — Pane header's folder path never updated live
+
+**Bug:** the captain: "vi borde fixa pathen vid titeln" — after picking a new
+folder or completing a root-folder switch, the path shown next to the pane
+title never changed. Root cause: `paneHeaderEl()` builds `.pane-sub` (the
+path span) ONCE at pane-construction time; `renderPane()` (called on every
+send/turn) only ever rebuilds the `.pane-scroll` area, never the header. So
+`.pane-sub` was permanently stale from the moment the pane was first
+rendered, regardless of how `pane.cwd` changed afterward.
+
+**Fix:** `updatePaneSubText(index, cwd)` queries the live DOM for that
+pane's header and updates/creates/removes its `.pane-sub` span directly,
+without rebuilding anything else. Called from all three places `pane.cwd`
+changes: typing in the cwd input, picking a folder via "…", and
+`sendFromPane`'s own `pane.cwd = cwd` assignment.
+
+**Separately surfaced while diagnosing this**: the captain's actual "switch root
+folder" confusion (a session's root flip-flopping between two folders across
+messages) turned out to be unrelated to Maestro at all — both turns carried
+`"entrypoint":"claude-desktop"`, meaning he was sending via the real Claude
+Desktop app on the same session, not Maestro's own composer. Desktop has its
+own, separate session-resume resolution that Maestro's switch/mtime-based
+`findTranscriptPath` fix has no influence over — using Desktop and Maestro
+interchangeably on the same session can pick either transcript copy
+unpredictably. Not a Maestro bug; a real limitation of mixing the two front
+ends on one session, worth remembering if it comes up again.
+
 ## 2026-07-03 — "Switch root folder" + stop silently dropping CLI failures
 
 **Decision:** the captain noticed the "…" folder-picker is always clickable, even
