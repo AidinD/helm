@@ -1,5 +1,33 @@
 # Decisions
 
+## 2026-07-03 — Spike: headless /compact works (auto-compact is buildable)
+
+**Decision:** Before building the Fas 3 auto-compact feature, spiked whether
+headless `-p` can even trigger the CLI's built-in `/compact`
+(`spike/test-compact-headless.mjs`). Result: definitively YES.
+`--resume <session> -p "/compact"` emits a clean event sequence —
+`system/status status:"compacting"` → `status:null compact_result:"success"`
+→ a `system/compact_boundary` event carrying
+`compact_metadata: { trigger:"manual", pre_tokens, post_tokens, duration_ms,
+preserved_segment }`. In the test: pre_tokens 32989 → post_tokens 2261
+(~93% reduction), and context genuinely survived (recalled a fact planted
+before the compaction).
+
+Notable gotcha for whoever builds the "did it work" detection: compaction
+does NOT shrink the transcript `.jsonl` on disk (it's append-only) — it
+APPENDS a summary user-turn + the `compact_boundary` marker, so line/byte
+count goes UP (24 → 36 in the test), not down. The authoritative success
+signal is the `compact_boundary` event's `compact_metadata` (and its
+pre/post token counts), never file size.
+
+Also learned: the `compact_boundary.compact_metadata.pre_tokens` is exactly
+the "how much context was in use" number — but it's only available AFTER a
+compact. To decide WHEN to auto-compact, the pre-compaction context size has
+to come from elsewhere (the last `result` event's `usage` in the transcript
+tail — cache_read + input tokens — is the readable proxy). That "when to
+fire" logic + the propose-vs-act gating decision is the actual build, now
+unblocked. The "can we fire it at all" question is closed.
+
 ## 2026-07-03 — Fas 3 first slice: the orchestrator-helper classifier
 
 **Decision:** the captain approved starting Fas 3 ("börja bygga nu"), scoped down
