@@ -1,5 +1,30 @@
 # Decisions
 
+## 2026-07-03 — Context gauge → bar+% with a click-to-open context+quota popover
+
+**Decision:** Iterated the context gauge per Aidin's feedback (referencing
+Claude Code's combined readout): make it a bar + percentage, and fold the
+quota into a popover you get by clicking it — "de visar en mätare av
+kontexten och när man trycker på den ser man både kontext och kvot."
+
+- The gauge (in the composer, under the model/effort row) is now a clickable
+  bar + "%" instead of a plain token count.
+- Clicking opens a `.context-popover` (anchored above it) showing a Context
+  window row (Nk / max (X%) + bar) and a Quota row (utilization % + bar).
+  Closes on second click / outside click / Escape (wired alongside
+  closeContextMenu).
+- Quota MOVED out of the top-header `#quota` span into this popover
+  ("flytta ner quota menyn dit också"). `renderQuota` is now a no-op;
+  `state.quota` still flows via refresh() and the popover reads it live.
+
+**The % needs a max, which isn't reliably readable per session** (the
+interactive transcript has no `contextWindow` field; it varies by model —
+200k / 1M). Added `config.contextWindowTokens`, defaulted to 1000000 to match
+Aidin's current environment (his own Claude Code shows "/ 1.0M"). The gauge
+still shows the absolute token count in the popover, so a wrong max only
+skews the %/bar, never hides the real number — and it's one config value to
+correct. A real per-model window lookup is a future refinement.
+
 ## 2026-07-03 — Per-session context-size gauge in the pane header
 
 **Decision:** Aidin's ask (with a Claude-Desktop screenshot showing "Context

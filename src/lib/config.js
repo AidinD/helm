@@ -58,6 +58,13 @@ const DEFAULT_CONFIG = {
   // both what he asked for and inherently safe — 30+ min of silence means
   // it's definitely not mid-turn.
   autoCompact: { enabled: false, thresholdTokens: 150000, idleMinutes: 10 },
+  // Assumed model context-window size, used only to turn the pane's context
+  // estimate into a percentage for the gauge. Can't be read reliably per
+  // session from the transcript, and varies by model (200k / 1M / …), so
+  // it's a single configurable value — defaulted to 1M to match Aidin's
+  // current environment. The gauge always shows the absolute token count
+  // too, so a wrong max only skews the %/bar, never hides the real number.
+  contextWindowTokens: 1000000,
   jot: {
     enabled: true,
     path: "D:\\Dropbox\\jot\\todos.json",

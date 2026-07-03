@@ -291,6 +291,73 @@ function closeContextMenu() {
   document.getElementById("contextMenu").classList.add("hidden");
 }
 
+// Context-size + quota popover, opened from the composer's context gauge —
+// the combined readout Aidin wanted (like Claude Code: click the context
+// meter, see both context and quota). Only one is ever open; a second click
+// or an outside click closes it (closeContextPopover is wired into the
+// document click handler alongside closeContextMenu).
+function closeContextPopover() {
+  document.querySelectorAll(".context-popover").forEach((el) => el.remove());
+}
+
+function cpopBarRow(labelText, valueText, pct, high) {
+  const row = document.createElement("div");
+  row.className = "cpop-row";
+  const top = document.createElement("div");
+  top.className = "cpop-row-top";
+  const l = document.createElement("span");
+  l.textContent = labelText;
+  const v = document.createElement("span");
+  v.className = "cpop-val";
+  v.textContent = valueText;
+  top.append(l, v);
+  const bar = document.createElement("span");
+  bar.className = "ctx-bar";
+  const fill = document.createElement("span");
+  fill.className = "ctx-fill" + (high ? " high" : "");
+  fill.style.width = `${Math.min(100, Math.max(0, pct))}%`;
+  bar.append(fill);
+  row.append(top, bar);
+  return row;
+}
+
+function toggleContextPopover(anchor, pane) {
+  const existing = document.querySelector(".context-popover");
+  closeContextPopover();
+  if (existing) {
+    return; // it was open under this or another gauge — toggle shut
+  }
+  const pop = document.createElement("div");
+  pop.className = "context-popover";
+  pop.addEventListener("click", (e) => e.stopPropagation()); // clicks inside don't close it
+
+  const windowTokens = state.config.contextWindowTokens || 1000000;
+  const fmtK = (n) => (n >= 10000 ? `${Math.round(n / 1000)}k` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`);
+  const fmtWindow = windowTokens >= 1000000 ? `${(windowTokens / 1000000).toFixed(windowTokens % 1000000 === 0 ? 0 : 1)}M` : `${Math.round(windowTokens / 1000)}k`;
+
+  if (typeof pane.contextTokens === "number") {
+    const pct = Math.round((pane.contextTokens / windowTokens) * 100);
+    pop.append(cpopBarRow("Context window", `${fmtK(pane.contextTokens)} / ${fmtWindow} (${pct}%)`, pct, pct >= 85));
+  }
+
+  const q = state.quota;
+  if (q) {
+    const qpct = Math.round((q.utilization || 0) * 100);
+    pop.append(cpopBarRow(`Quota · ${q.rateLimitType || "limit"}`, `${qpct}% used`, qpct, qpct >= 80));
+  } else {
+    const none = document.createElement("div");
+    none.className = "cpop-empty";
+    none.textContent = "Quota: — (no data yet)";
+    pop.append(none);
+  }
+
+  // Anchor above the gauge, right-aligned to it.
+  document.body.append(pop);
+  const r = anchor.getBoundingClientRect();
+  pop.style.left = `${Math.max(8, r.right - pop.offsetWidth)}px`;
+  pop.style.top = `${r.top - pop.offsetHeight - 6}px`;
+}
+
 // Custom dropdown button reusing the context-menu popup, instead of a native
 // <select> — Chromium's native select popup rendered white-on-white in this
 // Electron build despite color-scheme:dark set three different ways, so this
@@ -377,7 +444,10 @@ function buildMenuItems(items) {
   return frag;
 }
 
-document.addEventListener("click", closeContextMenu);
+document.addEventListener("click", () => {
+  closeContextMenu();
+  closeContextPopover();
+});
 document.addEventListener("contextmenu", (e) => {
   if (!e.target.closest("[data-has-menu]")) {
     closeContextMenu();
@@ -388,6 +458,7 @@ document.addEventListener("contextmenu", (e) => {
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     closeContextMenu();
+    closeContextPopover();
   }
 });
 
@@ -2409,23 +2480,40 @@ function paneComposerEl(index) {
   controls.append(pickBtn, cwdInput, attachBtn, permissionDD.el, modelDD.el, effortDD.el, sendBtn);
   shell.append(controls);
 
-  // Context-size gauge, under the model/effort row (Aidin's placement — he
-  // didn't spot it up in the pane header). Its own render closure because the
-  // composer is built once but pane.contextTokens arrives later, async, from
-  // loadTranscriptInto — which calls this to fill it in (and it's called once
-  // here for the already-loaded case).
-  const contextGauge = document.createElement("div");
+  // Context-size gauge — a bar + %, under the model/effort row (Aidin's
+  // placement). Clicking it opens a popover with the context detail AND the
+  // quota, mirroring Claude Code's combined readout. Its own render closure
+  // because the composer is built once but pane.contextTokens arrives later,
+  // async, from loadTranscriptInto (which calls this to fill it in).
+  const contextGauge = document.createElement("button");
+  contextGauge.type = "button";
   contextGauge.className = "composer-context";
   const renderContextGauge = () => {
-    if (typeof pane.contextTokens === "number") {
-      const k = pane.contextTokens / 1000;
-      contextGauge.textContent = `◱ ${k >= 10 ? Math.round(k) : k.toFixed(1)}k context`;
-      contextGauge.title = "Estimated context currently in use for this session (approximate). The same measure that drives auto-compact.";
-    } else {
-      contextGauge.textContent = "";
+    if (typeof pane.contextTokens !== "number") {
+      contextGauge.style.display = "none";
+      return;
     }
+    contextGauge.style.display = "";
+    const windowTokens = state.config.contextWindowTokens || 1000000;
+    const pct = Math.min(100, Math.round((pane.contextTokens / windowTokens) * 100));
+    contextGauge.innerHTML = "";
+    const bar = document.createElement("span");
+    bar.className = "ctx-bar";
+    const fill = document.createElement("span");
+    fill.className = "ctx-fill" + (pct >= 85 ? " high" : "");
+    fill.style.width = `${pct}%`;
+    bar.append(fill);
+    const label = document.createElement("span");
+    label.className = "ctx-label";
+    label.textContent = `${pct}%`;
+    contextGauge.append(bar, label);
+    contextGauge.title = "Context in use for this session — click for detail + quota";
   };
   renderContextGauge();
+  contextGauge.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleContextPopover(contextGauge, pane);
+  });
   shell.append(contextGauge);
 
   // Visible reasoning, not just a hover tooltip — a suggestion nobody reads
@@ -2750,15 +2838,13 @@ function scrollContainer() {
 
 // ============================== Quota + top controls ==============================
 
-function renderQuota(quota) {
-  const el = document.getElementById("quota");
-  if (!quota) {
-    el.textContent = "quota: —";
-    return;
-  }
-  const pct = Math.round((quota.utilization || 0) * 100);
-  el.textContent = `quota (${quota.rateLimitType || "?"}): ${pct}% used`;
-  el.classList.toggle("warn", pct >= 80);
+// Quota moved out of the header into the context-gauge popover (Aidin's ask:
+// "flytta ner quota menyn dit också"). state.quota still flows via refresh();
+// the popover reads it directly on open. This is now just a defensive no-op
+// kept so the existing refresh() call site doesn't need touching / can't
+// throw if the header element is gone.
+function renderQuota() {
+  // intentionally empty — see comment above
 }
 
 // A cheap summary of exactly the fields renderSidebar()'s output depends on

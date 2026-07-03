@@ -686,14 +686,94 @@ body.advanced .row-jot {
   font-size: 11px;
 }
 
-/* Context gauge in the pane header — pushed to the right (margin-left:auto),
-   sitting just before the pane actions. */
-.pane-context {
-  margin-left: auto;
-  font-weight: 400;
+/* Context gauge under the composer's model/effort row (Aidin's placement),
+   right-aligned. A clickable bar + % that opens the context/quota popover. */
+.composer-context {
+  align-self: flex-end;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 2px 0 auto;
+  padding: 2px 4px;
+  background: transparent;
+  border: none;
   color: var(--text-faint);
   font-size: 11px;
-  white-space: nowrap;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.composer-context:hover {
+  color: var(--text-dim);
+  background: var(--bg-card);
+}
+
+.ctx-bar {
+  display: inline-block;
+  width: 64px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.ctx-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+}
+
+.ctx-fill.high {
+  background: #e0a030;
+}
+
+.ctx-label {
+  min-width: 30px;
+  text-align: right;
+}
+
+.context-popover {
+  position: fixed;
+  z-index: 60;
+  width: 260px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cpop-row {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.cpop-row-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+.cpop-val {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.cpop-row .ctx-bar {
+  width: 100%;
+  height: 6px;
+}
+
+.cpop-empty {
+  font-size: 11.5px;
+  color: var(--text-faint);
 }
 
 .pane-status {
