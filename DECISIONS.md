@@ -1,5 +1,110 @@
 # Decisions
 
+## 2026-07-03 — Fas 3 Point 8 v1: a Jot-backed "Focus" page (ranked goals + goal breakdown with safe subtask write)
+
+**Built** the first slice of PLAN.md's Phase 3 "Point 8 — split work +
+prioritize focus," scoped deliberately to exactly two capabilities and no
+more: (1) a read-only Focus page that ranks the user's active GOALS, and (2)
+a goal-breakdown view that can add subtasks back into Jot. NOT built (out of
+scope by the task's own framing): goal-to-session dispatch, auto-scheduling,
+drag-reprioritization — those are later.
+
+**Backed by Jot, not a second task system.** Per PLAN.md's own framing and
+the ephemeral-sessions reorientation (the unit worth organizing is
+work/goals, which already live in Jot), this reads the SAME
+`<your-jot-data-dir>\todos.json` the sidebar's category matching already reads.
+Reused the existing `src/lib/jot.js` read layer rather than writing a second
+parser — extended it, didn't fork it.
+
+**Bug found and fixed while reusing the read layer: Maestro's Jot integration
+was silently disabled.** The real todos.json carries a UTF-8 BOM (EF BB BF —
+left by an editor or a legacy external write; Jot's own app writes without
+one). `loadJot`'s `JSON.parse(fs.readFileSync(...,"utf8"))` throws on a
+leading BOM, so it was falling through its own `catch` into `emptyIndex` on
+every call — meaning category counts, deadline sorting, and the whole
+attention-scoring Jot contribution had been quietly reading zero. Fixed with
+a shared `readJotFile(jotPath)` helper (strips a leading `﻿`, then
+parses) that both the existing `loadJot` and the new goal functions go
+through. Verified: `loadJot({}).ok` now returns 11 categories against the
+real file where it previously returned the empty index.
+
+**Capability 1 — `loadGoals(jotConfig)` (read-only ranking), jot.js:**
+returns top-level todos (`parentId === null`) whose status is `open` or
+`in-progress` (the goals actually worth choosing between now), each carrying
+its category, priority, deadline, subtask progress (done/total), review-count,
+and its own subtasks (so the breakdown needs no second read). Ranks them by an
+attention score built from the SAME signals sessions.js scores sessions with:
+deadline proximity via a `goalDeadlineBoost` that is byte-for-byte the same
+tiering as sessions.js's `deadlineBoost` (replicated, not imported, to keep
+this addition isolated to jot.js and off sessions.js's export surface that
+other in-flight work also edits — noted inline that they agree on purpose and
+may diverge later), in-progress status, Jot priority (lower number = more
+urgent, mapped through a bounded `priorityBoost` so an extreme value can't
+dominate), and small boosts for being an epic and for having review-status
+subtasks. Verified against the real file: 31 active goals, top-ranked ones
+are the in-progress p0 goals, as expected.
+
+**Capability 2 ended up READ-WRITE (not read-only) — `addSubtask(jotConfig,
+parentId, text)`, jot.js.** Confidence to write came from reading jot's own
+`INTEGRATION.md` (the authoritative external-agent contract) and its
+`storage.ts`: Jot's own writer is `JSON.stringify(state, null, 2)` as UTF-8
+**without a BOM**, and the contract prescribes exactly the safe-write flow
+this codebase already uses elsewhere (read latest → modify in memory → temp
+file → atomic rename). So `addSubtask` re-reads the FRESHEST file immediately
+before writing (never trusts an earlier in-memory snapshot — the Jot app
+live-reloads and may have flushed its own edit since), appends ONE todo (a
+minimal targeted change, never a blind whole-file overwrite of remembered
+state), and writes via temp-file + `fs.renameSync` (atomic on-volume) so an
+interrupted write can't leave todos.json torn — the same discipline as
+sessions.js's `patchSessionMeta`. Output is UTF-8 no-BOM, 2-space JSON: the
+file Maestro leaves behind is byte-shape-identical to one Jot's own app
+wrote. The new subtask inherits the parent's `categoryId` (verified data-model
+behavior), gets `status:"open"`, `priority:0`, a fresh UUID. Guards refuse:
+empty text, a missing parent, or a parent that is itself a subtask (Jot nests
+exactly one level — no grandchildren).
+
+**Verified the write against a COPY, never the real board.** A standalone
+script copied the real todos.json (with its BOM) into the scratchpad and
+exercised `addSubtask` against that copy only: append lands under the right
+parent, category inherited, text trimmed, output has no BOM and re-parses
+cleanly, all three guards fire, no stray `.tmp` left behind, and the real
+`<your-jot-data-dir>\todos.json` was confirmed untouched throughout. The atomic
+temp-file+rename behavior was exercised as part of that (the written file is
+always fully valid JSON).
+
+**Surface: a new "Focus" page** (`renderFocusPage` in renderer.js), added as
+its own page in the established `#pageToggle` pattern (a `focus` button + a
+`#focusPage` div toggled with `.hidden`, exactly like Analysis/Archive/
+Settings) — deliberately NOT threaded into the crowded session-list/pane
+rendering paths where it could collide with other recent renderer work. The
+page lists ranked goals as cards (top 3 get an accent left-edge as the
+"work on this now" recommendation, the rest under an "Also active" divider),
+each expandable to show its description, subtasks with status, and an
+add-subtask input. Adding re-renders from the freshly-read file (never an
+optimistic guess), so the UI always reflects real Jot state. All styling is
+self-contained under `.focus-*` classes reusing the existing CSS variables and
+the analysis-page visual language (no dependency on button/input classes that
+don't exist in this repo).
+
+**Wiring:** `main.js` — two IPC handlers (`jot:goals` read-only, and
+`jot:addSubtask` for the write, both loading `config.jot`); `preload.cjs` —
+`getJotGoals`/`addJotSubtask` on the `window.maestro` surface, one line each,
+same pattern as every other channel.
+
+**Verification:** `node --check` on all four changed JS files
+(`jot.js`/`main.js`/`renderer.js`/`preload.cjs`); a CSS brace-balance check
+(286/286); direct exercises of `loadGoals` against the real file (read-only)
+and `addSubtask` against a scratch copy (see above); and a full boot-test via
+`scripts/restart-dev.sh` (clean boot, no app-level errors — the GPU disk-cache
+warnings in the log are benign Electron cache noise, not app errors; confirmed
+via `Get-CimInstance` that only Maestro's own 4 PIDs recycled and Halyard's
+4 PIDs — 20556/4560/25124/6292 — were untouched, consistent with the
+documented safe-restart behavior). **What this could NOT verify** (native
+Electron app, no browser-servable preview — same limitation noted on every
+other UI change in this file): the Focus page actually rendering, the goal
+cards/chips/breakdown looking right, and the add-subtask flow end-to-end
+through the real IPC in the running app. That needs the captain's own visual test.
+
 ## 2026-07-03 — Orchestrator lifespan: no privileged "the orchestrator" session; land on a dashboard, start fresh orchestrator sessions
 
 **Decision:** the captain flagged that two original UI choices — app opens directly

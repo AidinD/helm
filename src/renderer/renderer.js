@@ -3,6 +3,7 @@ const STATUS_LABEL = { waiting: "Needs you", active: "Working", idle: "Idle", ar
 let state = { sessions: [], config: { groups: [], viewMode: "simple" }, quota: null };
 let searchTerm = "";
 let archiveSearchTerm = ""; // filters the Archive page's two lists by title/folder
+let selectedGoalId = null; // Focus page: which goal's breakdown is expanded
 let selectedSessionId = null;
 let focusedPaneIndex = 0;
 let dragSessionId = null;
@@ -3510,6 +3511,260 @@ document.getElementById("newChat").addEventListener("click", () => {
   renderSidebar();
 });
 
+// ============================== Focus page (Point 8) ==============================
+// A goal-to-tasks focus view, BACKED BY JOT — not a second task system. It
+// reads the same todos.json the sidebar's category matching reads (via
+// jot.js's loadGoals) and answers "of my several active goals, which should I
+// work on right now?" by ranking top-level goals on the same kind of signals
+// sessions.js scores sessions with (deadline proximity, in-progress status,
+// priority). Read-only ranking is the core; each goal can be expanded to see
+// its subtasks and to add new ones (the one Jot write, via the safe atomic
+// path in jot.js). Deliberately NOT goal-to-session dispatch, auto-scheduling,
+// or drag-reprioritization — those are later (PLAN.md Phase 3).
+
+// Deadline label for the Focus page. Unlike deadlineChipText (which hides
+// anything past 7 days to avoid cluttering sidebar rows), a goal's own
+// breakdown should always state its deadline when it has one.
+function goalDeadlineText(ms) {
+  if (typeof ms !== "number") {
+    return "";
+  }
+  const DAY = 24 * 60 * 60 * 1000;
+  const msLeft = ms - Date.now();
+  if (msLeft < 0) {
+    return "overdue";
+  }
+  if (msLeft < DAY) {
+    return "due today";
+  }
+  const days = Math.round(msLeft / DAY);
+  return `due in ${days}d`;
+}
+
+const SUBTASK_STATUS_LABEL = {
+  open: "○ open",
+  "in-progress": "◐ in progress",
+  review: "◎ review",
+  done: "● done",
+};
+
+async function renderFocusPage() {
+  const page = document.getElementById("focusPage");
+  page.innerHTML = "";
+
+  const header = document.createElement("h2");
+  header.textContent = "Focus";
+  page.append(header);
+
+  const result = await window.maestro.getJotGoals();
+
+  if (!result.ok) {
+    const empty = document.createElement("div");
+    empty.className = "pane-empty";
+    empty.textContent = "Jot data unavailable — check that Jot is enabled and its file exists (Settings).";
+    page.append(empty);
+    return;
+  }
+
+  const intro = document.createElement("div");
+  intro.className = "analysis-totals";
+  intro.textContent =
+    `${result.goals.length} active goal${result.goals.length === 1 ? "" : "s"} (open or in progress), ranked by what deserves your focus now. Backed by Jot.`;
+  page.append(intro);
+
+  if (result.goals.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "pane-empty";
+    empty.textContent = "No active goals in Jot right now.";
+    page.append(empty);
+    return;
+  }
+
+  // The top few are the actual "work on this now" recommendation; the rest are
+  // shown below a divider so the ranking's point (focus) isn't lost in a long
+  // list. Keeping all of them visible (read-only) still lets the breakdown be
+  // opened for any goal.
+  const list = document.createElement("div");
+  list.className = "focus-list";
+  const TOP_N = 3;
+  result.goals.forEach((goal, i) => {
+    if (i === TOP_N && result.goals.length > TOP_N) {
+      const divider = document.createElement("div");
+      divider.className = "focus-divider";
+      divider.textContent = "Also active";
+      list.append(divider);
+    }
+    list.append(focusGoalCard(goal, i < TOP_N));
+  });
+  page.append(list);
+}
+
+function focusGoalCard(goal, isTop) {
+  const card = document.createElement("div");
+  card.className = "focus-card" + (isTop ? " focus-card-top" : "");
+
+  const head = document.createElement("div");
+  head.className = "focus-card-head";
+  head.addEventListener("click", () => {
+    selectedGoalId = selectedGoalId === goal.id ? null : goal.id;
+    renderFocusPage();
+  });
+
+  const caret = document.createElement("span");
+  caret.className = "focus-caret";
+  caret.textContent = selectedGoalId === goal.id ? "▾" : "▸";
+  head.append(caret);
+
+  const titleWrap = document.createElement("div");
+  titleWrap.className = "focus-title-wrap";
+  const title = document.createElement("div");
+  title.className = "focus-title";
+  title.textContent = goal.text || "(untitled goal)";
+  titleWrap.append(title);
+
+  const meta = document.createElement("div");
+  meta.className = "focus-meta";
+  if (goal.category) {
+    const catChip = document.createElement("span");
+    catChip.className = "focus-chip focus-chip-cat";
+    if (goal.color) {
+      catChip.style.borderColor = goal.color;
+    }
+    catChip.textContent = goal.category;
+    meta.append(catChip);
+  }
+  const statusChip = document.createElement("span");
+  statusChip.className = "focus-chip";
+  statusChip.textContent = goal.status === "in-progress" ? "in progress" : goal.status;
+  meta.append(statusChip);
+  if (typeof goal.priority === "number") {
+    const prChip = document.createElement("span");
+    prChip.className = "focus-chip";
+    prChip.title = "Jot priority (lower = more urgent)";
+    prChip.textContent = `p${goal.priority}`;
+    meta.append(prChip);
+  }
+  const dl = goalDeadlineText(goal.deadline);
+  if (dl) {
+    const dlChip = document.createElement("span");
+    dlChip.className = "focus-chip focus-chip-deadline" + (dl === "overdue" ? " focus-chip-overdue" : "");
+    dlChip.textContent = dl;
+    meta.append(dlChip);
+  }
+  if (goal.subtaskTotal > 0) {
+    const progChip = document.createElement("span");
+    progChip.className = "focus-chip";
+    progChip.textContent = `${goal.subtaskDone}/${goal.subtaskTotal} subtasks`;
+    meta.append(progChip);
+  }
+  if (goal.subtaskReview > 0) {
+    const revChip = document.createElement("span");
+    revChip.className = "focus-chip focus-chip-review";
+    revChip.title = "Subtasks awaiting your review";
+    revChip.textContent = `${goal.subtaskReview} to review`;
+    meta.append(revChip);
+  }
+  titleWrap.append(meta);
+  head.append(titleWrap);
+
+  const score = document.createElement("span");
+  score.className = "focus-score";
+  score.title = "Attention score — higher means it deserves your focus sooner";
+  score.textContent = String(goal.attentionScore);
+  head.append(score);
+
+  card.append(head);
+
+  if (selectedGoalId === goal.id) {
+    card.append(focusGoalBreakdown(goal));
+  }
+  return card;
+}
+
+function focusGoalBreakdown(goal) {
+  const body = document.createElement("div");
+  body.className = "focus-breakdown";
+
+  if (goal.description) {
+    const desc = document.createElement("div");
+    desc.className = "focus-desc";
+    desc.textContent = goal.description;
+    body.append(desc);
+  }
+
+  const subHead = document.createElement("div");
+  subHead.className = "focus-sub-head";
+  subHead.textContent = goal.subtaskTotal > 0 ? "Subtasks" : "No subtasks yet — break this goal down below.";
+  body.append(subHead);
+
+  if (goal.subtaskTotal > 0) {
+    const ul = document.createElement("ul");
+    ul.className = "focus-subtasks";
+    goal.subtasks.forEach((s) => {
+      const li = document.createElement("li");
+      li.className = "focus-subtask focus-subtask-" + (s.status || "open");
+      const st = document.createElement("span");
+      st.className = "focus-subtask-status";
+      st.textContent = SUBTASK_STATUS_LABEL[s.status] || s.status || "open";
+      const txt = document.createElement("span");
+      txt.className = "focus-subtask-text";
+      txt.textContent = s.text;
+      li.append(st, txt);
+      ul.append(li);
+    });
+    body.append(ul);
+  }
+
+  // Add-a-subtask row: the "break it down further" write. A single click to
+  // add (Enter or the button) — the actual atomic write to todos.json happens
+  // in jot.js. On success the page re-renders from the freshly-read file, so
+  // what shows always reflects the real Jot state, never an optimistic guess.
+  const addRow = document.createElement("div");
+  addRow.className = "focus-add-row";
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "focus-add-input";
+  input.placeholder = "Add a subtask to break this goal down…";
+  const btn = document.createElement("button");
+  btn.className = "focus-add-btn";
+  btn.textContent = "Add";
+  const err = document.createElement("div");
+  err.className = "focus-add-err";
+  err.style.display = "none";
+
+  async function submit() {
+    const text = input.value.trim();
+    if (!text) {
+      return;
+    }
+    btn.disabled = true;
+    input.disabled = true;
+    const res = await window.maestro.addJotSubtask(goal.id, text);
+    if (res.ok) {
+      // Keep this goal expanded so the new subtask is visible after re-render.
+      selectedGoalId = goal.id;
+      renderFocusPage();
+    } else {
+      err.textContent = res.error || "Failed to add subtask.";
+      err.style.display = "";
+      btn.disabled = false;
+      input.disabled = false;
+      input.focus();
+    }
+  }
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      submit();
+    }
+  });
+  btn.addEventListener("click", submit);
+  addRow.append(input, btn);
+  body.append(addRow, err);
+
+  return body;
+}
+
 // ============================== Analysis page ==============================
 // Replaces the earlier popup versions of Skills/Usage — those rendered via
 // submenus that could overflow off-screen near the window edge, and the captain
@@ -3525,10 +3780,13 @@ document.getElementById("pageToggle").addEventListener("click", (e) => {
   document.querySelectorAll("#pageToggle button").forEach((b) => b.classList.toggle("active", b === btn));
   const page = btn.dataset.page;
   document.getElementById("chatPage").classList.toggle("hidden", page !== "chat");
+  document.getElementById("focusPage").classList.toggle("hidden", page !== "focus");
   document.getElementById("analysisPage").classList.toggle("hidden", page !== "analysis");
   document.getElementById("archivePage").classList.toggle("hidden", page !== "archive");
   document.getElementById("settingsPage").classList.toggle("hidden", page !== "settings");
-  if (page === "analysis") {
+  if (page === "focus") {
+    renderFocusPage();
+  } else if (page === "analysis") {
     renderAnalysisPage();
   } else if (page === "archive") {
     renderArchivePage();

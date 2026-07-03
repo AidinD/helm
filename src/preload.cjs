@@ -5,6 +5,8 @@ contextBridge.exposeInMainWorld("maestro", {
   getSessions: () => ipcRenderer.invoke("sessions:get"),
   setConfig: (patch) => ipcRenderer.invoke("config:set", patch),
   suggestModelEffort: (prompt) => ipcRenderer.invoke("suggest:modelEffort", prompt),
+  getJotGoals: () => ipcRenderer.invoke("jot:goals"),
+  addJotSubtask: (parentId, text) => ipcRenderer.invoke("jot:addSubtask", { parentId, text }),
   getTranscript: (ids) => ipcRenderer.invoke("transcript:get", ids),
   listSkills: (cwd) => ipcRenderer.invoke("skills:list", cwd),
   openSkill: (opts) => ipcRenderer.invoke("skills:open", opts),

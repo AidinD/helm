@@ -6,7 +6,7 @@ import crypto from "node:crypto";
 import { execFile, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { readAllSessions, enrichWithJot, setSessionArchived, forkTranscriptAtUserMessage, switchSessionRootFolder } from "./lib/sessions.js";
-import { loadJot } from "./lib/jot.js";
+import { loadJot, loadGoals, addSubtask } from "./lib/jot.js";
 import { loadConfig, writeConfig } from "./lib/config.js";
 import { startSession } from "./lib/launcher.js";
 import { suggestModelEffort } from "./lib/suggest.js";
@@ -174,6 +174,23 @@ ipcMain.handle("config:set", (_event, patch) => {
 
 // --- Model/effort suggestion for a given prompt ---
 ipcMain.handle("suggest:modelEffort", (_event, prompt) => suggestModelEffort(prompt));
+
+// --- Focus (Point 8): the user's active GOALS ranked by attention/priority,
+// read straight from Jot (the same todos.json the sidebar's category matching
+// reads — no second task system). Read-only. ---
+ipcMain.handle("jot:goals", () => {
+  const config = loadConfig();
+  return loadGoals(config.jot || {});
+});
+
+// --- Goal breakdown: add a subtask under an existing top-level goal, written
+// back to todos.json via the safe atomic-write path (re-read fresh, append one
+// todo, temp file + rename — see addSubtask in jot.js). The one Jot WRITE
+// Maestro performs; only ever in response to an explicit user action. ---
+ipcMain.handle("jot:addSubtask", (_event, { parentId, text }) => {
+  const config = loadConfig();
+  return addSubtask(config.jot || {}, parentId, text);
+});
 
 // --- Skills available to a pane, split global vs project-specific ---
 ipcMain.handle("skills:list", (_event, cwd) => listSkills(cwd));
