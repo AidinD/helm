@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld("maestro", {
   saveImage: (base64Data, ext) => ipcRenderer.invoke("image:save", { base64Data, ext }),
   archiveSession: (sessionId, archived) => ipcRenderer.invoke("session:archive", { sessionId, archived }),
   forkSession: (cliSessionId, userMsgIndex) => ipcRenderer.invoke("session:fork", { cliSessionId, userMsgIndex }),
+  switchSessionRootFolder: (cliSessionId, sessionId, newCwd) =>
+    ipcRenderer.invoke("session:switchRootFolder", { cliSessionId, sessionId, newCwd }),
   getUsageSummary: () => ipcRenderer.invoke("usage:summary"),
   getVersion: () => ipcRenderer.invoke("app:version"),
   pickFolder: () => ipcRenderer.invoke("dialog:pickFolder"),

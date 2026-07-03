@@ -68,6 +68,19 @@ function walkForSessionJson(dir, out, depth) {
  * live under a project folder keyed by an encoded cwd, but we search all
  * project folders so we do not depend on the exact encoding scheme.
  */
+// Mirrors the CLI's own ~/.claude/projects/<encoded-cwd>/ naming (verified
+// against real project dirs, e.g. "D:\Repo\Tools\maestro" ->
+// "D--Repo-Tools-maestro" — the colon becomes a hyphen, then every backslash
+// becomes another hyphen, giving the double-hyphen right after the drive
+// letter seen in practice). Used to switch a session's root folder: `claude
+// --resume` scopes its lookup by cwd (verified in
+// spike/test-cwd-switch.mjs — resuming from a different cwd fails outright
+// with "No conversation found"), so making that work means placing a copy of
+// the transcript into the TARGET folder's own encoded project directory.
+export function encodeProjectDir(cwd) {
+  return cwd.replace(/:/g, "-").replace(/\\/g, "-");
+}
+
 export function findTranscriptPath(transcriptIds) {
   const ids = (Array.isArray(transcriptIds) ? transcriptIds : [transcriptIds])
     .filter(Boolean)
@@ -83,14 +96,35 @@ export function findTranscriptPath(transcriptIds) {
   }
   for (const id of ids) {
     const fileName = `${id}.jsonl`;
+    // Collect EVERY matching file across project dirs rather than returning
+    // on the first hit — after switchSessionRootFolder copies a transcript
+    // into a new project dir, the SAME session id briefly exists in two
+    // places (old + new folder) until the next real turn is written. Which
+    // one fs.readdirSync happens to list first is directory-enumeration
+    // order, not meaningfully "correct" — picking the most recently
+    // MODIFIED copy is the one actually reflecting the live conversation,
+    // and costs nothing extra when (the overwhelmingly common case) only
+    // one copy exists at all.
+    let best = null;
+    let bestMtime = -1;
     for (const entry of projectDirs) {
       if (!entry.isDirectory()) {
         continue;
       }
       const candidate = path.join(projectsRoot, entry.name, fileName);
-      if (fs.existsSync(candidate)) {
-        return candidate;
+      let stat;
+      try {
+        stat = fs.statSync(candidate);
+      } catch {
+        continue;
       }
+      if (stat.mtimeMs > bestMtime) {
+        bestMtime = stat.mtimeMs;
+        best = candidate;
+      }
+    }
+    if (best) {
+      return best;
     }
   }
   return null;

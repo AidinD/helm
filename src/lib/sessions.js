@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import { findSessionsDir, findTranscriptPath } from "./paths.js";
+import { findSessionsDir, findTranscriptPath, encodeProjectDir, projectsRoot } from "./paths.js";
 
 // Default scoring weights for the attention ranking. Overridable via
 // config.jot.weights. "review" is weighted highest because in the captain's Jot
@@ -269,6 +269,56 @@ export function forkTranscriptAtUserMessage(cliSessionId, userMsgIndex) {
     return { ok: false, error: `Failed to write fork transcript: ${err.message}` };
   }
   return { ok: true, forkId };
+}
+
+/**
+ * "Switch root folder": lets a session continue in a DIFFERENT working
+ * directory than the one it was created in. `claude --resume` scopes its own
+ * session lookup by cwd — verified in spike/test-cwd-switch.mjs that
+ * resuming from a different folder fails outright with "No conversation
+ * found with session ID," even though Maestro's own findTranscriptPath
+ * searches every project dir. The fix, also spike-verified
+ * (spike/test-cwd-switch-copy.mjs): copy the transcript into the TARGET
+ * folder's own encoded project directory (same id, so --resume from there
+ * finds it) — the exact same "copy the transcript to make --resume work
+ * somewhere new" trick already used by the rewind-to-here fork, just copying
+ * into a different project dir instead of a new file in the same one.
+ *
+ * Copies rather than moves: the original stays fully intact and resumable
+ * from its original folder, matching every other "branch, don't destroy"
+ * operation in this codebase (rewind, archive, hide).
+ */
+export function switchSessionRootFolder(cliSessionId, sessionId, newCwd) {
+  const transcriptPath = findTranscriptPath([cliSessionId, sessionId]);
+  if (!transcriptPath) {
+    return { ok: false, error: "Transcript not found for that session." };
+  }
+  const targetDir = path.join(projectsRoot, encodeProjectDir(newCwd));
+  try {
+    fs.mkdirSync(targetDir, { recursive: true });
+  } catch (err) {
+    return { ok: false, error: `Failed to create target project folder: ${err.message}` };
+  }
+  const targetPath = path.join(targetDir, path.basename(transcriptPath));
+  if (path.resolve(targetPath) === path.resolve(transcriptPath)) {
+    // Already rooted there (picking the same folder again) — nothing to do.
+    return { ok: true };
+  }
+  try {
+    fs.copyFileSync(transcriptPath, targetPath);
+    // fs.copyFileSync PRESERVES the source's mtime on the copy (verified —
+    // Windows CopyFileW behavior carries through Node) — without this, the
+    // fresh copy ties with the original on mtime, and findTranscriptPath's
+    // "most recently modified wins" tie-break would inconsistently still
+    // pick the OLD copy depending on directory-listing order (caught before
+    // shipping: a standalone test found this exact failure). Explicitly
+    // bumping the copy's mtime to now makes it unambiguously the winner.
+    const now = new Date();
+    fs.utimesSync(targetPath, now, now);
+  } catch (err) {
+    return { ok: false, error: `Failed to copy transcript: ${err.message}` };
+  }
+  return { ok: true };
 }
 
 function readMeta(filePath) {

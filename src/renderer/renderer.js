@@ -2701,6 +2701,35 @@ async function sendFromPane(index, els) {
   const model = els.modelDD.value === "auto" ? suggestion.model : els.modelDD.value;
   const effort = els.effortDD.value === "auto" ? suggestion.effort : els.effortDD.value;
 
+  // "Switch root folder" (the captain's question about the "…" picker on an
+  // EXISTING session — it silently broke the next send with "No conversation
+  // found," since --resume scopes lookup by cwd; see DECISIONS.md). If this
+  // is a resumed session and the folder was changed since it was opened,
+  // copy the transcript into the new folder's project dir FIRST so --resume
+  // can actually find it there.
+  if (pane.cliSessionId && sessionById(pane.sessionId)?.cwd && sessionById(pane.sessionId).cwd !== cwd) {
+    const switchRes = await window.maestro.switchSessionRootFolder(pane.cliSessionId, pane.sessionId, cwd);
+    if (!switchRes.ok) {
+      if (panes[index] === pane) {
+        pane.busy = false;
+        setPaneBusyUI(index, "");
+        pane.turns.push({ role: "assistant", kind: "text", text: "⚠ Couldn't switch to the new folder: " + switchRes.error });
+        bumpSessionActivity(pane.sessionId);
+        renderPane(index);
+      }
+      return;
+    }
+    // Same guard every other await boundary in this function uses (the
+    // failure branch above, the startSession failure branch below) — the
+    // pane may have been reset ("+" new chat) or reassigned during the
+    // switch's await. Caught in review for consistency: without it, a
+    // resumed-but-abandoned pane would still spawn a real CLI process using
+    // stale model/effort/session values.
+    if (panes[index] !== pane) {
+      return;
+    }
+  }
+
   const res = await window.maestro.startSession({
     cwd,
     prompt,
@@ -3735,6 +3764,34 @@ window.maestro.onSessionEvent((evt) => {
         // A queued prompt is deliberately NOT fired after an explicit stop —
         // you stopped this run for a reason, most likely to intervene, not
         // to have something else auto-fire right after.
+      } else if (!evt.summary?.sawResult && evt.summary?.code !== 0) {
+        // A genuine CLI failure (non-zero exit, no result ever produced) —
+        // e.g. "No conversation found with session ID" when resuming from a
+        // folder the session wasn't created in. Previously this vanished
+        // completely: stderr was captured but nothing consumed it, so the
+        // prompt just silently disappeared with the pane going back to idle
+        // (caught via the captain's "vad innebär pick repo folder på en befintlig
+        // session" question). Surface it as a visible error turn instead of
+        // reloading a transcript that never got the failed turn appended.
+        pane.stopRequested = false;
+        const cleaned = (evt.summary?.stderrText || "")
+          .split("\n")
+          .filter((l) => l.trim() && !l.startsWith("Warning: no stdin data received"))
+          .join(" ")
+          .trim();
+        // A spawn-level failure (e.g. the claude binary couldn't be found)
+        // resolves with {code:-1, error: err.message} and no stderrText at
+        // all (launcher.js's separate child.on("error") path) — fall back to
+        // that message rather than dropping it for the generic exit-code
+        // text (caught in review).
+        const message = cleaned || evt.summary?.error || `Run failed (exit code ${evt.summary?.code}).`;
+        pane.turns.push({
+          role: "assistant",
+          kind: "text",
+          text: "⚠ " + truncateText(message, 400),
+        });
+        bumpSessionActivity(pane.sessionId);
+        renderPane(index);
       } else {
         pane.stopRequested = false;
         loadTranscriptInto(index).then(refresh);
