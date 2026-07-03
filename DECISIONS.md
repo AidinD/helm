@@ -1,5 +1,57 @@
 # Decisions
 
+## 2026-07-03 — Orchestrator instructions extracted into their own file (the third CLAUDE.md-shaped layer)
+
+**Context:** the captain asked a good architecture question while looking at
+`orchestratorHelper.js`'s inline classifier prompt: as the orchestrator's job
+grows beyond classifying (into dispatch, escalation, etc. — see PLAN.md's
+Phase 3 write-up), where should its own "how should the orchestrator itself
+behave" instructions live? Agreed it's a THIRD layer, distinct from (1)
+The captain's global personal CLAUDE.md (general collaboration rules, applies
+everywhere) and (2) each project's own repo CLAUDE.md (dev conventions for
+that specific project). This third layer is the orchestrator's own operating
+manual — the same role `AGENTS.md` plays for `firstmate` (already studied,
+see the 2026-07-03 source-read entries below): a dedicated, editable file
+completely separate from any project it happens to be supervising.
+
+**Built:** extracted the classifier's inline `CLASSIFIER_SYSTEM_PROMPT`
+string out of `src/lib/orchestratorHelper.js` into a new
+`src/lib/orchestrator-instructions.md`, loaded at runtime via
+`fs.readFileSync` (resolved relative to the module's own file via
+`fileURLToPath(import.meta.url)`, so it works regardless of cwd) instead of
+being hardcoded JS. Chose to keep it next to `orchestratorHelper.js` in
+`src/lib/` rather than the repo root — it's consumed by exactly one module
+today, unlike `PLAN.md`/`DECISIONS.md`/root `CLAUDE.md`, which serve the
+whole repo/every session.
+
+**Content — relocated, then modestly expanded, not rewritten:** the file
+keeps the original classification instructions (the 5 status tags, JSON-only
+response, the 12-word `reason` constraint) verbatim, and adds two sections
+already decided in PLAN.md's Phase 3 write-up rather than inventing anything
+new: the **orchestrator vs. worker** distinction (orchestrator holds the
+continuous thread and can explain why; workers are ephemeral and scoped) and
+**human gating scaled to blast radius** (propose via a UI affordance, never
+fully autonomous for anything that mutates state a human would want to
+review — today's classifier output is explicitly framed as a signal that
+feeds sorting/pills, never a trigger that acts on its own). Deliberately kept
+lean — a foundational first version sized to what the classifier alone needs
+today, to be grown as dispatch/escalation/coaching actually get built, not a
+full spec written in advance.
+
+**Behavior unchanged, verified:** the classifier's actual recipe —
+`--allowed-tools ""`, empty `--strict-mcp-config`, the Haiku model/effort
+args, the `TAG_SCHEMA` JSON schema, and the 5 `STATUS_TAGS` values — is
+untouched; `git diff --stat` confirms only `orchestratorHelper.js` changed
+(10 insertions/9 deletions, all in the prompt-loading section) plus the one
+new untracked markdown file. Verified: `node --check` on the edited file,
+a standalone ESM import test that exercises the exact `readFileSync` path
+resolution at module-load time (confirms `classifySessionStatus` still
+exports correctly and the file loads without throwing), and a full boot-test
+via `scripts/restart-dev.sh` (clean log, no errors; confirmed via
+`Get-CimInstance` that Maestro's own 4 processes recycled correctly and
+Halyard's 4 processes were untouched, consistent with the documented safe-
+restart behavior).
+
 ## 2026-07-03 — firstmate/gnhf relationship CONFIRMED; worktree-rooting question resolved
 
 **Decision:** the captain confirmed the recommendation from the deep source read
