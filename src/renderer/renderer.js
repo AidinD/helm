@@ -2546,6 +2546,39 @@ function renderQuota(quota) {
   el.classList.toggle("warn", pct >= 80);
 }
 
+// A cheap summary of exactly the fields renderSidebar()'s output depends on
+// (session identity/status/model/archived + the Jot badge fields it reads,
+// plus the config knobs that affect grouping/visibility). Comparing this
+// string is far cheaper than the full innerHTML="" + rebuild it guards —
+// found in a performance audit: the 30s poll below was rebuilding the whole
+// sidebar every tick even when nothing had changed (audit: "performance +
+// token usage granskning"). Deliberately NOT a full JSON.stringify of the
+// whole sessions/config payload — most fields on a session (turns, cwd,
+// etc.) don't affect the sidebar row at all, so including them would cause
+// false-positive "changed" on unrelated backend churn.
+function computeSidebarFingerprint(sessions, config) {
+  const sessionsPart = sessions
+    .map((s) =>
+      [
+        s.sessionId,
+        s.title,
+        s.status,
+        s.lastActivityAt,
+        s.model,
+        s.isArchived,
+        s.jot?.review,
+        s.jot?.inProgress,
+        s.jot?.open,
+        s.jot?.category,
+        s.jot?.nearestDeadline,
+      ].join(":")
+    )
+    .join("|");
+  const configPart = JSON.stringify(config.groups) + "|" + config.sidebarMode + "|" + config.archiveSuggestions?.enabled + "|" + config.hideArchived;
+  return sessionsPart + "##" + configPart;
+}
+let lastSidebarFingerprint = null;
+
 async function refresh() {
   const data = await window.maestro.getSessions();
   state.sessions = data.sessions;
@@ -2558,8 +2591,17 @@ async function refresh() {
   // mid-gesture (jarring layout jump). State above is still refreshed; the
   // sidebar re-renders on the next tick once the drag ends (dragend clears
   // the flag; reorderCategory/openSessionInPane also re-render on their own).
-  if (!categoryDragInProgress()) {
+  //
+  // Also skip the rebuild entirely when nothing the sidebar actually
+  // displays has changed since the last poll — every OTHER call site that
+  // renders in response to a real user action (search, category CRUD,
+  // opening a session, ...) calls renderSidebar() directly and is
+  // unaffected by this cache; this only guards the unconditional 30s timer
+  // tick from redoing identical work.
+  const fingerprint = computeSidebarFingerprint(state.sessions, state.config);
+  if (!categoryDragInProgress() && fingerprint !== lastSidebarFingerprint) {
     renderSidebar();
+    lastSidebarFingerprint = fingerprint;
   }
   renderQuota(state.quota);
   pruneStaleLaunchHistory();
