@@ -1,5 +1,18 @@
 # Decisions
 
+## 2026-07-02 — Done checkmark is now toggleable (un-ack undoes it)
+
+**Decision:** Aidin: "checkmarken bör gå att ta bort också (?) eller?" Agreed
+— a checkbox you can't uncheck is an odd affordance, and clicking an already-
+acked checkmark to say "actually, this needs attention again" is exactly the
+real state `acknowledgedSessions` already models (deleting the entry makes
+`main.js`'s status override fall through to the normal `deriveStatus`
+result, correctly reverting to "waiting" if still within the attention
+window). Removed the `disabled` gate; the button now toggles both ways —
+click un-acked → acked (adds the config entry), click acked → un-acked
+(deletes it) — with the same instant local visual feedback ahead of the
+async round-trip in both directions.
+
 ## 2026-07-02 — Fixed: the Done checkmark was "following along" onto new replies
 
 **Bug:** Aidin: "nästan rätt. Min avsikt var att checkmarken skulle betyda,
