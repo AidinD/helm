@@ -17,9 +17,10 @@ import { execFileSync } from "node:child_process";
  * matching `version.js`'s existing `execFileSync("git", [...])` pattern
  * rather than introducing a new way of shelling out.
  *
- * Deliberately does NOT install dependencies (`npm install` or otherwise)
- * into a fresh worktree — see `copyEnvFiles` below for what it does instead,
- * and `createWorktree`'s doc comment for why dependency install is deferred.
+ * Dependency provisioning (`node_modules` in a fresh worktree) is OPT-IN via
+ * `createWorktree`'s `deps` option - see `provisionDeps` below. Default stays
+ * the previous cheap behavior (no node_modules at all) so callers that don't
+ * need to build/test in the worktree pay no extra cost.
  */
 
 /**
@@ -110,17 +111,102 @@ export function copyEnvFiles(projectPath, worktreePath) {
 }
 
 /**
+ * The `node_modules` directory name, factored out because both provisioning
+ * and removal need to agree on exactly which path is a junction vs a real
+ * install.
+ */
+const NODE_MODULES_DIR = "node_modules";
+
+/**
+ * True if `dirPath` is a Windows directory junction / symlink (a reparse
+ * point), as opposed to a real directory. Used by `removeWorktree` to decide
+ * whether `node_modules` needs the junction-safe removal path.
+ *
+ * `fs.lstatSync` (unlike `statSync`) does NOT follow the link, so
+ * `isSymbolicLink()` here correctly reports true for a junction without
+ * ever touching whatever it points at.
+ */
+function isJunctionOrSymlink(dirPath) {
+  try {
+    return fs.lstatSync(dirPath).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Provisions `node_modules` into a freshly created worktree so an agent
+ * iteration running there can actually build/test, closing the gap this
+ * module's doc comment used to just document-and-defer.
+ *
+ * Two strategies, chosen via `deps`:
+ *
+ *   - `"junction"` (recommended default when opted in): creates a Windows
+ *     directory junction at `<worktreePath>/node_modules` pointing at the
+ *     SAME `node_modules` the source repo already has installed. Near-
+ *     instant (no copy, no network) because it's just a reparse point, not
+ *     a real directory. Caveat: this means the worktree shares the exact
+ *     same installed packages - including any native (.node) addons built
+ *     for the source repo's Node/Electron ABI - with the main checkout.
+ *     That is fine and in fact desirable for Maestro's own case (a single
+ *     JS/Electron app, one Node/Electron version, no per-worktree native
+ *     rebuild needed), but would NOT be safe for a project that needs a
+ *     genuinely isolated install (e.g. testing a dependency version bump in
+ *     the worktree without affecting the main checkout's node_modules).
+ *     Uses `fs.symlinkSync(target, path, "junction")`, which on Windows
+ *     creates a directory junction (not a symlink) and - unlike a real
+ *     symlink - does not require elevated privileges.
+ *   - `"install"` (slower, isolated): runs `npm ci` in the worktree if a
+ *     `package-lock.json` is present there (reproducible, matches what CI
+ *     would do), falling back to `npm install` otherwise. Fully independent
+ *     copy of node_modules, safe for the version-bump case above, but pays
+ *     the full registry/install cost per worktree.
+ *
+ * Best-effort by design (see `createWorktree`'s fail-safe note): any error
+ * here is caught by the caller, never left to fail worktree creation itself.
+ *
+ * @param {string} projectPath - absolute path to the source repo.
+ * @param {string} worktreePath - absolute path to the target worktree.
+ * @param {"junction"|"install"} strategy
+ * @returns {{ strategy: string, path: string }}
+ */
+function provisionDeps(projectPath, worktreePath, strategy) {
+  const sourceNodeModules = path.join(projectPath, NODE_MODULES_DIR);
+  const targetNodeModules = path.join(worktreePath, NODE_MODULES_DIR);
+
+  if (strategy === "junction") {
+    if (!fs.existsSync(sourceNodeModules)) {
+      throw new Error(`Source repo has no node_modules to junction: ${sourceNodeModules}`);
+    }
+    if (fs.existsSync(targetNodeModules)) {
+      throw new Error(`Worktree already has a node_modules: ${targetNodeModules}`);
+    }
+    // "junction" (not "dir") is the Windows-specific link type that needs no
+    // elevated privileges, unlike a real symlink.
+    fs.symlinkSync(sourceNodeModules, targetNodeModules, "junction");
+    return { strategy, path: targetNodeModules };
+  }
+
+  if (strategy === "install") {
+    const hasLockfile = fs.existsSync(path.join(worktreePath, "package-lock.json"));
+    const installArgs = hasLockfile ? ["ci"] : ["install"];
+    execFileSync("npm", installArgs, {
+      cwd: worktreePath,
+      encoding: "utf8",
+      windowsHide: true,
+      shell: true, // npm is a .cmd shim on Windows; needs a shell to resolve
+    });
+    return { strategy, path: targetNodeModules };
+  }
+
+  throw new Error(`Unknown deps strategy: ${strategy}`);
+}
+
+/**
  * Creates a new git worktree for `projectPath` on a new branch, in a sibling
  * `<repo>-worktrees/<id>` directory, then copies across any top-level
- * .env/.env.local files found in the source repo (see `copyEnvFiles`).
- *
- * Does NOT run `npm install` or any other dependency-install step — that's
- * genuinely more complex (registry access, install timing, and picking the
- * right package manager per project) and explicitly deferred past this
- * first pass. A fresh worktree from this function has tracked files + env
- * files, but no node_modules; a future pass should add that, likely as an
- * opt-in step per project rather than unconditional (not every worktree
- * consumer needs it immediately, and it's the slowest part of setup).
+ * .env/.env.local files found in the source repo (see `copyEnvFiles`), and
+ * optionally provisions `node_modules` (see `provisionDeps`).
  *
  * @param {string} projectPath - absolute path to the source repo. Never the
  *   caller's own cwd — always an explicit argument (see module doc comment).
@@ -129,7 +215,13 @@ export function copyEnvFiles(projectPath, worktreePath) {
  *   timestamp + random suffix so concurrent calls never collide.
  * @param {string} [options.branchName] - new branch name for the worktree;
  *   defaults to `maestro/<id>`.
- * @returns {{ worktreePath: string, branchName: string, envFilesCopied: string[] }}
+ * @param {"junction"|"install"|"none"} [options.deps="none"] - dependency
+ *   provisioning strategy. Defaults to `"none"` (the original behavior: no
+ *   node_modules at all) so callers that don't need to build/test in the
+ *   worktree keep the cheap, fast path. Pass `"junction"` for the fast
+ *   shared-install default, or `"install"` for a fully isolated install.
+ * @returns {{ worktreePath: string, branchName: string, envFilesCopied: string[],
+ *   depsProvisioned: { strategy: string, path: string }|null, depsError: string|null }}
  */
 export function createWorktree(projectPath, options = {}) {
   const resolvedProject = path.resolve(projectPath);
@@ -141,6 +233,7 @@ export function createWorktree(projectPath, options = {}) {
   const branchName = options.branchName || `maestro/${id}`;
   const worktreesRoot = worktreesRootFor(resolvedProject);
   const worktreePath = path.join(worktreesRoot, id);
+  const deps = options.deps || "none";
 
   if (fs.existsSync(worktreePath)) {
     throw new Error(`Worktree path already exists: ${worktreePath}`);
@@ -155,7 +248,25 @@ export function createWorktree(projectPath, options = {}) {
 
   const envFilesCopied = copyEnvFiles(resolvedProject, worktreePath);
 
-  return { worktreePath, branchName, envFilesCopied };
+  // Fail-safe: a provisioning failure (missing node_modules to junction, npm
+  // registry hiccup, etc.) must never leave the caller with no worktree at
+  // all - the worktree itself is already valid and usable (just without
+  // deps), so we log-and-continue rather than throwing. Callers that need to
+  // know can inspect `depsError` on the returned object.
+  let depsProvisioned = null;
+  let depsError = null;
+  if (deps !== "none") {
+    try {
+      depsProvisioned = provisionDeps(resolvedProject, worktreePath, deps);
+    } catch (err) {
+      depsError = err.message;
+      console.error(
+        `[worktree] Dependency provisioning ("${deps}") failed for ${worktreePath}: ${err.message}`
+      );
+    }
+  }
+
+  return { worktreePath, branchName, envFilesCopied, depsProvisioned, depsError };
 }
 
 /**
@@ -186,6 +297,22 @@ export function hasUncommittedChanges(worktreePath) {
  * thrown, not swallowed, so a caller always knows whether the removal
  * actually happened.
  *
+ * CRITICAL junction safety (verified empirically, not assumed): if
+ * `createWorktree` was called with `deps: "junction"`, the worktree's
+ * `node_modules` is a reparse point pointing at the SOURCE repo's real
+ * `node_modules`. `git worktree remove` (even with `--force`) does NOT
+ * treat that specially - it follows the junction like a normal directory
+ * and deletes everything inside it, which would silently wipe out the main
+ * repo's real `node_modules` (confirmed by direct test: a junctioned
+ * `node_modules` left in place for `git worktree remove --force` to handle
+ * emptied the shared target directory completely). So this function ALWAYS
+ * removes a junctioned `node_modules` itself first, using `fs.rmSync` on
+ * the junction path directly - `fs.rmSync`/`rmdir` on a Windows reparse
+ * point removes only the link/reparse entry itself, never the target's
+ * contents (also confirmed by direct test). Only after that pre-removal
+ * does `git worktree remove` run, by which point there is no junction left
+ * for it to walk into.
+ *
  * @param {string} projectPath - absolute path to the source repo (the one
  *   the worktree was created FROM, not the worktree path itself).
  * @param {string} worktreePath - absolute path to the worktree to remove.
@@ -204,6 +331,22 @@ export function removeWorktree(projectPath, worktreePath, options = {}) {
     throw new Error(
       `Worktree has uncommitted changes: ${resolvedWorktree}. Pass { force: true } to remove anyway.`
     );
+  }
+
+  // Junction-safety step - see doc comment above. Must run BEFORE `git
+  // worktree remove`, and must only ever unlink (never recurse through) the
+  // junction. `isJunctionOrSymlink` uses `lstat`, which never follows the
+  // link, so this can never mistake a real (non-junctioned) node_modules
+  // directory for a junction and is safe to run unconditionally.
+  const nodeModulesPath = path.join(resolvedWorktree, NODE_MODULES_DIR);
+  if (isJunctionOrSymlink(nodeModulesPath)) {
+    try {
+      fs.rmSync(nodeModulesPath, { recursive: true, force: true });
+    } catch (err) {
+      throw new Error(
+        `Failed to remove node_modules junction before worktree removal: ${nodeModulesPath}: ${err.message}`
+      );
+    }
   }
 
   const args = ["worktree", "remove", resolvedWorktree];

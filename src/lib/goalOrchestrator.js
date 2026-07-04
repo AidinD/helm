@@ -358,9 +358,20 @@ export async function runGoal({
     throw new Error("runGoal requires both projectPath and goal.");
   }
 
+  // `deps: "junction"` so an iteration can actually run builds/tests in the
+  // worktree (this is the whole point of Point 11 hardening - a goal that
+  // can't run its own tests can't self-verify). Junction, not a full
+  // install: it's near-instant and Maestro is a single JS/Electron app with
+  // one Node/Electron ABI, so sharing the main repo's node_modules across
+  // worktrees is safe here (see worktree.js's provisionDeps doc comment for
+  // when that would NOT hold). A failed provisioning still leaves a usable
+  // worktree (createWorktree's own fail-safe) - the first iteration would
+  // just see a missing node_modules and can `npm install` itself, same as
+  // before this change.
   const { worktreePath, branchName } = createWorktree(projectPath, {
     id: `goal-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     branchName: `maestro/goal-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    deps: "junction",
   });
   // The exact commit this worktree forked from — the baseline for counting
   // how many commits the goal itself added (see countCommitsOnBranch). Captured
