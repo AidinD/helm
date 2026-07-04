@@ -8,8 +8,11 @@
 // (transformers.js) runs Whisper via prebuilt ONNX runtime binaries — no C++
 // compile step — and auto-downloads the model to its own cache on first use,
 // which is a one-time background download, not a blocking manual install.
-// (The current Swedish-specialized model is larger than the old ~150MB base —
-// see MODEL_ID below — but is still a one-time cached download.)
+// (The current Swedish-specialized model is larger than the old ~150MB base -
+// see MODEL_ID/MODEL_DTYPE below - but is still a one-time cached download,
+// and this module now runs inside a dedicated worker process, not the
+// Electron main process - see voiceWorker.js - so loading/inference never
+// blocks the app's UI/IPC event loop.)
 import { pipeline } from "@huggingface/transformers";
 
 // Swedish-SPECIALIZED model. Progression: "whisper-tiny.en" (English-only,
@@ -27,12 +30,30 @@ import { pipeline } from "@huggingface/transformers";
 // test noted in the swap report). "small" is the accuracy sweet spot; sizes up
 // (kb-whisper-medium/-large ONNX) exist if even more accuracy is wanted, at a
 // much larger download.
-//
-// NOTE: real Swedish transcription QUALITY still needs the captain's live mic test —
-// a silent/synthetic buffer only proves the pipeline runs, not that dictation
-// is accurate. If it's good, this is the destination; if not, bump to
-// "onnx-community/kb-whisper-medium-ONNX".
 const MODEL_ID = "onnx-community/kb-whisper-small-ONNX";
+
+// Quantization for MODEL_ID's ONNX weights. The captain's live test after the
+// Swedish-quality swap: "Swedish and 'auto' work BETTER than before, but the
+// whole experience is SLOWER" - the previous "fp32" dtype loads the
+// full-precision weights (~970MB download: encoder_model.onnx 353MB +
+// decoder_model_merged.onnx 615MB) and runs matmuls at full precision, both
+// slow. "q8" (transformers.js's DEFAULT_DTYPE_SUFFIX_MAPPING maps it to the
+// "_quantized" file suffix - see node_modules/@huggingface/transformers/src/
+// utils/dtypes.js) picks the 8-bit quantized ONNX weights the
+// onnx-community/kb-whisper-small-ONNX repo ships alongside fp32
+// (encoder_model_quantized.onnx 92.2MB + decoder_model_merged_quantized.onnx
+// 314MB, ~406MB total - verified present on the repo before picking this,
+// not guessed): well under half the download, and int8 matmuls run
+// substantially faster than fp32 on the CPU execution provider
+// (onnxruntime-node) this app runs on. Chose "q8" over the even smaller "q4"
+// (~300MB) to protect the Swedish-quality gain that was the whole point of
+// switching to kb-whisper-small in the first place - 4-bit weight
+// quantization risks a bigger accuracy hit than 8-bit, and this model is
+// specifically valued for its transcription quality. If "q8" still isn't
+// fast enough on the captain's machine, try "q4" here, or step down to the smaller
+// "onnx-community/kb-whisper-base-ONNX" (same KBLab Swedish training, ~1/4
+// the parameter count) before falling back to a generic model.
+const MODEL_DTYPE = "q8";
 
 // Default transcription language when a caller passes nothing. Kept as
 // "swedish" so a stale caller (or any code path that forgets to pass a
@@ -50,15 +71,15 @@ const MODEL_ID = "onnx-community/kb-whisper-small-ONNX";
 const DEFAULT_TRANSCRIBE_LANGUAGE = "swedish";
 
 // Loaded once, reused across every transcription call in the process
-// lifetime — re-creating the pipeline per call would re-load the (now larger,
-// ~1GB fp32) model from disk every time. Verified load+run for this model:
-// ~64s cold (includes the one-time download) and ~6s per transcription; warm
-// re-use skips the download.
+// lifetime - re-creating the pipeline per call would re-load the model from
+// disk (and re-run ONNX session init) every time. This module is imported by
+// the voice worker process (see voiceWorker.js), which lives exactly as long
+// as the app does, so "once" here means once per app run.
 let transcriberPromise = null;
 
 function getTranscriber() {
   if (!transcriberPromise) {
-    transcriberPromise = pipeline("automatic-speech-recognition", MODEL_ID, { dtype: "fp32" }).catch((err) => {
+    transcriberPromise = pipeline("automatic-speech-recognition", MODEL_ID, { dtype: MODEL_DTYPE }).catch((err) => {
       // Let the next call retry instead of permanently caching a failure
       // (e.g. a transient network error on the first-ever model download).
       transcriberPromise = null;

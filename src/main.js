@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, Notification, clipboard } from "electron";
+import { app, BrowserWindow, ipcMain, dialog, shell, Notification, clipboard, utilityProcess } from "electron";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
@@ -18,7 +18,6 @@ import { judgeModelFit } from "./lib/judge.js";
 import { classifySessionStatus, estimateSessionContextTokens, compactSession, getTranscriptSize } from "./lib/orchestratorHelper.js";
 import { savePastedImage, prunePastedImages } from "./lib/images.js";
 import { computeVersionString } from "./lib/version.js";
-import { transcribeAudio } from "./lib/voice.js";
 import { runGoal } from "./lib/goalOrchestrator.js";
 import { buildArtifactSrcdoc, formatAnnotationsAsPrompt } from "./lib/lavishSdk.js";
 
@@ -328,14 +327,74 @@ ipcMain.handle("image:save", (_event, { base64Data, ext }) => {
 // --- Voice input: transcribe recorded mic audio locally (offline Whisper via
 // @huggingface/transformers — see src/lib/voice.js for why this option was
 // picked over the OS speech API / whisper.cpp bindings / OpenSuperWhisper).
+//
+// The actual ONNX inference runs in a dedicated utility process (see
+// src/lib/voiceWorker.js), NOT here on the main process. The captain's feedback
+// after the Swedish-quality model swap: "even the mic button feels laggy" -
+// the CPU-bound Whisper inference used to run directly on this IPC handler,
+// which is on the main process's event loop, so a multi-second
+// transcription blocked EVERY other IPC round-trip (session polling, the
+// mic button's own state, etc.) until it finished. utilityProcess.fork()
+// gives the model its own OS process and event loop; this process now only
+// ever does a cheap postMessage + await reply, so the UI stays responsive
+// no matter how long a transcription takes.
+//
+// The worker is spawned lazily on first use (not at app startup) so apps
+// that never touch voice input never pay the ~1s process-spawn cost or hold
+// the model in memory. It is then kept alive and reused for every
+// subsequent call in the app's lifetime - restarting it per call would
+// re-load the (hundreds-of-MB) ONNX model from disk every time, which is
+// exactly the per-call reload voice.js's own transcriberPromise caching was
+// already written to avoid.
+let voiceWorker = null;
+let voiceRequestId = 0;
+const pendingVoiceRequests = new Map(); // id -> { resolve, reject }
+
+function getVoiceWorker() {
+  if (voiceWorker) {
+    return voiceWorker;
+  }
+  voiceWorker = utilityProcess.fork(path.join(__dirname, "lib", "voiceWorker.js"));
+  voiceWorker.on("message", (message) => {
+    const pending = pendingVoiceRequests.get(message.id);
+    if (!pending) {
+      return; // stale/unknown reply (worker restarted mid-flight, etc.) - ignore.
+    }
+    pendingVoiceRequests.delete(message.id);
+    pending.resolve(message);
+  });
+  voiceWorker.on("exit", (code) => {
+    console.error(`[maestro] voice worker exited unexpectedly (code ${code})`);
+    // Fail every request still waiting on the dead worker instead of hanging
+    // the mic button forever; the next transcribe call spawns a fresh worker.
+    for (const pending of pendingVoiceRequests.values()) {
+      pending.reject(new Error("Voice worker process exited unexpectedly"));
+    }
+    pendingVoiceRequests.clear();
+    voiceWorker = null;
+  });
+  return voiceWorker;
+}
+
+function transcribeInWorker(samples, language) {
+  return new Promise((resolve, reject) => {
+    const id = ++voiceRequestId;
+    pendingVoiceRequests.set(id, { resolve, reject });
+    getVoiceWorker().postMessage({ id, samples, language });
+  });
+}
+
 // samples arrives as a plain array of floats (structured-clone can't carry a
 // Float32Array through contextBridge's IPC boundary as-is in every Electron
-// version, so the renderer sends Array.from(float32Array) and this rebuilds
-// the typed array main-process-side). ---
+// version, so the renderer sends Array.from(float32Array); it is forwarded
+// as-is to the worker, which rebuilds the typed array on its side). ---
 ipcMain.handle("voice:transcribe", async (_event, { samples, language }) => {
   try {
-    const text = await transcribeAudio(Float32Array.from(samples), language);
-    return { ok: true, text };
+    const message = await transcribeInWorker(samples, language);
+    if (!message.ok) {
+      throw new Error(message.error);
+    }
+    return { ok: true, text: message.text };
   } catch (err) {
     console.error("[maestro] voice transcription failed:", err);
     return { ok: false, error: err.message };
@@ -961,6 +1020,13 @@ app.on("before-quit", () => {
     killChildTree(child, { sync: true });
   }
   liveChildren.clear();
+  // Electron tears down utilityProcess children on quit regardless, but
+  // killing it explicitly avoids depending on that ordering and matches the
+  // liveChildren cleanup right above.
+  if (voiceWorker) {
+    voiceWorker.kill();
+    voiceWorker = null;
+  }
 });
 
 app.on("window-all-closed", () => {
