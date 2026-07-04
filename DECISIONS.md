@@ -1,5 +1,114 @@
 # Decisions
 
+## 2026-07-04 — Continuous voice input: rolling re-transcription (live partials while holding), not real streaming
+
+Follow-up to the same-day voice-input entries (hold-to-record, multilingual,
+language picker, whisper-base).
+The captain's ask: make transcription CONTINUOUS - show what it's hearing
+progressively WHILE he speaks, like Claude Desktop, instead of all-at-once when
+he releases the hold.
+
+**Design reality, stated honestly: Whisper is NOT a streaming model.**
+There is no token-level streaming to tap into - the model transcribes a whole
+clip at once.
+So "continuous" here is built as ROLLING RE-TRANSCRIPTION, the pragmatic
+approach that actually fits Whisper: while the hold is active, on an interval we
+take ALL the audio captured so far, transcribe the whole accumulated clip, and
+replace the live partial text in the composer with the latest fuller result; on
+release, one last full transcription produces the authoritative text.
+No attempt at real streaming was made because the model can't do it.
+
+**Kept the trigger identical - this is purely additive.**
+Hold-to-record (mic button mousedown/mouseup/mouseleave, and Alt-in-composer
+keydown/keyup/blur) is untouched, as are the mic SVG icons, the language picker,
+the model, and the thinking indicator - all already done and committed.
+Continuous is about showing partial results DURING the existing hold, not a new
+interaction.
+
+**Rolling loop (`src/renderer/renderer.js`, `startVoiceRecording` ~line 228).**
+`MediaRecorder` is now started with a 1s timeslice (`mediaRecorder.start(1000)`)
+so `dataavailable` chunks accumulate ~every second instead of arriving as one
+blob only at stop.
+A `setInterval(rollingTick, VOICE_ROLLING_INTERVAL_MS)` (new named tunable
+constant, 2000ms) drives the live updates: each tick concatenates the
+chunks-so-far, reuses the EXACT existing path - `decodeToMono16k` +
+`window.maestro.transcribeVoice(samples, language)` -> the same
+`voice:transcribe` IPC -> the same `transcribeAudio` in `voice.js` - and shows
+the result as the live partial.
+No second transcription path was built; `voice.js` is UNCHANGED (the same
+`transcribeAudio` works on a partial clip - confirmed by reading it, nothing
+there assumes a "complete" utterance).
+2s was chosen because whisper-base takes a couple seconds per call and each tick
+re-transcribes the FULL clip-so-far; shorter risks the model never keeping up.
+
+**Non-overlap: skip a tick, never queue a backlog.**
+The per-recording entry carries an `inFlight` boolean.
+`rollingTick` returns immediately if `inFlight` is already true (the previous
+tick's whisper call hasn't returned yet), so a slow transcription just means
+fewer live updates that interval, never a pile-up of queued calls that outlives
+the recording.
+The interval is cleared the instant `MediaRecorder` fires `stop`
+(`clearInterval(entry.rollingTimer)`), and a `stopped` flag makes any
+late-returning rolling tick discard its own result rather than clobber the
+authoritative final text.
+A tick also discards its result if `activeRecordings.get(index) !== entry` - the
+pane was reset/replaced mid-recording (same staleness concern the index-keyed
+map already guards elsewhere).
+
+**Text replacement: replace only the VOICE span, never the user's typed text.**
+The core requirement was that a partial "vi ska" becoming "vi ska bygga" updates
+IN PLACE rather than appending duplicates, AND that text the user typed manually
+before recording is never destroyed.
+Implemented via a pure helper `replaceVoiceSpan(currentValue, voiceStart,
+voiceLen, newVoiceText)` returning `{ value, newVoiceLen }`.
+`voiceStart` is captured once - the caret position (`selectionStart`) when the
+hold began - so everything before it is the user's own text and is left
+untouched; `voiceLen` tracks how much the voice text currently occupies, so each
+update replaces exactly the previous partial's span.
+A separator space is added before the voice text only when there is preceding
+user text that doesn't already end in whitespace, and that space counts as part
+of the voice span so a later SHORTER partial still replaces cleanly (no stranded
+space).
+The final result on release goes through the same helper, replacing the last
+partial; an empty final result cleanly removes any stray partial rather than
+leaving it behind.
+
+**Perf honesty (a known v1 limitation, not papered over).**
+whisper-base is slower than tiny, and re-transcribing the full accumulated clip
+every 2s is real CPU that grows with recording length.
+The non-overlap skip and immediate interval-stop-on-release are implemented;
+a windowed/VAD approach that only re-transcribes recent audio was deliberately
+NOT built for v1 (over-engineering before we know it's needed).
+If long recordings feel laggy in real use, that windowing is the documented next
+step.
+A second real unknown: this decodes a mid-stream webm/opus blob
+(header chunk + accumulated chunks) via `decodeAudioData` on each tick - the
+standard MediaRecorder-timeslice approach, but its behavior on a partial stream
+is exactly the kind of thing only a live mic can confirm.
+
+**Verified.**
+`node --check src/renderer/renderer.js` passes.
+The text-replacement logic was unit-tested standalone
+(`spike/test-voice-span-replace.mjs`, a new spike): it reads the shipped
+`replaceVoiceSpan` out of renderer.js and evals it (testing the real code, not a
+copy), 10 assertions, all pass - empty composer, partial growing in place,
+partial shrinking, preceding user text with/without trailing whitespace, newline
+separators, final-empty-removes-stray, and the after-span edge case.
+Full boot-test via `scripts/restart-dev.sh` (never a bare taskkill, per
+CLAUDE.md): clean boot, killed exactly Maestro's own 4 PIDs, no errors in the
+boot log, exactly 4 Maestro PIDs running afterward (no stray duplicate
+instances).
+**What this could NOT verify** (no microphone on this machine, same limitation
+as every prior voice-input entry): the actual live experience - partials
+appearing in the composer while speaking and updating in place, the 2s cadence
+feeling right, whisper-base keeping up (or not) with the rolling re-transcription
+on real hardware, mid-stream webm/opus decoding working per-tick, and whether the
+final text cleanly supersedes the last partial.
+All of that needs the captain's own real-microphone test.
+The non-overlap skip logic and the voice-span replacement logic ARE verified
+(the former by code inspection of the `inFlight`/`stopped` guards, the latter by
+the standalone unit test above).
+
 ## 2026-07-04 — Voice input: a language picker next to the mic (replaces hardcoded forced-Swedish)
 
 Follow-up to the same-day "force Swedish transcription" entry, after the captain's

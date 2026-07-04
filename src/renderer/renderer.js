@@ -173,6 +173,44 @@ const activeRecordings = new Map(); // index -> { mediaRecorder, stream, chunks 
 // nothing will ever stop.
 const heldRecordings = new Set(); // index
 
+// CONTINUOUS ("live") transcription — the captain's ask: show what's being heard
+// progressively WHILE holding, like Claude Desktop, instead of only on
+// release. Whisper is NOT a streaming model, so this is deliberately built as
+// ROLLING RE-TRANSCRIPTION, not real token streaming: while held, on this
+// interval we take ALL audio captured so far, transcribe the whole
+// accumulated clip, and replace the live partial in the composer with the
+// latest fuller result. On release, one last full transcription produces the
+// authoritative text. See DECISIONS.md ("continuous voice input").
+//
+// Tunable. ~2s balances responsiveness against cost: whisper-base takes a
+// couple seconds per call, and each tick re-transcribes the FULL clip-so-far,
+// so a shorter interval risks the model never keeping up. Overlapping calls
+// are skipped (an in-flight guard on the recording entry), so a slow tick
+// never queues a backlog — it just means fewer live updates, never a pile-up.
+const VOICE_ROLLING_INTERVAL_MS = 2000;
+
+// Pure helper (unit-tested standalone, see spike/test-voice-span-replace.mjs):
+// replace only the VOICE-inserted span of the composer text, leaving anything
+// the user typed manually before recording untouched. `voiceStart` is the
+// offset where voice text begins; `voiceLen` is the length currently occupying
+// that span (0 before the first insert). Returns the new full value plus the
+// new voice-span length so the caller can track it for the next update.
+//
+// A separator space is inserted before the voice text only when there IS
+// preceding user text and it doesn't already end in whitespace — so "hej" +
+// voice "world" becomes "hej world", but an empty composer just gets "world".
+// The separator counts as part of the voice span so a later shorter partial
+// (e.g. "world" -> "wo") still cleanly replaces it without stranding a space.
+function replaceVoiceSpan(currentValue, voiceStart, voiceLen, newVoiceText) {
+  const before = currentValue.slice(0, voiceStart);
+  const after = currentValue.slice(voiceStart + voiceLen);
+  let insert = newVoiceText;
+  if (before.length > 0 && !/\s$/.test(before) && newVoiceText.length > 0) {
+    insert = " " + newVoiceText;
+  }
+  return { value: before + insert + after, newVoiceLen: insert.length };
+}
+
 // Inline SVGs, not emoji, for the mic button's two states — matches the
 // convention set by wireScrollToBottomButton's down-arrow: currentColor
 // strokes/fills so the glyph inherits the button's own text color (works
@@ -213,7 +251,80 @@ async function startVoiceRecording(index, micBtn, promptEl) {
       chunks.push(e.data);
     }
   });
+
+  // The recording entry carries the live-transcription bookkeeping:
+  //  voiceStart  — offset in promptEl.value where voice text begins (captured
+  //                once, at the caret position when the hold started, so text
+  //                the user typed BEFORE recording is never clobbered).
+  //  voiceLen    — length currently occupying the voice span (grows/shrinks as
+  //                partials come in; 0 before the first insert).
+  //  inFlight    — a rolling transcription is currently running; the next tick
+  //                skips rather than queueing a backlog (whisper-base is slow).
+  //  stopped     — the hold has been released; a late-returning rolling tick
+  //                must NOT overwrite the authoritative final transcription.
+  //  rollingTimer — the setInterval handle, cleared the instant recording ends.
+  const selStart = typeof promptEl.selectionStart === "number" ? promptEl.selectionStart : promptEl.value.length;
+  const entry = {
+    mediaRecorder,
+    stream,
+    chunks,
+    voiceStart: selStart,
+    voiceLen: 0,
+    inFlight: false,
+    stopped: false,
+    rollingTimer: null,
+  };
+
+  // Apply one transcription result (partial OR final) into the composer,
+  // replacing only the voice span and updating voiceLen so the next result
+  // replaces THIS text rather than appending a duplicate. Caret is left at the
+  // end of the voice span so a partial growing in place reads naturally.
+  const applyResult = (text) => {
+    const { value, newVoiceLen } = replaceVoiceSpan(promptEl.value, entry.voiceStart, entry.voiceLen, text);
+    promptEl.value = value;
+    entry.voiceLen = newVoiceLen;
+    const caret = entry.voiceStart + newVoiceLen;
+    promptEl.setSelectionRange(caret, caret);
+    promptEl.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+
+  // Read the transcription language fresh each call so a change mid-recording
+  // still takes effect; fall back to "swedish" (pre-picker default) if config
+  // hasn't loaded. Reused by both the rolling ticks and the final pass.
+  const currentLanguage = () => state.config?.voiceLanguage || "swedish";
+
+  // Transcribe the accumulated-so-far clip and, if still valid to do so, show
+  // it as the live partial. Skips overlapping calls via entry.inFlight, and
+  // discards its own result if the recording has since stopped (the final
+  // transcription is authoritative) or the pane's recording was replaced.
+  const rollingTick = async () => {
+    if (entry.inFlight || entry.stopped || chunks.length === 0) {
+      return;
+    }
+    if (activeRecordings.get(index) !== entry) {
+      return; // pane reset/replaced this recording out from under us.
+    }
+    entry.inFlight = true;
+    try {
+      const samples = await decodeToMono16k(new Blob(chunks.slice(), { type: mediaRecorder.mimeType }));
+      const res = await window.maestro.transcribeVoice(Array.from(samples), currentLanguage());
+      if (!entry.stopped && activeRecordings.get(index) === entry && res.ok && typeof res.text === "string") {
+        applyResult(res.text);
+      }
+    } catch {
+      // A failed partial is non-fatal — the final transcription on release is
+      // the authoritative one; just skip this tick's update.
+    } finally {
+      entry.inFlight = false;
+    }
+  };
+
   mediaRecorder.addEventListener("stop", async () => {
+    entry.stopped = true;
+    if (entry.rollingTimer) {
+      clearInterval(entry.rollingTimer);
+      entry.rollingTimer = null;
+    }
     stream.getTracks().forEach((track) => track.stop());
     activeRecordings.delete(index);
     heldRecordings.delete(index);
@@ -223,21 +334,15 @@ async function startVoiceRecording(index, micBtn, promptEl) {
     micBtn.title = "Transcribing…";
     try {
       const samples = await decodeToMono16k(new Blob(chunks, { type: mediaRecorder.mimeType }));
-      // Single global transcription language (config.voiceLanguage), picked
-      // via the language dropdown next to the mic. Read fresh at transcribe
-      // time so a change mid-recording still takes effect; fall back to
-      // "swedish" (the pre-picker default) if config hasn't loaded.
-      const language = state.config?.voiceLanguage || "swedish";
-      const res = await window.maestro.transcribeVoice(Array.from(samples), language);
-      if (res.ok && res.text) {
-        // Append rather than replace — voice is an alternative way to ADD to
-        // what you're composing, not a destructive overwrite of anything
-        // already typed.
-        const existing = promptEl.value;
-        promptEl.value = existing && !existing.endsWith(" ") && !existing.endsWith("\n") ? `${existing} ${res.text}` : `${existing}${res.text}`;
-        promptEl.dispatchEvent(new Event("input", { bubbles: true }));
+      const res = await window.maestro.transcribeVoice(Array.from(samples), currentLanguage());
+      if (res.ok) {
+        // Authoritative final result — replaces whatever partial the last
+        // rolling tick left in the voice span (voiceStart/voiceLen still point
+        // at exactly that span). If the final text is empty, this cleanly
+        // removes any stray partial rather than leaving it behind.
+        applyResult(res.text || "");
         promptEl.focus();
-      } else if (!res.ok) {
+      } else {
         micBtn.title = `Transcription failed: ${res.error}`;
       }
     } catch (err) {
@@ -247,11 +352,15 @@ async function startVoiceRecording(index, micBtn, promptEl) {
       micBtn.title = "Hold to record voice input (transcribed locally, offline) — or hold Alt in the composer";
     }
   });
-  activeRecordings.set(index, { mediaRecorder, stream, chunks });
-  mediaRecorder.start();
+
+  activeRecordings.set(index, entry);
+  // Timeslice so dataavailable fires ~every second, giving the rolling loop a
+  // growing set of chunks to re-transcribe instead of one blob only at stop.
+  mediaRecorder.start(1000);
+  entry.rollingTimer = setInterval(rollingTick, VOICE_ROLLING_INTERVAL_MS);
   micBtn.classList.add("recording");
   micBtn.innerHTML = MIC_ICON_RECORDING;
-  micBtn.title = "Recording — release to stop";
+  micBtn.title = "Recording — release to stop (transcribing live)";
 }
 
 function stopVoiceRecording(index) {
