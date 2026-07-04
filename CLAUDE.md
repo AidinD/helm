@@ -12,6 +12,16 @@ running at the same time. Always restart via `scripts/restart-dev.sh`
 (shells out to `scripts/kill-maestro.ps1`), which only kills processes whose
 command line actually points at this repo.
 
+## Icons over emoji
+
+For interactive controls (buttons, icon-buttons), prefer a small inline SVG
+glyph (`currentColor` stroke/fill, no icon-library dependency) over a raw
+emoji - emoji render inconsistently across platforms/fonts and read as less
+polished. See the mic button (`MIC_ICON_IDLE`/`MIC_ICON_RECORDING` in
+`src/renderer/renderer.js`) for the reference pattern. Emoji are still fine
+for lightweight informal status text/badges (e.g. "⚠"/"❓ Needs your input")
+where a custom glyph isn't worth building.
+
 ## Core principles (full detail in PLAN.md)
 
 - Wrap the real CLI - never re-implement Claude, never strip features.

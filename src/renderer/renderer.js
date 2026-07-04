@@ -173,6 +173,20 @@ const activeRecordings = new Map(); // index -> { mediaRecorder, stream, chunks 
 // nothing will ever stop.
 const heldRecordings = new Set(); // index
 
+// Inline SVGs, not emoji, for the mic button's two states — matches the
+// convention set by wireScrollToBottomButton's down-arrow: currentColor
+// strokes/fills so the glyph inherits the button's own text color (works
+// with .icon-btn's normal/hover/.recording states via CSS, nothing baked
+// in), sized to sit inside the existing 26px .icon-btn box. See CLAUDE.md
+// "Icons over emoji" for the standing convention this establishes.
+const MIC_ICON_IDLE =
+  '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+  '<rect x="9" y="2" width="6" height="12" rx="3"/>' +
+  '<path d="M5 11a7 7 0 0 0 14 0"/>' +
+  '<path d="M12 18v4"/>' +
+  "</svg>";
+const MIC_ICON_RECORDING = '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>';
+
 async function startVoiceRecording(index, micBtn, promptEl) {
   if (activeRecordings.has(index) || heldRecordings.has(index)) {
     return; // already recording, or already mid-startup for this pane (button + Alt held together fire this twice).
@@ -204,7 +218,7 @@ async function startVoiceRecording(index, micBtn, promptEl) {
     activeRecordings.delete(index);
     heldRecordings.delete(index);
     micBtn.classList.remove("recording");
-    micBtn.textContent = "🎤";
+    micBtn.innerHTML = MIC_ICON_IDLE;
     micBtn.disabled = true;
     micBtn.title = "Transcribing…";
     try {
@@ -231,7 +245,7 @@ async function startVoiceRecording(index, micBtn, promptEl) {
   activeRecordings.set(index, { mediaRecorder, stream, chunks });
   mediaRecorder.start();
   micBtn.classList.add("recording");
-  micBtn.textContent = "⏹";
+  micBtn.innerHTML = MIC_ICON_RECORDING;
   micBtn.title = "Recording — release to stop";
 }
 
@@ -2901,7 +2915,7 @@ function paneComposerEl(index) {
   const micBtn = document.createElement("button");
   micBtn.type = "button";
   micBtn.className = "icon-btn";
-  micBtn.textContent = "🎤";
+  micBtn.innerHTML = MIC_ICON_IDLE;
   micBtn.title = "Hold to record voice input (transcribed locally, offline) — or hold Alt in the composer";
   micBtn.addEventListener("mousedown", (e) => {
     e.preventDefault(); // don't steal focus from the composer on mousedown
