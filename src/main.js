@@ -6,7 +6,7 @@ import crypto from "node:crypto";
 import { execFile, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { readAllSessions, enrichWithJot, setSessionArchived, forkTranscriptAtUserMessage, switchSessionRootFolder } from "./lib/sessions.js";
-import { loadJot, loadGoals, addSubtask } from "./lib/jot.js";
+import { loadJot, loadGoals, addSubtask, formatJotSummaryForClassifier } from "./lib/jot.js";
 import { loadConfig, writeConfig } from "./lib/config.js";
 import { startSession } from "./lib/launcher.js";
 import { suggestModelEffort } from "./lib/suggest.js";
@@ -842,17 +842,10 @@ async function runOrchestratorSweepBody(config, { classifyOn, compactOn, accurac
       return !prior || prior.classifiedAtActivity !== s.lastActivityAt;
     });
     for (const session of toClassify.slice(0, MAX_CLASSIFICATIONS_PER_SWEEP)) {
-      const jotSummary = session.jot
-        ? `${session.jot.category} (${
-            [
-              session.jot.review > 0 ? `${session.jot.review} review` : null,
-              session.jot.inProgress > 0 ? `${session.jot.inProgress} in progress` : null,
-              session.jot.open > 0 ? `${session.jot.open} open` : null,
-            ]
-              .filter(Boolean)
-              .join(", ") || "no open items"
-          })`
-        : null;
+      // Minimal, explicit projection — see formatJotSummaryForClassifier's own
+      // doc comment for why this is a category name + counts, never raw todo
+      // text/descriptions.
+      const jotSummary = formatJotSummaryForClassifier(session.jot);
       let result;
       try {
         result = await classifySessionStatus({

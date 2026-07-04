@@ -178,6 +178,60 @@ function emptyIndex(jotPath) {
   };
 }
 
+// ============================ Context projection ============================
+// Helpers that shrink Jot data down to the minimal fields a model/agent
+// context actually needs. todos.json carries fields no consumer of model
+// context needs at all (images, createdAt, completedAt) and some that are
+// only needed by specific consumers (a long description body). Every place
+// that turns Jot data into text a model will read should go through one of
+// these rather than serializing a raw todo or category object, so adding a
+// field to todos.json in the future doesn't silently balloon prompt size.
+//
+// This is purely about what's READ INTO CONTEXT — it never affects what's
+// matched (matchByTitle/matchByPath/matchByName), ranked (loadGoals), or
+// written back (addSubtask), which all keep working against the full parsed
+// data as before.
+
+// Kept for model context: enough to identify the todo, act on it, and place
+// it in the task hierarchy. Dropped: description (can be long free text; a
+// consumer that genuinely needs it should read it explicitly, not get it by
+// default), images, createdAt, completedAt (irrelevant to "what should I do
+// / how is this session's linked work doing").
+export function projectTodoForContext(todo) {
+  if (!todo) {
+    return null;
+  }
+  return {
+    id: todo.id,
+    text: todo.text || "",
+    status: todo.status || "open",
+    priority: typeof todo.priority === "number" ? todo.priority : null,
+    categoryId: todo.categoryId ?? null,
+    parentId: todo.parentId ?? null,
+  };
+}
+
+/**
+ * Builds the one-line Jot summary the orchestrator helper's classifier prompt
+ * embeds for a session (see orchestratorHelper.js's classifySessionStatus).
+ * Takes the small per-session aggregate enrichWithJot already computed
+ * (session.jot: { category, open, inProgress, review, ... }), not raw todos —
+ * the classifier only ever needs "which list, how much open/in-progress/
+ * review work," never individual todo text or descriptions. Returns null when
+ * the session has no matched Jot category.
+ */
+export function formatJotSummaryForClassifier(sessionJot) {
+  if (!sessionJot) {
+    return null;
+  }
+  const parts = [
+    sessionJot.review > 0 ? `${sessionJot.review} review` : null,
+    sessionJot.inProgress > 0 ? `${sessionJot.inProgress} in progress` : null,
+    sessionJot.open > 0 ? `${sessionJot.open} open` : null,
+  ].filter(Boolean);
+  return `${sessionJot.category} (${parts.join(", ") || "no open items"})`;
+}
+
 function normalize(str) {
   return String(str || "")
     .toLowerCase()
