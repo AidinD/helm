@@ -2,7 +2,7 @@ import { spawn, execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { resolveClaudeBinary } from "./launcher.js";
-import { createWorktree } from "./worktree.js";
+import { createWorktree, removeWorktree } from "./worktree.js";
 
 /**
  * Fas 3 Point 11 v1 — a real goal orchestrator, adapted (not copied) from
@@ -164,6 +164,18 @@ function runIteration({ worktreePath, goal, notesContent, model, effort }) {
       ITERATION_SCHEMA,
       "--system-prompt",
       ITERATION_SYSTEM_PROMPT,
+      // Without an explicit permission mode, a real goal that edits files /
+      // runs a build / touches git hits a permission prompt the headless
+      // child has no TTY to answer, so it hangs until ITERATION_TIMEOUT_MS,
+      // fails, and after two such iterations the whole run aborts for zero
+      // progress (review finding: the feature is dead-on-arrival for real
+      // goals without this; the trivial spike only squeaked by). Bypassing is
+      // SAFE precisely because every iteration runs inside the isolated,
+      // never-pushed worktree - that isolation is what earns the bypass. (If
+      // a tighter posture is wanted, "acceptEdits" is the alternative, but it
+      // can still stall on non-edit tool prompts.)
+      "--permission-mode",
+      "bypassPermissions",
     ];
     if (model) {
       args.push("--model", model);
@@ -290,20 +302,22 @@ function commitIteration(worktreePath, iterationNumber, summary) {
   }
 }
 
-function countCommitsOnBranch(worktreePath, branchName) {
+function countCommitsOnBranch(worktreePath, baseCommit) {
+  // Count commits the goal actually added, i.e. everything on HEAD since the
+  // exact commit the worktree branched from (captured at creation). The old
+  // `main..branch` form miscounted on any repo whose default branch isn't
+  // literally "main" (it would throw and fall back to counting the WHOLE
+  // history), and even on a "main" repo it was wrong when the primary checkout
+  // was on a feature branch at spawn time (the worktree forks from HEAD, not
+  // main). Counting `<baseCommit>..HEAD` is correct regardless (review finding).
+  if (!baseCommit) {
+    return 0;
+  }
   try {
-    const out = runGit(worktreePath, ["rev-list", "--count", `main..${branchName}`]).trim();
+    const out = runGit(worktreePath, ["rev-list", "--count", `${baseCommit}..HEAD`]).trim();
     return parseInt(out, 10) || 0;
   } catch {
-    // Fall back to counting against whatever the branch's own merge-base is,
-    // in case the default branch isn't literally named "main" — best-effort,
-    // never fatal to the overall result.
-    try {
-      const out = runGit(worktreePath, ["rev-list", "--count", "HEAD"]).trim();
-      return parseInt(out, 10) || 0;
-    } catch {
-      return 0;
-    }
+    return 0;
   }
 }
 
@@ -348,6 +362,15 @@ export async function runGoal({
     id: `goal-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     branchName: `maestro/goal-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
   });
+  // The exact commit this worktree forked from — the baseline for counting
+  // how many commits the goal itself added (see countCommitsOnBranch). Captured
+  // now, before any iteration commits land.
+  let baseCommit = null;
+  try {
+    baseCommit = runGit(worktreePath, ["rev-parse", "HEAD"]).trim();
+  } catch {
+    baseCommit = null;
+  }
 
   const iterations = [];
   let consecutiveFailures = 0;
@@ -425,7 +448,33 @@ export async function runGoal({
   }
 
   const finalNotes = readOrCreateNotes(worktreePath);
-  const commitCount = countCommitsOnBranch(worktreePath, branchName);
+  const commitCount = countCommitsOnBranch(worktreePath, baseCommit);
+
+  // Auto-clean up a run that produced NOTHING to review (zero commits) - a
+  // bad-path fast-fail, an all-failed run, or a cancel before any commit.
+  // Otherwise every such run would leave a stale `<repo>-worktrees/goal-*`
+  // dir + `maestro/goal-*` branch in the user's real repo forever, and a
+  // cancelled run would leave a dirty worktree with no cleanup path (review
+  // finding). Discard any uncommitted leftovers first (handles the dirty-
+  // cancel case), then remove the worktree and delete its now-unused branch.
+  // Runs WITH commits are deliberately kept - the whole point is to leave that
+  // work in the isolated worktree for the human to review/merge. Best-effort:
+  // a cleanup failure must never turn a finished run into a thrown error.
+  let cleanedUp = false;
+  if (commitCount === 0) {
+    try {
+      discardWorktreeChanges(worktreePath);
+      removeWorktree(projectPath, worktreePath, { force: true });
+      try {
+        runGit(projectPath, ["branch", "-D", branchName]);
+      } catch {
+        // branch may not exist / already gone - fine
+      }
+      cleanedUp = true;
+    } catch {
+      // leave it in place rather than fail the run; the path is still returned
+    }
+  }
 
   return {
     worktreePath,
@@ -434,5 +483,6 @@ export async function runGoal({
     commitCount,
     iterations,
     stoppedReason,
+    cleanedUp,
   };
 }
