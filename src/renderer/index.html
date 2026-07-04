@@ -2,7 +2,14 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' file:" />
+    <!-- The sha256 in script-src whitelists ONLY the Lavish annotation SDK's
+         exact inline script (see src/lib/lavishSdk.js buildArtifactSdkSource).
+         A framed data: document still has the embedder's CSP applied on top of
+         its own, so the parent must permit the SDK by hash for it to run in the
+         mockup iframe — the rest of the app stays inline-script-free. If the
+         SDK source changes this hash must be regenerated; spike/test-lavish.mjs
+         asserts the committed hash matches so drift fails loudly. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-lkHyWr9g7zAEbHgv/mmgrhYAKMZBvfcISQGhi51AgZ8='; style-src 'self' 'unsafe-inline'; img-src 'self' file:; frame-src 'self' data:" />
     <meta name="color-scheme" content="dark" />
     <title>Maestro</title>
     <link rel="stylesheet" href="style.css" />
@@ -15,6 +22,7 @@
           <button data-page="chat" class="active">Chat</button>
           <button data-page="focus">Focus</button>
           <button data-page="goal">Goal</button>
+          <button data-page="lavish">Plan</button>
           <button data-page="analysis">Analysis</button>
           <button data-page="archive">Archive</button>
           <button data-page="settings">Settings</button>
@@ -49,6 +57,7 @@
 
     <div class="analysis-page hidden" id="focusPage"></div>
     <div class="analysis-page hidden" id="goalPage"></div>
+    <div class="analysis-page hidden" id="lavishPage"></div>
     <div class="analysis-page hidden" id="analysisPage"></div>
     <div class="analysis-page hidden" id="archivePage"></div>
     <div class="analysis-page hidden" id="settingsPage"></div>

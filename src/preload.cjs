@@ -24,6 +24,12 @@ contextBridge.exposeInMainWorld("maestro", {
   getVersion: () => ipcRenderer.invoke("app:version"),
   pickFolder: () => ipcRenderer.invoke("dialog:pickFolder"),
   pickFiles: () => ipcRenderer.invoke("dialog:pickFiles"),
+  // Lavish (interactive-plan) v1 — read an HTML artifact file by path, wrap
+  // it into an SDK-injected srcdoc, and format collected annotations to text.
+  readArtifactFile: (filePath) => ipcRenderer.invoke("lavish:readFile", filePath),
+  buildArtifactSrcdoc: (artifactHtml) => ipcRenderer.invoke("lavish:buildSrcdoc", artifactHtml),
+  formatAnnotations: (annotations, domSnapshot) =>
+    ipcRenderer.invoke("lavish:formatPrompt", { annotations, domSnapshot }),
   startSession: (opts) => ipcRenderer.invoke("session:start", opts),
   stopSession: (launchId) => ipcRenderer.invoke("session:stop", { launchId }),
   onSessionEvent: (handler) => {

@@ -513,6 +513,25 @@ in practice, not building preemptively.
   element and type feedback ON it ("make this a floating overlay") instead
   of describing it in prose. Maestro shows plans as plain text today. Distinct
   planning-phase UX feature.
+  **A FIRST-PASS v1 loop now exists** (2026-07-04 — see DECISIONS.md): a new
+  "Plan" page (`renderLavishPage` in `renderer.js`) renders an HTML mockup
+  (pasted or loaded by path) in a sandboxed `data:`-URL iframe with an
+  annotation SDK injected. The SDK is LIFTED from lavish-axi's
+  `src/artifact-sdk.js` (MIT) — its `selector`/`context`/`snapshot` helpers +
+  the shadow-DOM annotation-card overlay + hover/click capture — trimmed into
+  `src/lib/lavishSdk.js`, with all of lavish-axi's Express/long-poll/state.json
+  transport COLLAPSED away (unnecessary and Windows-incompatible): the SDK posts
+  each annotation to `window.parent`, the renderer host collects it, and a pure
+  formatter turns `{prompts, dom_snapshot}` into an agent-ready text block that
+  "Send to composer" / "Copy feedback" hand off. Improvement over lavish: a
+  stable `data-lavish-id` on a mockup element is recorded and preferred as the
+  anchor over a recomputed selector. Verified end-to-end via live CDP (show ->
+  annotate -> structured feedback -> formatted text) + a standalone unit test.
+  Still FIRST-PASS: artifact GENERATION during planning (an agent producing the
+  mockup in the project's visual style) is the noted NEXT step; also deferred:
+  the deep "start a fresh session with this feedback as prompt" wiring (v1 drops
+  it into the composer), Mermaid/text-range/layout-audit parity, and running
+  artifact-authored scripts.
 - **Voice input (OpenSuperWhisper / local Whisper)** — voice as the primary
   prompt-composition method. Standalone, no architecture dependency, fastest
   of everything here to prototype. Best first experiment.

@@ -20,6 +20,7 @@ import { savePastedImage, prunePastedImages } from "./lib/images.js";
 import { computeVersionString } from "./lib/version.js";
 import { transcribeAudio } from "./lib/voice.js";
 import { runGoal } from "./lib/goalOrchestrator.js";
+import { buildArtifactSrcdoc, formatAnnotationsAsPrompt } from "./lib/lavishSdk.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -383,6 +384,42 @@ ipcMain.handle("dialog:pickFiles", async () => {
     return [];
   }
   return result.filePaths;
+});
+
+// --- Lavish (interactive-plan) v1: read an HTML artifact file from disk so the
+// renderer (which has no fs access) can load a mockup by path. Read-only; the
+// renderer also supports pasting HTML directly, which needs no IPC at all. ---
+ipcMain.handle("lavish:readFile", (_event, filePath) => {
+  try {
+    if (!filePath) {
+      return { ok: false, error: "No file path given" };
+    }
+    const resolved = path.normalize(String(filePath).trim());
+    if (!fs.existsSync(resolved)) {
+      return { ok: false, error: "File not found: " + resolved };
+    }
+    const stat = fs.statSync(resolved);
+    if (!stat.isFile()) {
+      return { ok: false, error: "Not a file: " + resolved };
+    }
+    return { ok: true, html: fs.readFileSync(resolved, "utf8") };
+  } catch (err) {
+    return { ok: false, error: String(err && err.message ? err.message : err) };
+  }
+});
+
+// --- Lavish v1: wrap artifact HTML into a full srcdoc document with the
+// annotation SDK injected. Kept in main (single source of truth in
+// lib/lavishSdk.js, which is an ES module the non-module renderer can't import
+// directly). Pure string transform — no fs, no side effects. ---
+ipcMain.handle("lavish:buildSrcdoc", (_event, artifactHtml) => {
+  return { ok: true, srcdoc: buildArtifactSrcdoc(artifactHtml) };
+});
+
+// --- Lavish v1: format collected annotations into a single agent-ready TEXT
+// block. Pure; unit-tested standalone in spike/test-lavish.mjs. ---
+ipcMain.handle("lavish:formatPrompt", (_event, { annotations, domSnapshot }) => {
+  return { ok: true, text: formatAnnotationsAsPrompt(annotations, domSnapshot) };
 });
 
 // --- Start (or resume) a rooted session; stream events to the renderer ---
