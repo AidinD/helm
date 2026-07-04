@@ -324,28 +324,45 @@ export function buildArtifactSdkSource() {
  * like a full document, the SDK + CSP are injected into its <head>/<body>;
  * otherwise it is wrapped in a minimal shell.
  *
- * IMPORTANT: the returned document is meant to be loaded into a sandboxed
- * iframe via a `data:` URL, NOT via the `srcdoc` attribute. A `srcdoc`
- * document INHERITS the embedder's Content-Security-Policy, and Maestro's own
- * page CSP is `default-src 'self'` — which blocks the inline SDK script (a
- * srcdoc document can only make the inherited policy STRICTER, never looser).
- * A framed `data:` URL is a separate browsing context governed solely by the
- * CSP meta tag embedded here, so the `'unsafe-inline'` script-src below
- * actually takes effect. (Verified live 2026-07-04: srcdoc -> CSP-blocked; the
- * data: URL below runs the SDK.)
+ * SECURITY MODEL (corrected 2026-07-04 after review - the prior comment had
+ * it backwards, which was dangerous). The returned document loads into a
+ * sandboxed (`allow-scripts`, NO `allow-same-origin` - null/opaque origin)
+ * iframe via a `data:` URL. A framed local-scheme (`data:`) document INHERITS
+ * the embedder's (index.html) CSP; the EFFECTIVE policy is the INTERSECTION of
+ * that inherited policy and this inner meta CSP - a script must be allowed by
+ * BOTH to run. So:
+ *   - index.html's `script-src` pins the SDK's exact sha256. That hash-pin is
+ *     the LOAD-BEARING containment: a pasted artifact's own inline scripts
+ *     don't match it, so the embedder half blocks them. Do NOT relax
+ *     index.html's script-src to plain `'self'` - that is what breaks
+ *     containment (and would CSP-block the SDK).
+ *   - this inner meta's `script-src 'unsafe-inline'` is the REQUIRED inner
+ *     half: it must permit inline for the intersection to admit the SDK at
+ *     all. It is NOT inert/removable - dropping it or setting `'none'` makes
+ *     the inner half block everything and the intersection then blocks the
+ *     SDK too. (It permits inline broadly on the inner side; the outer
+ *     hash-pin narrows "any inline" down to "only the SDK".)
+ * `srcdoc` was rejected because it inherits the same way, but the app's
+ * `default-src 'self'` left no route for the inline SDK. Verified live:
+ * srcdoc -> CSP-blocked; this data: URL runs the SDK and blocks pasted scripts.
+ * Follow-up (own focused pass, re-verify via scripts/e2e): pin the SDK sha256
+ * on THIS inner meta too, as defense-in-depth against any regression in
+ * data:-frame CSP inheritance.
  *
  * @param {string} artifactHtml raw HTML (fragment or full document)
  * @returns {string} full HTML document string to load as a data: URL
  */
 export function buildArtifactSrcdoc(artifactHtml) {
   const sdkTag = `<script>${buildArtifactSdkSource()}<\/script>`;
-  // Self-contained CSP for the framed document: no network at all, but inline
-  // script/style (the SDK + the artifact's own styling) and data:/file: images
-  // are allowed. The iframe's `sandbox="allow-scripts"` (no allow-same-origin)
-  // remains the outer containment; this is defense-in-depth on top of it.
+  // Self-contained CSP for the framed document: no network at all, inline
+  // script/style permitted on the inner side (see the security-model note
+  // above for why the outer hash-pin is what actually contains pasted
+  // scripts). img-src is data: only - a pasted mockup has no legitimate need
+  // to load local files as images (dropped `file:` per review, closing a
+  // local-file existence-probe vector).
   const cspTag =
     '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; ' +
-    "script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: file:; font-src data:\" />";
+    "script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:\" />";
   const html = String(artifactHtml || "");
   const looksLikeDocument = /<html[\s>]/i.test(html) || /<body[\s>]/i.test(html);
 
