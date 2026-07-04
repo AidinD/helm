@@ -1,5 +1,40 @@
 # Decisions
 
+## 2026-07-04 - Voice input perf fix: q8 quantization + off-main-loop worker process + slower rolling interval
+
+Follow-up to the same-day voice-input entries (hold-to-record, multilingual, language picker, kb-whisper-small swap, rolling re-transcription).
+Aidin's live-mic feedback after the kb-whisper-small Swedish-quality swap: "Swedish and 'auto' work BETTER than before, but the whole experience is SLOWER.
+It takes too long to transcribe at all, and even the mic button feels laggy." Quality was the goal and stayed; speed and UI responsiveness regressed and needed a fix without giving quality back up.
+
+**Root cause 1: `dtype: "fp32"` on kb-whisper-small.**
+The model swap to `onnx-community/kb-whisper-small-ONNX` picked full-precision weights (~970MB download: encoder_model.onnx 353MB + decoder_model_merged.onnx 615MB), which is both a large download and slow per-inference (fp32 matmuls).
+**Fix (`src/lib/voice.js`):** added a `MODEL_DTYPE` constant set to `"q8"`.
+Verified directly on the repo (not guessed) which quantized files it actually ships - `encoder_model_quantized.onnx` (92.2MB) + `decoder_model_merged_quantized.onnx` (314MB), ~406MB total, under half the fp32 size.
+transformers.js maps `dtype: "q8"` to the `_quantized` file suffix (`node_modules/@huggingface/transformers/src/utils/dtypes.js`), confirmed against the actual mapping table rather than assumed.
+Picked `q8` over the even smaller `q4` (~300MB) specifically to protect the Swedish-quality gain that was the whole point of the kb-whisper-small swap - 4-bit weight quantization risks a bigger accuracy hit than 8-bit.
+`onnx-community/kb-whisper-base-ONNX` (same KBLab Swedish training, roughly 1/4 the parameters) is documented as the next fallback in `voice.js` if `q8` still isn't fast enough on Aidin's machine.
+
+**Root cause 2: transcription ran directly on the Electron main process's event loop.**
+The `voice:transcribe` IPC handler in `src/main.js` used to call `transcribeAudio()` (CPU-bound ONNX inference, not I/O) directly, which blocks the main process for the whole multi-second transcription.
+Every other IPC round-trip queues up behind a blocked main loop, which is very likely why "even the mic button feels laggy" - the button's own state round-trips through main just like everything else.
+**Fix:** added `src/lib/voiceWorker.js`, a new entry point forked via Electron's `utilityProcess.fork()` from `main.js`.
+It imports the same `voice.js` and answers `{ id, samples, language }` request messages over `process.parentPort` with `{ id, ok, text }` / `{ id, ok: false, error }` replies.
+`main.js` spawns the worker lazily on first use, keeps it alive and reused for the rest of the app's lifetime (so the model is loaded exactly once, not per call), and kills it explicitly in the existing `before-quit` handler alongside the `liveChildren` cleanup.
+The `voice:transcribe` IPC handler's public shape is unchanged; only what runs behind it moved process.
+
+**Root cause 3 (contributing): the rolling re-transcription interval was tuned for a lighter, no-longer-current model.**
+`VOICE_ROLLING_INTERVAL_MS` in `src/renderer/renderer.js` was 2000ms, tuned back when the model was `whisper-base`.
+Continuous mode re-transcribes the FULL accumulated clip every tick (not a delta), so as kb-whisper-small (heavier than whisper-base even at q8) took a hold's clip through several ticks, ticks risked firing back to back with no breathing room, competing with each other and with the eventual release-time final transcription for the same CPU.
+**Fix:** bumped `VOICE_ROLLING_INTERVAL_MS` to 4000ms so the model has room to finish a tick before the next one is due.
+The existing non-overlap guard (`entry.inFlight`) was left as-is - it already prevents a pile-up, it just wasn't given enough breathing room at 2s against the heavier model.
+Deliberately did NOT add clip-windowing (re-transcribing only the last N seconds instead of the full accumulated clip): the q8 speed win plus the longer interval were judged sufficient, and windowing would need new bookkeeping around `voiceStart`/`voiceLen` that risks regressing the carefully-tested "replace only the voice span" behavior documented in the "continuous voice input" entry above.
+
+**Verified:** `node --check` on every touched file passes.
+A standalone smoke test (loaded the real `voice.js`, not a mock, then deleted) confirmed the pipeline initializes with `dtype: "q8"` and transcribes a synthetic silent buffer without error - cold run (including the one-time quantized-weight download) ~50s, warm run ~5.6s process-to-result.
+This proves the dtype string is valid for this repo and the pipeline loads/runs; it does NOT prove real-world Swedish transcription quality, latency, or mic-button responsiveness improved - that needs Aidin's live microphone test, same limitation as every prior voice-input entry.
+
+**What Aidin needs to test:** hold the mic button and confirm it reacts instantly (no lag) even while a transcription is in flight; confirm a normal-length utterance transcribes noticeably faster than before; confirm Swedish (and "auto") transcription quality is still as good as the kb-whisper-small swap delivered; try continuous/rolling mode on a longer hold and confirm live partials keep up reasonably instead of trailing far behind.
+
 ## 2026-07-04 — Practitioner research validates the direction; 5 mechanisms to adopt, 4 traps to avoid
 
 **Decision:** Before committing to the Maestro rebuild (Aidin: "before we

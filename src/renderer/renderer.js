@@ -186,12 +186,20 @@ const heldRecordings = new Set(); // index
 // latest fuller result. On release, one last full transcription produces the
 // authoritative text. See DECISIONS.md ("continuous voice input").
 //
-// Tunable. ~2s balances responsiveness against cost: whisper-base takes a
-// couple seconds per call, and each tick re-transcribes the FULL clip-so-far,
-// so a shorter interval risks the model never keeping up. Overlapping calls
-// are skipped (an in-flight guard on the recording entry), so a slow tick
-// never queues a backlog — it just means fewer live updates, never a pile-up.
-const VOICE_ROLLING_INTERVAL_MS = 2000;
+// Tunable. Bumped from 2000 to 4000ms after Aidin's live-test feedback that
+// the whole experience felt slow: the current model (kb-whisper-small,
+// Swedish-specialized - see src/lib/voice.js) is heavier per call than the
+// earlier whisper-base this constant was originally tuned for, and each tick
+// re-transcribes the FULL clip-so-far (not just the new audio), so the clip
+// keeps getting more expensive to re-transcribe the longer the hold lasts.
+// At 2s, a hold of more than a few seconds meant ticks were firing back to
+// back with no breathing room, competing with each other and with the
+// eventual release-time final transcription for the same CPU. 4s gives the
+// model room to actually finish a tick before the next one is even due.
+// Overlapping calls are still skipped (the in-flight guard on the recording
+// entry below), so a slow tick never queues a backlog - it just means fewer
+// live updates, never a pile-up.
+const VOICE_ROLLING_INTERVAL_MS = 4000;
 
 // Pure helper (unit-tested standalone, see spike/test-voice-span-replace.mjs):
 // replace only the VOICE-inserted span of the composer text, leaving anything
