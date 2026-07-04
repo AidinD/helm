@@ -1,5 +1,50 @@
 # Decisions
 
+## 2026-07-04 — AXI ecosystem mapped; gh-axi adopted, TOON as a principle (standalone build has thin surface today)
+
+**Decision:** the captain asked whether to pull in the rest of Kun Chen's "axi"
+tools (the token-saving angle). Mapped the whole ecosystem at the source
+level (read-only, via gh api). Findings:
+- **AXI is a design principle + a small lib (`axi-sdk-js`), not a runtime.**
+  The core token lever is **TOON** output (Token-Oriented Object Notation,
+  a tabular JSON-alternative, ~40% fewer tokens on structured lists) plus 10
+  principles (minimal schemas, pre-computed aggregates to kill follow-up
+  calls, definitive empty states, loud-failing flags).
+- **Reality check that reframes it:** the dramatic savings (57-74%) are vs
+  MCP. Vs an already-lean CLI like raw `gh`, the token delta is ~1% - the
+  AXI win there is reliability/turn-count, not raw tokens. So AXI pays off
+  where you're replacing verbose JSON/MCP output or making tool output
+  unambiguous, not for shaving already-terse commands.
+- **All `-axi` tools are Node 20+ and cross-platform** (each carries a
+  Windows badge; `axi-sdk-js` has explicit Windows shim-parsing). The
+  earlier "lavish server is Unix-only" concern was only its port-recovery
+  path (lsof/ps); the core is plain Node HTTP - moot for us anyway since
+  Maestro's Lavish uses IPC, no server.
+
+**Decided (the captain: "kör på din rekommendation"):**
+- **gh-axi: ADOPTED.** Verified it installs+runs on Windows (`npx -y gh-axi
+  --help`, exit 0, its own output is already TOON-compact). Added a
+  proportionate rule to the global personal CLAUDE.md: prefer `gh-axi` for
+  non-trivial GitHub API work, plain git for local ops.
+- **TOON: adopt as a PRINCIPLE, standalone build queued but reconsidered.**
+  On reflection, Maestro's current agent-facing surfaces are already
+  compact (the classifier/judge send short text, not verbose JSON), so a
+  standalone "convert Maestro's output to TOON" build has thin surface
+  *today*. The real value is prospective - as the structured-injection
+  features (`/triage` feeding the board, Focus feeding goals, goal-
+  orchestrator notes) mature, encode THOSE as TOON. So: fold TOON in with
+  those features rather than build a TOON layer into thin surface now.
+  Tracked as a Jot task; not built.
+- **Also tracked:** stop reading the whole `todos.json` into context when
+  only a category/few fields are needed (the AXI minimal-schema lens applied
+  to how Jot data is consumed, both by Maestro-to-agent injection and by
+  Claude reading it directly) - a small recurring token win.
+- **Skipped:** terminal-axi (empty repo, LICENSE only), agent-browser-axi
+  (redundant with chrome-devtools-axi), rough-cut-axi (niche, no license),
+  tasks-axi (redundant with Jot), mcp-compressor (wrong direction).
+  chrome-devtools-axi is a later "if/when Maestro agents do browser work"
+  adopt-candidate (57% fewer tokens vs chrome MCP).
+
 ## 2026-07-04 — Fas 4 Lavish: a FIRST-PASS interactive-plan annotate loop (draft, not final UX)
 
 **Built** a v1 of the "Lavish"-style interactive-plan feature (PLAN Phase 4).
