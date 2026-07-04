@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -87,6 +88,14 @@ export function classifySessionStatus({ cwd, cliSessionId, sessionId, title, jot
       "Classify this session's current status.",
     ].join("\n");
 
+    // Pre-generated rather than read back from `parsed.session_id` after the
+    // fact: a killed-on-timeout or errored-before-valid-JSON subprocess never
+    // reaches that parse, which would otherwise leave deleteOwnTranscript
+    // with no ID to clean up and leak the file anyway (confirmed live during
+    // review of the classifier's original leak fix, 2026-07-04) — with
+    // --session-id supplied upfront, the transcript's filename is known
+    // regardless of how the call ends.
+    const classifierSessionId = randomUUID();
     const args = [
       "-p",
       summary,
@@ -94,6 +103,8 @@ export function classifySessionStatus({ cwd, cliSessionId, sessionId, title, jot
       "claude-haiku-4-5-20251001",
       "--effort",
       "low",
+      "--session-id",
+      classifierSessionId,
       "--output-format",
       "json",
       "--json-schema",
@@ -128,6 +139,21 @@ export function classifySessionStatus({ cwd, cliSessionId, sessionId, title, jot
       }
       settled = true;
       clearTimeout(timeoutId);
+      // This call's own transcript is pure disposable overhead — nothing
+      // ever reads it again once `structured_output` is parsed out below.
+      // Before this cleanup existed, every classification permanently left a
+      // full session transcript on disk (one per session per sweep, forever)
+      // in the SAME project directory as the real session it checked —
+      // confirmed live 2026-07-03: 320 of these had piled up under one
+      // project dir alone, indistinguishable from real sessions to Maestro's
+      // own directory-scanning sidebar. Runs here, in `finish`, rather than
+      // only on the successful-parse path below, so a timeout-killed or
+      // errored-before-valid-JSON call (which never reaches that parse)
+      // still gets cleaned up instead of re-leaking on exactly that path —
+      // confirmed live during review 2026-07-04. Best-effort — a failed
+      // cleanup must never fail the classification itself, so this never
+      // throws.
+      deleteOwnTranscript(cwd, classifierSessionId);
       resolve(result);
     };
 
@@ -145,17 +171,6 @@ export function classifySessionStatus({ cwd, cliSessionId, sessionId, title, jot
     child.on("close", () => {
       try {
         const parsed = JSON.parse(out);
-        // This call's own transcript is pure disposable overhead — nothing
-        // ever reads it again once `structured_output` is parsed out here.
-        // Before this cleanup existed, every classification permanently left
-        // a full session transcript on disk (one per session per sweep,
-        // forever) in the SAME project directory as the real session it
-        // checked — confirmed live 2026-07-03: 320 of these had piled up
-        // under one project dir alone, indistinguishable from real sessions
-        // to Maestro's own directory-scanning sidebar. Deleted here,
-        // best-effort — a failed cleanup must never fail the classification
-        // itself, so this never throws.
-        deleteOwnTranscript(cwd, parsed.session_id);
         const tag = parsed.structured_output;
         if (tag && STATUS_TAGS.includes(tag.statusTag) && tag.reason) {
           finish({ statusTag: tag.statusTag, reason: tag.reason, costUsd: parsed.total_cost_usd || 0 });
