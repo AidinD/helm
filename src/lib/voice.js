@@ -11,10 +11,15 @@
 // manual install.
 import { pipeline } from "@huggingface/transformers";
 
-// tiny.en: smallest usable Whisper size, English-only (matches the v1 scope —
-// no language selection yet, see PLAN.md). Swap to a multilingual/larger
-// model later is a one-line change if the captain wants that in a review pass.
-const MODEL_ID = "Xenova/whisper-tiny.en";
+// Multilingual tiny model (no ".en" suffix) — v1 shipped "whisper-tiny.en",
+// which is an ENGLISH-ONLY fine-tune and was never going to transcribe
+// Swedish (the captain's report: "Språk funkar inte för svenska"). Same size class
+// as before (~150MB), just multilingual weights. `language` is left
+// unspecified below (transformers.js defaults it to `null` = auto-detect),
+// not hardcoded to "sv" — the captain mixes Swedish and English naturally in the
+// same utterance, so per-call language forcing would fight his actual usage
+// more than it helps.
+const MODEL_ID = "Xenova/whisper-tiny";
 
 // Loaded once, reused across every transcription call in the process
 // lifetime — re-creating the pipeline per call would re-load the ~150MB model

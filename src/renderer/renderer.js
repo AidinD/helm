@@ -156,19 +156,40 @@ function renderLiveStats(index, pane) {
 // while a recording is in flight, and looking panes[index] up fresh (rather
 // than closing over the pane object) means a stale recording naturally has
 // nowhere valid to insert its result.
+//
+// Hold-to-record, not click-to-toggle (the captain's v1 feedback: "Jag vill ha en
+// hold to record function. Typ alt knappen eller någon enkel kombination.") —
+// press-and-hold starts recording, releasing stops it and transcribes. Two
+// equivalent ways to hold: the mic button itself (mousedown/mouseup), or the
+// Alt key while focus is in that pane's composer. Click-to-toggle is gone
+// entirely, not layered alongside hold, per the ask ("hold is now the
+// interaction model", not a confusing dual mode).
 const activeRecordings = new Map(); // index -> { mediaRecorder, stream, chunks }
+// Tracks which panes are CURRENTLY being held (button pressed down or Alt
+// held), independent of activeRecordings — getUserMedia's permission
+// round-trip is async, so the hold can end (mouseup/keyup, or the OS
+// permission prompt taking a while) before the stream is even ready. Checked
+// right after the await below so a released hold never starts a recording
+// nothing will ever stop.
+const heldRecordings = new Set(); // index
 
-async function toggleVoiceRecording(index, micBtn, promptEl) {
-  const active = activeRecordings.get(index);
-  if (active) {
-    active.mediaRecorder.stop();
-    return;
+async function startVoiceRecording(index, micBtn, promptEl) {
+  if (activeRecordings.has(index) || heldRecordings.has(index)) {
+    return; // already recording, or already mid-startup for this pane (button + Alt held together fire this twice).
   }
+  heldRecordings.add(index);
   let stream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (err) {
+    heldRecordings.delete(index);
     micBtn.title = `Microphone unavailable: ${err.message}`;
+    return;
+  }
+  if (!heldRecordings.has(index)) {
+    // Hold was released while the permission prompt/round-trip was pending —
+    // don't open a recording nothing will ever stop.
+    stream.getTracks().forEach((track) => track.stop());
     return;
   }
   const mediaRecorder = new MediaRecorder(stream);
@@ -181,6 +202,7 @@ async function toggleVoiceRecording(index, micBtn, promptEl) {
   mediaRecorder.addEventListener("stop", async () => {
     stream.getTracks().forEach((track) => track.stop());
     activeRecordings.delete(index);
+    heldRecordings.delete(index);
     micBtn.classList.remove("recording");
     micBtn.textContent = "🎤";
     micBtn.disabled = true;
@@ -203,13 +225,25 @@ async function toggleVoiceRecording(index, micBtn, promptEl) {
       micBtn.title = `Transcription failed: ${err.message}`;
     } finally {
       micBtn.disabled = false;
+      micBtn.title = "Hold to record voice input (transcribed locally, offline) — or hold Alt in the composer";
     }
   });
   activeRecordings.set(index, { mediaRecorder, stream, chunks });
   mediaRecorder.start();
   micBtn.classList.add("recording");
   micBtn.textContent = "⏹";
-  micBtn.title = "Stop recording";
+  micBtn.title = "Recording — release to stop";
+}
+
+function stopVoiceRecording(index) {
+  // Always clear the hold flag, even if getUserMedia/MediaRecorder isn't
+  // ready yet — startVoiceRecording's post-await check relies on this to
+  // bail out instead of starting a recording nothing will ever stop.
+  heldRecordings.delete(index);
+  const active = activeRecordings.get(index);
+  if (active) {
+    active.mediaRecorder.stop();
+  }
 }
 
 // Decodes a recorded audio Blob (whatever codec MediaRecorder used, typically
@@ -2493,7 +2527,7 @@ function updateClaudeMdLinks(header, cwd) {
   const globalBtn = document.createElement("button");
   globalBtn.className = "icon-btn";
   globalBtn.textContent = "🌐";
-  globalBtn.title = "Open your global CLAUDE.md";
+  globalBtn.title = "Open your global CLAUDE.md folder";
   globalBtn.addEventListener("click", async (e) => {
     e.stopPropagation();
     const res = await window.maestro.openGlobalClaudeMd();
@@ -2514,7 +2548,7 @@ function updateClaudeMdLinks(header, cwd) {
       const projectBtn = document.createElement("button");
       projectBtn.className = "icon-btn";
       projectBtn.textContent = "📄";
-      projectBtn.title = "Open this project's CLAUDE.md";
+      projectBtn.title = "Open this project's folder";
       projectBtn.addEventListener("click", async (e) => {
         e.stopPropagation();
         const res = await window.maestro.openProjectClaudeMd(cwd);
@@ -2845,14 +2879,54 @@ function paneComposerEl(index) {
 
   // Voice input (PLAN.md Phase 4) — v1 scope is deliberately minimal: record,
   // transcribe locally (offline Whisper, see src/lib/voice.js), insert into
-  // the composer. No language picker, no continuous dictation; that is a
-  // review-and-iterate pass once the captain has tried this.
+  // the composer.
+  //
+  // Hold-to-record (the captain's feedback on v1's click-to-toggle: "Jag vill ha en
+  // hold to record function. Typ alt knappen eller någon enkel kombination.").
+  // Two equivalent ways to hold, both calling the same start/stop pair so
+  // they can never leave the button in a "half held" state:
+  // 1. Press-and-hold the mic button itself (mousedown/mouseup). mouseleave
+  //    also stops it — dragging the mouse off the button while held must not
+  //    leave a recording stuck active with no way to release it.
+  // 2. Hold Alt while focus is inside THIS pane's composer textarea.
+  //    Confirmed no collision before picking Alt: grepped the whole renderer
+  //    for existing keydown handlers (Enter-to-send, Escape-to-close-menu/
+  //    lightbox, inline-rename Enter/Escape) — none use Alt or check
+  //    e.altKey, and main.js sets no custom accelerators/globalShortcut. The
+  //    one real interaction is Electron's own default application menu
+  //    (no custom Menu is set, so the OS-default File/Edit/View/Window/Help
+  //    bar is present) — bare Alt normally shifts focus to it. preventDefault
+  //    on keydown suppresses that reliably in Chromium/Electron, so Alt stays
+  //    free to reuse here without stealing focus from the composer.
   const micBtn = document.createElement("button");
   micBtn.type = "button";
   micBtn.className = "icon-btn";
   micBtn.textContent = "🎤";
-  micBtn.title = "Record voice input (transcribed locally, offline)";
-  micBtn.addEventListener("click", () => toggleVoiceRecording(index, micBtn, promptEl));
+  micBtn.title = "Hold to record voice input (transcribed locally, offline) — or hold Alt in the composer";
+  micBtn.addEventListener("mousedown", (e) => {
+    e.preventDefault(); // don't steal focus from the composer on mousedown
+    startVoiceRecording(index, micBtn, promptEl);
+  });
+  micBtn.addEventListener("mouseup", () => stopVoiceRecording(index));
+  micBtn.addEventListener("mouseleave", () => stopVoiceRecording(index));
+
+  promptEl.addEventListener("keydown", (e) => {
+    if (e.key !== "Alt" || e.repeat) {
+      return;
+    }
+    e.preventDefault();
+    startVoiceRecording(index, micBtn, promptEl);
+  });
+  promptEl.addEventListener("keyup", (e) => {
+    if (e.key !== "Alt") {
+      return;
+    }
+    stopVoiceRecording(index);
+  });
+  // Alt-tabbing away, or any other focus loss, blurs the textarea without a
+  // matching keyup ever firing — same "don't leave it stuck" concern as
+  // mouseleave above, just for the keyboard path.
+  promptEl.addEventListener("blur", () => stopVoiceRecording(index));
 
   const sendBtn = document.createElement("button");
   sendBtn.className = "send-btn";

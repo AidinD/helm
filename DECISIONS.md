@@ -1,5 +1,111 @@
 # Decisions
 
+## 2026-07-04 — Voice input v1 feedback: hold-to-record (button + Alt), and a multilingual model so Swedish actually works
+
+Follow-up to the 2026-07-03 "Voice input v1" entry, after the captain live-tested
+the shipped mic button and gave two pieces of feedback.
+
+**1. "Jag vill ha en hold to record function. Typ alt knappen eller någon
+enkel kombination."** (I want a hold-to-record function, like the Alt key or
+some simple combo.) v1 was click-to-start/click-to-stop
+(`toggleVoiceRecording`, renderer.js). Replaced entirely with hold-to-record —
+not layered alongside the old toggle, per the ask that hold is now THE
+interaction model, not a second confusing mode.
+
+- `renderer.js`: `toggleVoiceRecording` split into `startVoiceRecording`/
+  `stopVoiceRecording`, called from two independent hold mechanisms that both
+  route through the same pair so neither can leave the button in a
+  half-held state: (a) `mousedown`/`mouseup` on the mic button itself, with
+  `mouseleave` also stopping it — dragging the mouse off the button while
+  held must not strand a recording with no way to release it; (b) `keydown`/
+  `keyup` on Alt while focus is in that pane's composer textarea, with a
+  `blur` listener as the equivalent of `mouseleave` for the keyboard path
+  (Alt-tabbing away blurs the textarea without a matching `keyup` ever
+  firing).
+- New `heldRecordings` Set (index-keyed, alongside the existing
+  `activeRecordings` map) tracks which panes are CURRENTLY being held,
+  independent of whether a `MediaRecorder` exists yet — `getUserMedia`'s
+  permission round-trip is async, so a hold can end before the stream is even
+  ready. `startVoiceRecording` re-checks `heldRecordings.has(index)` right
+  after that `await` and bails out (stopping the tracks it just opened) if
+  the hold was already released, so a fast tap can never open a recording
+  nothing will ever stop.
+- **Alt was checked for collisions before picking it**, per the ask: grepped
+  every `keydown`/`keyup` handler in `renderer.js` (Enter-to-send, Escape for
+  the context menu/image lightbox, inline-rename Enter/Escape) — none read
+  `e.altKey` or check `e.key === "Alt"`, and `main.js` sets no
+  `accelerator`/`globalShortcut` anywhere (confirmed via grep — zero matches).
+  The one real interaction: no custom `Menu` is set in this Electron 31 app,
+  so the OS-default File/Edit/View/Window/Help application menu bar is
+  present, and bare Alt normally shifts keyboard focus to it.
+  `e.preventDefault()` in the `keydown` handler suppresses that reliably in
+  Chromium/Electron, so Alt is free to reuse for this without stealing focus
+  from the composer.
+
+**2. "Språk funkar inte för svenska, kan man fixa hem ett svenska paket?"**
+(Language doesn't work for Swedish, can we get a Swedish package?) Root
+cause, confirmed rather than assumed: v1 shipped `Xenova/whisper-tiny.en` —
+the `.en` suffix is Hugging Face/OpenAI's own naming convention for an
+ENGLISH-ONLY fine-tune of Whisper. It was never going to transcribe Swedish
+regardless of any option passed to it.
+
+- `src/lib/voice.js`: `MODEL_ID` changed to `Xenova/whisper-tiny` (no `.en` —
+  the multilingual checkpoint, same tiny size class, ~150MB). Confirmed
+  Swedish is genuinely in this checkpoint's vocabulary, not just "should
+  work in theory": inspected the downloaded `generation_config.json`'s
+  `lang_to_id` map directly — it contains a `<|sv|>` token.
+- **`language` left unset, not hardcoded to `"sv"`.** Read transformers.js's
+  own `automatic-speech-recognition` pipeline source
+  (`node_modules/@huggingface/transformers/src/pipelines/automatic-speech-
+  recognition.js`) rather than assuming: its JSDoc states `language` "Default
+  is `null`, meaning it should be auto-detected." Chose to keep that default
+  rather than force `"sv"` — the captain mixes Swedish and English naturally in the
+  same utterance (matches his own usage pattern), so a hardcoded language
+  would fight that instead of helping it. Auto-detect picks per-utterance
+  instead.
+
+**Verified end-to-end, not just a model-name swap.** Checked for a Swedish
+SAPI voice on this machine first (per the ask) — `System.Speech.Synthesis`
+only has `Microsoft Hazel Desktop` (en-GB), `Microsoft David Desktop`
+(en-US), and `Microsoft Zira Desktop` (en-US) installed; no Windows language
+pack and no OneCore speech voices exist here either (`Get-WinUserLanguageList`
+returned empty). **No genuine Swedish speech sample could be generated or
+found on this machine** — this is the one thing that still needs the captain's own
+live test (real mic, real Swedish, ideally some natural Swedish/English
+mixing to match his actual usage).
+
+What WAS verified directly against the shipped module: a standalone script
+imported `src/lib/voice.js`'s real `transcribeAudio` (not a mock), fed it a
+real speech WAV (Windows SAPI TTS, same technique the original English spike
+used), and confirmed (a) the new multilingual model downloads and caches
+correctly (`node_modules/@huggingface/transformers/.cache/Xenova/whisper-tiny/`,
+alongside the old now-unused `whisper-tiny.en` cache, both gitignored), (b)
+transcription still works correctly end-to-end against English speech — a
+real regression check, not an assumption that multilingual models stay
+English-compatible — producing "Hello, Vice-Draud. Please switch to hold to
+record as supports Swedish." against the spoken "Hello Maestro, please switch
+to hold to record and support Swedish." (a couple of words mangled, expected
+given robotic SAPI TTS input — the original English-only spike had similar
+roughness), and (c) the console log line `"No language specified - defaulting
+to English (en)."` confirms auto-detect is genuinely active end-to-end, not
+silently ignored — it inspected the actual audio and correctly identified
+English, which is exactly the mechanism that will identify Swedish when the
+real input is Swedish.
+
+**Verification commands run:** `node --check` on both edited files
+(`src/lib/voice.js`, `src/renderer/renderer.js`); the standalone
+`transcribeAudio` exercise above against a real SAPI-generated WAV; a full
+boot-test via `scripts/restart-dev.sh` (clean boot, no errors) with
+`Get-CimInstance` confirming only Maestro's own 4 processes were running
+afterward (no stray prior instances, no Halyard collision). **What this
+could NOT verify** (no live microphone on this machine, same limitation as
+every prior voice-input entry): the hold-to-record interaction actually
+feeling right with a real hand on a real mouse/keyboard, Alt not misbehaving
+against any OS-level or driver-level global hotkey the captain might have configured
+outside this app, and — the actual point of this whole fix — real Swedish
+transcription quality against the captain's own voice, accent, and mixed Swedish/
+English speech. All three need the captain's own live test.
+
 ## 2026-07-04 — CLAUDE.md quick-links: open the real canonical file (not the stub), and open its FOLDER (not the bare file)
 
 Follow-up to the 2026-07-03 "CLAUDE.md quick-links" entry, after the captain
