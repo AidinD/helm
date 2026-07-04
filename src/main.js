@@ -402,6 +402,14 @@ ipcMain.handle("lavish:readFile", (_event, filePath) => {
     if (!stat.isFile()) {
       return { ok: false, error: "Not a file: " + resolved };
     }
+    // Cap the read: a mockup is tiny (KBs). Without this, pointing at a huge
+    // or special file would read it fully into memory on the main thread via
+    // the sync read below and freeze the whole app (review finding). 8MB is
+    // far above any real mockup and still safe to load synchronously.
+    const MAX_ARTIFACT_BYTES = 8 * 1024 * 1024;
+    if (stat.size > MAX_ARTIFACT_BYTES) {
+      return { ok: false, error: `File too large (${Math.round(stat.size / 1024)} KB; max ${MAX_ARTIFACT_BYTES / 1024 / 1024} MB). A mockup should be far smaller.` };
+    }
     return { ok: true, html: fs.readFileSync(resolved, "utf8") };
   } catch (err) {
     return { ok: false, error: String(err && err.message ? err.message : err) };
