@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveClaudeBinary } from "./launcher.js";
-import { findTranscriptPath } from "./paths.js";
+import { findTranscriptPath, projectsRoot, encodeProjectDir } from "./paths.js";
 import { readTranscript } from "./transcript.js";
 
 // Fas 3's "sensor": a periodic, stateless classifier over sessions that
@@ -145,6 +145,17 @@ export function classifySessionStatus({ cwd, cliSessionId, sessionId, title, jot
     child.on("close", () => {
       try {
         const parsed = JSON.parse(out);
+        // This call's own transcript is pure disposable overhead — nothing
+        // ever reads it again once `structured_output` is parsed out here.
+        // Before this cleanup existed, every classification permanently left
+        // a full session transcript on disk (one per session per sweep,
+        // forever) in the SAME project directory as the real session it
+        // checked — confirmed live 2026-07-03: 320 of these had piled up
+        // under one project dir alone, indistinguishable from real sessions
+        // to Maestro's own directory-scanning sidebar. Deleted here,
+        // best-effort — a failed cleanup must never fail the classification
+        // itself, so this never throws.
+        deleteOwnTranscript(cwd, parsed.session_id);
         const tag = parsed.structured_output;
         if (tag && STATUS_TAGS.includes(tag.statusTag) && tag.reason) {
           finish({ statusTag: tag.statusTag, reason: tag.reason, costUsd: parsed.total_cost_usd || 0 });
@@ -156,6 +167,27 @@ export function classifySessionStatus({ cwd, cliSessionId, sessionId, title, jot
       }
     });
   });
+}
+
+// Best-effort delete of a just-completed one-shot classifier call's own
+// transcript. `cwd` + `sessionId` together resolve the exact file path the
+// same way `findTranscriptPath` searches (paths.js's own `encodeProjectDir`
+// naming), no directory scan needed since we know precisely which file we
+// just created. Silently no-ops on any failure (missing session_id, file
+// already gone, permission issue) — this is cleanup of the tool's own
+// disposable output, never something a caller should have to handle.
+function deleteOwnTranscript(cwd, sessionId) {
+  if (!sessionId || !cwd) {
+    return;
+  }
+  try {
+    const filePath = path.join(projectsRoot, encodeProjectDir(cwd), `${sessionId}.jsonl`);
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+  } catch {
+    // best-effort only
+  }
 }
 
 function truncate(text, max) {

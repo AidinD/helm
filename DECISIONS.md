@@ -1,5 +1,59 @@
 # Decisions
 
+## 2026-07-04 — Classifier sweep was leaking a permanent transcript per check; encodeProjectDir was silently wrong for any path with a space
+
+**Bug (the captain's report, "sessions rooted themselves in Documents\Claude
+again"):** Investigated instead of assuming a switch-root-folder regression.
+Real cause: the orchestrator classifier (`orchestratorHelper.js`,
+`config.orchestratorHelper.enabled: true`, sweeping every ~15 min) spawns a
+real `claude -p` call per session it checks, correctly rooted in that
+session's own folder - but that call creates a full, permanent session
+transcript on disk with nothing ever cleaning it up. Confirmed live: 320 of
+442 `.jsonl` files under the Dropbox Claude project directory were the
+classifier's own throwaway artifacts (content-matched via its exact prompt
+template, `"Session: X\nLinked task: ..."`) - not real conversations. Since
+many of the captain's genuinely personal (non-project) sessions are rooted in that
+same general folder, the classifier's leak concentrated there, reading as
+"my sessions keep re-rooting" when it was actually junk accumulating
+alongside them. Disabled `orchestratorHelper.enabled` immediately as a
+stop-gap (a config flip, non-destructive) while fixing the root cause.
+
+**Fix attempt #1 surfaced a second, deeper, pre-existing bug.** Added
+`deleteOwnTranscript(cwd, sessionId)` to `classifySessionStatus`'s `close`
+handler - delete the just-created transcript immediately after reading its
+`structured_output`, since nothing else ever reads it again. First
+verification (a real end-to-end call against this repo's own project
+folder, not a mock) still leaked a file. Traced with temporary debug tracing
+(removed before committing): `encodeProjectDir` (`paths.js`, built earlier
+2026-07-03 for the original `switchSessionRootFolder` fix) only replaces `:`
+and `\` with `-` - it silently preserves spaces and any other special
+character. The real Claude Code convention (confirmed by inspecting every
+directory under `~/.claude/projects` - none contain anything outside
+`[a-zA-Z0-9-]`) replaces EVERY non-alphanumeric character 1:1 with a hyphen,
+e.g. `<your-claude-home>` -> `D--Dropbox-Mina-Dokument-Claude`.
+The old regex produced a wrong, non-existent directory name for exactly this
+folder (a space in "Documents"), so the delete silently no-opped -
+`fs.existsSync` on the wrong path just returns false, no error, no signal
+anything was wrong.
+
+**Fix:** `encodeProjectDir` now does `cwd.replace(/[^a-zA-Z0-9]/g, "-")`.
+Verified no regression for ordinary paths (only `:`/`\` present) - old and
+new regexes produce byte-identical output when there's nothing else to
+replace. The ONLY other caller besides the new cleanup is
+`switchSessionRootFolder` (`sessions.js`) - meaning tonight's earlier
+root-folder-switch fix has ALSO been silently computing the wrong copy-
+destination directory for any target path containing a space this whole
+time, a real latent bug now fixed as a side effect, not just today's leak.
+
+**Re-verified end-to-end after the fix** (real `classifySessionStatus` call
+against this repo's own large real transcript, twice): both runs returned a
+genuine classification AND left zero files behind, real transcript
+untouched both times. `orchestratorHelper.enabled` left OFF in config.json
+pending the captain's own decision on whether to re-enable now that the leak is
+fixed - this fix stops new leaks, it doesn't retroactively clean up the 320
+already-accumulated junk files, which need his explicit go-ahead before any
+deletion (a call I won't make unilaterally).
+
 ## 2026-07-03 — Fas 3 Point 8 v1: a Jot-backed "Focus" page (ranked goals + goal breakdown with safe subtask write)
 
 **Built** the first slice of PLAN.md's Phase 3 "Point 8 — split work +
