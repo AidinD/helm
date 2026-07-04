@@ -52,6 +52,9 @@ export function loadJot(jotConfig = {}) {
       id: cat.id,
       name: cat.name,
       color: cat.color || null,
+      // Optional absolute folder this list is bound to (Jot's Category.repoPath).
+      // When set, it drives a deterministic path match that beats name-matching.
+      repoPath: typeof cat.repoPath === "string" && cat.repoPath.trim() ? cat.repoPath.trim() : null,
       open: 0,
       inProgress: 0,
       review: 0,
@@ -94,10 +97,39 @@ export function loadJot(jotConfig = {}) {
     return cats.find((c) => c.name === name) || null;
   }
 
-  function matchByTitle(title, sessionId) {
-    if (sessionId && overrides[sessionId]) {
-      return findByName(overrides[sessionId]);
+  // Deterministic path match: a session whose working directory is a
+  // category's repoPath — OR sits inside it — belongs to that category, full
+  // stop. This is the whole point of Category.repoPath: an explicit, unambiguous
+  // binding that doesn't depend on the session title happening to contain the
+  // list name. When several categories' repoPaths all contain the cwd (nested
+  // repos), the LONGEST (most specific) wins.
+  function matchByPath(cwd) {
+    const normCwd = normalizePath(cwd);
+    if (!normCwd) {
+      return null;
     }
+    let best = null;
+    let bestLen = 0;
+    for (const cat of cats) {
+      if (!cat.repoPath) {
+        continue;
+      }
+      const normRepo = normalizePath(cat.repoPath);
+      if (!normRepo) {
+        continue;
+      }
+      // Exact match, or cwd is a subfolder of repoPath (guard against a prefix
+      // that isn't a real path boundary, e.g. ".../foo" vs ".../foobar").
+      const isMatch = normCwd === normRepo || normCwd.startsWith(normRepo + "/");
+      if (isMatch && normRepo.length > bestLen) {
+        best = cat;
+        bestLen = normRepo.length;
+      }
+    }
+    return best;
+  }
+
+  function matchByName(title) {
     const normTitle = normalize(title);
     if (!normTitle) {
       return null;
@@ -119,6 +151,21 @@ export function loadJot(jotConfig = {}) {
     return best;
   }
 
+  // Precedence: an explicit title override wins, then a deterministic repoPath
+  // match against the session's working directory, then the fuzzy name match as
+  // a fallback for categories with no repoPath set. `cwd` is optional so older
+  // callers (and sessions with no known folder) still get name-based matching.
+  function matchByTitle(title, sessionId, cwd) {
+    if (sessionId && overrides[sessionId]) {
+      return findByName(overrides[sessionId]);
+    }
+    const byPath = matchByPath(cwd);
+    if (byPath) {
+      return byPath;
+    }
+    return matchByName(title);
+  }
+
   return { ok: true, path: jotPath, categories: cats, matchByTitle };
 }
 
@@ -135,6 +182,21 @@ function normalize(str) {
   return String(str || "")
     .toLowerCase()
     .replace(/[^a-z0-9åäö]/g, "");
+}
+
+// Canonicalizes a filesystem path for comparison: forward slashes, no trailing
+// slash, lowercased. Windows paths are case-insensitive and mix separators
+// (D:\Repo vs D:/repo), so both must fold to one form before comparing a
+// session's cwd against a category's repoPath. Returns "" for empty input.
+function normalizePath(p) {
+  const s = String(p || "").trim();
+  if (!s) {
+    return "";
+  }
+  return s
+    .replace(/[\\/]+/g, "/") // backslashes and doubled slashes -> single forward slash
+    .replace(/\/+$/, "") // drop any trailing slash
+    .toLowerCase();
 }
 
 // ============================ Goal focus (Point 8) ============================
