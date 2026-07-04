@@ -11,15 +11,25 @@
 // manual install.
 import { pipeline } from "@huggingface/transformers";
 
-// Multilingual tiny model (no ".en" suffix) — v1 shipped "whisper-tiny.en",
-// which is an ENGLISH-ONLY fine-tune and was never going to transcribe
-// Swedish (the captain's report: "Språk funkar inte för svenska"). Same size class
-// as before (~150MB), just multilingual weights. `language` is left
-// unspecified below (transformers.js defaults it to `null` = auto-detect),
-// not hardcoded to "sv" — the captain mixes Swedish and English naturally in the
-// same utterance, so per-call language forcing would fight his actual usage
-// more than it helps.
+// Multilingual tiny model (no ".en" suffix) — the English-only "whisper-tiny.en"
+// couldn't transcribe Swedish at all.
 const MODEL_ID = "Xenova/whisper-tiny";
+
+// Force Swedish transcription rather than letting Whisper auto-detect the
+// language. Auto-detect was the ACTUAL bug behind "still doesn't work for
+// Swedish" (the captain, 2026-07-04): on his Swedish speech it guessed English and
+// transcribed the audio as best-fit English words — total garbage, since the
+// words are Swedish. Forcing the language removes that guess. transformers.js
+// takes the full lowercase language name here ("swedish"), not the ISO code.
+//
+// Tradeoff, deliberately accepted for v1: the captain mixes Swedish and English, and
+// a hard "swedish" will now mis-handle a purely-English utterance the mirror
+// way. But his prompts are Swedish-dominant and Whisper tolerates embedded
+// English tech terms under a Swedish language setting far better than the
+// reverse (Swedish-under-English, which is what was failing). A language
+// toggle/picker in the composer is the proper fix for true mixed use — noted
+// as the follow-up rather than built now (would need renderer/IPC plumbing).
+const TRANSCRIBE_LANGUAGE = "swedish";
 
 // Loaded once, reused across every transcription call in the process
 // lifetime — re-creating the pipeline per call would re-load the ~150MB model
@@ -45,6 +55,6 @@ function getTranscriber() {
  */
 export async function transcribeAudio(float32Samples) {
   const transcriber = await getTranscriber();
-  const result = await transcriber(float32Samples);
+  const result = await transcriber(float32Samples, { language: TRANSCRIBE_LANGUAGE, task: "transcribe" });
   return (result?.text || "").trim();
 }
