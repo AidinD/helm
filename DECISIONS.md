@@ -1,5 +1,118 @@
 # Decisions
 
+## 2026-07-04 — Live token ticker investigated (no reproducible bug found); thinking-dot recolored + animated
+
+**Context:** Aidin reported, after live-testing the 2026-07-03 "Live time/
+tokens ticker" feature: "Och dessutom räknar den fortfarande inte upp tokens
+live" (it still doesn't count up tokens live). That feature's own DECISIONS.md
+entry admits no live click-through was ever done — only a standalone Node
+script against a captured transcript, plus a static code read. Per this
+repo's own Bug-Fixes-&-Testing rule, this had to be reproduced end-to-end in
+the real running app before touching any code — "I read the code and it
+looks right" was explicitly not an acceptable standard here, since that is
+exactly what shipped the bug in the first place.
+
+**How it was actually driven live:** Maestro is a native Electron app with no
+browser-servable dev server, so the standard preview tools don't attach to
+it. Launched the real `electron.exe` (found in `node_modules/electron/dist/`)
+directly with `--remote-debugging-port=9333`, which exposes a Chrome DevTools
+Protocol endpoint over the real renderer page. A small throwaway Node script
+(`cdp.mjs`, not committed — scratchpad only) connected over that CDP
+WebSocket and used `Runtime.evaluate` to fill the real composer textarea,
+click the real Send button, and read back real `pane` state and DOM content
+from the live running app — genuine end-to-end interaction, not a simulation.
+(Aside, logged for whoever hits this next: launching the Electron process via
+a bash `(cmd &)` detached subshell is unreliable in this environment — the
+process and its CDP port die a few seconds after the bash tool call returns,
+even though `electron.exe` itself is still technically running. Launching via
+`run_in_background: true` on the Bash tool, or via a `Start-Process`-launched
+detached process, both kept the CDP port alive reliably across many
+subsequent tool calls.)
+
+**What was actually verified, live, across 5 independent real runs**
+(including 2 with temporary raw stream-json tracing added to both
+`launcher.js` and `renderer.js`'s "usage" handling, removed again afterward —
+`git diff` on both files is empty): a brand-new session with no prior
+`--resume`, a resumed/continued session, and a second pane in split-view all
+showed the exact same correct chain, every time:
+- `launcher.js`'s per-`assistant`-event usage-emission block (added in the
+  2026-07-03 commit) fires correctly off real `evt.message.usage`, deduped by
+  `message.id` as designed — confirmed via raw trace output, not inference.
+- Every `{kind: "usage", totalTokens}` event reaches
+  `window.maestro.onSessionEvent` in the renderer and finds its
+  `launchPaneHistory` entry (`entryFound=true` on the very first event of a
+  fresh run, checked explicitly).
+- `pane.liveTokens` increments correctly and cumulatively (watched it climb
+  e.g. 492,049 → 1,119,755 → 1,892,945 → 2,162,001 tokens over one real run).
+- `renderLiveStats` finds `.pane-status` and creates/updates
+  `.pane-live-stats` with real, changing text (` · 21.0s · 236.1k tokens`
+  etc.), confirmed via both `document.querySelector` reads and a real
+  `Page.captureScreenshot` showing the ticker visibly live under a busy pane.
+- `startLiveStatsTicker`'s 250ms interval is genuinely running (elapsed-time
+  component of the readout climbed in step with wall-clock time across
+  repeated samples).
+
+One earlier test run did show 4 "usage" emissions from `launcher.js` with no
+matching renderer-side receipt — the initial signal that looked like a real
+race (an `await window.maestro.suggestModelEffort(...)` / `startSession(...)`
+gap between a send starting and `launchPaneHistory.set()` actually running,
+which could in principle let very early stream events arrive before the map
+entry exists). This did NOT reproduce on a clean, isolated retest with full
+instrumentation from event #1 onward. The likely explanation, in hindsight:
+that specific test had accidentally been driven against a pane that had
+resumed a huge, live, already-1900-turns-deep session (traced back to a
+stray `cwd`/session default left over from earlier manual CDP polling
+in this same investigation) — self-inflicted test contamination, not a
+defect in the shipped code.
+
+**Conclusion: no reproducible defect found in the current, committed ticker
+code.** The most plausible real explanation for Aidin's report is that his
+live Maestro window was still running the pre-fix build — this repo has no
+hot-reload (confirmed: no file-watcher, no `webContents.reload` call
+anywhere in `main.js`), so any code change only takes effect after a full
+restart via `scripts/restart-dev.sh`, and 10 further commits shipped after
+the ticker commit before this report came in. Filed here rather than
+silently closed out, since it's a real user report and the fix (if the
+stale-window theory is right) is simply "restart Maestro" — flagging in case
+it recurs after a confirmed-fresh restart, which would mean this
+investigation missed something and needs to resume with a different angle
+(e.g. a specific model/effort combination, or a much longer real session,
+not reproduced here).
+
+**Thinking-dot color + animation (Aidin's second ask, same message):**
+"Kan vi ha en roligare tänkar ikon, inte bara pulserande och roligare färg än
+blå, orange som bubblorna hade passat bättre tror jag" (a more fun thinking
+icon, not just pulsing, and a more fun color than blue — orange like "the
+bubbles"). "Bubblorna" is the user's own chat turn bubbles
+(`.turn.user .turn-bubble`), which already use `background: var(--accent)`
+(`#d97757`) — grepped `style.css` for existing orange/amber values first per
+the ask to reuse rather than invent; `--accent` was the obvious existing
+candidate, already described in an existing comment as "accent orange."
+- `.pane-status-icon` (`src/renderer/style.css`) recolored from `var(--active)`
+  (blue) to `var(--accent)` (orange), matching the user bubbles exactly.
+- Replaced the flat scale+opacity pulse with a three-dot wave: the single
+  `<span>` `setPaneBusyUI` already creates is the center dot, with
+  `::before`/`::after` pseudo-elements adding the left/right dots (no JS
+  change needed) on staggered `animation-delay` for a left-to-right bounce,
+  evoking a "typing" indicator rather than a flat pulse.
+- The original `pane-status-pulse` keyframe was kept (renamed usage only on
+  `.pane-status-icon` itself) since `.icon-btn.recording` (the mic button)
+  independently reuses that same keyframe name for its own unrelated
+  live-recording cue.
+- The reactive "ping" on new events (`tool_use`/`usage`/`assistant`) now
+  pings orange instead of blue too; still only the center dot pings, with the
+  two side dots continuing their ambient wave underneath.
+
+**Verified:** `node --check` on all touched JS (traces added then fully
+reverted — confirmed via `git diff` showing zero changes to `launcher.js`/
+`renderer.js`), a CSS brace-balance check, a full `scripts/restart-dev.sh`
+boot-test (clean log), and live CDP verification of the new dot: computed
+`background-color: rgb(217, 119, 87)` (`#d97757`, matching the bubbles
+exactly) on the real running element during a real busy run, `animationName`
+confirmed as `pane-status-wave` on the pseudo-elements and `pane-status-ping`
+reactively on new events, and a real screenshot showing both the orange user
+bubble and the orange animated thinking dots side by side.
+
 ## 2026-07-04 — Fas 3 Point 11 v1: a real goal orchestrator (`src/lib/goalOrchestrator.js`)
 
 **Built** the first real slice of PLAN.md's Point 11 ("real orchestration") —

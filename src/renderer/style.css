@@ -804,21 +804,70 @@ body.advanced .row-jot {
   padding: 0;
 }
 
-/* "Thinking" indicator — a small pulsing dot shown while a pane's turn is
-   in flight, hooked into the exact same pane.busy state the send/stop
-   button already reflects (see setPaneBusyUI). Reuses --active, the same
-   color already used for .pane-status text and the "waiting" state. */
+/* "Thinking" indicator — a small three-dot wave shown while a pane's turn is
+   in flight, hooked into the exact same pane.busy state the send/stop button
+   already reflects (see setPaneBusyUI). Recolored to --accent (2026-07-04,
+   Aidin's ask: "roligare tänkar ikon... roligare färg än blå, orange som
+   bubblorna" — the same warm orange the user's own chat bubbles already use,
+   .turn.user .turn-bubble's background, reused here rather than inventing a
+   new color) instead of the original --active blue. The single .pane-status-
+   icon span is the CENTER dot; ::before/::after add the left/right dots via
+   box-shadow-free pseudo-elements so no extra DOM nodes are needed from the
+   JS side (setPaneBusyUI only ever creates the one span). Each dot's bounce
+   is staggered via animation-delay for a left-to-right wave instead of a
+   flat synchronized pulse — a step up from the plain scale+opacity pulse per
+   the ask for something "roligare" (livelier) without turning it into a
+   distracting spinner. */
 .pane-status-icon {
+  position: relative;
   display: inline-block;
   width: 6px;
   height: 6px;
-  margin-right: 5px;
+  margin: 0 10px 0 5px;
   border-radius: 999px;
-  background: var(--active);
+  background: var(--accent);
   vertical-align: middle;
-  animation: pane-status-pulse 1.1s ease-in-out infinite;
+  animation: pane-status-wave 1.2s ease-in-out infinite;
+  animation-delay: 0.15s;
 }
 
+.pane-status-icon::before,
+.pane-status-icon::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  animation: pane-status-wave 1.2s ease-in-out infinite;
+}
+
+.pane-status-icon::before {
+  left: -9px;
+  animation-delay: 0s;
+}
+
+.pane-status-icon::after {
+  left: 9px;
+  animation-delay: 0.3s;
+}
+
+@keyframes pane-status-wave {
+  0%, 60%, 100% {
+    opacity: 0.35;
+    transform: scale(0.8) translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: scale(1.15) translateY(-3px);
+  }
+}
+
+/* Original plain pulse — kept as its own named keyframe (no longer used by
+   .pane-status-icon itself, which now uses pane-status-wave above) because
+   .icon-btn.recording elsewhere still reuses it for its own simple "live"
+   cue and has nothing to do with the thinking-dot color/animation change. */
 @keyframes pane-status-pulse {
   0%, 100% {
     opacity: 0.35;
@@ -831,11 +880,13 @@ body.advanced .row-jot {
 }
 
 /* Reacts to a real event landing (tool_use/usage/assistant chunk) — a quick
-   bright "ping" that overrides the ambient pulse above for one animation
+   bright "ping" that overrides the ambient wave above for one animation
    cycle, then falls away on its own (animation, not a toggled state, so
-   nothing has to remove this class later). Makes the dot feel like it's
+   nothing has to remove this class later). Makes the dots feel like they're
    responding to activity, not just idling — Aidin's ask for the indicator to
-   "feel more alive." */
+   "feel more alive." Only the center dot pings (the ::before/::after side
+   dots keep waving underneath) — pinging all three at once was visually
+   noisier without reading as more informative. */
 .pane-status-icon-ping {
   animation: pane-status-ping 0.5s ease-out;
 }
@@ -844,7 +895,7 @@ body.advanced .row-jot {
   0% {
     opacity: 1;
     transform: scale(1.8);
-    box-shadow: 0 0 6px 1px var(--active);
+    box-shadow: 0 0 6px 1px var(--accent);
   }
   100% {
     opacity: 1;
