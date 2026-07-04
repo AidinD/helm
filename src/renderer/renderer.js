@@ -4280,6 +4280,335 @@ window.maestro.onGoalEvent((evt) => {
   }
 });
 
+// ============================== Lavish (interactive plan) ==============================
+// v1 of the "Lavish"-style interactive-plan feature (PLAN Phase 4). The
+// distinctive value over a plain text plan is the ANNOTATE-FEEDBACK LOOP: an
+// HTML mockup is shown in a sandboxed iframe with the annotation SDK injected
+// (see lib/lavishSdk.js, lifted from lavish-axi), the user clicks an element
+// and types feedback ON it, and each annotation comes back as a structured
+// record. "Copy feedback" / "Send to composer" turn the collected annotations
+// into one agent-ready text block. Explicitly a FIRST-PASS draft.
+//
+// The SDK runs inside the sandboxed, null-origin iframe, so it can only reach
+// the host via window.parent.postMessage — collected here (no Express, no
+// long-poll, unlike lavish-axi). The message-type strings mirror LAVISH_MSG in
+// lib/lavishSdk.js.
+
+let lavishState = {
+  srcdoc: null, // current iframe srcdoc (SDK-injected), or null before load
+  annotateMode: true,
+  annotations: [], // [{ uid, selector, tag, text, prompt, lavishId? }]
+  domSnapshot: "", // indented uid/tag/text tree from the SDK
+  loadError: "",
+};
+
+function renderLavishPage() {
+  const page = document.getElementById("lavishPage");
+  page.innerHTML = "";
+
+  const header = document.createElement("h2");
+  header.textContent = "Interactive plan";
+  page.append(header);
+
+  const intro = document.createElement("div");
+  intro.className = "analysis-totals";
+  intro.textContent =
+    "Draft / first pass. Load an HTML mockup, toggle annotate mode, click any element and type feedback on it. Each annotation is captured as structured data; 'Send to composer' / 'Copy feedback' turn them into one agent-ready text block.";
+  page.append(intro);
+
+  // ---- Load form: paste HTML, or point at a file path ----
+  const form = document.createElement("div");
+  form.className = "goal-form lavish-form";
+
+  const htmlLabel = document.createElement("label");
+  htmlLabel.className = "goal-field-label";
+  htmlLabel.textContent = "Artifact HTML (paste a mockup)";
+  const htmlInput = document.createElement("textarea");
+  htmlInput.className = "goal-textarea lavish-html-input";
+  htmlInput.placeholder = "Paste the HTML of a plan mockup here…";
+  htmlInput.rows = 5;
+
+  const pathLabel = document.createElement("label");
+  pathLabel.className = "goal-field-label";
+  pathLabel.textContent = "…or load from a file path";
+  const pathRow = document.createElement("div");
+  pathRow.className = "goal-cwd-row";
+  const pathInput = document.createElement("input");
+  pathInput.type = "text";
+  pathInput.className = "cwd-input";
+  pathInput.placeholder = "Absolute path to an .html file";
+  const pickBtn = document.createElement("button");
+  pickBtn.className = "icon-btn";
+  pickBtn.textContent = "…";
+  pickBtn.title = "Pick an HTML file";
+  pickBtn.addEventListener("click", async () => {
+    const files = await window.maestro.pickFiles();
+    if (files && files.length) {
+      pathInput.value = files[0];
+    }
+  });
+  pathRow.append(pathInput, pickBtn);
+
+  const err = document.createElement("div");
+  err.className = "goal-error";
+  err.textContent = lavishState.loadError || "";
+
+  const actionRow = document.createElement("div");
+  actionRow.className = "goal-action-row";
+  const loadBtn = document.createElement("button");
+  loadBtn.className = "goal-start-btn";
+  loadBtn.textContent = "Load mockup";
+  loadBtn.addEventListener("click", async () => {
+    lavishState.loadError = "";
+    let html = htmlInput.value.trim();
+    const filePath = pathInput.value.trim();
+    if (!html && filePath) {
+      const res = await window.maestro.readArtifactFile(filePath);
+      if (!res || !res.ok) {
+        lavishState.loadError = "Failed to read file: " + (res?.error || "unknown error");
+        renderLavishPage();
+        return;
+      }
+      html = res.html;
+    }
+    if (!html) {
+      lavishState.loadError = "Paste HTML or pick a file first.";
+      renderLavishPage();
+      return;
+    }
+    const built = await window.maestro.buildArtifactSrcdoc(html);
+    if (!built || !built.ok) {
+      lavishState.loadError = "Failed to build mockup: " + (built?.error || "unknown error");
+      renderLavishPage();
+      return;
+    }
+    lavishState.srcdoc = built.srcdoc;
+    lavishState.annotations = [];
+    lavishState.domSnapshot = "";
+    lavishState.annotateMode = true;
+    renderLavishPage();
+  });
+  actionRow.append(loadBtn);
+  form.append(htmlLabel, htmlInput, pathLabel, pathRow, err, actionRow);
+  page.append(form);
+
+  if (!lavishState.srcdoc) {
+    return;
+  }
+
+  // ---- Review surface: sandboxed iframe + annotate toggle ----
+  const reviewBar = document.createElement("div");
+  reviewBar.className = "lavish-review-bar";
+
+  const modeToggle = document.createElement("button");
+  modeToggle.className = "text-btn lavish-mode-toggle";
+  const setToggleLabel = () => {
+    modeToggle.textContent = lavishState.annotateMode ? "Annotate mode: ON" : "Annotate mode: OFF";
+    modeToggle.classList.toggle("active", lavishState.annotateMode);
+  };
+  setToggleLabel();
+  modeToggle.addEventListener("click", () => {
+    lavishState.annotateMode = !lavishState.annotateMode;
+    setToggleLabel();
+    postToLavishFrame({ type: "lavish:setAnnotationMode", enabled: lavishState.annotateMode });
+  });
+  reviewBar.append(modeToggle);
+
+  const hint = document.createElement("span");
+  hint.className = "lavish-review-hint";
+  hint.textContent = "Click an element in the mockup below and type feedback on it.";
+  reviewBar.append(hint);
+  page.append(reviewBar);
+
+  const frame = document.createElement("iframe");
+  frame.id = "lavishFrame";
+  frame.className = "lavish-frame";
+  // Sandboxed: scripts run (needed for the SDK) but no same-origin, no
+  // top-navigation, no popups — the mockup can't reach app internals.
+  frame.setAttribute("sandbox", "allow-scripts");
+  // Load as a data: URL, NOT srcdoc: a srcdoc document inherits the app's own
+  // strict CSP (default-src 'self'), which blocks the inline annotation SDK. A
+  // framed data: URL is a separate browsing context governed only by the CSP
+  // embedded in the document itself (see buildArtifactSrcdoc), so the SDK runs.
+  frame.src = "data:text/html;charset=utf-8," + encodeURIComponent(lavishState.srcdoc);
+  page.append(frame);
+
+  // Stable wrapper for the collected annotations + actions. Rendered by
+  // renderLavishCollected() so a NEW annotation (or Clear) refreshes only this
+  // region — crucially NOT the iframe above, which would otherwise reload the
+  // mockup and reset the SDK on every click.
+  const collectedWrap = document.createElement("div");
+  collectedWrap.id = "lavishCollectedWrap";
+  page.append(collectedWrap);
+  renderLavishCollected();
+}
+
+// Render just the collected-annotations list + feedback actions into the
+// stable #lavishCollectedWrap, leaving the iframe intact.
+function renderLavishCollected() {
+  const wrap = document.getElementById("lavishCollectedWrap");
+  if (!wrap) {
+    return;
+  }
+  wrap.innerHTML = "";
+
+  // ---- Collected annotations ----
+  const collected = document.createElement("div");
+  collected.className = "lavish-collected";
+  const collHead = document.createElement("div");
+  collHead.className = "goal-status-line";
+  collHead.textContent = `Collected annotations (${lavishState.annotations.length})`;
+  collected.append(collHead);
+
+  if (lavishState.annotations.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "goal-iter-summary";
+    empty.textContent = "No annotations yet.";
+    collected.append(empty);
+  } else {
+    lavishState.annotations.forEach((a, i) => {
+      collected.append(lavishAnnotationCard(a, i));
+    });
+  }
+  wrap.append(collected);
+
+  // ---- Actions on the collected feedback ----
+  const feedbackActions = document.createElement("div");
+  feedbackActions.className = "goal-action-row lavish-feedback-actions";
+
+  const copyBtn = document.createElement("button");
+  copyBtn.className = "goal-start-btn";
+  copyBtn.textContent = "Copy feedback";
+  copyBtn.disabled = lavishState.annotations.length === 0;
+  copyBtn.addEventListener("click", async () => {
+    const text = await lavishFormatText();
+    if (text) {
+      await window.maestro.copyToClipboard(text);
+      copyBtn.textContent = "Copied!";
+      setTimeout(() => (copyBtn.textContent = "Copy feedback"), 1500);
+    }
+  });
+
+  const sendBtn = document.createElement("button");
+  sendBtn.className = "goal-start-btn";
+  sendBtn.textContent = "Send to composer";
+  sendBtn.title = "Drop the formatted feedback into the focused chat composer";
+  sendBtn.disabled = lavishState.annotations.length === 0;
+  sendBtn.addEventListener("click", async () => {
+    const text = await lavishFormatText();
+    if (!text) {
+      return;
+    }
+    // Drop into the focused pane's composer on the Chat page. NEXT-PASS: start
+    // a fresh rooted session directly with this as the prompt (noted deferred).
+    const paneEl = document.querySelector(`.pane[data-pane="${focusedPaneIndex}"]`);
+    const promptEl = paneEl?.querySelector(".pane-composer textarea");
+    if (promptEl) {
+      promptEl.value = promptEl.value ? promptEl.value + "\n\n" + text : text;
+      promptEl.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    // Also copy, so it's usable even if the user isn't looking at the composer.
+    await window.maestro.copyToClipboard(text);
+    // Jump to the Chat page so the composer is visible with the feedback in it.
+    document.querySelector('#pageToggle button[data-page="chat"]')?.click();
+  });
+
+  const clearBtn = document.createElement("button");
+  clearBtn.className = "goal-cancel-btn";
+  clearBtn.textContent = "Clear";
+  clearBtn.disabled = lavishState.annotations.length === 0;
+  clearBtn.addEventListener("click", () => {
+    lavishState.annotations = [];
+    renderLavishCollected();
+  });
+
+  feedbackActions.append(sendBtn, copyBtn, clearBtn);
+  wrap.append(feedbackActions);
+}
+
+function lavishAnnotationCard(a, index) {
+  const card = document.createElement("div");
+  card.className = "goal-iter-card lavish-annotation-card-row";
+
+  const head = document.createElement("div");
+  head.className = "goal-iter-head";
+  const num = document.createElement("span");
+  num.className = "goal-iter-num";
+  num.textContent = `#${index + 1}`;
+  const badge = document.createElement("span");
+  badge.className = "goal-iter-badge";
+  badge.textContent = a.lavishId ? `data-lavish-id=${a.lavishId}` : a.selector || a.tag || "(element)";
+  head.append(num, badge);
+  card.append(head);
+
+  if (a.text) {
+    const ctx = document.createElement("div");
+    ctx.className = "goal-iter-sublabel";
+    ctx.textContent = `"${a.text}"`;
+    card.append(ctx);
+  }
+
+  const prompt = document.createElement("div");
+  prompt.className = "goal-iter-summary";
+  prompt.textContent = a.prompt || "";
+  card.append(prompt);
+
+  const removeBtn = document.createElement("button");
+  removeBtn.className = "text-btn lavish-remove-btn";
+  removeBtn.textContent = "Remove";
+  removeBtn.addEventListener("click", () => {
+    lavishState.annotations.splice(index, 1);
+    renderLavishCollected();
+  });
+  card.append(removeBtn);
+
+  return card;
+}
+
+// Format the collected annotations + DOM snapshot into an agent-ready block.
+// Delegates to main (single source of truth in lib/lavishSdk.js).
+async function lavishFormatText() {
+  const res = await window.maestro.formatAnnotations(lavishState.annotations, lavishState.domSnapshot);
+  return res && res.ok ? res.text : "";
+}
+
+function postToLavishFrame(msg) {
+  const frame = document.getElementById("lavishFrame");
+  if (frame && frame.contentWindow) {
+    frame.contentWindow.postMessage(msg, "*");
+  }
+}
+
+// The SDK inside the sandboxed iframe posts annotation records + snapshots to
+// window.parent. Collect them into lavishState. Only react to messages from
+// our own artifact frame (payload shape check — the iframe is null-origin, so
+// event.source identity is the reliable filter).
+window.addEventListener("message", (event) => {
+  const msg = event.data || {};
+  const frame = document.getElementById("lavishFrame");
+  if (!frame || event.source !== frame.contentWindow) {
+    return;
+  }
+  if (msg.type === "lavish:ready") {
+    if (typeof msg.snapshot === "string") {
+      lavishState.domSnapshot = msg.snapshot;
+    }
+    return;
+  }
+  if (msg.type === "lavish:queuePrompt" && msg.prompt && msg.prompt.prompt) {
+    lavishState.annotations.push(msg.prompt);
+    // Refresh ONLY the collected list — never the whole page — so the iframe
+    // (and the mockup/SDK state inside it) is left untouched between clicks.
+    if (!document.getElementById("lavishPage").classList.contains("hidden")) {
+      renderLavishCollected();
+    }
+    return;
+  }
+  if (msg.type === "lavish:snapshot" && typeof msg.snapshot === "string") {
+    lavishState.domSnapshot = msg.snapshot;
+  }
+});
+
 // ============================== Analysis page ==============================
 // Replaces the earlier popup versions of Skills/Usage — those rendered via
 // submenus that could overflow off-screen near the window edge, and Aidin
@@ -4297,6 +4626,7 @@ document.getElementById("pageToggle").addEventListener("click", (e) => {
   document.getElementById("chatPage").classList.toggle("hidden", page !== "chat");
   document.getElementById("focusPage").classList.toggle("hidden", page !== "focus");
   document.getElementById("goalPage").classList.toggle("hidden", page !== "goal");
+  document.getElementById("lavishPage").classList.toggle("hidden", page !== "lavish");
   document.getElementById("analysisPage").classList.toggle("hidden", page !== "analysis");
   document.getElementById("archivePage").classList.toggle("hidden", page !== "archive");
   document.getElementById("settingsPage").classList.toggle("hidden", page !== "settings");
@@ -4304,6 +4634,8 @@ document.getElementById("pageToggle").addEventListener("click", (e) => {
     renderFocusPage();
   } else if (page === "goal") {
     renderGoalPage();
+  } else if (page === "lavish") {
+    renderLavishPage();
   } else if (page === "analysis") {
     renderAnalysisPage();
   } else if (page === "archive") {

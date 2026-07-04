@@ -1,5 +1,64 @@
 # Decisions
 
+## 2026-07-04 — Fas 4 Lavish: a FIRST-PASS interactive-plan annotate loop (draft, not final UX)
+
+**Built** a v1 of the "Lavish"-style interactive-plan feature (PLAN Phase 4).
+The distinctive value over a plain text plan is the ANNOTATE-FEEDBACK LOOP: an HTML mockup is rendered in a sandboxed iframe with an annotation SDK injected, the user clicks an element and types feedback ON it, and each annotation comes back as a structured record that can seed the next agent prompt.
+This is explicitly a DRAFT for Aidin to react to - scoped to the core loop plumbing (show mock -> annotate -> get structured feedback out), NOT a polished product.
+
+**Lifted the annotation-capture logic from Kun Chen's lavish-axi (MIT), did not reinvent it.**
+Fetched `src/artifact-sdk.js` read-only via `gh api` and lifted its `selector()` (best-effort CSS path: prefer `#id`, else `tag:nth-of-type`, capped ~5 ancestors), `context()` (the `{uid, selector, tag, text}` record, `text` = up to ~240 chars of trimmed innerText), the shadow-DOM floating annotation-card overlay, the capture-phase hover/click handlers with the `isNativeInteractiveControl` guard (native controls behave natively instead of annotating), and `snapshot()` (indented uid/tag/text tree).
+Attribution is in the header of `src/lib/lavishSdk.js`.
+**Wrote fresh / deliberately dropped:** all of lavish-axi's Mermaid pan/zoom, its layout-overflow auditing, and its text-range selection (out of scope for v1); and - the key architectural collapse - its entire Express-server + postMessage + HTTP long-poll + `state.json` transport.
+lavish-axi needs that only because its artifact is a cross-origin sandboxed iframe with no app context (and that server layer is macOS/Linux-only, so it would break on Windows anyway).
+In Electron the iframe lives in the same renderer process, so the injected SDK posts each record to `window.parent` (the one channel that crosses the sandbox boundary), the renderer host collects it into `lavishState`, and a formatter turns it into text on demand.
+No server, no long-poll, no persisted state.
+
+**Improvement over lavish worth keeping:** if the artifact HTML already carries a stable `data-lavish-id` on an element, the SDK records it as `lavishId` (via `closest('[data-lavish-id]')`), and the formatter prefers that anchor over the recomputed CSS selector - so anchoring is exact when we control the mockup.
+
+**The one non-obvious problem, and its fix: CSP.**
+First attempt loaded the mockup via the iframe's `srcdoc` attribute.
+A `srcdoc` document INHERITS the embedder's Content-Security-Policy, and Maestro's page CSP is `default-src 'self'` - which blocks the inline SDK script (a srcdoc document can only make the inherited policy STRICTER, never looser).
+Confirmed live: the SDK `<script>` was present in the frame DOM but never executed, with a `Refused to execute inline script ... default-src 'self'` console violation.
+Switched to loading the mockup as a `data:text/html` URL (a separate browsing context) AND pinned the SDK's exact sha256 in the parent CSP's `script-src`.
+A framed `data:` document still has the embedder's CSP applied on top of its own, so the parent MUST whitelist the SDK by hash for it to run - the rest of the app stays inline-script-free (no blanket `'unsafe-inline'`).
+The SDK source is deterministic (`buildArtifactSdkSource()` returns a constant string), so a single pinned hash works; Chromium's reported hash matched the computed one exactly.
+To stop this from silently breaking if the SDK is ever edited, `spike/test-lavish.mjs` asserts both that the exported `LAVISH_SDK_SCRIPT_SHA256` matches the current source AND that `index.html` contains that hash - drift fails loudly (it already caught one hash change during this build, after a `snapshot()` tweak).
+Artifact author's own inline scripts do NOT run under this scheme (only the pinned SDK does) - acceptable for v1 (mockups are static HTML); noted as a later consideration if generated mockups need their own scripts.
+
+**Single source of truth in an ES module, bridged to the non-module renderer via IPC.**
+`renderer.js` is loaded as a plain `<script>` (not `type=module`), so it can't `import` from `src/lib/lavishSdk.js`.
+Rather than duplicate the SDK-source and formatter into the renderer, `main.js` exposes `lavish:buildSrcdoc` (wrap artifact HTML into the SDK-injected document) and `lavish:formatPrompt` (format collected annotations to text) - both pure string transforms, no fs.
+A separate `lavish:readFile` reads an HTML artifact by path (the renderer has no fs).
+`preload.cjs` exposes `readArtifactFile` / `buildArtifactSrcdoc` / `formatAnnotations`.
+
+**Surface: a new "Plan" page**, added via the exact same `#pageToggle` pattern as Focus/Goal/Analysis/Archive/Settings (a `data-page="lavish"` button + `#lavishPage` div toggled with `.hidden`, rendered by `renderLavishPage()`).
+Load form accepts pasted HTML OR a file path (with the composer's own `pickFiles` picker); an annotate-mode toggle; the sandboxed review iframe; a collected-annotations list; and "Send to composer" / "Copy feedback" / "Clear" actions.
+"Send to composer" drops the formatted block into the focused pane's composer and switches to the Chat page (also copies to clipboard); "Copy feedback" just copies.
+
+**Deliberate re-render split so a click never reloads the mockup.**
+A new annotation (or Clear/Remove) refreshes ONLY a stable `#lavishCollectedWrap` region via `renderLavishCollected()`, never the whole page - because re-rendering the page would recreate the iframe, reloading the mockup and resetting the SDK's state on every single click.
+Found and fixed this during live testing.
+
+**Guardrails honored:**
+- USER-TRIGGERED ONLY - everything starts from a click; nothing on a timer.
+- Left untouched (recently-committed, unrelated): voice input code, mic button, thinking indicator, language picker, Focus page, Goal page.
+- Did NOT call the Agent tool / delegate - built directly.
+
+**Verified end-to-end via live CDP against the running renderer** (`--remote-debugging-port`, the established technique), driving the frame through a `Page.createIsolatedWorld` context:
+1-3. Plan page shows, iframe renders, SDK executes inside the frame (mockup DOM present).
+4. Clicking a NON-interactive element (`<h1>`) opens the annotation card in the shadow DOM (clicking a `<button>` correctly does NOT - native controls are exempt, exactly as lavish intends).
+5. The typed feedback lands in host `lavishState` with correct `selector` (`div#hero > h1`), `tag`, `text` ("Welcome home"), `lavishId` (`hero-block`, picked up from the ancestor's `data-lavish-id`), and `prompt`; DOM snapshot captured on ready.
+6. The formatter (real IPC -> main -> lavishSdk) produced the expected text block, preferring the `data-lavish-id` anchor.
+7. Snapshot excludes the injected SDK `<script>`.
+8. Toggling annotate mode OFF suppresses the card (no new annotation) without rebuilding the iframe.
+9. "Send to composer" drops the formatted feedback into the focused pane's composer and switches to Chat.
+Plus `node --check` on all changed JS, a standalone unit test of the pure helpers (`spike/test-lavish.mjs`, 14 assertions incl. the CSP-hash drift guard), and a clean boot with zero CSP violations in the log.
+
+**What still needs Aidin's real click-test:** the actual feel of clicking-and-typing on a real, visually-styled mockup (the CDP test dispatches synthetic clicks, not a human's); whether the "Plan" page is the right home vs. integrating into the composer/plan flow; and the annotation-card ergonomics on a dense layout.
+
+**This is a first-pass DRAFT.** Explicitly deferred to a later pass: artifact GENERATION during planning (an agent producing the mockup in the project's visual style - PLAN calls this the noted next step); the deep "start a fresh rooted session with this feedback as the prompt" wiring (v1 drops it into the composer instead); Mermaid/text-range/layout-audit parity with lavish-axi; and letting artifact-authored scripts run.
+
 ## 2026-07-04 — Fas 3 Point 11: a minimal FIRST-PASS UI onto the goal orchestrator (draft, not final UX)
 
 **Built** the first UI that can trigger and watch `src/lib/goalOrchestrator.js`'s `runGoal`, which had been backend-only since earlier the same day (no interface consumed it).
