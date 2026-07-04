@@ -91,7 +91,7 @@ export function enrichWithJot(sessions, jotIndex, weightsOverride = {}) {
   const weights = { ...DEFAULT_WEIGHTS, ...weightsOverride };
   const now = Date.now();
   for (const session of sessions) {
-    const cat = jotIndex.matchByTitle(session.title, session.sessionId);
+    const cat = jotIndex.matchByTitle(session.title, session.sessionId, session.cwd);
     if (cat) {
       session.jot = {
         category: cat.name,
