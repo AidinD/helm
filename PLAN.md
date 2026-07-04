@@ -468,8 +468,26 @@ in practice, not building preemptively.
 - **gnhf** ("good night, have fun") — long-running goal orchestrator:
   decomposes a goal into steps, runs each in a FRESH context window,
   auto-rolls-back failures, generates organized commits. Maps to Point 8
-  (split work) + the autonomous-stretch capability. Depends on the firstmate
-  decision + worktrees.
+  (split work) + the autonomous-stretch capability. Depended on the firstmate
+  decision + worktrees — both now resolved (firstmate → reference only;
+  worktrees → `worktree.js`, built 2026-07-03).
+  **A v1 backend module now exists** (`src/lib/goalOrchestrator.js`,
+  2026-07-04 — see DECISIONS.md): `runGoal({ projectPath, goal,
+  maxIterations, ... })` runs fresh `claude -p` subprocess iterations (no
+  `--resume`, matching gnhf's actual verified architecture) in an isolated
+  worktree, with continuity via a `.maestro-goal/notes.md` file the
+  orchestrator itself writes/reads (gnhf's real mechanism, not an invention),
+  structured JSON output per iteration, one orchestrator-authored commit per
+  success, and a `reset --hard`/`clean -fd` rollback per failure — verified
+  end-to-end with a real spike against a live `claude` subprocess
+  (`spike/test-goal-orchestrator.mjs`), not mocked. This is still an early,
+  backend-only slice, NOT the whole of Point 11: no dispatch UI (nothing in
+  Maestro's own interface starts/monitors/cancels a goal run yet), no coach/
+  escalation layer (Point 12's framing — the module has no judgment about
+  WHEN to escalate to Aidin, only fixed stop conditions), no independent
+  build/test verification of an iteration's own self-reported success (same
+  documented weak spot as gnhf itself), and no dependency-install into the
+  worktree (same gap `worktree.js`'s own `createWorktree` already defers).
 - **no-mistakes** — automated review+git pipeline in fresh context: commit →
   rebase onto main → peer-review agent in a fresh window → forced E2E test
   with photographic evidence → auto-fix obvious, escalate ambiguous → lint/
