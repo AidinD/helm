@@ -5441,3 +5441,26 @@ setInterval(refresh, 30000);
 window.maestro.getVersion().then((v) => {
   document.getElementById("appVersion").textContent = v;
 });
+
+// Stale-build indicator: shows the pill when main.js's periodic on-disk
+// check (see runStaleBuildCheck) finds the git HEAD has moved past what this
+// running instance booted with — i.e. the source on disk changed (a pull, an
+// edit) since Maestro started, so the currently running window no longer
+// matches what's on disk. Purely informational (there is no in-app restart
+// action here — the captain restarts via his own script, which this must not try
+// to replace or second-guess).
+function applyBuildStatus(status) {
+  const pill = document.getElementById("staleBuildPill");
+  if (!pill) {
+    return;
+  }
+  if (status && status.stale) {
+    pill.textContent = "Newer build available - restart";
+    pill.classList.remove("hidden");
+  } else {
+    pill.classList.add("hidden");
+  }
+}
+
+window.maestro.getBuildStatus().then(applyBuildStatus);
+window.maestro.onBuildStaleUpdate(applyBuildStatus);

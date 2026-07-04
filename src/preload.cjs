@@ -22,6 +22,16 @@ contextBridge.exposeInMainWorld("maestro", {
     ipcRenderer.invoke("session:switchRootFolder", { cliSessionId, sessionId, newCwd }),
   getUsageSummary: () => ipcRenderer.invoke("usage:summary"),
   getVersion: () => ipcRenderer.invoke("app:version"),
+  // Stale-build indicator: getBuildStatus() returns the running build's own
+  // identity plus whatever the last periodic on-disk check found; onBuildStaleUpdate
+  // fires only when that check's result actually changes (see runStaleBuildCheck
+  // in main.js), not on every tick.
+  getBuildStatus: () => ipcRenderer.invoke("build:status"),
+  onBuildStaleUpdate: (handler) => {
+    const listener = (_event, payload) => handler(payload);
+    ipcRenderer.on("build:staleUpdate", listener);
+    return () => ipcRenderer.removeListener("build:staleUpdate", listener);
+  },
   pickFolder: () => ipcRenderer.invoke("dialog:pickFolder"),
   pickFiles: () => ipcRenderer.invoke("dialog:pickFiles"),
   // Lavish (interactive-plan) v1 — read an HTML artifact file by path, wrap
