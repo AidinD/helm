@@ -1,5 +1,75 @@
 # Decisions
 
+## 2026-07-04 — Orchestrator model clarified: one overarching orchestrator, rooted nowhere; workers rooted per-project
+
+**Decision:** the captain flagged (twice) confusion about "rooting" that I caused by
+conflating two things. Clarified, and wrote it into orchestrator-instructions.md
+("Where the orchestrator runs vs. where the work runs"):
+- The orchestrator is ONE overarching thing above ALL projects, rooted in
+  none. There is no per-project orchestrator.
+- Two distinct notions of "rooted": (a) a session's own cwd — decides which
+  project's CLAUDE.md/settings/skills auto-load for THAT session; (b) the
+  target project of a piece of work — which the orchestrator names EXPLICITLY
+  at dispatch. Never conflate them.
+- Dispatch: launch each worker with cwd = its target project (so that
+  project's CLAUDE.md loads for the worker), in an isolated worktree made via
+  `git -C <projectPath> worktree add`. The orchestrator never has to be "in"
+  the project. Mirrors firstmate (first mate isn't in a project; crewmates
+  get worktrees of specific projects).
+- The Agent-tool `isolation:"worktree"` shortcut infers the repo from the
+  CALLING session's cwd (why it failed from this Dropbox-rooted session) — a
+  harness-shortcut quirk, NOT evidence orchestrators must be rooted anywhere.
+
+**Also (parallelism / worktrees, from a related discussion):** worktrees are
+the substrate for conflict-free parallel work, but they DEFER conflicts to
+merge time, not eliminate them — disjoint files merge clean, same-line edits
+still conflict, and a shared append-target like DECISIONS.md conflicts at
+merge (so the orchestrator writes shared files AFTER merge). Tonight I
+hand-orchestrated raw Agent calls on ONE shared working tree, which is why I
+serialized on shared files (renderer.js) instead of parallelizing — the
+Agent-tool worktree isolation was unavailable from this session's root, and
+Maestro's own worktree-based dispatch isn't built. Building it (treehouse
+automation + dispatch) is what turns "serialize on shared files" into real
+conflict-free parallelism.
+
+**Operating context:** we currently work IN Claude Desktop; Maestro is the
+tool being built, not the runtime. Assume Claude Desktop until the captain says
+migrated. So today CLAUDE is the hand-orchestrator; the self-hosting hazard
+doesn't bite yet.
+
+## 2026-07-04 — Ship-review round on the risky commits: containment sound, real fixes applied
+
+**Decision:** the captain asked for ship-reviews of the commits that warrant it.
+Ran report-only adversarial reviews (fresh context, no file edits, no app
+launch — to avoid app-instance collision with the concurrent harness build)
+on the three genuinely risky commits, then applied every real finding myself,
+serially, committing per-feature. Verdicts + fixes:
+- **Lavish (CSP/iframe):** containment SOUND (no sandbox escape, XSS, IPC
+  reach-through, or spoofable postMessage). Fixed: the in-code comment stated
+  the security model BACKWARDS (dangerous — would mislead someone into
+  relaxing index.html's hash-pin and breaking containment); img-src tightened
+  to `data:`; 8MB cap on lavish:readFile. Notably, the review's own "inner
+  'unsafe-inline' is inert, set it to 'none'" suggestion was WRONG (it's the
+  required inner half of the CSP intersection — 'none' would CSP-block the
+  SDK) — caught by reasoning through CSP semantics rather than applying blind.
+- **goalOrchestrator:** destructive-git containment CONFIRMED airtight (reset
+  --hard/clean -fd can only hit the isolated worktree, never the primary
+  checkout — full chain verified). But a real HIGH: iterations ran with no
+  `--permission-mode`, so real goals would hang to timeout (feature
+  dead-on-arrival; only the trivial spike passed). Fixed with
+  bypassPermissions (safe via worktree isolation). Also: auto-remove
+  zero-commit worktrees+branches (were leaking every run), base-commit-based
+  commit count (was miscounting on non-main repos), server-side maxIterations
+  clamp. Re-ran the spike: real iteration now completes.
+- **Focus page:** write path CONFIRMED atomic + BOM-free + shape-correct. One
+  MED lost-update race (Maestro vs. the Jot app both doing whole-file writes)
+  — fixed with a stat compare-before-swap + retry so a concurrent Jot write
+  is detected and retried, never clobbered.
+
+Takeaway: the ship-reviews earned their cost — the goalOrchestrator
+permission-mode HIGH would have shipped a headline feature that silently
+didn't work.
+
 ## 2026-07-04 — Reusable Electron E2E harness over CDP (scripts/e2e/)
 
 **Built** a standing Electron E2E harness so testing Maestro's UI (and later jot/loom) is repeatable, and so an agent or a human can SCREENSHOT and inspect the running app.
