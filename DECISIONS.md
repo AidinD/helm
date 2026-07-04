@@ -1,5 +1,190 @@
 # Decisions
 
+## 2026-07-04 — Fas 3 Point 11 v1: a real goal orchestrator (`src/lib/goalOrchestrator.js`)
+
+**Built** the first real slice of PLAN.md's Point 11 ("real orchestration") —
+the biggest piece of Fas 3 still unbuilt. New module
+`src/lib/goalOrchestrator.js` exporting `runGoal({ projectPath, goal,
+maxIterations, model, effort, onIteration, cancelToken })`. Backend/library
+only, same posture as `worktree.js` before it — no dispatch UI, no wiring
+into `main.js`/`renderer.js`, nothing consumes it yet on purpose.
+
+**Shape, adapted (not copied) from gnhf's actual source-verified
+architecture** (DECISIONS.md's 2026-07-03 source-read entries, PLAN.md's
+Phase 4 "DECIDED" note: vendor/adapt gnhf's `Orchestrator` pattern, not a
+live dependency — there's no package boundary to depend on cleanly anyway):
+
+1. **Isolated worktree per run**, via `worktree.js`'s already-spike-verified
+   `createWorktree(projectPath, {...})` — all iterations run there, the
+   primary checkout is never touched.
+2. **A loop of FRESH `claude -p` subprocess iterations, no `--resume`** —
+   confirmed live (2026-07-03) as gnhf's real architecture for the CLI-agent
+   family, not an assumption to revisit. Reuses `launcher.js`'s
+   `resolveClaudeBinary()` + direct-`.exe`-spawn convention (the same
+   space-truncation-bug avoidance already proven there) rather than
+   reinventing subprocess plumbing. Capped at `maxIterations` (default 5) —
+   v1 is deliberately small-scale.
+3. **Continuity via `.maestro-goal/notes.md` in the worktree, not
+   conversation memory** — `readOrCreateNotes` reads (creating if absent)
+   before each iteration and folds the content into that iteration's prompt;
+   `appendNotes` appends a structured summary after. This is gnhf's actual
+   verified continuity mechanism, not an invented alternative.
+4. **Structured per-iteration output**, matching the exact cost-optimized
+   recipe `judge.js`/`orchestratorHelper.js` already established
+   (`--output-format json` + `--json-schema`, though NOT the Haiku-only/
+   no-tools stripped-down variant those two use — an iteration is a real
+   coding turn that needs its normal tools, unlike a classifier/judge call).
+   Schema: `success` (bool — false discards the iteration), `summary` (one
+   sentence, doubles as the git commit message — no separate LLM call to
+   produce one, mirroring gnhf), `keyChanges` (array), `keyLearnings` (array
+   — the only channel through which knowledge survives into the next fresh
+   subprocess). The iteration system prompt explicitly instructs: smallest
+   next step, run your own build/test/lint, do NOT commit yourself (the
+   orchestrator commits), stop any background processes before finishing.
+5. **One orchestrator-authored git commit per successful iteration**,
+   message built from that iteration's own `summary` field
+   (`[goal-orchestrator] iteration N: <summary>`). On `success:false` or a
+   hard process error (timeout/spawn failure/bad JSON/schema mismatch):
+   `git reset --hard` + `git clean -fd` in the worktree, mirroring gnhf's
+   verified rollback behavior. A "commit itself failed" case (e.g. a hook
+   blocked it) is deliberately NOT treated the same as a bad iteration — it's
+   logged clearly and the (presumably good) changes are left uncommitted for
+   a human to inspect, rather than being discarded.
+6. **Stop conditions**: `maxIterations` reached, two consecutive
+   `success:false`/hard-error iterations in a row, or an explicit
+   `cancelToken.cancelled` flag checked between iterations (never mid-run —
+   an in-flight subprocess always finishes or times out on its own).
+7. **Never pushes, never merges to the primary checkout, never opens a PR** —
+   per the human-gating principle (PLAN.md Phase 3) and matching the
+   `ship-review` skill's own "stop before push" stance (same reasoning:
+   pushing/merging is more consequential and harder to undo than a local
+   fix-and-verify loop). Returns `{ worktreePath, branchName, notes,
+   commitCount, iterations, stoppedReason }` and leaves everything on disk
+   for a human (or a future dispatched review pass) to look at.
+8. **`onIteration` callback**, optional, fires after each iteration's result
+   — for a future UI/CLI caller to show live progress. No UI built this pass.
+
+**A real ordering bug caught by the spike, not by inspection:** the first
+version appended to `notes.md` AFTER `commitIteration`'s `git add -A && git
+commit`, so every successful commit captured notes.md one iteration stale,
+and the worktree was left dirty (`git status --porcelain` showed a modified
+`notes.md`) after every "successful, nothing left to review" run. Fixed by
+moving `appendNotes` before `commitIteration` in the success branch only —
+the failure/error branches correctly already appended AFTER
+`discardWorktreeChanges` (a `reset --hard` would otherwise wipe an
+uncommitted pre-discard append). Caught because the spike asserts a genuinely
+clean working tree post-run, not just "a commit happened somewhere."
+
+**Verified with a real spike, real `claude` subprocess calls, not mocked**
+(`spike/test-goal-orchestrator.mjs`) — this feature's entire value
+proposition is real autonomous iteration, so per the captain's own instruction it
+had to be proven against a live invocation. Goal: "create hello.txt
+containing the word hello, then stop" against a scratch git repo under the
+OS temp dir (never Maestro's own working tree). Real run: 3 iterations (the
+capped max), first one created and committed `hello.txt`, the next two
+correctly recognized the goal was already complete and made no further
+changes (still committed, since `success:true` — a genuinely idempotent
+"nothing more to do" report, not a bug). 24 real assertions, all passed:
+worktree created on disk, checked out on the right `maestro/goal-*` branch,
+3 real commits independently visible via `git log main..branch` (not just
+this module's own count), `hello.txt` content verified byte-exact both in
+the worktree AND inside the actual commit via `git show branch:hello.txt`
+(rules out an uncommitted stray file passing the check), working tree
+genuinely clean post-run, `notes.md` content matches what's actually on disk
+and documents the iteration, `stoppedReason` correct, primary repo checkout
+(`main`) completely untouched throughout, and the scratch repo has zero
+remotes at all — proving push wasn't just skipped but structurally
+impossible in this test. Total spike cost: a few cents (Haiku-effort-`low`
+Sonnet calls).
+
+**A second, environmental (non-code) issue surfaced and fixed in the spike
+itself:** the first two spike versions called `fs.rmSync` directly on the
+scratch root without first calling `worktree.js`'s own `removeWorktree()` —
+unlike the pre-existing `test-worktree-lifecycle.mjs`, which does. This left
+git's internal `.git/worktrees/<id>` registration pointing at a directory
+Node was deleting out from under it, and Windows would refuse to release the
+directory handle (`EPERM`/"being used by another process") for tens of
+seconds afterward — confirmed NOT a leftover process (checked via
+`Get-CimInstance`, nothing had the path open) and confirmed NOT reproducible
+in the already-proven worktree-only spike, which does call `removeWorktree`
+first. Fixed by adding the same proper teardown call before the raw
+directory delete; re-ran clean immediately after.
+
+**Explicitly deferred to a future pass** (v1 scope, not gaps to silently
+paper over): a dispatch UI (start/monitor/cancel a goal run from Maestro's
+own interface — `onIteration`/`cancelToken` are the hooks a future caller
+would use, nothing consumes them yet); the coach/escalation layer (PLAN.md's
+Point 12 framing — this module has no judgment about WHEN to escalate to
+The captain, it just runs and stops on its own fixed conditions); real cancellation
+wiring beyond the flag itself (no IPC channel, no way for a human to actually
+flip `cancelToken.cancelled` from a running UI yet); dependency-install into
+the worktree (same gap `worktree.js`'s own `createWorktree` already defers —
+a goal touching a project that needs `npm install` to even build will have
+its first iteration discover and presumably fix that itself, same as gnhf's
+own documented behavior); a configurable `--permission-mode` per run (the
+spike ran successfully on the CLI's own default, unconfigured — a future
+pass may want tighter/looser control per project, matching firstmate's
+per-project mode idea already noted in PLAN.md's Phase 4 section); and any
+independent build/test verification of an iteration's own `success:true`
+self-report (gnhf's own documented weak spot — v1 trusts the agent's
+self-report plus process exit code only, same as gnhf).
+
+**Verification commands run:** `node --check` on both new files; confirmed
+`goalOrchestrator.js` imports only `node:child_process`/`node:fs`/`node:path`
+plus the two local lib modules (no Electron-specific import, so it works in
+plain Node outside the Electron app, matching the "pure library module" ask);
+`node spike/test-goal-orchestrator.mjs` — full real run, all 24 assertions
+passed (paste of the actual run output kept in this session's own report,
+not duplicated here). No boot-test via `restart-dev.sh` — this is a pure
+backend library with no `main.js`/renderer wiring, per the task's own scope.
+
+## 2026-07-04 — Mic button: SVG icon instead of emoji, and a standing "icons over emoji" convention
+
+The captain's feedback on the hold-to-record mic button (previous entry, same day):
+"kan du också fixa mikrofon ikonen till att använda något mer stilrent. Gör
+det till en vana i maestro" (fix the mic icon to something more sleek/
+polished, and make this a habit in Maestro).
+
+- `src/renderer/renderer.js`: the mic button's two raw-emoji states
+  (`micBtn.textContent = "🎤"` idle, `"⏹"` recording) replaced with two small
+  inline SVG constants, `MIC_ICON_IDLE` (mic capsule + stand, stroke-based)
+  and `MIC_ICON_RECORDING` (filled rounded square), assigned via
+  `micBtn.innerHTML` at the three call sites (initial creation, the
+  `mediaRecorder` `"stop"` handler reverting to idle, and
+  `startVoiceRecording` switching to recording).
+- Not a new pattern invented from scratch - matches the one inline-SVG
+  precedent already in this file, `wireScrollToBottomButton`'s down-arrow
+  (`stroke="currentColor"`, no hardcoded color, sized to fit its button).
+  `currentColor` means the glyph automatically respects `.icon-btn`'s
+  existing hover/active/`.recording` CSS (the red pulse background swaps
+  `color` too, so the stop-square recolors with it for free) instead of
+  baking a color into the SVG.
+- No icon-library dependency added - this app has none today, and two small
+  hand-written glyphs (a handful of path/rect commands each) don't justify
+  pulling one in.
+- Deliberately scoped to only the composer's mic button. Left
+  `.pane-status-icon` and the pane header's status-row/thinking-indicator
+  emoji untouched - separate in-flight work by someone else at the time of
+  this change.
+- **Made it a standing habit, not a one-off**, per the ask: added an "Icons
+  over emoji" section to `CLAUDE.md` - prefer small inline SVG glyphs
+  (`currentColor`, no library) over raw emoji for interactive controls going
+  forward, since emoji render inconsistently across platforms/fonts and read
+  as less polished; informal status text/badges (the existing "⚠"/"❓ Needs
+  your input" markers) are explicitly still fine as emoji, since building a
+  custom glyph for those isn't worth it. Points at this mic button as the
+  reference example.
+
+**Verification.** `node --check src/renderer/renderer.js` passed. No
+style.css changes were needed - `.icon-btn`/`.icon-btn.recording` already
+apply `color`, which both new SVGs inherit via `currentColor`/`fill`, so no
+new brace-balance risk. Full boot-test via `scripts/restart-dev.sh` (never a
+bare taskkill, per this file's own rule) came up clean with no console
+errors. This is a native Electron app with no browser-preview tooling
+available in this environment - the actual visual result (icon shape,
+crispness, alignment inside the 26px button) still needs the captain's own look
+before calling it done.
+
 ## 2026-07-04 — Voice input v1 feedback: hold-to-record (button + Alt), and a multilingual model so Swedish actually works
 
 Follow-up to the 2026-07-03 "Voice input v1" entry, after the captain live-tested
