@@ -38,7 +38,24 @@ const TAG_SCHEMA = JSON.stringify({
 // (dispatch/escalation/coaching instructions) without touching this module's
 // code.
 const INSTRUCTIONS_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), "orchestrator-instructions.md");
-const CLASSIFIER_SYSTEM_PROMPT = fs.readFileSync(INSTRUCTIONS_PATH, "utf8");
+// The file serves two audiences (see its own header): broad orchestrator
+// guidance for a full-capability agent, PLUS the literal classifier system
+// prompt fenced between these markers. Load ONLY the fenced region so the
+// surrounding guidance (delegation heuristics, human-gating philosophy, etc.)
+// never bloats or confuses this tiny Haiku status-classification call. Falls
+// back to the whole file if the markers are ever absent, so a malformed edit
+// degrades to the old behavior rather than an empty prompt.
+const CLASSIFIER_SYSTEM_PROMPT = (() => {
+  const raw = fs.readFileSync(INSTRUCTIONS_PATH, "utf8");
+  const START = "<!-- classifier-prompt:start -->";
+  const END = "<!-- classifier-prompt:end -->";
+  const s = raw.indexOf(START);
+  const e = raw.indexOf(END);
+  if (s !== -1 && e !== -1 && e > s) {
+    return raw.slice(s + START.length, e).trim();
+  }
+  return raw.trim();
+})();
 
 // This mirrors judgeModelFit's exact cost-optimized recipe (judge.js) almost
 // line for line: --system-prompt + --allowed-tools "" + empty
