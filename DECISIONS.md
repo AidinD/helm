@@ -1,5 +1,39 @@
 # Decisions
 
+## 2026-07-04 — Reusable Electron E2E harness over CDP (scripts/e2e/)
+
+**Built** a standing Electron E2E harness so testing Maestro's UI (and later jot/loom) is repeatable, and so an agent or a human can SCREENSHOT and inspect the running app.
+Context: Maestro is a native Electron app with no browser-servable dev server, so the standard preview_* / browser tools don't apply.
+The same ad-hoc CDP dance (launch electron with `--remote-debugging-port`, find the renderer target, drive it) had been hand-rolled repeatedly; this turns it into a small reusable module.
+
+**Files:** `scripts/e2e/harness.mjs` (the module) and `scripts/e2e/demo.mjs` (a verification script that drives Maestro end to end).
+Put under `scripts/` alongside the existing `scripts/kill-maestro.ps1` / `restart-dev.sh` rather than a new `test/` tree, matching where the repo already keeps its dev tooling.
+This is a NEW standalone tool that only DRIVES the app from outside; it does not touch `src/` (main.js, renderer.js, preload.cjs).
+
+**CDP transport: raw WebSocket + the `/json/list` HTTP endpoint, ZERO npm dependencies.**
+Node 24 (and any Node 18+) ships a global `WebSocket` and `fetch`, so the harness talks CDP directly with nothing to install.
+Chose this over the `chrome-remote-interface` package deliberately: on Windows a zero-dependency path is the most robust (no native build, no lockfile churn, nothing to break on `npm ci`), and the CDP surface we need is tiny (`Runtime.evaluate`, `Page.captureScreenshot`, `Runtime.enable` + the `consoleAPICalled`/`exceptionThrown` events, `Page.enable`).
+Electron 31 is Chromium ~126, so full modern CDP is available.
+The API is intentionally small and obvious: `launch()`, then `eval`, `click`, `type`, `getText`, `waitForSelector`, `screenshot`, `getConsole`/`getConsoleErrors`, `close`.
+
+**Cleanup scope: match on the unique `--remote-debugging-port=<port>` flag, NOT the app-directory basename.**
+This is the load-bearing decision and a deliberate divergence from `kill-maestro.ps1`.
+`kill-maestro.ps1` matches electron processes by command line containing `*Tools\maestro*`, which is correct for boot-testing (nothing else is running Maestro then).
+But the E2E harness is expected to run WHILE the user's own Maestro is live - and a single Electron app spawns several `electron.exe` (main + GPU + renderer + utility).
+Verified at run time: 4 `electron.exe` already matched `*maestro*` before launch (the user's session).
+Matching on the app-directory basename would have killed that live session too - exactly the class of mistake CLAUDE.md warns about.
+The `--remote-debugging-port=<port>` flag is a per-launch unique token that appears only on the main process we spawned, so a `-like` match on it can never hit an unrelated Electron app.
+`close()` resolves the matching main PID(s) and `taskkill /PID <pid> /T /F` each, taking the whole child tree (GPU/renderer/utility) with it and nothing else.
+Guarded against an invalid/low port to refuse a broadening match.
+
+**Verified end to end** (`node scripts/e2e/demo.mjs`): launched Maestro on port 9333, waited for `#pageToggle`, screenshotted the chat dashboard, clicked the Focus tab, waited for `#focusPage` visible, screenshotted again, read console (0 messages, 0 errors), then clean shutdown.
+Two real PNGs produced (1184x755, 137 KB + 66 KB, confirmed PNG signatures).
+Process check before vs after: 4 Maestro `electron.exe` at start, 4 after, 0 strays on port 9333 - the user's session untouched, the launched instance fully gone.
+
+**Pointing it at another Electron app later (jot/loom):** pass `launch({ appDir, command, args, port })`.
+`appDir` is the cwd to launch from; `command`/`args` default to `npm`/`["start"]` (the harness inserts `-- --remote-debugging-port=<port>` so the flag reaches electron through npm).
+Cleanup keys off the port, so no per-app kill script is needed - the same harness works unchanged for any Electron app whose start script runs `electron .`.
+
 ## 2026-07-04 — AXI ecosystem mapped; gh-axi adopted, TOON as a principle (standalone build has thin surface today)
 
 **Decision:** the captain asked whether to pull in the rest of Kun Chen's "axi"
