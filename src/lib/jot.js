@@ -342,57 +342,86 @@ export function addSubtask(jotConfig, parentId, text) {
     return { ok: false, error: "Missing parent goal id." };
   }
   const jotPath = jotConfig.path || DEFAULT_JOT_PATH;
-
-  // Re-read the freshest version RIGHT before writing — never trust an earlier
-  // in-memory snapshot. This is the whole point of the safe-write flow: the
-  // Jot app may have flushed its own edit since Maestro last read the file.
-  const data = readJotFile(jotPath);
-  if (!data || !Array.isArray(data.todos)) {
-    return { ok: false, error: "Could not read Jot data." };
-  }
-  const parent = data.todos.find((t) => t.id === parentId);
-  if (!parent) {
-    return { ok: false, error: "Parent goal not found." };
-  }
-  if (parent.parentId) {
-    // Jot nests exactly one level; refuse to create a grandchild.
-    return { ok: false, error: "Cannot add a subtask under a subtask." };
-  }
-
-  const newTodo = {
-    id: crypto.randomUUID(),
-    text: trimmed,
-    status: "open",
-    description: "",
-    images: [],
-    // Subtasks inherit the parent's category (verified data-model behavior).
-    categoryId: parent.categoryId ?? null,
-    tags: [],
-    // Sensible default priority so it neither jumps the queue nor sinks; the
-    // user can reprioritize in Jot. 0 matches Jot's own "no explicit priority"
-    // baseline for a freshly added item.
-    priority: 0,
-    deadline: null,
-    parentId: parentId,
-    createdAt: Date.now(),
-    completedAt: null,
-  };
-  data.todos.push(newTodo);
-
   const dir = path.dirname(jotPath);
   const base = path.basename(jotPath);
-  const tmpPath = path.join(dir, `.${base}.${crypto.randomBytes(4).toString("hex")}.tmp`);
-  try {
-    // No BOM, 2-space, LF — exactly Jot's own writer's output.
-    fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), "utf8");
-    fs.renameSync(tmpPath, jotPath);
-  } catch (err) {
+
+  // Compare-before-swap against a lost-update race with the Jot app. Both
+  // processes do whole-file read-modify-write with no lock; if Jot flushes an
+  // edit in the window between our read and our rename, a naive rename would
+  // silently REVERT Jot's edit (review finding — file stays valid, but a real
+  // todo vanishes). Guard: stat the file at read time, and immediately before
+  // the atomic rename re-stat it; if mtime/size changed, someone wrote in our
+  // window, so we discard our temp and retry from a fresh read. A few attempts
+  // is plenty for a single user; if it somehow keeps changing, we abort rather
+  // than clobber.
+  const MAX_ATTEMPTS = 4;
+  let lastError = null;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    let statBefore;
     try {
-      fs.unlinkSync(tmpPath);
-    } catch {
-      // best-effort cleanup; the write already failed
+      statBefore = fs.statSync(jotPath);
+    } catch (err) {
+      return { ok: false, error: `Could not stat Jot data: ${err.message}` };
     }
-    return { ok: false, error: `Failed to write Jot data: ${err.message}` };
+    const data = readJotFile(jotPath);
+    if (!data || !Array.isArray(data.todos)) {
+      return { ok: false, error: "Could not read Jot data." };
+    }
+    const parent = data.todos.find((t) => t.id === parentId);
+    if (!parent) {
+      return { ok: false, error: "Parent goal not found." };
+    }
+    if (parent.parentId) {
+      // Jot nests exactly one level; refuse to create a grandchild.
+      return { ok: false, error: "Cannot add a subtask under a subtask." };
+    }
+
+    const newTodo = {
+      id: crypto.randomUUID(),
+      text: trimmed,
+      status: "open",
+      description: "",
+      images: [],
+      // Subtasks inherit the parent's category (verified data-model behavior).
+      categoryId: parent.categoryId ?? null,
+      tags: [],
+      // Sensible default priority so it neither jumps the queue nor sinks; the
+      // user can reprioritize in Jot. 0 matches Jot's own "no explicit priority"
+      // baseline for a freshly added item.
+      priority: 0,
+      deadline: null,
+      parentId: parentId,
+      createdAt: Date.now(),
+      completedAt: null,
+    };
+    data.todos.push(newTodo);
+
+    const tmpPath = path.join(dir, `.${base}.${crypto.randomBytes(4).toString("hex")}.tmp`);
+    try {
+      // No BOM, 2-space, LF — exactly Jot's own writer's output.
+      fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), "utf8");
+      // Re-stat right before the swap: if the file changed since we read it,
+      // the Jot app wrote in our window — abandon this attempt and retry from
+      // its newer state rather than overwrite (revert) that write.
+      const statNow = fs.statSync(jotPath);
+      if (statNow.mtimeMs !== statBefore.mtimeMs || statNow.size !== statBefore.size) {
+        fs.unlinkSync(tmpPath);
+        lastError = "Jot file changed during write (concurrent edit)";
+        continue;
+      }
+      fs.renameSync(tmpPath, jotPath);
+      return { ok: true, id: newTodo.id };
+    } catch (err) {
+      try {
+        fs.unlinkSync(tmpPath);
+      } catch {
+        // best-effort cleanup; the write already failed
+      }
+      return { ok: false, error: `Failed to write Jot data: ${err.message}` };
+    }
   }
-  return { ok: true, id: newTodo.id };
+  return {
+    ok: false,
+    error: `Could not write subtask: ${lastError || "Jot file kept changing"}. Try again.`,
+  };
 }
