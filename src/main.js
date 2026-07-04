@@ -17,7 +17,7 @@ import { appendUsageLog, readUsageSummary, computeSuggestionAccuracyVerdict } fr
 import { judgeModelFit } from "./lib/judge.js";
 import { classifySessionStatus, estimateSessionContextTokens, compactSession, getTranscriptSize } from "./lib/orchestratorHelper.js";
 import { savePastedImage, prunePastedImages } from "./lib/images.js";
-import { computeVersionString } from "./lib/version.js";
+import { computeVersionString, captureRunningBuildIdentity, checkForNewerBuild } from "./lib/version.js";
 import { runGoal } from "./lib/goalOrchestrator.js";
 import { buildArtifactSrcdoc, formatAnnotationsAsPrompt } from "./lib/lavishSdk.js";
 
@@ -25,6 +25,18 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 let mainWindow = null;
 let latestQuota = null;
+// Stale-build indicator: the identity (package.json version + git HEAD short
+// hash) of the build THIS instance is actually running, captured exactly
+// once here at module load (main.js is only evaluated once per app launch).
+// This never changes for the lifetime of the process — it is the fixed
+// baseline that runStaleBuildCheck() below compares the live on-disk state
+// against, which is the whole point: an already-running instance has no
+// other way to notice that the source on disk moved out from under it.
+const runningBuildIdentity = captureRunningBuildIdentity();
+// Latest stale-check result, read by the "build:status" IPC handler (renderer
+// polls it once on startup) and pushed proactively over "build:staleUpdate"
+// whenever the periodic check (see runStaleBuildCheck) flips it.
+let latestBuildStatus = { stale: false, runningVersion: runningBuildIdentity.version, runningCommit: runningBuildIdentity.commit, currentVersion: runningBuildIdentity.version };
 const liveChildren = new Map(); // launchId -> child process, for the Stop button
 // Fas 3 Point 11 (goal orchestrator) — one entry per in-flight goal run,
 // goalRunId -> { cancelToken }. The orchestrator itself checks
@@ -408,6 +420,13 @@ ipcMain.handle("usage:summary", () => readUsageSummary());
 // package.json) + a commit count since that bump, so the last number resets
 // to 0 on every version bump instead of growing forever. ---
 ipcMain.handle("app:version", () => computeVersionString());
+
+// --- Stale-build indicator: hands back the running build's own identity plus
+// the most recent periodic staleness check (see runStaleBuildCheck below).
+// The renderer calls this once on startup to paint the initial state, then
+// just listens on "build:staleUpdate" for changes — no polling from the
+// renderer side. ---
+ipcMain.handle("build:status", () => latestBuildStatus);
 
 // --- Full chat history for a session (for the pane view) ---
 ipcMain.handle("transcript:get", (_event, { cliSessionId, sessionId }) => {
@@ -996,10 +1015,39 @@ function runSuggestionAccuracyCheck(config) {
   writeConfig(next);
 }
 
+// Stale-build indicator: how often to re-check the on-disk git HEAD against
+// the identity captured at boot. Cheap (a single `git rev-parse`, no model
+// call, no network) so a fairly tight interval is fine — 45s means a restart
+// prompt shows up soon after a pull/edit without polling so often it shows
+// up in any profiling. Runs off the hot path: it's its own timer, entirely
+// decoupled from session polling / IPC traffic.
+const STALE_BUILD_CHECK_INTERVAL_MS = 45 * 1000;
+
+function runStaleBuildCheck() {
+  // No .git to read (e.g. a packaged build) — checkForNewerBuild always
+  // reports stale:false in that case, so this naturally becomes a no-op
+  // that just keeps latestBuildStatus's version string current.
+  const result = checkForNewerBuild(runningBuildIdentity);
+  const next = {
+    stale: result.stale,
+    runningVersion: runningBuildIdentity.version,
+    runningCommit: runningBuildIdentity.commit,
+    currentVersion: result.current.version,
+  };
+  const changed = next.stale !== latestBuildStatus.stale || next.currentVersion !== latestBuildStatus.currentVersion;
+  latestBuildStatus = next;
+  // Only push when something actually changed — avoids spamming the
+  // renderer with an identical payload every 45s for the entire session.
+  if (changed && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("build:staleUpdate", latestBuildStatus);
+  }
+}
+
 app.whenReady().then(() => {
   prunePastedImages();
   createWindow();
   setInterval(runOrchestratorSweep, ORCHESTRATOR_SWEEP_INTERVAL_MS);
+  setInterval(runStaleBuildCheck, STALE_BUILD_CHECK_INTERVAL_MS);
 });
 
 // Without this, quitting Maestro while any prompt is still running leaves
