@@ -76,6 +76,58 @@ Not a rip-and-replace — a gradual shift in what gets built next and what
 Aidin actually reaches for day to day, tracked here so future scoping
 weighs it.
 
+## Target UI (the 2026-07-04 mock) + practitioner research
+
+**Target UI vision:** the interactive mock at
+https://claude.ai/code/artifact/9bded7e6-64b8-409b-9b01-e6b896e34676 is the
+shape Maestro is being rebuilt toward — lands on a dashboard (not a
+privileged orchestrator session), organized around GOALS not a durable
+session list, with "In motion" (ephemeral running work), "Orchestrator
+proposes" (human-gated cards), and "New session" (fresh context loaded from
+files). Aidin confirmed it gave him a much clearer picture and wants
+mock-first used more often (now a global CLAUDE.md rule). The rebuild toward
+this is a GATED epic in Jot ("bygg om Maestro..."), gated on the practitioner
+research below, which is now done.
+
+**Practitioner research (2026-07-04):** surveyed 8 agentic-engineering
+practitioners + Anthropic's orchestrator-worker doc (full findings + sources
+in DECISIONS.md). Headline: Maestro's primitives (ephemeral sessions,
+files-as-memory, orchestrator dispatching workers into isolated worktrees,
+token-efficiency) are the consensus these practitioners independently
+converged on — the direction is validated; the value is in their specific
+mechanisms.
+
+Adopt (candidates, tracked as a Jot epic — not yet built):
+- **RPI phasing (Dex Horthy):** make each per-feature session a
+  Research -> Plan(artifact) -> Worktree -> Implement pipeline; the plan
+  artifact is itself durable file-memory.
+- **~40% context-fill "dumb zone" budget (Horthy):** model recall degrades
+  in the middle of a large window; keep each worker under ~40% fill — turns
+  "token-efficiency first" into a surfaceable per-worker KPI.
+- **Files-as-memory triad, Ralph-style (Geoffrey Huntley):** fix_plan.md +
+  AGENT.md/CLAUDE.md + specs/ + git-as-narrative, re-read fresh each session;
+  plus his "serialize the validation step to one worker" orchestration rule.
+- **Verification gate before "done" (Simon Willison + Aidin's own rule):** a
+  worker's worktree isn't done until a green test/verification signal exists.
+- **Repo-map context priming (Paul Gauthier/aider):** prime workers with
+  tree-sitter signatures, not raw file dumps — token-efficient whole-repo
+  awareness inside a small worktree context.
+- Reference architecture: **Anthropic's orchestrator-worker** — orchestrator
+  owns all next-step decisions, workers are isolated and never talk.
+
+Avoid / boundary conditions:
+- **Yegge's AI-supervisor "fleets"** — defer; an agent-of-agents layer fights
+  files-as-memory + solo human-in-control. Stay at the "cluster" stage.
+- **Full autonomy for cared-about code (Ronacher/Karpathy):** make the
+  human-review checkpoint a first-class, easy-to-invoke state automation
+  can't quietly bypass.
+- **Huntley's re-read-the-whole-spec-every-loop** trades tokens for
+  reliability — fine for cheap models; for expensive ones use repo-map +
+  the <40% budget instead of re-stuffing. Cost it, don't cargo-cult it.
+- **Anthropic's ~15x token multiplier for multi-agent fan-out** — constrain
+  fan-out width in the orchestrator from day one (echoes the logged
+  agent-fan-out-runaway lesson).
+
 ## Phase 0 — Spike (de-risk before any UI)
 
 Prove the foundation with a throwaway script, no Electron yet:

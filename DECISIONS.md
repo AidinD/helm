@@ -1,5 +1,59 @@
 # Decisions
 
+## 2026-07-04 — Practitioner research validates the direction; 5 mechanisms to adopt, 4 traps to avoid
+
+**Decision:** Before committing to the Maestro rebuild (Aidin: "before we
+build anything, research 5-10 AI pioneers like Kun Chen"), surveyed 8
+agentic-engineering practitioners + Anthropic's orchestrator-worker doc.
+Headline: Maestro's core primitives (ephemeral per-feature sessions,
+files-as-durable-memory, an orchestrator dispatching workers into isolated
+git worktrees, token-efficiency first) are the SAME primitives these people
+independently converged on — the direction is validated, and the value is in
+their worked-out mechanisms.
+
+People + their most-relevant idea:
+- **Geoffrey Huntley** ("Ralph") — closest match: fresh context every loop,
+  filesystem+git as memory (fix_plan.md / AGENT.md / specs/), serialize the
+  build/validation step to one worker. (ghuntley.com/ralph/)
+- **Dex Horthy** (12-Factor Agents, RPI) — the "dumb zone": recall degrades
+  in the mid 40-60% of a big context window, so keep sessions <~40% fill;
+  Research->Plan->(Worktree)->Implement phasing, <40 instructions per phase;
+  don't use prompts for control flow. (github.com/humanlayer/12-factor-agents)
+- **Steve Yegge** — trajectory: coding agents -> agent clusters -> fleets;
+  Maestro is the "cluster" tool (one human orchestrating parallel workers).
+- **Armin Ronacher** — "second checkout = shared state is just the fs" (endorses
+  worktree isolation); dumbest-thing-that-works code for reviewability;
+  log to files so the agent self-debugs; healthy skepticism of full loops.
+- **Simon Willison** — "vibe engineering"; tests are the agent's verification
+  target and no longer optional; linear codebase walkthroughs.
+- **Thorsten Ball** — "an LLM, a loop, and enough tokens": the worker is
+  simple; the value is the orchestration/memory/isolation around it.
+- **Paul Gauthier** (aider) — repo-map via tree-sitter (signatures not file
+  dumps) for token-efficient whole-repo awareness; one commit per change.
+- **Andrej Karpathy** — keep AI "on a leash": small verifiable chunks, human
+  owns verification (the justification for small ephemeral sessions).
+- **Anthropic multi-agent doc** — orchestrator owns all next-step decisions,
+  workers isolated + never talk; WARNING: ~15x tokens vs single chat, and
+  their worst early bug was runaway subagent spawning (matches our own logged
+  fan-out-runaway lesson).
+
+Adopt (tracked as a Jot epic, not yet built): RPI phasing per session; the
+<40% context-fill budget as a per-worker KPI; the Ralph files-as-memory triad
++ serialize-validation rule; a verification gate before "done"; repo-map
+context priming; Anthropic's orchestrator-worker as the literal dispatch spec.
+
+Avoid / boundary: Yegge's AI-supervisor fleets (defer — fights files-as-memory
++ solo control); full autonomy for cared-about code (make human review a
+first-class state); Huntley's re-read-whole-spec-every-loop (token tension —
+use repo-map + budget for expensive models); the ~15x multiplier (constrain
+fan-out width from day one). Full report + all source URLs captured in the
+research task output; the adopt/avoid summary is mirrored in PLAN.md's
+"Target UI + practitioner research" section.
+
+This UNBLOCKS the "bygg om Maestro" rebuild epic — but the rebuild plan should
+be shaped WITH Aidin (the mock is the UI target; these mechanisms are the
+orchestration substrate), not started unilaterally.
+
 ## 2026-07-04 — Orchestrator model clarified: one overarching orchestrator, rooted nowhere; workers rooted per-project
 
 **Decision:** Aidin flagged (twice) confusion about "rooting" that I caused by
