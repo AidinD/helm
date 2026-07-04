@@ -49,11 +49,15 @@ const MODEL_ID = "onnx-community/kb-whisper-small-ONNX";
 // (~300MB) to protect the Swedish-quality gain that was the whole point of
 // switching to kb-whisper-small in the first place - 4-bit weight
 // quantization risks a bigger accuracy hit than 8-bit, and this model is
-// specifically valued for its transcription quality. If "q8" still isn't
-// fast enough on Aidin's machine, try "q4" here, or step down to the smaller
-// "onnx-community/kb-whisper-base-ONNX" (same KBLab Swedish training, ~1/4
-// the parameter count) before falling back to a generic model.
-const MODEL_DTYPE = "q8";
+// specifically valued for its transcription quality.
+//
+// 2026-07-04, second live test: "q8" was STILL very slow on Aidin's machine
+// (UI lag-free thanks to the worker process, but many seconds before text
+// appears). Stepped down to "q4" (~300MB, 4-bit weights) for faster inference.
+// If Swedish quality regresses noticeably at 4-bit, the next move is the
+// smaller "onnx-community/kb-whisper-base-ONNX" at q8 - fewer decoder layers is
+// a bigger latency lever than quantization - rather than staying at small.
+const MODEL_DTYPE = "q4";
 
 // Default transcription language when a caller passes nothing. Kept as
 // "swedish" so a stale caller (or any code path that forgets to pass a
