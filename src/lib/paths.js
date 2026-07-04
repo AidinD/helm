@@ -77,8 +77,17 @@ function walkForSessionJson(dir, out, depth) {
 // spike/test-cwd-switch.mjs — resuming from a different cwd fails outright
 // with "No conversation found"), so making that work means placing a copy of
 // the transcript into the TARGET folder's own encoded project directory.
+// Every non-alphanumeric character becomes a literal hyphen (1:1, never
+// collapsed) — verified 2026-07-03 against every real directory under
+// ~/.claude/projects (none contain anything outside [a-zA-Z0-9-]), e.g.
+// "D:\Dropbox\Mina Dokument\Claude" -> "D--Dropbox-Mina-Dokument-Claude".
+// The previous version only handled ":" and "\\", silently producing a
+// WRONG directory name (with a literal space preserved) for any path
+// containing a space or other special character — found live when it broke
+// orchestratorHelper.js's classifier-transcript cleanup for exactly this
+// folder, which has a space in "Mina Dokument".
 export function encodeProjectDir(cwd) {
-  return cwd.replace(/:/g, "-").replace(/\\/g, "-");
+  return cwd.replace(/[^a-zA-Z0-9]/g, "-");
 }
 
 export function findTranscriptPath(transcriptIds) {
