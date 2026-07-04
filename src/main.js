@@ -634,6 +634,16 @@ ipcMain.handle("goal:run", async (_event, { projectPath, goal, maxIterations, mo
   if (!projectPath || !goal) {
     return { ok: false, error: "projectPath and goal are required" };
   }
+  // Hard-clamp iterations at the trust boundary, not just the UI. This spawns
+  // real autonomous claude subprocesses that make real commits and spend real
+  // tokens; the renderer's input max="20" is only an HTML hint (a user typing
+  // 500, or any future non-UI caller, would otherwise get 500 real
+  // iterations). Floor 1, ceiling 20 (review finding).
+  const GOAL_ITERATION_CEILING = 20;
+  const requestedMax = parseInt(maxIterations, 10);
+  const clampedMax = Number.isFinite(requestedMax)
+    ? Math.min(Math.max(1, requestedMax), GOAL_ITERATION_CEILING)
+    : undefined; // undefined -> runGoal's own default
   const goalRunId = crypto.randomUUID();
   const cancelToken = { cancelled: false };
   liveGoalRuns.set(goalRunId, { cancelToken });
@@ -644,7 +654,7 @@ ipcMain.handle("goal:run", async (_event, { projectPath, goal, maxIterations, mo
     }
   };
 
-  send({ kind: "started", goal, maxIterations: maxIterations || null });
+  send({ kind: "started", goal, maxIterations: clampedMax || null });
 
   // Fire-and-return: the handler resolves immediately with the goalRunId so
   // the renderer can wire up its Cancel button, while the run itself proceeds
@@ -653,7 +663,7 @@ ipcMain.handle("goal:run", async (_event, { projectPath, goal, maxIterations, mo
   runGoal({
     projectPath,
     goal,
-    maxIterations: maxIterations || undefined,
+    maxIterations: clampedMax,
     model: model || undefined,
     effort: effort || undefined,
     cancelToken,
