@@ -4,6 +4,10 @@ let state = { sessions: [], config: { groups: [], viewMode: "simple" }, quota: n
 let searchTerm = "";
 let archiveSearchTerm = ""; // filters the Archive page's two lists by title/folder
 let selectedGoalId = null; // Focus page: which goal's breakdown is expanded
+// Goal page (Fas 3 Point 11) — the single in-flight autonomous run's live
+// state, or null when nothing is running. A first-pass draft: one run at a
+// time. { goalRunId, goal, status, iterations: [...], result, error }.
+let goalRunState = null;
 let selectedSessionId = null;
 let focusedPaneIndex = 0;
 let dragSessionId = null;
@@ -3993,6 +3997,289 @@ function focusGoalBreakdown(goal) {
   return body;
 }
 
+// ============================== Goal page (Fas 3 Point 11) ==============================
+// A MINIMAL first-pass UI to trigger and watch an autonomous goal run against
+// the already-built src/lib/goalOrchestrator.js. This is explicitly a draft
+// for the captain to react to, not a finalized interface — the point is to make the
+// orchestrator testable, not to design its permanent UX.
+//
+// GUARDRAIL: starting a run spawns REAL autonomous claude subprocesses that
+// make real commits in an isolated worktree. It is USER-TRIGGERED ONLY (the
+// Start button below) — nothing here runs on a timer or any automatic event.
+// The orchestrator never pushes/merges, and there is deliberately no push
+// affordance in this pass.
+
+function renderGoalPage() {
+  const page = document.getElementById("goalPage");
+  page.innerHTML = "";
+
+  const header = document.createElement("h2");
+  header.textContent = "Autonomous goal";
+  page.append(header);
+
+  const intro = document.createElement("div");
+  intro.className = "analysis-totals";
+  intro.textContent =
+    "Draft / first pass. Runs a goal to partial completion via fresh autonomous claude iterations in an isolated git worktree. Each successful iteration is committed. It never pushes or merges — the work is left in a worktree for you to review.";
+  page.append(intro);
+
+  const running = goalRunState && goalRunState.status === "running";
+
+  // ---- Input form ----
+  const form = document.createElement("div");
+  form.className = "goal-form";
+
+  const goalLabel = document.createElement("label");
+  goalLabel.className = "goal-field-label";
+  goalLabel.textContent = "Goal";
+  const goalInput = document.createElement("textarea");
+  goalInput.className = "goal-textarea";
+  goalInput.placeholder = "Describe the goal for the autonomous run…";
+  goalInput.rows = 4;
+  goalInput.disabled = running;
+  if (goalRunState) {
+    goalInput.value = goalRunState.goal || "";
+  }
+
+  const cwdLabel = document.createElement("label");
+  cwdLabel.className = "goal-field-label";
+  cwdLabel.textContent = "Project folder";
+  const cwdRow = document.createElement("div");
+  cwdRow.className = "goal-cwd-row";
+  const cwdInput = document.createElement("input");
+  cwdInput.type = "text";
+  cwdInput.className = "cwd-input";
+  cwdInput.placeholder = "Repo folder to run the goal against";
+  // Default to the focused pane's cwd when it has one — matching the composer's
+  // own rooting default so the common case needs no folder pick.
+  cwdInput.value = (goalRunState && goalRunState.projectPath) || panes[focusedPaneIndex]?.cwd || "";
+  cwdInput.disabled = running;
+  const pickBtn = document.createElement("button");
+  pickBtn.className = "icon-btn";
+  pickBtn.textContent = "…";
+  pickBtn.title = "Pick project folder";
+  pickBtn.disabled = running;
+  pickBtn.addEventListener("click", async () => {
+    const folder = await window.maestro.pickFolder();
+    if (folder) {
+      cwdInput.value = folder;
+    }
+  });
+  cwdRow.append(cwdInput, pickBtn);
+
+  const iterLabel = document.createElement("label");
+  iterLabel.className = "goal-field-label";
+  iterLabel.textContent = "Max iterations";
+  const iterInput = document.createElement("input");
+  iterInput.type = "number";
+  iterInput.className = "goal-iter-input";
+  iterInput.min = "1";
+  iterInput.max = "20";
+  iterInput.value = (goalRunState && goalRunState.maxIterations) || 5;
+  iterInput.disabled = running;
+
+  const err = document.createElement("div");
+  err.className = "goal-error";
+
+  const actionRow = document.createElement("div");
+  actionRow.className = "goal-action-row";
+  const startBtn = document.createElement("button");
+  startBtn.className = "goal-start-btn";
+  startBtn.textContent = running ? "Running…" : "Start goal run";
+  startBtn.disabled = running;
+  startBtn.addEventListener("click", async () => {
+    const goal = goalInput.value.trim();
+    const projectPath = cwdInput.value.trim();
+    const maxIterations = parseInt(iterInput.value, 10) || 5;
+    err.textContent = "";
+    if (!goal) {
+      err.textContent = "Enter a goal first.";
+      return;
+    }
+    if (!projectPath) {
+      err.textContent = "Pick a project folder first.";
+      return;
+    }
+    const res = await window.maestro.runGoal({ projectPath, goal, maxIterations });
+    if (!res || !res.ok) {
+      err.textContent = "Failed to start: " + (res?.error || "unknown error");
+      return;
+    }
+    goalRunState = {
+      goalRunId: res.goalRunId,
+      goal,
+      projectPath,
+      maxIterations,
+      status: "running",
+      iterations: [],
+      result: null,
+      error: null,
+    };
+    renderGoalPage();
+  });
+  actionRow.append(startBtn);
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.className = "goal-cancel-btn";
+  cancelBtn.textContent = "Cancel";
+  cancelBtn.disabled = !running;
+  cancelBtn.addEventListener("click", async () => {
+    if (!goalRunState) {
+      return;
+    }
+    cancelBtn.disabled = true;
+    cancelBtn.textContent = "Cancelling after current iteration…";
+    await window.maestro.cancelGoal(goalRunState.goalRunId);
+  });
+  actionRow.append(cancelBtn);
+
+  form.append(goalLabel, goalInput, cwdLabel, cwdRow, iterLabel, iterInput, err, actionRow);
+  page.append(form);
+
+  // ---- Live progress ----
+  if (goalRunState) {
+    const progress = document.createElement("div");
+    progress.className = "goal-progress";
+
+    const statusLine = document.createElement("div");
+    statusLine.className = "goal-status-line";
+    if (goalRunState.status === "running") {
+      statusLine.textContent = `Running · ${goalRunState.iterations.length} iteration(s) so far…`;
+    } else if (goalRunState.status === "done") {
+      statusLine.textContent = "Run finished.";
+    } else if (goalRunState.status === "error") {
+      statusLine.textContent = "Run ended with an error.";
+    }
+    progress.append(statusLine);
+
+    goalRunState.iterations.forEach((rec) => {
+      progress.append(goalIterationCard(rec));
+    });
+
+    page.append(progress);
+  }
+
+  // ---- Final summary ----
+  if (goalRunState && goalRunState.status === "done" && goalRunState.result) {
+    page.append(goalSummaryCard(goalRunState.result));
+  }
+  if (goalRunState && goalRunState.status === "error") {
+    const errCard = document.createElement("div");
+    errCard.className = "goal-summary-card goal-summary-error";
+    errCard.textContent = "Error: " + (goalRunState.error || "unknown error");
+    page.append(errCard);
+  }
+}
+
+function goalIterationCard(rec) {
+  const card = document.createElement("div");
+  const ok = rec.ok && rec.result && rec.result.success;
+  card.className = "goal-iter-card" + (ok ? " goal-iter-ok" : " goal-iter-fail");
+
+  const head = document.createElement("div");
+  head.className = "goal-iter-head";
+  const num = document.createElement("span");
+  num.className = "goal-iter-num";
+  num.textContent = `Iteration ${rec.iteration}`;
+  const badge = document.createElement("span");
+  badge.className = "goal-iter-badge";
+  if (rec.ok && rec.result) {
+    badge.textContent = rec.result.success ? "committed" : "discarded";
+  } else {
+    badge.textContent = "error";
+  }
+  head.append(num, badge);
+  card.append(head);
+
+  if (rec.ok && rec.result) {
+    const summary = document.createElement("div");
+    summary.className = "goal-iter-summary";
+    summary.textContent = rec.result.summary || "(no summary)";
+    card.append(summary);
+
+    if (Array.isArray(rec.result.keyChanges) && rec.result.keyChanges.length) {
+      const label = document.createElement("div");
+      label.className = "goal-iter-sublabel";
+      label.textContent = "Key changes";
+      const ul = document.createElement("ul");
+      ul.className = "goal-iter-list";
+      rec.result.keyChanges.forEach((c) => {
+        const li = document.createElement("li");
+        li.textContent = c;
+        ul.append(li);
+      });
+      card.append(label, ul);
+    }
+  } else {
+    const errText = document.createElement("div");
+    errText.className = "goal-iter-summary";
+    errText.textContent = rec.error || "Iteration failed.";
+    card.append(errText);
+  }
+
+  return card;
+}
+
+function goalSummaryCard(result) {
+  const card = document.createElement("div");
+  card.className = "goal-summary-card";
+
+  const title = document.createElement("div");
+  title.className = "goal-summary-title";
+  title.textContent = "Run complete — review the work in its isolated worktree";
+  card.append(title);
+
+  const rows = [
+    ["Commits", String(result.commitCount ?? 0)],
+    ["Branch", result.branchName || "(unknown)"],
+    ["Worktree", result.worktreePath || "(unknown)"],
+    ["Stopped because", result.stoppedReason || "(unknown)"],
+  ];
+  rows.forEach(([k, v]) => {
+    const row = document.createElement("div");
+    row.className = "goal-summary-row";
+    const key = document.createElement("span");
+    key.className = "goal-summary-key";
+    key.textContent = k;
+    const val = document.createElement("span");
+    val.className = "goal-summary-val";
+    val.textContent = v;
+    row.append(key, val);
+    card.append(row);
+  });
+
+  const note = document.createElement("div");
+  note.className = "goal-summary-note";
+  note.textContent =
+    "This run did NOT push or merge. All work lives in the isolated worktree and branch above, for you to review and merge (or discard) by hand.";
+  card.append(note);
+
+  return card;
+}
+
+// Live goal-run events (own channel, parallel to session events). Each payload
+// carries goalRunId; events from a stale run (a previous run, or after a new
+// one started) are ignored so late events can't clobber current state.
+window.maestro.onGoalEvent((evt) => {
+  if (!goalRunState || evt.goalRunId !== goalRunState.goalRunId) {
+    return;
+  }
+  if (evt.kind === "iteration") {
+    goalRunState.iterations.push(evt.record);
+  } else if (evt.kind === "done") {
+    goalRunState.status = "done";
+    goalRunState.result = evt.result;
+  } else if (evt.kind === "error") {
+    goalRunState.status = "error";
+    goalRunState.error = evt.error;
+  }
+  // Only re-render if the Goal page is actually visible, to avoid clobbering
+  // another page the user may have switched to mid-run.
+  if (!document.getElementById("goalPage").classList.contains("hidden")) {
+    renderGoalPage();
+  }
+});
+
 // ============================== Analysis page ==============================
 // Replaces the earlier popup versions of Skills/Usage — those rendered via
 // submenus that could overflow off-screen near the window edge, and the captain
@@ -4009,11 +4296,14 @@ document.getElementById("pageToggle").addEventListener("click", (e) => {
   const page = btn.dataset.page;
   document.getElementById("chatPage").classList.toggle("hidden", page !== "chat");
   document.getElementById("focusPage").classList.toggle("hidden", page !== "focus");
+  document.getElementById("goalPage").classList.toggle("hidden", page !== "goal");
   document.getElementById("analysisPage").classList.toggle("hidden", page !== "analysis");
   document.getElementById("archivePage").classList.toggle("hidden", page !== "archive");
   document.getElementById("settingsPage").classList.toggle("hidden", page !== "settings");
   if (page === "focus") {
     renderFocusPage();
+  } else if (page === "goal") {
+    renderGoalPage();
   } else if (page === "analysis") {
     renderAnalysisPage();
   } else if (page === "archive") {

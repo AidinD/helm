@@ -19,12 +19,21 @@ import { classifySessionStatus, estimateSessionContextTokens, compactSession, ge
 import { savePastedImage, prunePastedImages } from "./lib/images.js";
 import { computeVersionString } from "./lib/version.js";
 import { transcribeAudio } from "./lib/voice.js";
+import { runGoal } from "./lib/goalOrchestrator.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 let mainWindow = null;
 let latestQuota = null;
 const liveChildren = new Map(); // launchId -> child process, for the Stop button
+// Fas 3 Point 11 (goal orchestrator) — one entry per in-flight goal run,
+// goalRunId -> { cancelToken }. The orchestrator itself checks
+// cancelToken.cancelled BETWEEN iterations (never mid-iteration), so
+// "goal:cancel" just flips the flag on the matching run and the loop stops
+// at its next boundary. In-memory only: a goal run is inherently tied to the
+// app being open, and a run's real durable output is the worktree/branch/
+// commits it leaves on disk, not this transient handle.
+const liveGoalRuns = new Map();
 // Fas 3 orchestrator-helper classifier results, sessionId -> { statusTag,
 // reason, classifiedAtActivity }. In-memory only (lost on restart — a fresh
 // sweep re-populates it soon after; not worth persisting for a v1 ambient
@@ -562,6 +571,71 @@ ipcMain.handle("session:stop", (_event, { launchId }) => {
   }
   killChildTree(child);
   liveChildren.delete(launchId);
+  return { ok: true };
+});
+
+// --- Fas 3 Point 11: run an autonomous goal to (partial) completion in an
+// isolated worktree, streaming each iteration's result to the renderer. This
+// spawns REAL autonomous `claude -p` subprocesses that make real commits, so
+// it is USER-TRIGGERED ONLY (invoked from a click in the Goal page) — never
+// on a timer or any automatic event. It never pushes/merges/opens a PR (the
+// orchestrator refuses to; there is deliberately no push affordance here).
+//
+// Events are sent on their own "goal:event" channel (parallel to
+// "session:event"), so goal progress never collides with normal session
+// streaming. Every payload carries the goalRunId so the renderer can ignore
+// events from a stale/previous run.
+ipcMain.handle("goal:run", async (_event, { projectPath, goal, maxIterations, model, effort }) => {
+  if (!projectPath || !goal) {
+    return { ok: false, error: "projectPath and goal are required" };
+  }
+  const goalRunId = crypto.randomUUID();
+  const cancelToken = { cancelled: false };
+  liveGoalRuns.set(goalRunId, { cancelToken });
+
+  const send = (payload) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("goal:event", { goalRunId, ...payload });
+    }
+  };
+
+  send({ kind: "started", goal, maxIterations: maxIterations || null });
+
+  // Fire-and-return: the handler resolves immediately with the goalRunId so
+  // the renderer can wire up its Cancel button, while the run itself proceeds
+  // and streams progress over goal:event. Errors are reported over the same
+  // channel, never left to reject an already-resolved invoke.
+  runGoal({
+    projectPath,
+    goal,
+    maxIterations: maxIterations || undefined,
+    model: model || undefined,
+    effort: effort || undefined,
+    cancelToken,
+    onIteration: (record) => send({ kind: "iteration", record }),
+  })
+    .then((result) => {
+      send({ kind: "done", result });
+    })
+    .catch((err) => {
+      send({ kind: "error", error: err?.message || String(err) });
+    })
+    .finally(() => {
+      liveGoalRuns.delete(goalRunId);
+    });
+
+  return { ok: true, goalRunId };
+});
+
+// --- Cancel an in-flight goal run: flip its cancelToken so the orchestrator
+// stops at the next iteration boundary (an in-flight iteration always runs to
+// its own completion or timeout — there is no mid-iteration kill). ---
+ipcMain.handle("goal:cancel", (_event, { goalRunId }) => {
+  const run = liveGoalRuns.get(goalRunId);
+  if (!run) {
+    return { ok: false, error: "no running goal for that id" };
+  }
+  run.cancelToken.cancelled = true;
   return { ok: true };
 });
 
