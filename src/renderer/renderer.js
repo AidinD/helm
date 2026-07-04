@@ -3082,10 +3082,6 @@ function paneComposerEl(index) {
       { value: "auto", label: "Auto-detect" },
       { value: "swedish", label: "Svenska" },
       { value: "english", label: "English" },
-      { value: "norwegian", label: "Norsk" },
-      { value: "danish", label: "Dansk" },
-      { value: "german", label: "Deutsch" },
-      { value: "spanish", label: "Español" },
     ],
     async (value) => {
       // Persist globally via the same setConfig IPC every other setting uses.
