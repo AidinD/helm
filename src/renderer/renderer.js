@@ -223,7 +223,12 @@ async function startVoiceRecording(index, micBtn, promptEl) {
     micBtn.title = "Transcribing…";
     try {
       const samples = await decodeToMono16k(new Blob(chunks, { type: mediaRecorder.mimeType }));
-      const res = await window.maestro.transcribeVoice(Array.from(samples));
+      // Single global transcription language (config.voiceLanguage), picked
+      // via the language dropdown next to the mic. Read fresh at transcribe
+      // time so a change mid-recording still takes effect; fall back to
+      // "swedish" (the pre-picker default) if config hasn't loaded.
+      const language = state.config?.voiceLanguage || "swedish";
+      const res = await window.maestro.transcribeVoice(Array.from(samples), language);
       if (res.ok && res.text) {
         // Append rather than replace — voice is an alternative way to ADD to
         // what you're composing, not a destructive overwrite of anything
@@ -2942,12 +2947,38 @@ function paneComposerEl(index) {
   // mouseleave above, just for the keyboard path.
   promptEl.addEventListener("blur", () => stopVoiceRecording(index));
 
+  // Transcription language for the mic button. A single GLOBAL setting
+  // (config.voiceLanguage), not per-pane — v1 keeps one language for all
+  // panes. Reuses the exact same dropdownPill component as the model/effort/
+  // permission pills so it looks and behaves identically. The `value` passed
+  // through to voice.js must be the full lowercase language NAME transformers.js
+  // accepts ("swedish"/"english"/…) or "auto" for auto-detect; the labels are
+  // just nicer display text. Default "swedish" preserves the pre-picker forced-
+  // Swedish behavior (the captain's primary language).
+  const languageDD = dropdownPill(
+    state.config?.voiceLanguage || "swedish",
+    [
+      { value: "auto", label: "Auto-detect" },
+      { value: "swedish", label: "Svenska" },
+      { value: "english", label: "English" },
+      { value: "norwegian", label: "Norsk" },
+      { value: "danish", label: "Dansk" },
+      { value: "german", label: "Deutsch" },
+      { value: "spanish", label: "Español" },
+    ],
+    async (value) => {
+      // Persist globally via the same setConfig IPC every other setting uses.
+      state.config = await window.maestro.setConfig({ voiceLanguage: value });
+    }
+  );
+  languageDD.el.title = "Voice transcription language";
+
   const sendBtn = document.createElement("button");
   sendBtn.className = "send-btn";
   sendBtn.textContent = "➤";
   sendBtn.title = pane.sessionId ? "Continue (Enter)" : "Start session (Enter)";
 
-  controls.append(pickBtn, cwdInput, attachBtn, permissionDD.el, modelDD.el, effortDD.el, micBtn, sendBtn);
+  controls.append(pickBtn, cwdInput, attachBtn, permissionDD.el, modelDD.el, effortDD.el, languageDD.el, micBtn, sendBtn);
   shell.append(controls);
 
   // Context-size gauge — a bar + %, under the model/effort row (the captain's

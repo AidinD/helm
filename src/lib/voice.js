@@ -15,21 +15,20 @@ import { pipeline } from "@huggingface/transformers";
 // couldn't transcribe Swedish at all.
 const MODEL_ID = "Xenova/whisper-tiny";
 
-// Force Swedish transcription rather than letting Whisper auto-detect the
-// language. Auto-detect was the ACTUAL bug behind "still doesn't work for
-// Swedish" (the captain, 2026-07-04): on his Swedish speech it guessed English and
-// transcribed the audio as best-fit English words — total garbage, since the
-// words are Swedish. Forcing the language removes that guess. transformers.js
-// takes the full lowercase language name here ("swedish"), not the ISO code.
+// Default transcription language when a caller passes nothing. Kept as
+// "swedish" so a stale caller (or any code path that forgets to pass a
+// language) preserves the pre-picker forced-Swedish behavior rather than
+// silently changing to auto-detect. The actual per-use language now comes
+// from the composer's language dropdown (config.voiceLanguage), plumbed
+// through renderer -> IPC -> here (see DECISIONS.md, "voice language picker").
 //
-// Tradeoff, deliberately accepted for v1: the captain mixes Swedish and English, and
-// a hard "swedish" will now mis-handle a purely-English utterance the mirror
-// way. But his prompts are Swedish-dominant and Whisper tolerates embedded
-// English tech terms under a Swedish language setting far better than the
-// reverse (Swedish-under-English, which is what was failing). A language
-// toggle/picker in the composer is the proper fix for true mixed use — noted
-// as the follow-up rather than built now (would need renderer/IPC plumbing).
-const TRANSCRIBE_LANGUAGE = "swedish";
+// transformers.js expects the full lowercase language NAME here ("swedish",
+// "english", "norwegian", …), NOT the ISO code. The special value "auto"
+// (also null/empty) means auto-detect: we then OMIT the `language` option
+// entirely from the pipeline call, which is how transformers.js's ASR
+// pipeline triggers language auto-detection (its own JSDoc: language "Default
+// is `null`, meaning it should be auto-detected.").
+const DEFAULT_TRANSCRIBE_LANGUAGE = "swedish";
 
 // Loaded once, reused across every transcription call in the process
 // lifetime — re-creating the pipeline per call would re-load the ~150MB model
@@ -52,9 +51,21 @@ function getTranscriber() {
  * Transcribes a mono Float32Array of PCM audio samples at 16kHz (the format
  * the renderer's recorder decodes to before sending over IPC) into text.
  * Returns the trimmed text, or "" if nothing recognizable came through.
+ *
+ * @param {Float32Array} float32Samples mono 16kHz PCM samples
+ * @param {string} [language] full lowercase language NAME transformers.js
+ *   accepts ("swedish"/"english"/…), or "auto"/null/empty for auto-detect.
+ *   Defaults to "swedish" so a stale caller never breaks (see above).
  */
-export async function transcribeAudio(float32Samples) {
+export async function transcribeAudio(float32Samples, language = DEFAULT_TRANSCRIBE_LANGUAGE) {
   const transcriber = await getTranscriber();
-  const result = await transcriber(float32Samples, { language: TRANSCRIBE_LANGUAGE, task: "transcribe" });
+  // Auto-detect: omit `language` entirely so transformers.js detects it from
+  // the audio (passing null/"auto" as a language name would be rejected).
+  const normalized = (language || "").trim().toLowerCase();
+  const options =
+    !normalized || normalized === "auto"
+      ? { task: "transcribe" }
+      : { language: normalized, task: "transcribe" };
+  const result = await transcriber(float32Samples, options);
   return (result?.text || "").trim();
 }
