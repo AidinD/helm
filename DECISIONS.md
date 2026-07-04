@@ -1,5 +1,58 @@
 # Decisions
 
+## 2026-07-04 — CLAUDE.md quick-links: open the real canonical file (not the stub), and open its FOLDER (not the bare file)
+
+Follow-up to the 2026-07-03 "CLAUDE.md quick-links" entry, after Aidin
+live-tested the shipped links and gave two pieces of feedback.
+
+**1. "den globala länken går till den tomma filen istället för den som finns
+i dropbox"** (the global link opens the empty file instead of the one that
+exists in Dropbox). The previous `claudeMd:openGlobal` deliberately opened
+`~/.claude/CLAUDE.md` - the thin stub, not the canonical Dropbox file it
+`@imports` - on the reasoning that Claude Code itself resolves the import
+automatically and the stub is the one path every machine actually has. That
+reasoning was sound for how Claude Code consumes the file, but wrong for
+what a human clicking a link in the app wants to see: the stub is a few lines
+pointing elsewhere, not the actual rules. Aidin has now said directly he
+wants the real file. Fixed by having `main.js` read the stub's own content,
+regex-match its `^@(.+\.md)$` import line, and resolve that path
+(`D:/Dropbox/Mina Dokument/Claude/CLAUDE.md` on this machine) instead of the
+stub. New `resolveCanonicalGlobalClaudeMd()` helper isolates that parse step
+so it can be exercised independently of Electron.
+
+**2. "det är nog dessutom bättre om länken går till foldern med de samlade
+filerna, t.ex om jag vill se decisions eller plan"** (better if the link
+goes to the FOLDER with the collected files, e.g. to see DECISIONS or PLAN).
+Both `claudeMd:openGlobal` and `claudeMd:openProject` now call
+`shell.showItemInFolder(file)` instead of `shell.openPath(file)` - Explorer
+opens on the containing folder with CLAUDE.md pre-selected, so
+DECISIONS.md/PLAN.md/OPINIONS.md/VOICE.md/skills/ sitting right next to it
+are immediately visible, without an extra "go up one level" step.
+`showItemInFolder` chosen over `openPath` on the folder itself specifically
+for that highlighted-selection behavior - a bare folder-open would land in
+the same place but without drawing the eye to CLAUDE.md first. The global
+link now resolves to the canonical Dropbox Claude folder (via the same
+`@import`-parsing helper above); the project link resolves to `cwd` itself,
+the project's own root folder - both changes are one-line swaps in
+`main.js`'s two IPC handlers since `showItemInFolder` still takes a file
+path and derives the folder itself. The existing "only show the project link
+if a project CLAUDE.md exists" gate (`claudeMd:projectExists`) is unchanged.
+
+**Verification:** a standalone script
+(outside the app, no Electron/shell dependency) that calls the same
+stub-parsing and existence-check logic the real handlers now use, asserting:
+the resolved global file is the Dropbox canonical path (not the stub) and
+its folder contains OPINIONS.md/VOICE.md/skills/; the resolved project
+folder equals `cwd` and contains this repo's own
+CLAUDE.md/DECISIONS.md/PLAN.md; both the "no CLAUDE.md at this cwd" and
+"no cwd" cases still correctly report not-ok. All checks passed before
+wiring the logic into `main.js`. Also ran `node --check` on both edited
+files and a full boot-test via `scripts/restart-dev.sh` (clean boot, no
+errors, Reinmaker's PIDs untouched). Actually clicking the links and
+confirming Explorer opens on the right folder with the right file selected
+still needs Aidin's own live test - no way to observe a real Explorer window
+from here.
+
 ## 2026-07-04 — Classifier sweep was leaking a permanent transcript per check; encodeProjectDir was silently wrong for any path with a space
 
 **Bug (Aidin's report, "sessions rooted themselves in Mina Dokument\Claude

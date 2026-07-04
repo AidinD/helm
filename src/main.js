@@ -212,26 +212,51 @@ ipcMain.handle("clipboard:write", (_event, text) => {
   return { ok: true };
 });
 
-// --- Open Aidin's global personal CLAUDE.md in the OS default app. This is
-// the thin ~/.claude/CLAUDE.md STUB, not the canonical Dropbox-synced file it
-// @imports — deliberately: Claude Code resolves the @import automatically for
-// every session regardless of which one you open, and the stub is the file
-// every machine actually has at this exact path, so it's the more reliable
-// thing for a fixed IPC handler to point at. Aidin can follow the @import
-// line himself if he specifically wants the canonical file. ---
-ipcMain.handle("claudeMd:openGlobal", () => {
-  const file = path.join(os.homedir(), ".claude", "CLAUDE.md");
-  if (!fs.existsSync(file)) {
-    return { ok: false, error: "Global CLAUDE.md not found at " + file };
+// --- Resolve ~/.claude/CLAUDE.md's own @import line to find the real,
+// canonical Dropbox-synced file. Previous behavior deliberately opened the
+// thin stub itself and made Aidin follow the @import line manually - he's
+// since said directly he wants the real file, not the stub, so this now
+// reads the stub just to find the canonical path and returns that instead. ---
+function resolveCanonicalGlobalClaudeMd() {
+  const stubFile = path.join(os.homedir(), ".claude", "CLAUDE.md");
+  if (!fs.existsSync(stubFile)) {
+    return { ok: false, error: "Global CLAUDE.md not found at " + stubFile };
   }
-  shell.openPath(file);
+  const stubContent = fs.readFileSync(stubFile, "utf8");
+  const importMatch = stubContent.match(/^@(.+\.md)\s*$/m);
+  if (!importMatch) {
+    return { ok: false, error: "No @import line found in " + stubFile };
+  }
+  const canonicalFile = path.normalize(importMatch[1].trim());
+  if (!fs.existsSync(canonicalFile)) {
+    return { ok: false, error: "Canonical CLAUDE.md not found at " + canonicalFile };
+  }
+  return { ok: true, file: canonicalFile };
+}
+
+// --- Open the FOLDER containing Aidin's real, canonical global CLAUDE.md
+// (resolved via the stub's @import line - see resolveCanonicalGlobalClaudeMd)
+// in Explorer, with the file itself selected. A folder rather than the bare
+// file per Aidin's ask: that folder also holds DECISIONS.md/PLAN.md-shaped
+// siblings (OPINIONS.md, VOICE.md, skills/) he wants to browse to from the
+// same click. showItemInFolder (not openPath) so Explorer opens with
+// CLAUDE.md highlighted rather than just landing on the folder view. ---
+ipcMain.handle("claudeMd:openGlobal", () => {
+  const resolved = resolveCanonicalGlobalClaudeMd();
+  if (!resolved.ok) {
+    return resolved;
+  }
+  shell.showItemInFolder(resolved.file);
   return { ok: true };
 });
 
-// --- Open the current session's own project CLAUDE.md (cwd/CLAUDE.md), if it
-// exists. The renderer only shows this affordance when a lookup confirms the
-// file is actually there (see claudeMd:projectExists) rather than surfacing a
-// dead link that errors on click. ---
+// --- Open the current session's own project ROOT folder (where that
+// project's CLAUDE.md/DECISIONS.md/PLAN.md live) in Explorer, with
+// CLAUDE.md selected, if a project CLAUDE.md exists. The renderer only shows
+// this affordance when a lookup confirms the file is actually there (see
+// claudeMd:projectExists) rather than surfacing a dead link that errors on
+// click. Opens the folder (not just the file) per the same "browse to
+// DECISIONS.md/PLAN.md from here" ask as the global link above. ---
 ipcMain.handle("claudeMd:openProject", (_event, cwd) => {
   if (!cwd) {
     return { ok: false, error: "No project folder for this session" };
@@ -240,7 +265,7 @@ ipcMain.handle("claudeMd:openProject", (_event, cwd) => {
   if (!fs.existsSync(file)) {
     return { ok: false, error: "No CLAUDE.md in " + cwd };
   }
-  shell.openPath(file);
+  shell.showItemInFolder(file);
   return { ok: true };
 });
 
