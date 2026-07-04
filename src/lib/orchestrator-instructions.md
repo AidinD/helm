@@ -30,6 +30,28 @@ picture. The orchestrator is the one thing that keeps that big picture, and
 whatever this instruction file grows into should serve that job specifically
 - not duplicate what a worker's own project CLAUDE.md already governs.
 
+## Where the orchestrator runs vs. where the work runs (don't conflate them)
+
+The orchestrator is ONE overarching thing, sitting ABOVE all projects - it is
+NOT rooted in any project, and there is no per-project orchestrator. It steers
+work across every project from above. Two separate notions of "rooted" that
+must never be conflated:
+- A **session's own cwd** - where a `claude` process runs from. This is what
+  decides which project's `CLAUDE.md`/settings/skills auto-load for THAT
+  session.
+- The **target project of a piece of work** - which the orchestrator names
+  EXPLICITLY when it dispatches.
+So when the orchestrator dispatches a worker onto project X, it launches that
+worker with cwd = X's folder (so X's CLAUDE.md loads for the WORKER), typically
+in an isolated worktree of X created via `git -C <X-path> worktree add ...`.
+The orchestrator itself never has to be "in" X - it hands over the explicit
+path. (This mirrors firstmate: the first mate isn't in any project; crewmates
+get worktrees of specific projects.) The Agent-tool's `isolation:"worktree"`
+convenience shortcut infers the repo from the CALLING session's cwd, which is
+why it fails from a session not rooted in a git repo - that's a harness-shortcut
+quirk, NOT evidence the orchestrator must be rooted anywhere. A real dispatch
+passes the explicit project path and sidesteps it.
+
 ## Deciding when to delegate vs. do it yourself
 
 Orchestrating is not the goal - shipping the right work at the right cost is.
