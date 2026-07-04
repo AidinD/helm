@@ -480,14 +480,27 @@ in practice, not building preemptively.
   structured JSON output per iteration, one orchestrator-authored commit per
   success, and a `reset --hard`/`clean -fd` rollback per failure — verified
   end-to-end with a real spike against a live `claude` subprocess
-  (`spike/test-goal-orchestrator.mjs`), not mocked. This is still an early,
-  backend-only slice, NOT the whole of Point 11: no dispatch UI (nothing in
-  Maestro's own interface starts/monitors/cancels a goal run yet), no coach/
-  escalation layer (Point 12's framing — the module has no judgment about
-  WHEN to escalate to Aidin, only fixed stop conditions), no independent
-  build/test verification of an iteration's own self-reported success (same
-  documented weak spot as gnhf itself), and no dependency-install into the
-  worktree (same gap `worktree.js`'s own `createWorktree` already defers).
+  (`spike/test-goal-orchestrator.mjs`), not mocked.
+  **A minimal FIRST-PASS UI now exists too** (`goalOrchestrator.js` is no
+  longer backend-only — 2026-07-04, see DECISIONS.md): a new "Goal" page
+  (`renderGoalPage` in `renderer.js`) with a goal textarea, project-folder
+  picker, max-iterations input, Start + Cancel buttons, live per-iteration
+  progress, and a final summary card that states the work is in an isolated
+  worktree and was NOT pushed/merged. Wired via a `goal:run`/`goal:cancel`
+  IPC pair (`main.js`) that forwards `onIteration` over a dedicated
+  `goal:event` channel (parallel to `session:event`) and holds the
+  `cancelToken`; `preload.cjs` exposes `runGoal`/`cancelGoal`/`onGoalEvent`.
+  It is USER-TRIGGERED ONLY (a click) and has no push/merge affordance. This
+  UI is explicitly a DRAFT for Aidin to react to, verified by wiring
+  inspection + live CDP (not a full autonomous run) — the UX is open, not
+  finalized.
+  Still NOT the whole of Point 11 — Point 11 remains IN PROGRESS, not done:
+  no coach/escalation layer (Point 12's framing — the module has no judgment
+  about WHEN to escalate to Aidin, only fixed stop conditions), single
+  concurrent run only, no independent build/test verification of an
+  iteration's own self-reported success (same documented weak spot as gnhf
+  itself), and no dependency-install into the worktree (same gap
+  `worktree.js`'s own `createWorktree` already defers).
 - **no-mistakes** — automated review+git pipeline in fresh context: commit →
   rebase onto main → peer-review agent in a fresh window → forced E2E test
   with photographic evidence → auto-fix obvious, escalate ambiguous → lint/

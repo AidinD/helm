@@ -31,4 +31,15 @@ contextBridge.exposeInMainWorld("maestro", {
     ipcRenderer.on("session:event", listener);
     return () => ipcRenderer.removeListener("session:event", listener);
   },
+  // Fas 3 Point 11 — autonomous goal orchestrator. runGoal starts a run and
+  // resolves with { ok, goalRunId }; progress arrives over onGoalEvent (its
+  // own channel, parallel to session events); cancelGoal flips the run's
+  // cancel flag so it stops between iterations.
+  runGoal: (opts) => ipcRenderer.invoke("goal:run", opts),
+  cancelGoal: (goalRunId) => ipcRenderer.invoke("goal:cancel", { goalRunId }),
+  onGoalEvent: (handler) => {
+    const listener = (_event, payload) => handler(payload);
+    ipcRenderer.on("goal:event", listener);
+    return () => ipcRenderer.removeListener("goal:event", listener);
+  },
 });

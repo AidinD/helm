@@ -1,5 +1,41 @@
 # Decisions
 
+## 2026-07-04 — Fas 3 Point 11: a minimal FIRST-PASS UI onto the goal orchestrator (draft, not final UX)
+
+**Built** the first UI that can trigger and watch `src/lib/goalOrchestrator.js`'s `runGoal`, which had been backend-only since earlier the same day (no interface consumed it).
+This is explicitly a DRAFT for Aidin to react to - the point is to make the already-built orchestrator TESTABLE, not to finalize its interface.
+Deliberately kept minimal and clearly-bounded rather than deeply integrated: one run at a time, one new "Goal" page, no coach/escalation layer.
+
+**Surface: a new "Goal" page**, added via the exact same `#pageToggle` pattern as Focus/Analysis/Archive/Settings (a `data-page="goal"` button + a `#goalPage` div toggled with `.hidden`, rendered by `renderGoalPage()` in `renderer.js`).
+Not threaded into the crowded session-list/pane paths - same isolation reasoning the Focus page used.
+The page has three inputs (goal textarea, project-folder text field with the composer's own "…" `pickFolder` picker, max-iterations number defaulting to 5), a Start button, a Cancel button, a live per-iteration progress list, and a final summary card.
+The project folder defaults to the focused pane's `cwd` when it has one (matching the composer's rooting default), else the picker.
+
+**Live progress uses its OWN IPC channel, parallel to session events - not overloaded onto `session:event`.**
+`main.js`'s `goal:run` handler builds a `send()` that does `webContents.send("goal:event", { goalRunId, ...payload })`, exactly mirroring the shape of the existing `session:event` path (`launchId` there, `goalRunId` here).
+The handler wires the orchestrator's `onIteration` callback straight to `send({ kind: "iteration", record })`, and emits `started` / `done` / `error` on the same channel.
+`preload.cjs` exposes `runGoal` / `cancelGoal` / `onGoalEvent` (the last mirrors `onSessionEvent`'s subscribe-and-return-unsubscribe shape).
+The renderer's `onGoalEvent` subscriber ignores any event whose `goalRunId` doesn't match the current `goalRunState`, so a stale/previous run's late events can't clobber current state, and it only re-renders when the Goal page is actually visible.
+
+**Cancel is wired to the real `cancelToken`.**
+`goal:run` holds `{ cancelToken }` in a `liveGoalRuns` map keyed by a `crypto.randomUUID()` goalRunId (same id discipline as `session:start`'s launchId); `goal:cancel` flips `run.cancelToken.cancelled = true`, and the orchestrator stops at its next iteration boundary (an in-flight iteration always runs to its own completion/timeout - the module never kills mid-iteration).
+The handler resolves immediately with `{ ok, goalRunId }` (fire-and-return) so the renderer can wire Cancel while the run streams progress; the run's own resolution/rejection is reported over `goal:event`, never left to reject an already-resolved `invoke`.
+
+**Guardrails honored (this runs REAL autonomous claude subprocesses making real commits):**
+- USER-TRIGGERED ONLY - the run starts only from the Start button's click handler; nothing here is on a timer or any automatic event.
+- No push/merge affordance - the orchestrator already refuses to push/merge/PR, and this pass deliberately adds no button that would.
+- The final summary card states explicitly, in the UI, that the run did NOT push or merge and that all work lives in the isolated worktree + branch (shown by path) for the user to review/merge or discard by hand - so Aidin knows where the work went.
+- Left untouched (recently-committed, unrelated): the voice input code, mic button, thinking indicator, language picker, and the Focus page.
+
+**Verified the WIRING without a full real autonomous run** (per the task's explicit instruction not to spend tokens/spawn real claude just to test UI):
+- `node --check` on all changed JS (`main.js`, `preload.cjs`, `renderer.js`, `goalOrchestrator.js`) - all pass; CSS brace-balance 325/325.
+- Full boot-test via `scripts/restart-dev.sh` (never a bare taskkill, per CLAUDE.md) - clean boot, no errors.
+- Live CDP verification against the real running renderer (the same `--remote-debugging-port` technique the token-ticker investigation established): clicking the Goal tab renders the page with all form fields, Cancel correctly disabled while idle; all three bridge methods (`runGoal`/`cancelGoal`/`onGoalEvent`) present on `window.maestro`; and the real render functions `goalIterationCard`/`goalSummaryCard` produce correct DOM (iteration card shows number + "committed" badge + summary + key-changes with the `goal-iter-ok` accent class; summary card shows commits/branch/worktree/stopped-reason plus the "did NOT push or merge" note).
+- The complete IPC round-trip was proven incidentally-but-strongly: a Start click against a deliberately non-existent folder drove the REAL path (renderer -> `goal:run` IPC -> `runGoal` -> `createWorktree` throws "Project path does not exist" BEFORE any iteration -> real `goal:event` `{kind:"error"}` -> `onGoalEvent` -> `goalRunState.status="error"` -> re-render). This confirms the end-to-end channel AND that a bad path fails fast with ZERO claude subprocesses spawned and zero tokens spent. Confirmed afterward: no stray worktree (`git worktree list`), no `maestro/goal-*` branch, maestro's own working tree clean apart from the intended edits.
+- NOT exercised live (would need a real autonomous run): a successful `iteration`/`done` event mutating state through to the summary card. That path is the same handler/switch already proven for the `error` kind, and both render funcs are proven to render correctly - but the genuinely-successful end-to-end run is left for Aidin's own test, as instructed.
+
+**This is a first-pass DRAFT needing Aidin's review.** The UX is genuinely open (a dedicated page was one of several equally-valid choices); no coach/escalation layer (Point 12); single concurrent run; no re-run-from-summary, no worktree-open-in-explorer shortcut, no per-model/effort selection in the form (the backend accepts them; the form omits them for v1 simplicity). Point 11 remains IN PROGRESS, not done.
+
 ## 2026-07-04 — Continuous voice input: rolling re-transcription (live partials while holding), not real streaming
 
 Follow-up to the same-day voice-input entries (hold-to-record, multilingual,
