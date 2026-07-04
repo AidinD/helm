@@ -11,9 +11,15 @@
 // manual install.
 import { pipeline } from "@huggingface/transformers";
 
-// Multilingual tiny model (no ".en" suffix) — the English-only "whisper-tiny.en"
-// couldn't transcribe Swedish at all.
-const MODEL_ID = "Xenova/whisper-tiny";
+// Multilingual "base" model. Progression: "whisper-tiny.en" (English-only,
+// couldn't do Swedish at all) → "whisper-tiny" (multilingual, but Aidin
+// tested it live and Swedish was "väldigt dålig och unreliable" — tiny is
+// just too small for good non-English accuracy) → "whisper-base" here, the
+// next size up, his own suggestion, for materially better Swedish. Larger
+// one-time download than tiny and a bit slower per transcription, an
+// accepted tradeoff for usable Swedish. If base is still not good enough,
+// "whisper-small" is the next step (bigger again).
+const MODEL_ID = "Xenova/whisper-base";
 
 // Default transcription language when a caller passes nothing. Kept as
 // "swedish" so a stale caller (or any code path that forgets to pass a

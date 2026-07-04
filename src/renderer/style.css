@@ -794,7 +794,10 @@ body.advanced .row-jot {
 
 .pane-status {
   font-weight: 500;
-  color: var(--active);
+  /* --accent (warm orange), matching the thinking dots beside it, per Aidin's
+     test feedback that "Working…" should match the recolored indicator
+     instead of staying the old blue (--active). */
+  color: var(--accent);
   font-size: 11.5px;
   padding: 0 16px 4px;
 }
@@ -823,7 +826,12 @@ body.advanced .row-jot {
   display: inline-block;
   width: 6px;
   height: 6px;
-  margin: 0 10px 0 5px;
+  /* The wave's ::after dot sits at left:9px (extends ~9px past this center
+     dot's right edge), so a 10px right margin left only ~1px before the
+     status text — they visually collided (Aidin's feedback). 22px right
+     clears the ::after dot with a comfortable gap; 14px left clears the
+     ::before dot (at left:-9px) from the padding edge. */
+  margin: 0 22px 0 14px;
   border-radius: 999px;
   background: var(--accent);
   vertical-align: middle;
