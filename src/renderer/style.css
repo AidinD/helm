@@ -71,28 +71,28 @@ h1 {
 
 /* Stale-build indicator pill — hidden by default (see #staleBuildPill in
    index.html), shown only when main.js's periodic check finds the on-disk
-   git HEAD has moved past what this running instance booted with. Styled
-   like .meta-pill but in --accent (the app's one "needs attention" color,
-   also used by .icon-btn.recording) rather than a neutral border, so it
-   reads as a real prompt rather than another static label next to the
-   version text. */
+   git HEAD has moved past what this running instance booted with. Purely
+   informational (there is no in-app restart action, Aidin restarts via his
+   own script) so it is styled like .meta-pill's quiet neutral-border
+   language rather than --accent - a pulsing accent-orange pill overstated a
+   passive "restart whenever you feel like it" hint. --accent stays reserved
+   for genuine active states (the thinking dots, the recording mic). */
 .stale-build-pill {
   font: inherit;
   font-weight: 600;
   font-size: 10.5px;
   padding: 2px 8px;
   border-radius: 8px;
-  border: 1px solid var(--accent);
+  border: 1px solid var(--border);
   background: transparent;
-  color: var(--accent);
+  color: var(--text-dim);
   cursor: pointer;
   white-space: nowrap;
-  animation: pane-status-pulse 2.2s ease-in-out infinite;
 }
 
 .stale-build-pill:hover {
-  background: var(--accent);
-  color: #1a1a1a;
+  color: var(--text);
+  border-color: var(--text-dim);
 }
 
 .header-controls {
