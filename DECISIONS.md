@@ -1,5 +1,97 @@
 # Decisions
 
+## 2026-07-04 — Voice input: a language picker next to the mic (replaces hardcoded forced-Swedish)
+
+Follow-up to the same-day "force Swedish transcription" entry, after Aidin's
+feedback: instead of forcing one language, give him a small language menu next
+to the mic button so he can pick the transcription language (he mixes Swedish
+and English).
+The previous version hardcoded `const TRANSCRIBE_LANGUAGE = "swedish"` in
+`src/lib/voice.js` and passed it unconditionally.
+That entry itself had named "a language toggle/picker in the composer" as the
+proper fix for true mixed use, deferred at the time - this is that fix.
+
+**UI - reused the existing dropdown component, not a hand-rolled `<select>`.**
+The composer's model/effort/permission pills are all built by one shared helper,
+`dropdownPill(initialValue, options, onSelect)` (`renderer.js:567`), which
+returns `{ el, setValue, value }` and renders a `.meta-pill` button that opens
+the app's own `showContextMenu` on click.
+The new language picker (`languageDD`, `renderer.js` in `paneComposerEl`) calls
+that exact same helper with the same `[{value,label}, …]` option shape, so it
+looks and behaves identically to its neighbours - same class, same menu, same
+keyboard/mouse behavior.
+It is appended into the same `controls` row, immediately before `micBtn`
+(`controls.append(… effortDD.el, languageDD.el, micBtn, sendBtn)`), so it sits
+right next to the mic it controls.
+
+**Options / default.**
+Auto-detect, Svenska (swedish), English (english), plus Norsk (norwegian),
+Dansk (danish), Deutsch (german), Español (spanish) - a short list, trivially
+added since they're all just more `{value,label}` entries the same pattern
+already handles.
+Display labels are the nicer native names; the `value` passed through is always
+the full lowercase English language NAME transformers.js requires
+("swedish"/"english"/…), or "auto" for auto-detect - never an ISO code.
+Default selection is **Svenska** (`config.voiceLanguage` defaults to "swedish"),
+preserving today's forced-Swedish behavior exactly.
+
+**Persistence - a single global setting, via the existing setConfig IPC.**
+Added `voiceLanguage: "swedish"` to `DEFAULT_CONFIG` (`config.js`) - a top-level
+primitive, so the existing shallow `{ ...current, ...patch }` merge in the
+`config:set` handler (`main.js:168`) persists it correctly with no
+nested-object protection needed (unlike `jot`/`autoCompact`/etc.).
+The dropdown's `onSelect` calls `window.maestro.setConfig({ voiceLanguage })`
+and stores the returned config back into `state.config`, the same one-liner
+every other setting toggle in the renderer uses.
+The dropdown's initial value is read back from `state.config?.voiceLanguage`
+on render.
+Deliberately a single global setting, not per-pane state (overkill for v1, per
+the ask).
+
+**Plumbed the language through to `transcribeAudio`.**
+The path is renderer's `startVoiceRecording` -> `window.maestro.transcribeVoice`
+(preload.cjs) -> IPC `voice:transcribe` (main.js) -> `transcribeAudio` (voice.js).
+Each hop now carries the language: `startVoiceRecording` reads
+`state.config?.voiceLanguage || "swedish"` fresh at transcribe time (so a change
+mid-recording still applies) and passes it; `transcribeVoice(samples, language)`
+forwards it in the IPC payload; the `voice:transcribe` handler destructures
+`{ samples, language }` and passes it on; `transcribeAudio(float32Samples,
+language = "swedish")` uses it.
+In `voice.js` the hardcoded `TRANSCRIBE_LANGUAGE` const is replaced by
+`DEFAULT_TRANSCRIBE_LANGUAGE = "swedish"` (the fallback default, so a stale
+caller that passes nothing keeps today's behavior rather than silently
+switching to auto-detect).
+When the value is "auto" (or null/empty) the `language` option is OMITTED
+entirely from the pipeline call - that is how transformers.js's ASR pipeline
+triggers auto-detection (its JSDoc: language "Default is `null`, meaning it
+should be auto-detected."); otherwise it passes
+`{ language: <name>, task: "transcribe" }`.
+
+**Left untouched, per the ask:** the hold-to-record logic, the mic SVG icons,
+and the thinking indicator - all already done and committed. This change only
+ADDS the dropdown and the language plumbing.
+
+**Verified.** `node --check` on all five changed files
+(`config.js`/`voice.js`/`main.js`/`preload.cjs`/`renderer.js`) - all pass.
+A mechanical plumbing test (standalone script importing the real
+`transcribeAudio`, fed a 1s silent 16kHz buffer): a named language ("english")
+runs without throwing; "auto" runs without throwing AND emits transformers.js's
+own `"No language specified - defaulting to English (en)."` log line - the
+message that only appears when the `language` option is genuinely omitted,
+proving the auto-detect branch works as intended, not just that it doesn't
+crash; the no-arg default correctly ran in Swedish mode (produced Swedish
+output off the silence, confirming the "swedish" fallback passes a real
+language); an empty string behaved as auto-detect (same omitted-language log).
+Full boot-test via `scripts/restart-dev.sh` (never a bare taskkill, per
+CLAUDE.md) - clean boot, no errors, killed exactly Maestro's own 4 PIDs.
+**What this could NOT verify** (no microphone and no Swedish voice on this
+machine, same limitation as every prior voice-input entry): real transcription
+QUALITY in any language, and the dropdown actually rendering/selecting/
+persisting through a real click in the running app. Both need Aidin's own live
+test - in particular whether picking each language actually improves his real
+Swedish and mixed Swedish/English transcription over the old forced-Swedish
+behavior.
+
 ## 2026-07-04 — Live token ticker investigated (no reproducible bug found); thinking-dot recolored + animated
 
 **Context:** Aidin reported, after live-testing the 2026-07-03 "Live time/

@@ -82,6 +82,13 @@ const DEFAULT_CONFIG = {
   // Maestro hasn't yet learned a real window for (see modelContextWindows).
   // Defaulted to 1M to match Aidin's current environment.
   contextWindowTokens: 1000000,
+  // Language the composer's mic button transcribes voice input as (see
+  // src/lib/voice.js). A single global setting, not per-pane (overkill for
+  // v1). "swedish" preserves the pre-picker forced-Swedish behavior as the
+  // default (Aidin's primary language). Value is the full lowercase English
+  // language NAME that transformers.js expects ("swedish"/"english"/etc.), or
+  // "auto" to let Whisper auto-detect the language per utterance.
+  voiceLanguage: "swedish",
   // model name -> real context-window size, LEARNED from the CLI's own
   // result events (evt.modelUsage[model].contextWindow) as sessions run
   // through Maestro. Authoritative per model; the gauge prefers this over

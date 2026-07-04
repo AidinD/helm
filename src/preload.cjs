@@ -15,7 +15,7 @@ contextBridge.exposeInMainWorld("maestro", {
   projectClaudeMdExists: (cwd) => ipcRenderer.invoke("claudeMd:projectExists", cwd),
   copyToClipboard: (text) => ipcRenderer.invoke("clipboard:write", text),
   saveImage: (base64Data, ext) => ipcRenderer.invoke("image:save", { base64Data, ext }),
-  transcribeVoice: (samples) => ipcRenderer.invoke("voice:transcribe", { samples }),
+  transcribeVoice: (samples, language) => ipcRenderer.invoke("voice:transcribe", { samples, language }),
   archiveSession: (sessionId, archived) => ipcRenderer.invoke("session:archive", { sessionId, archived }),
   forkSession: (cliSessionId, userMsgIndex) => ipcRenderer.invoke("session:fork", { cliSessionId, userMsgIndex }),
   switchSessionRootFolder: (cliSessionId, sessionId, newCwd) =>

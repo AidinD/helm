@@ -322,9 +322,9 @@ ipcMain.handle("image:save", (_event, { base64Data, ext }) => {
 // Float32Array through contextBridge's IPC boundary as-is in every Electron
 // version, so the renderer sends Array.from(float32Array) and this rebuilds
 // the typed array main-process-side). ---
-ipcMain.handle("voice:transcribe", async (_event, { samples }) => {
+ipcMain.handle("voice:transcribe", async (_event, { samples, language }) => {
   try {
-    const text = await transcribeAudio(Float32Array.from(samples));
+    const text = await transcribeAudio(Float32Array.from(samples), language);
     return { ok: true, text };
   } catch (err) {
     console.error("[maestro] voice transcription failed:", err);
