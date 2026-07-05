@@ -19,8 +19,6 @@
 // `MessagePortMain`-based utility-process IPC (`process.parentPort`):
 //   main -> worker: { id, samples: number[], language: string, engine: string }
 //   worker -> main: { id, ok: true, text } | { id, ok: false, error }
-//   worker -> main: { serverPid: number|null } (see below — fire-and-forget,
-//     no id, not a reply to any specific request)
 // `id` round-trips a request to its response so overlapping calls (the
 // rolling re-transcription tick firing while a previous one is still
 // in-flight, or a rolling tick overlapping the final on-release
@@ -28,19 +26,6 @@
 // plain number array (same reasoning as the renderer->main hop already
 // documented in main.js: structured-clone of a Float32Array isn't reliable
 // across every Electron IPC boundary), rebuilt into a Float32Array here.
-//
-// The "whispercpp" engine's warm path (see whisperCpp.js/whisperServer.js)
-// spawns whisper-server.exe as a CHILD OF THIS WORKER PROCESS, not of
-// main.js. main.js's own before-quit handler can only reach this worker
-// itself (voiceWorker.kill()) — that does not tree-kill a grandchild process
-// on Windows, the same orphan risk documented at length for
-// claude.exe/whisper-stream.exe elsewhere in this codebase. Rather than have
-// main.js ask this worker to shut the grandchild down (a message-then-kill
-// sequence whose delivery order relative to voiceWorker.kill() is not
-// guaranteed), this worker instead proactively PUSHES the warm server's PID
-// to main.js right after every transcribe call, so main.js can track it and
-// tree-kill it directly and synchronously in before-quit — the exact same
-// pattern it already uses for liveChildren/liveVoiceStreams.
 //
 // `engine` selects the transcription backend (config.voiceEngine, see
 // config.js): "whispercpp" spawns the whisper.cpp CUDA subprocess (see
@@ -52,19 +37,7 @@
 // warning) when whisperCpp.isAvailable() is false, rather than failing the
 // transcription outright.
 import { transcribeAudio as transcribeWithTransformers } from "./voice.js";
-import { transcribeAudio as transcribeWithWhisperCpp, isAvailable as whisperCppAvailable, getWarmServerPid, stopWarmServer } from "./whisperCpp.js";
-
-// Backstop: if this worker process itself is torn down for any reason
-// (including main.js's own voiceWorker.kill()), try to take whisper-server.exe
-// down with it. This is NOT the primary cleanup path — main.js tracks the
-// server's PID (pushed via the "serverPid" message below) and tree-kills it
-// directly and synchronously in before-quit, since that is deterministic and
-// does not depend on this handler running before the process is torn down.
-// This is only a second line of defense for exit paths that skip main.js's
-// before-quit sweep (e.g. this worker crashing on its own).
-process.on("exit", () => {
-  stopWarmServer({ sync: true });
-});
+import { transcribeAudio as transcribeWithWhisperCpp, isAvailable as whisperCppAvailable } from "./whisperCpp.js";
 
 function transcribe(samples, language, engine) {
   if (engine === "whispercpp") {
@@ -84,11 +57,5 @@ process.parentPort.on("message", (event) => {
     })
     .catch((err) => {
       process.parentPort.postMessage({ id, ok: false, error: err.message });
-    })
-    .finally(() => {
-      // Report the warm server's current PID (or null if none is running,
-      // e.g. the fallback path was used) after every call — see the header
-      // comment above for why main.js needs this pushed rather than polled.
-      process.parentPort.postMessage({ serverPid: getWarmServerPid() });
     });
 });
