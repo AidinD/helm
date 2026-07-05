@@ -3785,7 +3785,7 @@ async function refresh() {
 // reached the same way any other page is.
 async function startup() {
   await refresh();
-  document.querySelector('#pageToggle button[data-page="dashboard"]')?.click();
+  navigateToPage("dashboard");
 }
 
 // The modelFit event is the normal way launchPaneHistory entries get cleaned
@@ -4044,7 +4044,7 @@ function startOrchestratorSessionBtnEl() {
       console.error("[maestro] orchestrator:info failed:", info.error);
       return;
     }
-    document.querySelector('#pageToggle button[data-page="chat"]')?.click();
+    navigateToPage("chat");
     const draft = `Read ${info.instructionsPath} and act as Maestro's orchestrator for this session. Start by checking current state (Jot, PLAN.md/DECISIONS.md) and telling me what needs attention.`;
     openFreshDraftInPane(info.cwd, draft, { paneOverrides: { isOrchestrator: true } });
   });
@@ -4307,7 +4307,7 @@ function dashSessionRowEl(session) {
   const row = document.createElement("div");
   row.className = "dash-queue-row";
   row.addEventListener("click", () => {
-    document.querySelector('#pageToggle button[data-page="chat"]')?.click();
+    navigateToPage("chat");
     openSessionInPane(session, focusedPaneIndex);
   });
   row.append(dashQueueStateIcon("session", session));
@@ -4419,7 +4419,7 @@ function dashGoalCardEl(goal) {
   }
 
   card.addEventListener("click", () => {
-    document.querySelector('#pageToggle button[data-page="focus"]')?.click();
+    navigateToPage("focus");
     selectedGoalId = goal.id;
   });
 
@@ -4495,7 +4495,7 @@ async function dashboardNewSessionSection() {
       showToast("Pick a project chip first.");
       return;
     }
-    document.querySelector('#pageToggle button[data-page="chat"]')?.click();
+    navigateToPage("chat");
     openFreshDraftInPane(dashboardSelectedChip, "");
   });
   launchRow.append(startBtn);
@@ -5627,7 +5627,7 @@ function renderLavishCollected() {
     // Also copy, so it's usable even if the user isn't looking at the composer.
     await window.maestro.copyToClipboard(text);
     // Jump to the Chat page so the composer is visible with the feedback in it.
-    document.querySelector('#pageToggle button[data-page="chat"]')?.click();
+    navigateToPage("chat");
   });
 
   const clearBtn = document.createElement("button");
@@ -5970,7 +5970,7 @@ function agentsSessionNode(session) {
   const node = document.createElement("div");
   node.className = "tree-node root";
   node.addEventListener("click", () => {
-    document.querySelector('#pageToggle button[data-page="chat"]')?.click();
+    navigateToPage("chat");
     openSessionInPane(session, focusedPaneIndex);
   });
 
@@ -6010,13 +6010,27 @@ function agentsSessionNode(session) {
 // page. Combines both into one page with simple hand-rolled bar charts (no
 // charting dependency needed for this).
 
-document.getElementById("pageToggle").addEventListener("click", (e) => {
-  const btn = e.target.closest("button[data-page]");
-  if (!btn) {
-    return;
-  }
-  document.querySelectorAll("#pageToggle button").forEach((b) => b.classList.toggle("active", b === btn));
-  const page = btn.dataset.page;
+// Gear glyph for the header Settings button — currentColor stroke so it
+// inherits .icon-btn's normal/hover/.active text color, sized to sit inside
+// the .icon-btn box, matching the MIC/GLOBE/DOCUMENT icon conventions above.
+const GEAR_ICON =
+  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+  '<circle cx="12" cy="12" r="3"/>' +
+  '<path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>' +
+  "</svg>";
+document.getElementById("settingsGear").innerHTML = GEAR_ICON;
+
+// Which pages belong to the Dashboard primary tab (the "work" facets). The
+// primary Dashboard button and the #dashboardSubnav are shown/activated as a
+// group across all of these, not by exact page match. Settings owns the two
+// utility pages (Skills=analysis, Archive) reached from the gear.
+const DASHBOARD_FACET_PAGES = ["dashboard", "goal", "agents", "routines", "focus"];
+const SETTINGS_GROUP_PAGES = ["settings", "analysis", "archive"];
+
+// Single source of truth for page navigation. Everything (the primary bar,
+// the gear, the sub-nav, and every programmatic jump) routes through here, so
+// navigation no longer depends on a button physically existing in #pageToggle.
+function navigateToPage(page) {
   document.getElementById("chatPage").classList.toggle("hidden", page !== "chat");
   document.getElementById("dashboardPage").classList.toggle("hidden", page !== "dashboard");
   document.getElementById("focusPage").classList.toggle("hidden", page !== "focus");
@@ -6027,6 +6041,23 @@ document.getElementById("pageToggle").addEventListener("click", (e) => {
   document.getElementById("analysisPage").classList.toggle("hidden", page !== "analysis");
   document.getElementById("archivePage").classList.toggle("hidden", page !== "archive");
   document.getElementById("settingsPage").classList.toggle("hidden", page !== "settings");
+
+  // Primary bar active state is group-aware: clicking a sub-nav facet (e.g.
+  // Goal) must keep the Dashboard primary tab lit, not deactivate it.
+  const inDashboardGroup = DASHBOARD_FACET_PAGES.includes(page);
+  document.querySelectorAll("#pageToggle button").forEach((b) => {
+    const bp = b.dataset.page;
+    b.classList.toggle("active", bp === "dashboard" ? inDashboardGroup : bp === page);
+  });
+
+  // Gear = active whenever we're on Settings or one of its utility pages.
+  document.getElementById("settingsGear").classList.toggle("active", SETTINGS_GROUP_PAGES.includes(page));
+
+  // Sub-nav: visible only within the Dashboard group; its buttons match exactly.
+  const subnav = document.getElementById("dashboardSubnav");
+  subnav.classList.toggle("hidden", !inDashboardGroup);
+  subnav.querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.dataset.page === page));
+
   if (page === "dashboard") {
     renderDashboardPage();
   } else if (page === "focus") {
@@ -6046,7 +6077,22 @@ document.getElementById("pageToggle").addEventListener("click", (e) => {
   } else if (page === "settings") {
     renderSettingsPage();
   }
-});
+}
+
+// Delegate all nav surfaces (primary bar + dashboard sub-nav) to
+// navigateToPage — they all carry data-page buttons.
+function wirePageNav(containerId) {
+  document.getElementById(containerId).addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-page]");
+    if (!btn) {
+      return;
+    }
+    navigateToPage(btn.dataset.page);
+  });
+}
+wirePageNav("pageToggle");
+wirePageNav("dashboardSubnav");
+document.getElementById("settingsGear").addEventListener("click", () => navigateToPage("settings"));
 
 // ============================== Settings page ==============================
 
@@ -6199,6 +6245,19 @@ function renderSettingsPage() {
   header.textContent = "Settings";
   page.append(header);
 
+  // Quiet secondary row reaching the two utility pages that no longer have a
+  // primary tab of their own (Skills = the former "Analysis" page; Archive).
+  const utilRow = document.createElement("div");
+  utilRow.className = "view-toggle settings-utilities";
+  const skillsBtn = document.createElement("button");
+  skillsBtn.textContent = "Skills";
+  skillsBtn.addEventListener("click", () => navigateToPage("analysis"));
+  const archiveBtn = document.createElement("button");
+  archiveBtn.textContent = "Archive";
+  archiveBtn.addEventListener("click", () => navigateToPage("archive"));
+  utilRow.append(skillsBtn, archiveBtn);
+  page.append(utilRow);
+
   const block = document.createElement("div");
   block.className = "analysis-block settings-block";
 
@@ -6349,7 +6408,7 @@ async function renderAnalysisPage() {
   ]);
 
   const header = document.createElement("h2");
-  header.textContent = "Analysis";
+  header.textContent = "Skills";
   page.append(header);
 
   const totals = document.createElement("div");

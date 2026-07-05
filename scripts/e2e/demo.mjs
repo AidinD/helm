@@ -4,7 +4,7 @@
 //   1. launch Maestro with remote debugging
 //   2. wait for the main UI (#pageToggle)
 //   3. screenshot the dashboard (chat page)
-//   4. click the "Focus" tab in #pageToggle
+//   4. click the "Focus" facet in the dashboard sub-nav
 //   5. wait for #focusPage to become visible, screenshot again
 //   6. read any console errors
 //   7. clean shutdown (only the launched instance is killed)
@@ -40,10 +40,10 @@ try {
   const size1 = await app.screenshot(shot1);
   log(`screenshot 1 (dashboard): ${shot1} — ${size1} bytes`);
 
-  log('clicking the "Focus" tab…');
-  await app.click('#pageToggle button[data-page="focus"]');
+  log('clicking the "Focus" facet in the dashboard sub-nav…');
+  await app.click('#dashboardSubnav button[data-page="focus"]');
   await app.waitForSelector("#focusPage", 10000, { visible: true });
-  const nowActive = await app.getText("#pageToggle button.active");
+  const nowActive = await app.getText("#dashboardSubnav button.active");
   log("active tab after click:", JSON.stringify(nowActive));
 
   const size2 = await app.screenshot(shot2);
