@@ -20,6 +20,7 @@ import { savePastedImage, prunePastedImages } from "./lib/images.js";
 import { computeVersionString, captureRunningBuildIdentity, checkForNewerBuild } from "./lib/version.js";
 import { runGoal } from "./lib/goalOrchestrator.js";
 import { loadDomains, registerDomain, removeDomain } from "./lib/domains.js";
+import { listScheduledTasks } from "./lib/routines.js";
 import { buildArtifactSrcdoc, formatAnnotationsAsPrompt } from "./lib/lavishSdk.js";
 import { isAvailable as whisperStreamAvailable, startStream as startWhisperStream, stopStream as stopWhisperStream } from "./lib/whisperStream.js";
 
@@ -555,6 +556,15 @@ ipcMain.handle("domains:register", (_event, { name, path: domainPath, icon }) =>
 );
 
 ipcMain.handle("domains:remove", (_event, id) => removeDomain(id));
+
+// --- Routines page (read-only): list Claude Code's OWN scheduled tasks from
+// ~/.claude/scheduled-tasks/. Maestro does not run a scheduler of its own -
+// this just surfaces what already exists on disk. Async so a large or slow
+// folder read never blocks the main event loop. ---
+ipcMain.handle("routines:list", async () => {
+  const tasks = await listScheduledTasks();
+  return { ok: true, tasks };
+});
 
 // --- Pick or create the folder for a new non-repo domain project ---
 ipcMain.handle("dialog:pickDomainFolder", async () => {

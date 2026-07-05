@@ -3948,6 +3948,11 @@ function refreshDashboardIfVisible() {
   if (isDashboardVisible()) {
     renderDashboardPage();
   }
+  // Agents page's session nodes are also derived from state.sessions - keep
+  // them live on the same poll tick, same no-op-when-hidden guard.
+  if (!document.getElementById("agentsPage").classList.contains("hidden")) {
+    renderAgentsPage();
+  }
 }
 
 async function renderDashboardPage() {
@@ -5181,10 +5186,13 @@ window.maestro.onGoalEvent((evt) => {
     goalRunState.status = "error";
     goalRunState.error = evt.error;
   }
-  // Only re-render if the Goal page is actually visible, to avoid clobbering
-  // another page the user may have switched to mid-run.
+  // Only re-render if the Goal/Agents page is actually visible, to avoid
+  // clobbering another page the user may have switched to mid-run.
   if (!document.getElementById("goalPage").classList.contains("hidden")) {
     renderGoalPage();
+  }
+  if (!document.getElementById("agentsPage").classList.contains("hidden")) {
+    renderAgentsPage();
   }
 });
 
@@ -5517,6 +5525,283 @@ window.addEventListener("message", (event) => {
   }
 });
 
+// ============================== Routines page ==============================
+// Read-only view over Claude Code's OWN scheduled tasks (files under
+// ~/.claude/scheduled-tasks/, one folder per task with a SKILL.md). Maestro
+// does NOT run a scheduler of its own here - this page only lists what
+// already exists on disk, via routines:list (see lib/routines.js). A
+// Maestro-native routine type is a real idea (PLAN.md) but is not built in
+// this pass; it is shown below as a clearly-marked "(coming)" placeholder
+// rather than faked with invented schedule data.
+
+async function renderRoutinesPage() {
+  const page = document.getElementById("routinesPage");
+  page.innerHTML = "";
+
+  const header = document.createElement("h2");
+  header.textContent = "Routines";
+  page.append(header);
+
+  const intro = document.createElement("div");
+  intro.className = "analysis-totals";
+  intro.textContent =
+    "Claude Code's own scheduled tasks (~/.claude/scheduled-tasks/) - read-only. Maestro doesn't run a scheduler of its own; this just shows what's already there.";
+  page.append(intro);
+
+  const board = document.createElement("section");
+  board.className = "dash-board";
+  board.append(dashBoardHeadWithLabel("Scheduled tasks", null, false, "Each one is a Claude Code SKILL.md task folder"));
+
+  const body = document.createElement("div");
+  body.className = "dash-board-body";
+  board.append(body);
+  page.append(board);
+
+  const res = await window.maestro.listRoutines();
+  // The page may have been navigated away from while the read was in flight;
+  // avoid clobbering whatever the user is looking at now.
+  if (page.classList.contains("hidden")) {
+    return;
+  }
+  body.innerHTML = "";
+
+  if (!res || !res.ok || !Array.isArray(res.tasks) || res.tasks.length === 0) {
+    body.append(dashEmpty("No scheduled tasks found under ~/.claude/scheduled-tasks/."));
+  } else {
+    const list = document.createElement("div");
+    list.className = "dash-queue-list";
+    res.tasks.forEach((task) => list.append(routineRowEl(task)));
+    body.append(list);
+  }
+
+  const later = document.createElement("div");
+  later.className = "later-note";
+  later.textContent =
+    "(coming) A Maestro-native routine type - defined and run from inside Maestro itself, alongside these Claude-native ones - is not built in this pass.";
+  page.append(later);
+}
+
+function routineRowEl(task) {
+  const row = document.createElement("div");
+  row.className = "dash-queue-row";
+
+  const ic = document.createElement("div");
+  ic.className = "dash-state-ic dash-state-working";
+  const dot = document.createElement("span");
+  dot.className = "dash-pulse-dot";
+  ic.append(dot);
+  row.append(ic);
+
+  const qbody = document.createElement("div");
+  qbody.className = "dash-q-body";
+  const top = document.createElement("div");
+  top.className = "dash-q-top";
+  const title = document.createElement("span");
+  title.className = "dash-q-title";
+  title.textContent = task.name;
+  const tag = document.createElement("span");
+  tag.className = "dash-goal-tag";
+  tag.textContent = "claude scheduled-task";
+  top.append(title, tag);
+  qbody.append(top);
+
+  const why = document.createElement("div");
+  why.className = "dash-q-why";
+  why.textContent = task.schedule ? `${task.schedule} · ${task.description || ""}` : task.description || task.taskId;
+  qbody.append(why);
+  row.append(qbody);
+
+  const openBtn = document.createElement("button");
+  openBtn.className = "text-btn";
+  openBtn.textContent = "Open SKILL.md";
+  openBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    window.maestro.copyToClipboard(task.skillPath);
+  });
+  const actions = document.createElement("div");
+  actions.className = "dash-queue-actions";
+  actions.append(openBtn);
+  row.append(actions);
+
+  return row;
+}
+
+// ============================== Agents page ==============================
+// Maestro's OWN activity - not a rebuild of Claude Code's native Agent View.
+// Two real sources, both already in renderer state:
+//   - state.sessions: manual sessions Maestro is tracking (reuses the same
+//     session.status the sidebar dot and dashboard queue already read).
+//   - goalRunState: the current goalOrchestrator run (if any), with its
+//     iterations as children - the same state renderGoalPage reads.
+// A true multi-worker fan-out (several workers under one orchestrator node,
+// running in parallel worktrees) does not exist yet - only ever one branch of
+// real children today (one goal run's iterations). That is marked "(coming)"
+// below rather than faked.
+
+function renderAgentsPage() {
+  const page = document.getElementById("agentsPage");
+  page.innerHTML = "";
+
+  const header = document.createElement("h2");
+  header.textContent = "Agents";
+  page.append(header);
+
+  const intro = document.createElement("div");
+  intro.className = "analysis-totals";
+  intro.textContent = "What Maestro itself is running right now - active sessions and goal-orchestrator runs.";
+  page.append(intro);
+
+  const wrap = document.createElement("div");
+  wrap.className = "tree-wrap";
+
+  if (goalRunState) {
+    wrap.append(agentsGoalRunNode(goalRunState));
+  } else {
+    const placeholder = document.createElement("div");
+    placeholder.className = "tree-meta-row agents-placeholder";
+    placeholder.textContent = "(goal runs appear here when running)";
+    wrap.append(placeholder);
+  }
+
+  const activeSessions = sortByAttention(state.sessions.filter((s) => !s.isArchived && (s.status === "active" || s.status === "waiting")));
+  activeSessions.forEach((session) => wrap.append(agentsSessionNode(session)));
+
+  if (!goalRunState && activeSessions.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "tree-meta-row agents-placeholder";
+    empty.textContent = "Nothing in motion right now.";
+    wrap.append(empty);
+  }
+
+  page.append(wrap);
+
+  const legend = document.createElement("div");
+  legend.className = "legend";
+  [
+    ["running", "running"],
+    ["waiting", "needs you"],
+    ["done", "done / committed"],
+    ["failed", "failed / rolled back"],
+    ["idle", "idle / background"],
+  ].forEach(([cls, label]) => {
+    const span = document.createElement("span");
+    const dot = document.createElement("span");
+    dot.className = `agents-state-dot ${cls}`;
+    span.append(dot, document.createTextNode(label));
+    legend.append(span);
+  });
+  page.append(legend);
+
+  const later = document.createElement("div");
+  later.className = "later-note";
+  later.textContent =
+    "(coming) Gated on the dispatch layer maturing: true multi-worker fan-out (several workers under one orchestrator node, in parallel worktrees), a timeline scrubber over past runs, and per-node token/cost readout. Today this tree only ever has one branch of real children (a single goalOrchestrator run's iterations).";
+  page.append(later);
+}
+
+function agentsGoalRunNode(run) {
+  const node = document.createElement("div");
+  node.className = "tree-node root";
+
+  const line = document.createElement("div");
+  line.className = "tree-line";
+  const dot = document.createElement("span");
+  dot.className = `agents-state-dot ${run.status === "running" ? "running" : run.status === "error" ? "failed" : "done"}`;
+  const label = document.createElement("span");
+  label.className = "tree-label";
+  const name = document.createElement("span");
+  name.className = "name";
+  name.textContent = `Goal run - "${run.goal || "(no goal text)"}"`;
+  const detail = document.createElement("span");
+  detail.className = "detail";
+  const projectName = (run.projectPath || "").split(/[\\/]/).filter(Boolean).pop() || run.projectPath || "";
+  detail.textContent = `${projectName} · iteration ${run.iterations.length}/${run.maxIterations || "?"}`;
+  label.append(name, detail);
+  const badge = document.createElement("span");
+  badge.className = "tree-badge";
+  badge.textContent = "orchestrator";
+  line.append(dot, label, badge);
+  node.append(line);
+
+  const meta = document.createElement("div");
+  meta.className = "tree-meta-row";
+  meta.textContent = `project: ${run.projectPath || "(unknown)"} · status: ${run.status}`;
+  node.append(meta);
+
+  if (run.iterations.length > 0) {
+    const children = document.createElement("div");
+    children.className = "tree-children";
+    run.iterations.forEach((rec) => children.append(agentsIterationNode(rec)));
+    node.append(children);
+  }
+
+  return node;
+}
+
+function agentsIterationNode(rec) {
+  const node = document.createElement("div");
+  node.className = "tree-node";
+
+  const line = document.createElement("div");
+  line.className = "tree-line";
+  const ok = rec.ok && rec.result && rec.result.success;
+  const dot = document.createElement("span");
+  dot.className = `agents-state-dot ${rec.ok ? "done" : "failed"}`;
+  const label = document.createElement("span");
+  label.className = "tree-label";
+  const name = document.createElement("span");
+  name.className = "name";
+  name.textContent = `Iteration ${rec.iteration}`;
+  const detail = document.createElement("span");
+  detail.className = "detail";
+  detail.textContent = rec.ok && rec.result ? rec.result.summary || "" : rec.error || "failed";
+  label.append(name, detail);
+  const badge = document.createElement("span");
+  badge.className = "tree-badge";
+  badge.textContent = rec.ok ? (ok ? "committed" : "discarded") : "error";
+  line.append(dot, label, badge);
+  node.append(line);
+
+  return node;
+}
+
+function agentsSessionNode(session) {
+  const node = document.createElement("div");
+  node.className = "tree-node root";
+  node.addEventListener("click", () => {
+    document.querySelector('#pageToggle button[data-page="chat"]')?.click();
+    openSessionInPane(session, focusedPaneIndex);
+  });
+
+  const line = document.createElement("div");
+  line.className = "tree-line";
+  const dot = document.createElement("span");
+  dot.className = `agents-state-dot ${session.status === "waiting" ? "waiting" : "running"}`;
+  const label = document.createElement("span");
+  label.className = "tree-label";
+  const name = document.createElement("span");
+  name.className = "name";
+  name.textContent = `Session - "${session.title}"`;
+  const detail = document.createElement("span");
+  detail.className = "detail";
+  const projectName = (session.cwd || "").split(/[\\/]/).filter(Boolean).pop() || session.cwd || "";
+  detail.textContent = `${projectName} · ${session.status === "waiting" ? "waiting for input" : "active"}`;
+  label.append(name, detail);
+  const badge = document.createElement("span");
+  badge.className = "tree-badge";
+  badge.textContent = "manual session";
+  line.append(dot, label, badge);
+  node.append(line);
+
+  const meta = document.createElement("div");
+  meta.className = "tree-meta-row";
+  const modelLabel = session.model ? session.model.replace("claude-", "") : "model unknown";
+  meta.textContent = `${modelLabel}${session.effort ? " / " + session.effort : ""} · ${relTime(session.lastActivityAt)}`;
+  node.append(meta);
+
+  return node;
+}
+
 // ============================== Analysis page ==============================
 // Replaces the earlier popup versions of Skills/Usage — those rendered via
 // submenus that could overflow off-screen near the window edge, and Aidin
@@ -5536,6 +5821,8 @@ document.getElementById("pageToggle").addEventListener("click", (e) => {
   document.getElementById("focusPage").classList.toggle("hidden", page !== "focus");
   document.getElementById("goalPage").classList.toggle("hidden", page !== "goal");
   document.getElementById("lavishPage").classList.toggle("hidden", page !== "lavish");
+  document.getElementById("routinesPage").classList.toggle("hidden", page !== "routines");
+  document.getElementById("agentsPage").classList.toggle("hidden", page !== "agents");
   document.getElementById("analysisPage").classList.toggle("hidden", page !== "analysis");
   document.getElementById("archivePage").classList.toggle("hidden", page !== "archive");
   document.getElementById("settingsPage").classList.toggle("hidden", page !== "settings");
@@ -5547,6 +5834,10 @@ document.getElementById("pageToggle").addEventListener("click", (e) => {
     renderGoalPage();
   } else if (page === "lavish") {
     renderLavishPage();
+  } else if (page === "routines") {
+    renderRoutinesPage();
+  } else if (page === "agents") {
+    renderAgentsPage();
   } else if (page === "analysis") {
     renderAnalysisPage();
   } else if (page === "archive") {
