@@ -4373,7 +4373,19 @@ async function dashboardGoalsSection() {
   } else {
     const grid = document.createElement("div");
     grid.className = "dash-goals-grid";
-    result.goals.forEach((goal) => grid.append(dashGoalCardEl(goal)));
+    // When a Work/Private focus is active, float the matching (+ neutral) goals
+    // to the top and let the dimmed non-matching ones sink below - dimming alone
+    // wasn't enough to get an overview with ~29 goals (the captain note 2026-07-05).
+    // Stable sort keeps each group's original order. "All" leaves order intact.
+    const isDimmed = (g) => {
+      const d = domainForGoal(g);
+      return dashboardFocusMode !== "all" && d !== null && d !== dashboardFocusMode;
+    };
+    const ordered =
+      dashboardFocusMode === "all"
+        ? result.goals
+        : [...result.goals].sort((a, b) => (isDimmed(a) ? 1 : 0) - (isDimmed(b) ? 1 : 0));
+    ordered.forEach((goal) => grid.append(dashGoalCardEl(goal)));
     body.append(grid);
   }
   section.append(body);
@@ -6065,6 +6077,14 @@ function navigateToPage(page) {
   document.getElementById("analysisPage").classList.toggle("hidden", page !== "analysis");
   document.getElementById("archivePage").classList.toggle("hidden", page !== "archive");
   document.getElementById("settingsPage").classList.toggle("hidden", page !== "settings");
+
+  // Chat-specific header controls (Simple/Advanced view mode, split-view, and
+  // background tasks) only apply to Chat - hide them on every other page so the
+  // header isn't cluttered with chat-only controls on Dashboard/Plan/etc.
+  // (the captain design note 2026-07-05).
+  for (const id of ["viewToggle", "splitToggle", "backgroundTasksBtn"]) {
+    document.getElementById(id)?.classList.toggle("hidden", page !== "chat");
+  }
 
   // Primary bar active state is group-aware: clicking a sub-nav facet (e.g.
   // Goal) must keep the Dashboard primary tab lit, not deactivate it.
