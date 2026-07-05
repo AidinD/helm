@@ -910,16 +910,30 @@ export function producedRealChanges(worktreePath) {
       encoding: "utf8",
       windowsHide: true,
     });
-    const lines = status.split(/\r?\n/).filter((l) => l.length > 0);
-    for (const line of lines) {
-      // porcelain v1: "XY <path>", or "XY <old> -> <new>" for renames/copies.
-      let p = line.slice(3);
-      if (p.includes(" -> ")) {
-        p = p.split(" -> ").pop();
+    // A single path is "real work" if it lives OUTSIDE .maestro-goal/. git
+    // may C-quote paths containing special/non-ASCII chars ("...\303\266...");
+    // strip only the surrounding quotes - the escapes sit in the filename after
+    // any dir prefix, so the prefix test still holds, and git always uses
+    // forward slashes for separators even on Windows (so no \-to-/ rewrite,
+    // which would corrupt those escapes).
+    const isReal = (rawPath) => {
+      const p = rawPath.replace(/^"|"$/g, "");
+      return p !== NOTES_DIR && !p.startsWith(`${NOTES_DIR}/`);
+    };
+    for (const line of status.split(/\r?\n/)) {
+      if (line.length === 0) {
+        continue;
       }
-      p = p.replace(/^"|"$/g, ""); // git quotes paths with special chars
-      const norm = p.replace(/\\/g, "/").replace(/^\.\//, "");
-      if (norm !== NOTES_DIR && !norm.startsWith(`${NOTES_DIR}/`)) {
+      const pathPart = line.slice(3); // porcelain v1: "XY <path>" or "XY <old> -> <new>"
+      if (pathPart.includes(" -> ")) {
+        // Rename/copy: a real file LEAVING or ENTERING the tree both count, so
+        // a real file renamed INTO .maestro-goal/ is still real work (its source
+        // left the tree) - check both sides, not just the destination.
+        const [from, to] = pathPart.split(" -> ");
+        if (isReal(from) || isReal(to)) {
+          return true;
+        }
+      } else if (isReal(pathPart)) {
         return true;
       }
     }
