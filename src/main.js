@@ -19,6 +19,7 @@ import { classifySessionStatus, estimateSessionContextTokens, compactSession, ge
 import { savePastedImage, prunePastedImages } from "./lib/images.js";
 import { computeVersionString, captureRunningBuildIdentity, checkForNewerBuild } from "./lib/version.js";
 import { runGoal } from "./lib/goalOrchestrator.js";
+import { loadDomains, registerDomain, removeDomain } from "./lib/domains.js";
 import { buildArtifactSrcdoc, formatAnnotationsAsPrompt } from "./lib/lavishSdk.js";
 import { isAvailable as whisperStreamAvailable, startStream as startWhisperStream, stopStream as stopWhisperStream } from "./lib/whisperStream.js";
 
@@ -533,6 +534,33 @@ ipcMain.handle("dialog:pickFolder", async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: "Pick the repo folder to root the session in",
     properties: ["openDirectory"],
+  });
+  if (result.canceled || result.filePaths.length === 0) {
+    return null;
+  }
+  return result.filePaths[0];
+});
+
+// --- Non-repo "life-domain" projects (PLAN.md's non-repo project types) —
+// plain folders (gym, cycling, kombucha, etc) that are first-class project
+// types alongside git repos, backed by domains.js's small persisted
+// registry. A session rooted in a domain's folder works exactly like a repo
+// session (same session:start handler, same automatic CLAUDE.md + memory
+// loading) - there is no separate "domain session" code path, only a
+// different source for the cwd. ---
+ipcMain.handle("domains:list", () => loadDomains());
+
+ipcMain.handle("domains:register", (_event, { name, path: domainPath, icon }) =>
+  registerDomain({ name, path: domainPath, icon })
+);
+
+ipcMain.handle("domains:remove", (_event, id) => removeDomain(id));
+
+// --- Pick or create the folder for a new non-repo domain project ---
+ipcMain.handle("dialog:pickDomainFolder", async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: "Pick (or create) the folder for this domain",
+    properties: ["openDirectory", "createDirectory"],
   });
   if (result.canceled || result.filePaths.length === 0) {
     return null;

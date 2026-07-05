@@ -1,5 +1,6 @@
 node_modules/
 config.json
+domains.json
 usage-log.jsonl
 pasted-images/
 # whisper.cpp CUDA binary + GGML model for voice transcription (see
