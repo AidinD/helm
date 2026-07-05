@@ -47,6 +47,13 @@ const DEFAULT_MAX_ITERATIONS = 5;
 const ITERATION_TIMEOUT_MS = 15 * 60_000;
 const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 
+// A verification command is expected to be a normal build/test/lint run, not
+// a long-running server — generous but bounded so a hung command (e.g. a test
+// runner that starts a watcher instead of exiting) can't wedge the iteration
+// loop forever.
+const VERIFY_TIMEOUT_MS = 10 * 60_000;
+const VERIFY_OUTPUT_TAIL_CHARS = 4000;
+
 const ITERATION_SCHEMA = JSON.stringify({
   type: "object",
   properties: {
@@ -253,6 +260,74 @@ function runIteration({ worktreePath, goal, notesContent, model, effort }) {
 }
 
 /**
+ * Runs the independent verification command in the worktree, so an
+ * iteration's own self-reported success:true is never the only signal an
+ * iteration is accepted on (PLAN.md Point 11 hardening — the documented gap
+ * that this whole change closes). Resolves to
+ * { ok:true, output } if the command exits 0, or
+ * { ok:false, output } if it exits non-zero, times out, or fails to spawn —
+ * never throws, so the caller's loop can always treat a bad result as a
+ * failed iteration. `output` is the combined stdout+stderr tail, used both
+ * for the notes.md feedback and the iteration record.
+ *
+ * Run with `shell: true` since verifyCommand is a plain shell command string
+ * (e.g. "npm test"), matching worktree.js's own npm-via-shell convention on
+ * Windows.
+ */
+function runVerifyCommand(worktreePath, verifyCommand) {
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn(verifyCommand, {
+        cwd: worktreePath,
+        shell: true,
+        windowsHide: true,
+        env: process.env,
+      });
+    } catch (err) {
+      resolve({ ok: false, output: `Failed to spawn verify command: ${err.message}` });
+      return;
+    }
+
+    let out = "";
+    let settled = false;
+    const finish = (value) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeoutId);
+      resolve(value);
+    };
+
+    const timeoutId = setTimeout(() => {
+      child.kill();
+      finish({
+        ok: false,
+        output: truncate(out, VERIFY_OUTPUT_TAIL_CHARS) + `\n[verify command timed out after ${VERIFY_TIMEOUT_MS}ms]`,
+      });
+    }, VERIFY_TIMEOUT_MS);
+
+    child.stdout?.on("data", (d) => {
+      out += d.toString("utf8");
+    });
+    child.stderr?.on("data", (d) => {
+      out += d.toString("utf8");
+    });
+    child.on("error", (err) => {
+      finish({ ok: false, output: `Verify command failed to run: ${err.message}` });
+    });
+    child.on("close", (code) => {
+      // Keep only the tail — a failing test suite can print megabytes, and
+      // only the last part (the actual failure) is useful feedback for the
+      // next fresh-context iteration.
+      const tail = out.length > VERIFY_OUTPUT_TAIL_CHARS ? out.slice(-VERIFY_OUTPUT_TAIL_CHARS) : out;
+      finish({ ok: code === 0, output: tail });
+    });
+  });
+}
+
+/**
  * Discards all uncommitted changes in the worktree — used after a failed
  * (success:false) or hard-error iteration, mirroring gnhf's verified
  * failure-rollback behavior. Best-effort with a clear log on failure rather
@@ -334,6 +409,17 @@ function countCommitsOnBranch(worktreePath, baseCommit) {
  *   intentionally small-scale, not a production-scale feature).
  * @param {string} [opts.model] - model passed to every iteration.
  * @param {string} [opts.effort] - effort passed to every iteration.
+ * @param {string} [opts.verifyCommand] - optional independent verification
+ *   gate (e.g. "npm test" or "npm run build"), run as a shell command with
+ *   the worktree as cwd. Closes the "trusts the agent's own self-reported
+ *   success" gap (PLAN.md Point 11 hardening): when set, an iteration that
+ *   reports success:true is only ACCEPTED (notes appended as success,
+ *   committed) if this command then also exits 0 in the worktree. If it
+ *   exits non-zero or times out, the iteration is treated exactly like any
+ *   other failure — discarded via the same reset --hard/clean -fd rollback,
+ *   with the command's output tail recorded in notes.md so the next
+ *   fresh-context iteration knows what actually broke. Defaults to
+ *   undefined, which keeps the pre-existing behavior unchanged (no gate).
  * @param {(iterationRecord: object) => void} [opts.onIteration] - optional
  *   callback fired after each iteration with its result, for a future UI/CLI
  *   caller to show live progress. Never awaited, never allowed to throw the
@@ -351,6 +437,7 @@ export async function runGoal({
   maxIterations = DEFAULT_MAX_ITERATIONS,
   model,
   effort,
+  verifyCommand,
   onIteration,
   cancelToken,
 }) {
@@ -422,6 +509,55 @@ export async function runGoal({
         costUsd: outcome.costUsd,
       };
       consecutiveFailures += 1;
+    } else if (verifyCommand) {
+      // Independent verification gate (PLAN.md Point 11 hardening): the
+      // agent's own success:true is necessary but not sufficient. Run the
+      // configured command in the worktree BEFORE appending notes or
+      // committing anything, so a failing verification is indistinguishable
+      // from any other failed iteration downstream — same rollback, same
+      // consecutive-failure counting, same stop conditions.
+      const verifyOutcome = await runVerifyCommand(worktreePath, verifyCommand);
+      if (verifyOutcome.ok) {
+        // Verified green — accept exactly like the no-gate path below.
+        appendNotes(worktreePath, i, outcome.result);
+        const committed = commitIteration(worktreePath, i, outcome.result.summary);
+        record = {
+          iteration: i,
+          ok: true,
+          result: outcome.result,
+          committed,
+          verified: true,
+          costUsd: outcome.costUsd,
+        };
+        consecutiveFailures = 0;
+      } else {
+        // Verification failed — treat exactly like a success:false iteration:
+        // roll back through the existing discard path (no new destructive
+        // command, no state left outside the worktree) and record the
+        // failure reason so the next fresh-context iteration actually knows
+        // what to fix, closing the loop this whole change exists for.
+        discardWorktreeChanges(worktreePath);
+        const verifyFailureResult = {
+          success: false,
+          summary: `${outcome.result.summary} (rejected: independent verification failed)`,
+          keyChanges: [],
+          keyLearnings: [
+            `Iteration ${i} reported success but failed independent verification (\`${verifyCommand}\`).`,
+            `Verification output tail:\n${verifyOutcome.output || "(no output captured)"}`,
+          ],
+        };
+        appendNotes(worktreePath, i, verifyFailureResult);
+        record = {
+          iteration: i,
+          ok: true,
+          result: outcome.result,
+          committed: false,
+          verified: false,
+          verifyOutput: verifyOutcome.output,
+          costUsd: outcome.costUsd,
+        };
+        consecutiveFailures += 1;
+      }
     } else {
       // Notes MUST be appended BEFORE committing (not after) — the commit is
       // meant to capture the complete state of this iteration, notes.md
