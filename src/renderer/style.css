@@ -178,6 +178,12 @@ h1 {
   color: var(--text);
 }
 
+.text-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+  pointer-events: none;
+}
+
 .text-btn.has-running {
   border-color: var(--active);
   color: var(--active);
@@ -230,53 +236,6 @@ h1 {
   display: flex;
   gap: 6px;
   padding: 10px 10px 4px;
-}
-
-/* The orchestrator's chat — a static, prominent card (not an accordion row),
-   since it's special and always there, per feedback. */
-.orchestrator-card {
-  margin: 10px 10px 4px;
-  padding: 12px 14px;
-  border-radius: 10px;
-  background: linear-gradient(135deg, rgba(217, 119, 87, 0.16), rgba(217, 119, 87, 0.05));
-  border: 1px solid rgba(217, 119, 87, 0.4);
-  cursor: pointer;
-}
-
-.orchestrator-card:hover {
-  border-color: var(--accent);
-}
-
-.orchestrator-card.selected {
-  background: linear-gradient(135deg, rgba(217, 119, 87, 0.26), rgba(217, 119, 87, 0.08));
-}
-
-.orchestrator-card-title-line {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.orchestrator-card-badge {
-  color: var(--accent);
-  font-size: 15px;
-}
-
-.orchestrator-card-title {
-  font-weight: 700;
-  font-size: 13.5px;
-  flex: 1;
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.orchestrator-card-meta {
-  margin-top: 6px;
-  margin-left: 23px;
-  font-size: 11px;
-  color: var(--text-dim);
 }
 
 /* Inline rename input — replaces a label in place, matches its surrounding
@@ -2500,6 +2459,13 @@ button.primary {
   margin-bottom: 20px;
 }
 
+.dash-topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .dash-focus-toggle {
   display: flex;
   align-items: center;
@@ -2601,6 +2567,19 @@ button.primary {
 .dash-queue-row.dash-resolved {
   opacity: 0.4;
   pointer-events: none;
+}
+
+/* Collapsed stand-in for every archive proposal (see dashArchiveGroupEl in
+   renderer.js) - same .dash-queue-row shell as any other row so it sorts
+   into the list visually unchanged; "Review" reveals the expanded list of
+   normal proposal rows below it rather than navigating anywhere. */
+.dash-archive-group-expanded {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  padding-left: 20px;
+  border-left: 2px solid var(--border);
 }
 
 .dash-state-ic {
