@@ -369,6 +369,16 @@ ipcMain.handle("image:save", (_event, { base64Data, ext }) => {
 let voiceWorker = null;
 let voiceRequestId = 0;
 const pendingVoiceRequests = new Map(); // id -> { resolve, reject }
+// PID of the warm whisper-server.exe process the voice worker spawned for the
+// single-clip transcription path (see whisperCpp.js/whisperServer.js), or
+// null if none is running. The worker pushes this after every transcribe
+// call (see voiceWorker.js's "serverPid" message) since whisper-server.exe is
+// a CHILD OF THE WORKER PROCESS, not of main.js — tracking its PID here lets
+// before-quit tree-kill it directly and synchronously (same pattern as
+// liveChildren/liveVoiceStreams below) instead of depending on a
+// message-then-kill round-trip to the worker whose delivery order relative
+// to voiceWorker.kill() would not be guaranteed.
+let voiceServerPid = null;
 
 function getVoiceWorker() {
   if (voiceWorker) {
@@ -376,6 +386,10 @@ function getVoiceWorker() {
   }
   voiceWorker = utilityProcess.fork(path.join(__dirname, "lib", "voiceWorker.js"));
   voiceWorker.on("message", (message) => {
+    if (Object.prototype.hasOwnProperty.call(message, "serverPid")) {
+      voiceServerPid = message.serverPid;
+      return;
+    }
     const pending = pendingVoiceRequests.get(message.id);
     if (!pending) {
       return; // stale/unknown reply (worker restarted mid-flight, etc.) - ignore.
@@ -392,6 +406,12 @@ function getVoiceWorker() {
     }
     pendingVoiceRequests.clear();
     voiceWorker = null;
+    // The worker's own process.on("exit") backstop (see voiceWorker.js) tries
+    // to clean up whisper-server.exe when the worker dies, but this process
+    // has no way to confirm that ran — clear the stale PID either way so
+    // before-quit never taskkills an unrelated process that happens to reuse
+    // this PID later.
+    voiceServerPid = null;
   });
   return voiceWorker;
 }
@@ -1172,6 +1192,21 @@ app.on("before-quit", () => {
     stopWhisperStream(child, { sync: true });
   }
   liveVoiceStreams.clear();
+  // Same orphan-prevention concern as liveChildren/liveVoiceStreams above,
+  // for the warm whisper-server.exe process the voice worker spawns for the
+  // single-clip transcription path (see whisperCpp.js/whisperServer.js).
+  // That process is a CHILD OF THE WORKER PROCESS, not of this one, so
+  // killing it needs its own tracked PID (see voiceServerPid above) and its
+  // own synchronous taskkill /T /F here — voiceWorker.kill() below only
+  // reaches the worker itself, not its grandchild.
+  if (voiceServerPid) {
+    try {
+      execFileSync("taskkill", ["/pid", String(voiceServerPid), "/T", "/F"], { stdio: "ignore" });
+    } catch {
+      // Already exited — nothing to do.
+    }
+    voiceServerPid = null;
+  }
   // Electron tears down utilityProcess children on quit regardless, but
   // killing it explicitly avoids depending on that ordering and matches the
   // liveChildren cleanup right above.
