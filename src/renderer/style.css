@@ -2522,16 +2522,6 @@ button.primary {
   font-weight: 400;
 }
 
-.dash-placeholder-note {
-  font-size: 10.5px;
-  color: var(--text-faint);
-  font-style: italic;
-}
-
-.dash-domain-note {
-  margin-bottom: 10px;
-}
-
 /* --- Needs you & in motion (merged attention queue, Variant A) ---
    Replaces the earlier separate "In motion" grid + "Orchestrator proposes"
    list with one row style shared by both proposal rows (archive
