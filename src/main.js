@@ -765,7 +765,7 @@ ipcMain.handle("session:stop", (_event, { launchId }) => {
 // "session:event"), so goal progress never collides with normal session
 // streaming. Every payload carries the goalRunId so the renderer can ignore
 // events from a stale/previous run.
-ipcMain.handle("goal:run", async (_event, { projectPath, goal, maxIterations, model, effort }) => {
+ipcMain.handle("goal:run", async (_event, { projectPath, goal, maxIterations, model, effort, verifyCommand }) => {
   if (!projectPath || !goal) {
     return { ok: false, error: "projectPath and goal are required" };
   }
@@ -801,6 +801,11 @@ ipcMain.handle("goal:run", async (_event, { projectPath, goal, maxIterations, mo
     maxIterations: clampedMax,
     model: model || undefined,
     effort: effort || undefined,
+    // Optional independent build/test verification gate (Point 11
+    // hardening) - a plain shell command string, e.g. "npm test". Passed
+    // straight through; runGoal treats an empty/missing value as "no gate"
+    // (unchanged pre-existing behavior).
+    verifyCommand: verifyCommand || undefined,
     cancelToken,
     onIteration: (record) => send({ kind: "iteration", record }),
   })
