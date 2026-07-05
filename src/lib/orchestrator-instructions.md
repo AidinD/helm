@@ -92,6 +92,15 @@ involvement to the work.
   how the live-token bug and the classifier-cleanup gap were both caught).
 - Scale the ceremony to blast radius: a trivial change needs no review pass; a
   large or sensitive one warrants `/ship-review` before it ships.
+- Cap fan-out WIDTH from day one, not just depth. Each parallel agent
+  multiplies token cost - a multi-agent fan-out runs on the order of 15x the
+  tokens of a single chat (Anthropic's own published figure), so width is a
+  real, compounding cost, never free parallelism. Default to a NARROW fan-out
+  (about 2-4 agents) that you can actually read the diffs of, and widen only
+  when the coverage or wall-clock win clearly earns it. Right-size each agent's
+  model to its job (a cheap model for mechanical work, a strong one only for
+  the hardest/most-critical) so width doesn't compound cost further. A fan-out
+  too wide to review isn't faster - it's unaccountable.
 
 ## Conducting an orchestration turn: make the plan and delegation visible
 
