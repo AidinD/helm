@@ -20,6 +20,7 @@ import { savePastedImage, prunePastedImages } from "./lib/images.js";
 import { computeVersionString, captureRunningBuildIdentity, checkForNewerBuild } from "./lib/version.js";
 import { runGoal } from "./lib/goalOrchestrator.js";
 import { buildArtifactSrcdoc, formatAnnotationsAsPrompt } from "./lib/lavishSdk.js";
+import { isAvailable as whisperStreamAvailable, startStream as startWhisperStream, stopStream as stopWhisperStream } from "./lib/whisperStream.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -419,6 +420,54 @@ ipcMain.handle("voice:transcribe", async (_event, { samples, language }) => {
     console.error("[maestro] voice transcription failed:", err);
     return { ok: false, error: err.message };
   }
+});
+
+// --- True real-time streaming transcription (continuous voice input) ---
+// See src/lib/whisperStream.js for the full design rationale. Unlike
+// voice:transcribe (one-shot, routed through the dedicated utility process
+// since ONNX/whisper-cli inference is CPU-bound and would otherwise block
+// this process's event loop), whisper-stream.exe is a long-lived SUBPROCESS
+// that owns the microphone directly via SDL2 — there is nothing CPU-bound
+// happening on the main process's own event loop here, just an async spawn
+// and incremental stdout reads, so no utility-process indirection is needed.
+//
+// One stream per pane/hold at a time in practice (only one mic can be held
+// at once in the UI), but keyed by streamId so overlapping stop/start pairs
+// (e.g. rapid re-holds) can never cross-wire a stale process's events into a
+// fresh one.
+const liveVoiceStreams = new Map(); // streamId -> child process
+
+ipcMain.handle("voice:streamStart", (_event, { language }) => {
+  if (!whisperStreamAvailable()) {
+    return { ok: false, error: "whisper-stream.exe or the GGML model is not installed" };
+  }
+  const streamId = crypto.randomUUID();
+  const send = (payload) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("voice:streamEvent", { streamId, ...payload });
+    }
+  };
+  let child;
+  try {
+    child = startWhisperStream(language, send);
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+  liveVoiceStreams.set(streamId, child);
+  child.on("exit", () => {
+    liveVoiceStreams.delete(streamId);
+  });
+  return { ok: true, streamId };
+});
+
+ipcMain.handle("voice:streamStop", (_event, { streamId }) => {
+  const child = liveVoiceStreams.get(streamId);
+  if (!child) {
+    return { ok: false, error: "no running stream for that streamId" };
+  }
+  stopWhisperStream(child);
+  liveVoiceStreams.delete(streamId);
+  return { ok: true };
 });
 
 // --- Aggregate usage summary (models + tools most used) ---
@@ -1069,6 +1118,14 @@ app.on("before-quit", () => {
     killChildTree(child, { sync: true });
   }
   liveChildren.clear();
+  // Same orphan-prevention concern as liveChildren above, but for any
+  // whisper-stream.exe still holding the microphone (continuous voice mode
+  // left active when the app quits). SDL2's audio capture does not get
+  // released just because the parent Electron process exits.
+  for (const child of liveVoiceStreams.values()) {
+    stopWhisperStream(child, { sync: true });
+  }
+  liveVoiceStreams.clear();
   // Electron tears down utilityProcess children on quit regardless, but
   // killing it explicitly avoids depending on that ordering and matches the
   // liveChildren cleanup right above.

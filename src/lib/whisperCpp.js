@@ -53,7 +53,10 @@ const LANGUAGE_CODES = {
   english: "en",
 };
 
-function resolveLanguageCode(language) {
+// Exported for reuse by whisperStream.js (the real-time streaming path),
+// which needs the same voiceLanguage -> ISO code mapping whisper-stream.exe's
+// own `-l` flag expects.
+export function resolveLanguageCode(language) {
   const normalized = (language || "").trim().toLowerCase();
   if (!normalized || normalized === "auto") {
     return null; // omit -l entirely -> whisper.cpp auto-detects
