@@ -1,5 +1,19 @@
 # Decisions
 
+## 2026-07-05 - Goal runs require a native claude.exe; reject shell-shim installs and fail loud
+
+A same-day spawn-fallback hardening (route the prompt via stdin in shell mode, to keep goal/notes text out of cmd.exe) was itself put through a pre-ship review and then reverted.
+The review surfaced two problems.
+H1: the shell-mode `child.stdin.write` sat in a SYNCHRONOUS try/catch, but a broken-pipe EPIPE on a child's stdin is emitted ASYNCHRONOUSLY as an `error` event - with no listener attached, that becomes an uncaughtException that can take down the whole Electron process (reproduced by the reviewer).
+M1, more fundamentally: the entire shell path was already non-functional.
+In `shell:true` mode Node concatenates argv unescaped and cmd.exe then corrupts the still-argv `--json-schema` (drops the quotes -> invalid JSON) and truncates the multi-word `--system-prompt` at the first space.
+So the npm-global `claude.cmd` path never actually worked; the stdin change was hardening an injection surface on a path that couldn't run anyway, and its code comment wrongly implied those constants were shell-safe.
+Decision: rather than make the shell path work (file-based schema/system-prompt args - its own testing burden for a path a native install never hits), reject it.
+`runGoal` now fails loudly up front if claude doesn't resolve to a `.exe`, and `runIteration` spawns with `shell:false` + a positional prompt (reverted to the simple, known-good form).
+This removes H1 (no stdin code at all), removes M1 (no shell mode), and is honest: a clear "install native claude.exe" error beats silently feeding every iteration a corrupted schema.
+If npm-shim support is ever actually wanted, do it as a focused task with file-based args and its own test, not as an untested fallback.
+Verified: the real goal-orchestrator E2E spike stayed green through the revert (native .exe path, primary checkout untouched).
+
 ## 2026-07-05 - Removed the warm whisper-server (built the same day), reverting single-clip transcription to whisper-cli
 
 Earlier the same day a warm `whisper-server.exe` was added (whisperServer.js) so the single-clip transcription path loads the model once instead of paying whisper-cli's ~460ms model-load per call (~350-530ms warm vs ~1.2s cli, 2-3x).
