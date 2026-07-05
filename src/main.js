@@ -754,6 +754,35 @@ ipcMain.handle("session:stop", (_event, { launchId }) => {
   return { ok: true };
 });
 
+// --- Goal page: suggest a default verify command for a project folder, so
+// the Point 11 verification gate (see runGoal's verifyCommand doc comment)
+// is easy to turn on. Reads package.json's "scripts" (async, off the main
+// thread's sync fs path) and picks "npm test" if a "test" script exists,
+// else "npm run build" if a "build" script exists, else no suggestion. Any
+// failure (missing/unreadable/invalid package.json) degrades to no
+// suggestion rather than throwing - this is a convenience prefill, never a
+// hard requirement.
+ipcMain.handle("goal:suggestVerifyCommand", async (_event, { projectPath }) => {
+  if (!projectPath) {
+    return { ok: true, command: "" };
+  }
+  try {
+    const pkgPath = path.join(projectPath, "package.json");
+    const raw = await fs.promises.readFile(pkgPath, "utf8");
+    const pkg = JSON.parse(raw);
+    const scripts = pkg && typeof pkg.scripts === "object" ? pkg.scripts : {};
+    if (scripts.test) {
+      return { ok: true, command: "npm test" };
+    }
+    if (scripts.build) {
+      return { ok: true, command: "npm run build" };
+    }
+    return { ok: true, command: "" };
+  } catch {
+    return { ok: true, command: "" };
+  }
+});
+
 // --- Fas 3 Point 11: run an autonomous goal to (partial) completion in an
 // isolated worktree, streaming each iteration's result to the renderer. This
 // spawns REAL autonomous `claude -p` subprocesses that make real commits, so

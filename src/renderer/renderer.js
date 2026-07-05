@@ -4711,6 +4711,7 @@ function renderGoalPage() {
     const folder = await window.maestro.pickFolder();
     if (folder) {
       cwdInput.value = folder;
+      await suggestVerifyCommandFor(folder);
     }
   });
   cwdRow.append(cwdInput, pickBtn);
@@ -4726,6 +4727,40 @@ function renderGoalPage() {
   iterInput.value = (goalRunState && goalRunState.maxIterations) || 5;
   iterInput.disabled = running;
 
+  const verifyLabel = document.createElement("label");
+  verifyLabel.className = "goal-field-label";
+  verifyLabel.textContent = "Verify command (optional)";
+  const verifyInput = document.createElement("input");
+  verifyInput.type = "text";
+  verifyInput.className = "goal-verify-input";
+  verifyInput.placeholder = "e.g. npm test or npm run build";
+  verifyInput.value = (goalRunState && goalRunState.verifyCommand) || "";
+  verifyInput.disabled = running;
+  const verifyHint = document.createElement("div");
+  verifyHint.className = "goal-field-hint";
+  verifyHint.textContent =
+    "Runs after each iteration; the change is only kept if this passes.";
+
+  // Auto-suggest a default the first time a project folder is picked/typed:
+  // "npm test" if package.json has a test script, else "npm run build" if it
+  // has a build script, else leave the field empty. Only prefills an EMPTY
+  // field - never overwrites something the user already typed/edited.
+  async function suggestVerifyCommandFor(folder) {
+    if (!folder || verifyInput.value.trim()) {
+      return;
+    }
+    const res = await window.maestro.suggestVerifyCommand(folder);
+    if (res && res.ok && res.command && !verifyInput.value.trim()) {
+      verifyInput.value = res.command;
+    }
+  }
+  if (!running && cwdInput.value.trim() && !verifyInput.value.trim()) {
+    suggestVerifyCommandFor(cwdInput.value.trim());
+  }
+  cwdInput.addEventListener("change", () => {
+    suggestVerifyCommandFor(cwdInput.value.trim());
+  });
+
   const err = document.createElement("div");
   err.className = "goal-error";
 
@@ -4739,6 +4774,7 @@ function renderGoalPage() {
     const goal = goalInput.value.trim();
     const projectPath = cwdInput.value.trim();
     const maxIterations = parseInt(iterInput.value, 10) || 5;
+    const verifyCommand = verifyInput.value.trim();
     err.textContent = "";
     if (!goal) {
       err.textContent = "Enter a goal first.";
@@ -4748,7 +4784,7 @@ function renderGoalPage() {
       err.textContent = "Pick a project folder first.";
       return;
     }
-    const res = await window.maestro.runGoal({ projectPath, goal, maxIterations });
+    const res = await window.maestro.runGoal({ projectPath, goal, maxIterations, verifyCommand });
     if (!res || !res.ok) {
       err.textContent = "Failed to start: " + (res?.error || "unknown error");
       return;
@@ -4758,6 +4794,7 @@ function renderGoalPage() {
       goal,
       projectPath,
       maxIterations,
+      verifyCommand,
       status: "running",
       iterations: [],
       result: null,
@@ -4781,7 +4818,19 @@ function renderGoalPage() {
   });
   actionRow.append(cancelBtn);
 
-  form.append(goalLabel, goalInput, cwdLabel, cwdRow, iterLabel, iterInput, err, actionRow);
+  form.append(
+    goalLabel,
+    goalInput,
+    cwdLabel,
+    cwdRow,
+    iterLabel,
+    iterInput,
+    verifyLabel,
+    verifyInput,
+    verifyHint,
+    err,
+    actionRow
+  );
   page.append(form);
 
   // ---- Live progress ----

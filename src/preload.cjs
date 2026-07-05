@@ -64,6 +64,7 @@ contextBridge.exposeInMainWorld("maestro", {
   // own channel, parallel to session events); cancelGoal flips the run's
   // cancel flag so it stops between iterations.
   runGoal: (opts) => ipcRenderer.invoke("goal:run", opts),
+  suggestVerifyCommand: (projectPath) => ipcRenderer.invoke("goal:suggestVerifyCommand", { projectPath }),
   cancelGoal: (goalRunId) => ipcRenderer.invoke("goal:cancel", { goalRunId }),
   onGoalEvent: (handler) => {
     const listener = (_event, payload) => handler(payload);
