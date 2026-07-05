@@ -1529,27 +1529,32 @@ body.advanced .row-jot {
   color: var(--accent);
 }
 
-/* Model/effort selects styled as text pills (Reinmaker's .meta-pill: rounded
-   border, bold small text, no visible "dropdown box" chrome). */
-/* Now a <button> that opens the shared context-menu popup, not a native
-   <select> — see dropdownPill() in renderer.js for why. */
+/* Model/effort/permission/language dropdown pills. Unified with .icon-btn/
+   .text-btn's shared button language (2026-07-05 consistency pass) instead
+   of the previous one-off look (transparent background, 8px radius, bold
+   text) that made this row of buttons read as a grab-bag rather than one
+   family — same 26px height, 6px radius, --bg-card resting surface, normal
+   weight, and --bg-card-hover hover lift as every other icon/text button in
+   the app. Now a <button> that opens the shared context-menu popup, not a
+   native <select> — see dropdownPill() in renderer.js for why. */
 .meta-pill {
-  background: transparent;
+  background: var(--bg-card);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 6px;
   color: var(--text-dim);
   font: inherit;
-  font-weight: 600;
+  font-weight: 500;
   font-size: 11.5px;
-  padding: 4px 10px;
+  height: 26px;
+  padding: 0 10px;
   cursor: pointer;
   text-align: center;
   white-space: nowrap;
 }
 
 .meta-pill:hover {
+  background: var(--bg-card-hover);
   color: var(--text);
-  border-color: var(--text-dim);
 }
 
 /* Explicit hex per state rather than filter() — filters compounded on an
