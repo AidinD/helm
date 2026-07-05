@@ -95,6 +95,13 @@ const NOTES_FILENAME = "notes.md";
 const PHASE_FILENAME = "phase.json";
 const PLAN_FILENAME = "plan.md";
 const DEFAULT_MAX_ITERATIONS = 5;
+// How many consecutive implement-phase iterations may report success while
+// producing NO file changes outside .maestro-goal/ before the run stops on its
+// own (ship-review: a stuck-or-done agent that keeps self-reporting success
+// otherwise burns every remaining iteration + tokens undetected, because the
+// orchestrator's own notes.md append makes `committed` an unreliable
+// work-happened signal). Stops by DEFAULT, not only when escalation is opted in.
+const NO_OP_CONVERGENCE_STREAK = 2;
 
 // RPI phasing (Dex Horthy, 12-Factor Agents — see PLAN.md's practitioner-
 // research section and DECISIONS.md's 2026-07-04 entry): instead of every
@@ -396,6 +403,34 @@ function extractUsage(parsed) {
  * SOMETHING was cut and how much. Best-effort: a truncation failure must
  * never fail the iteration loop over housekeeping.
  */
+/**
+ * Extracts every "Key learnings:" bullet from a block of notes.md text, in
+ * order, deduped. Used to rescue durable learnings from the middle of notes.md
+ * that truncation is about to drop (ship-review finding 4.1).
+ */
+export function extractKeyLearnings(text) {
+  const learnings = [];
+  let inSection = false;
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (/^Key learnings:\s*$/i.test(line)) {
+      inSection = true;
+      continue;
+    }
+    if (!inSection) {
+      continue;
+    }
+    const m = line.match(/^-\s+(.*)$/);
+    if (m) {
+      learnings.push(m[1].trim());
+    } else {
+      // any non-bullet line (blank or a new heading) closes the section
+      inSection = false;
+    }
+  }
+  return [...new Set(learnings)];
+}
+
 function truncateNotesIfNeeded(worktreePath) {
   try {
     const file = notesPath(worktreePath);
@@ -405,10 +440,22 @@ function truncateNotesIfNeeded(worktreePath) {
     }
     const header = content.slice(0, 400);
     const tail = content.slice(-NOTES_MAX_CHARS_AFTER_WARNING);
+    // Rescue every durable "Key learnings" bullet from the MIDDLE we're about
+    // to drop (ship-review finding 4.1) — these decisions/dead-ends are exactly
+    // what a later fresh-context iteration most needs and cannot reconstruct.
+    // Only the dropped middle is scanned; the tail keeps its own learnings, so
+    // they aren't duplicated into the ledger.
+    const middle = content.slice(400, content.length - NOTES_MAX_CHARS_AFTER_WARNING);
+    const preserved = extractKeyLearnings(middle);
+    const ledger = preserved.length
+      ? `\n\n## Preserved key learnings (from truncated earlier iterations)\n\n${preserved
+          .map((l) => `- ${l}`)
+          .join("\n")}\n`
+      : "";
     const marker = `\n\n[... earlier notes truncated - context fill crossed the ${Math.round(
       CONTEXT_FILL_WARN_THRESHOLD * 100
-    )}% budget, older history dropped to keep future iterations' prompts small ...]\n\n`;
-    fs.writeFileSync(file, header + marker + tail, "utf8");
+    )}% budget, older narrative dropped to keep future iterations' prompts small; durable key learnings preserved above ...]\n\n`;
+    fs.writeFileSync(file, header + ledger + marker + tail, "utf8");
     return true;
   } catch (err) {
     console.error(`[goalOrchestrator] Failed to truncate notes.md for ${worktreePath}: ${err.message}`);
@@ -732,28 +779,31 @@ function detectCostSoftCap(record, maxCostPerIterationUsd) {
 }
 
 /**
- * Signal (d): no net progress — `streak` or more consecutive SUCCESSFUL,
- * COMMITTED iterations in a row with the commit count never actually moving
- * up. This is intentionally distinct from `consecutiveFailures` (which
- * already stops the run on outright failures): this catches the quieter
- * failure mode of an agent reporting success and getting past the verify
- * gate, but not actually landing commits (e.g. `commitIteration` finding
- * nothing to commit each time) — busy-looking but not moving the goal
- * forward.
+ * Signal (d): no net progress — `streak` or more consecutive SUCCESSFUL
+ * implement-phase iterations that each changed NOTHING outside .maestro-goal/.
+ * This is intentionally distinct from `consecutiveFailures` (which already
+ * stops the run on outright failures): it catches the quieter failure mode of
+ * an agent reporting success and getting past the verify gate but not actually
+ * moving the goal forward — busy-looking but idle.
+ *
+ * Keys off `producedChanges`, NOT `committed` (ship-review finding): the
+ * orchestrator appends notes.md every iteration, so the worktree is essentially
+ * never empty at commit time and `committed` is almost always true — it can't
+ * distinguish real work from the orchestrator's own bookkeeping. Only
+ * implement-phase iterations are considered: research/plan iterations
+ * legitimately produce no code (their deliverables — notes.md/plan.md — live
+ * inside .maestro-goal/), so counting them here would false-positive.
  */
-function detectNoNetProgress(iterations, streak, commitCountByIteration) {
-  const successes = iterations.filter((r) => r.ok && r.result && r.result.success !== false);
-  if (successes.length < streak) {
+export function detectNoNetProgress(iterations, streak) {
+  const implementSuccesses = iterations.filter(
+    (r) => r.ok && r.result && r.result.success !== false && r.phase === "implement"
+  );
+  if (implementSuccesses.length < streak) {
     return null;
   }
-  const recent = successes.slice(-streak);
-  if (!recent.every((r) => !r.committed)) {
-    return null;
-  }
-  const counts = recent.map((r) => commitCountByIteration.get(r.iteration) ?? 0);
-  const first = counts[0];
-  if (counts.every((c) => c === first)) {
-    return `${streak} consecutive successful iterations in a row produced no new commits (commit count stayed at ${first}).`;
+  const recent = implementSuccesses.slice(-streak);
+  if (recent.every((r) => r.producedChanges === false)) {
+    return `${streak} consecutive implement iterations reported success but changed no files outside .maestro-goal/ (no real progress).`;
   }
   return null;
 }
@@ -766,7 +816,7 @@ function detectNoNetProgress(iterations, streak, commitCountByIteration) {
  * `{}` and still get sensible behavior; see `runGoal`'s own doc comment for
  * the full option list.
  */
-function detectEscalationSignal(iterations, latestRecord, escalationConfig, commitCountByIteration) {
+function detectEscalationSignal(iterations, latestRecord, escalationConfig) {
   const keywords = escalationConfig.ambiguityKeywords || DEFAULT_AMBIGUITY_KEYWORDS;
   const maxCostPerIterationUsd = escalationConfig.maxCostPerIterationUsd ?? DEFAULT_MAX_COST_PER_ITERATION_USD;
   const noProgressStreak = escalationConfig.noProgressStreak ?? DEFAULT_NO_PROGRESS_STREAK;
@@ -776,7 +826,7 @@ function detectEscalationSignal(iterations, latestRecord, escalationConfig, comm
     { signal: "repeated_verify_failure", detail: detectRepeatedVerifyFailure(iterations, repeatedVerifyFailureThreshold) },
     { signal: "ambiguity_reported", detail: detectAmbiguitySignal(latestRecord, keywords) },
     { signal: "cost_soft_cap", detail: detectCostSoftCap(latestRecord, maxCostPerIterationUsd) },
-    { signal: "no_net_progress", detail: detectNoNetProgress(iterations, noProgressStreak, commitCountByIteration) },
+    { signal: "no_net_progress", detail: detectNoNetProgress(iterations, noProgressStreak) },
   ];
   return reasons.find((r) => r.detail) || null;
 }
@@ -836,6 +886,60 @@ function discardWorktreeChanges(worktreePath) {
     console.error(`[goalOrchestrator] Failed to reset/clean worktree ${worktreePath}: ${err.message}`);
     return false;
   }
+}
+
+/**
+ * Whether this iteration actually changed any file OUTSIDE .maestro-goal/ —
+ * the honest "did the agent do real work" signal (ship-review finding).
+ * MUST be called BEFORE the orchestrator appends its own notes.md/plan.md,
+ * which live under .maestro-goal/ and would otherwise always dirty the tree,
+ * making a plain `git status` (and therefore `committed`) useless for telling
+ * agent work apart from bookkeeping. Best-effort: on any git error it returns
+ * `true` (assume progress) so a transient git hiccup never wrongly flags a
+ * working run as a no-op stall.
+ */
+export function producedRealChanges(worktreePath) {
+  try {
+    const status = execFileSync("git", ["-C", worktreePath, "status", "--porcelain"], {
+      encoding: "utf8",
+      windowsHide: true,
+    });
+    const lines = status.split(/\r?\n/).filter((l) => l.length > 0);
+    for (const line of lines) {
+      // porcelain v1: "XY <path>", or "XY <old> -> <new>" for renames/copies.
+      let p = line.slice(3);
+      if (p.includes(" -> ")) {
+        p = p.split(" -> ").pop();
+      }
+      p = p.replace(/^"|"$/g, ""); // git quotes paths with special chars
+      const norm = p.replace(/\\/g, "/").replace(/^\.\//, "");
+      if (norm !== NOTES_DIR && !norm.startsWith(`${NOTES_DIR}/`)) {
+        return true;
+      }
+    }
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Computes the next RPI phase after a SUCCESSFUL iteration, with a deliverable
+ * gate (ship-review finding 1.1): plan -> implement only advances once plan.md
+ * actually exists with real content. A plan-phase iteration that reports
+ * success without writing a usable plan re-runs the plan phase rather than
+ * proceeding to implement against no plan. research -> plan and implement (which
+ * stays implement) are unaffected.
+ */
+export function advancePhaseAfterSuccess(worktreePath, currentPhase) {
+  const next = nextPhase(currentPhase);
+  if (currentPhase === "plan" && next === "implement") {
+    const plan = readPlan(worktreePath);
+    if (!plan || !plan.trim()) {
+      return currentPhase;
+    }
+  }
+  return next;
 }
 
 /**
@@ -986,6 +1090,23 @@ export async function runGoal({
     throw new Error("runGoal requires both projectPath and goal.");
   }
 
+  // Validate projectPath is actually a git work tree BEFORE any worktree/branch
+  // operation runs against it (ship-review finding): projectPath arrives over
+  // IPC with only a truthiness check, yet flows into `git -C <projectPath>
+  // branch -D` / `worktree remove` at cleanup. Fail loudly here rather than let
+  // a destructive git command run against a non-repo or the wrong directory.
+  try {
+    const inside = execFileSync("git", ["-C", projectPath, "rev-parse", "--is-inside-work-tree"], {
+      encoding: "utf8",
+      windowsHide: true,
+    }).trim();
+    if (inside !== "true") {
+      throw new Error("path is not inside a git work tree");
+    }
+  } catch (err) {
+    throw new Error(`runGoal: projectPath is not a git repository: ${projectPath} (${err.message})`);
+  }
+
   // `deps: "junction"` so an iteration can actually run builds/tests in the
   // worktree (this is the whole point of Point 11 hardening - a goal that
   // can't run its own tests can't self-verify). Junction, not a full
@@ -1031,6 +1152,10 @@ export async function runGoal({
 
   const iterations = [];
   let consecutiveFailures = 0;
+  // Consecutive implement-phase iterations that reported success but changed
+  // nothing outside .maestro-goal/ (see NO_OP_CONVERGENCE_STREAK). Reset the
+  // moment any real change or phase progress happens.
+  let consecutiveNoOps = 0;
   let stoppedReason = "max_iterations_reached";
   // RPI phase, persisted to phase.json so it survives the fresh-subprocess-
   // per-iteration model the same way notes.md does. A brand-new worktree has
@@ -1042,14 +1167,8 @@ export async function runGoal({
   // detectEscalationSignal). `escalationEnabled` is captured once so an
   // absent `escalationConfig` truly changes nothing below beyond this one
   // boolean check per iteration - the whole point of the opt-in default-OFF
-  // shape. `commitCountByIteration` records the branch's total commit count
-  // AFTER each iteration completes, keyed by iteration number, so the
-  // no-net-progress signal can compare counts across iterations without
-  // re-deriving history from the records themselves (commitCount isn't on
-  // the record - it's a side-channel git fact, same as `countCommitsOnBranch`
-  // below already treats it).
+  // shape.
   const escalationEnabled = Boolean(escalationConfig);
-  const commitCountByIteration = new Map();
   let escalation = null;
 
   for (let i = 1; i <= maxIterations; i++) {
@@ -1090,6 +1209,11 @@ export async function runGoal({
     // unchanged tree for no reason. Only implement-phase iterations run it.
     const verifyGateApplies = Boolean(verifyCommand) && phase === "implement";
     const iterationPhase = phase;
+    // Honest "did the agent do real work" signal (ship-review finding) —
+    // measured NOW, before any appendNotes/plan write below dirties
+    // .maestro-goal/. Only meaningful on a successful iteration (a failed one is
+    // rolled back regardless).
+    const producedChanges = outcome.ok ? producedRealChanges(worktreePath) : false;
 
     let record;
     if (!outcome.ok) {
@@ -1138,13 +1262,18 @@ export async function runGoal({
           ok: true,
           result: outcome.result,
           committed,
+          producedChanges,
           verified: true,
           costUsd: outcome.costUsd,
           fillPct: outcome.usage?.fillPct ?? null,
           totalTokens: outcome.usage?.totalTokens ?? null,
         };
         consecutiveFailures = 0;
-        phase = nextPhase(phase);
+        // Verify gate only applies to implement, so this branch is always the
+        // implement phase: a verified success that changed no real files is a
+        // no-op toward convergence (finding); a real change resets the streak.
+        consecutiveNoOps = producedChanges ? 0 : consecutiveNoOps + 1;
+        phase = advancePhaseAfterSuccess(worktreePath, phase);
         writePhase(worktreePath, phase);
       } else {
         // Verification failed — treat exactly like a success:false iteration:
@@ -1191,17 +1320,28 @@ export async function runGoal({
         ok: true,
         result: outcome.result,
         committed,
+        producedChanges,
         costUsd: outcome.costUsd,
         fillPct: outcome.usage?.fillPct ?? null,
         totalTokens: outcome.usage?.totalTokens ?? null,
       };
       consecutiveFailures = 0;
+      // Only an implement iteration that changed nothing real is a no-op toward
+      // convergence (finding). research/plan legitimately produce no code
+      // outside .maestro-goal/ but DO make phase progress, so they reset the
+      // streak rather than counting against it.
+      if (iterationPhase === "implement" && !producedChanges) {
+        consecutiveNoOps += 1;
+      } else {
+        consecutiveNoOps = 0;
+      }
       // Advance research -> plan -> implement on a successful phase-completing
       // iteration, instead of looping the same phase maxIterations times.
-      // `nextPhase` is a no-op once already at "implement" (the last phase),
-      // so implement iterations keep re-running implement until done or
-      // maxIterations, matching the pre-RPI behavior for that phase.
-      phase = nextPhase(phase);
+      // `advancePhaseAfterSuccess` is a no-op once already at "implement" (the
+      // last phase), so implement iterations keep re-running implement until
+      // done or maxIterations, matching the pre-RPI behavior for that phase;
+      // it also gates plan -> implement on plan.md actually existing.
+      phase = advancePhaseAfterSuccess(worktreePath, phase);
       writePhase(worktreePath, phase);
     }
 
@@ -1248,8 +1388,7 @@ export async function runGoal({
     // the loop pauses (worktree/commits kept, resumable) rather than falling
     // through to the harsher unconditional abort path.
     if (escalationEnabled) {
-      commitCountByIteration.set(i, countCommitsOnBranch(worktreePath, baseCommit));
-      const signal = detectEscalationSignal(iterations, record, escalationConfig, commitCountByIteration);
+      const signal = detectEscalationSignal(iterations, record, escalationConfig);
       if (signal) {
         escalation = {
           iteration: i,
@@ -1272,6 +1411,15 @@ export async function runGoal({
 
     if (consecutiveFailures >= 2) {
       stoppedReason = "two_consecutive_failures";
+      break;
+    }
+    if (consecutiveNoOps >= NO_OP_CONVERGENCE_STREAK) {
+      // The agent keeps reporting success but has stopped changing anything —
+      // either the goal is already satisfied or it's stuck. Either way, stop
+      // cleanly instead of burning the remaining iterations/tokens; the human
+      // reviews the kept worktree. Fires by DEFAULT, independent of the opt-in
+      // escalation feature. See NO_OP_CONVERGENCE_STREAK.
+      stoppedReason = "no_op_convergence";
       break;
     }
     if (i === maxIterations) {

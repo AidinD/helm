@@ -139,7 +139,7 @@ try {
   assert(notesOnDisk === result.notes, "returned notes content matches notes.md as actually written on disk");
 
   assert(
-    ["max_iterations_reached", "two_consecutive_failures", "cancelled"].includes(result.stoppedReason),
+    ["max_iterations_reached", "two_consecutive_failures", "cancelled", "no_op_convergence", "escalated"].includes(result.stoppedReason),
     `stoppedReason is one of the documented values (got: ${result.stoppedReason})`
   );
 
