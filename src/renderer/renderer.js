@@ -3934,7 +3934,7 @@ const SUBTASK_STATUS_LABEL = {
 // labeled placeholder rather than invented data - see the individual section
 // comments below.
 let dashboardFocusMode = "work"; // "work" | "private" - local UI state, resets on reload
-let dashboardSelectedChip = null; // which "New session" project chip is selected
+let dashboardSelectedChip = null; // which "New session" project chip is selected (a cwd string)
 
 function isDashboardVisible() {
   return !document.getElementById("dashboardPage").classList.contains("hidden");
@@ -3973,7 +3973,7 @@ async function renderDashboardPage() {
 
   page.append(dashboardQueueSection());
   page.append(await dashboardGoalsSection());
-  page.append(dashboardNewSessionSection());
+  page.append(await dashboardNewSessionSection());
 }
 
 // --- Focus work/private toggle -----------------------------------------
@@ -4421,19 +4421,25 @@ function dashGoalCardEl(goal) {
 }
 
 // --- New session -------------------------------------------------------
-// Real: project chips render from actual repo cwd's seen among state.sessions
-// (so the chip list reflects real projects Maestro has touched).
+// Project chips come from two sources:
+//   - repo projects: derived from actual repo cwd's seen among state.sessions
+//     (so the chip list reflects real projects Maestro has touched).
+//   - domain projects: PLAN.md's non-repo "life-domain" project type (gym,
+//     diabetes, kombucha, ...) — a small persisted registry (domains.js),
+//     surfaced here with a distinct icon per the approved dashboard mock
+//     (repo chips get a folder icon, domain chips get their own icon).
+// Both chip kinds behave identically once selected: a session rooted in
+// either folder auto-loads its CLAUDE.md + memory the moment it starts (see
+// dashAutoContextStripEl) — there is no separate "domain session" mode.
 // Variant A change: the old manual "load context" checklist (checkboxes for
 // CLAUDE.md/PLAN.md/DECISIONS.md/memory) is gone. There was never anything to
 // decide there - a session rooted in a project already auto-loads that
 // project's CLAUDE.md + memory the moment it starts, so the checklist only
 // implied a choice that doesn't exist. It's replaced by a passive one-line
 // strip stating what already happens.
-// Placeholder: clicking "Start fresh session" does NOT yet start anything -
-// there is no start-from-dashboard IPC built yet, so it shows a toast
-// explaining that instead of silently doing nothing or faking a session
-// start.
-function dashboardNewSessionSection() {
+const REPO_CHIP_ICON = "\u{1F4C1}"; // folder
+
+async function dashboardNewSessionSection() {
   const section = document.createElement("section");
   section.className = "dash-board";
   section.append(dashBoardHead("New session", null, "Starts fresh every time - never resumed history"));
@@ -4450,53 +4456,133 @@ function dashboardNewSessionSection() {
 
   const chipGrid = document.createElement("div");
   chipGrid.className = "dash-chip-grid";
-  const knownProjects = [...new Set(state.sessions.filter((s) => s.cwd).map((s) => s.cwd))];
-  const projectNames = knownProjects.map((cwd) => cwd.split(/[\\/]/).filter(Boolean).pop() || cwd);
-  projectNames.forEach((name, i) => chipGrid.append(dashChipEl(name, knownProjects[i])));
-  chipGrid.append(dashChipEl("+ other…", null));
+
+  const knownRepos = [...new Set(state.sessions.filter((s) => s.cwd).map((s) => s.cwd))];
+  const domains = await window.maestro.listDomains();
+
+  // { cwd, label, icon } for every selectable chip, repos first then domains,
+  // so dashAutoContextStripEl can look up the selected chip's label/icon by
+  // cwd regardless of which kind it is.
+  const chips = [
+    ...knownRepos.map((cwd) => ({
+      cwd,
+      label: cwd.split(/[\\/]/).filter(Boolean).pop() || cwd,
+      icon: REPO_CHIP_ICON,
+    })),
+    ...domains.map((d) => ({ cwd: d.path, label: d.name, icon: d.icon })),
+  ];
+
+  chips.forEach((chip) => chipGrid.append(dashChipEl(chip.label, chip.cwd, chip.icon)));
+  chipGrid.append(dashChipEl("+ other…", "__other__", null));
+  chipGrid.append(dashChipEl("+ new domain…", "__new_domain__", null));
   panel.append(chipGrid);
 
-  panel.append(dashAutoContextStripEl(dashboardSelectedChip, projectNames, knownProjects));
+  panel.append(dashAutoContextStripEl(dashboardSelectedChip, chips));
 
   const launchRow = document.createElement("div");
   launchRow.className = "dash-launch-row";
-  const note = document.createElement("span");
-  note.className = "dash-placeholder-note";
-  note.textContent = "Start fresh session: stub only — no start-from-dashboard IPC built yet";
   const startBtn = document.createElement("button");
   startBtn.className = "text-btn";
   startBtn.textContent = "Start fresh session";
-  startBtn.addEventListener("click", () => {
-    showToast(
-      dashboardSelectedChip
-        ? `Would start a fresh session rooted in "${dashboardSelectedChip}" — not wired up yet.`
-        : "Pick a project chip first — starting a session from here isn't wired up yet."
-    );
+  startBtn.addEventListener("click", async () => {
+    if (!dashboardSelectedChip || dashboardSelectedChip === "__other__" || dashboardSelectedChip === "__new_domain__") {
+      showToast("Pick a project chip first.");
+      return;
+    }
+    document.querySelector('#pageToggle button[data-page="chat"]')?.click();
+    openFreshDraftInPane(dashboardSelectedChip, "");
   });
-  launchRow.append(note, startBtn);
+  launchRow.append(startBtn);
 
   body.append(panel, launchRow);
   section.append(body);
   return section;
 }
 
-function dashChipEl(label, cwd) {
+function dashChipEl(label, cwd, icon) {
   const chip = document.createElement("div");
   chip.className = "dash-chip" + (dashboardSelectedChip === cwd ? " dash-chip-selected" : "");
-  chip.textContent = label;
-  chip.addEventListener("click", () => {
+  if (icon) {
+    const ic = document.createElement("span");
+    ic.className = "dash-chip-ic";
+    ic.textContent = icon;
+    chip.append(ic);
+  }
+  chip.append(document.createTextNode(label));
+  chip.addEventListener("click", async () => {
+    if (cwd === "__other__") {
+      const folder = await window.maestro.pickFolder();
+      if (folder) {
+        dashboardSelectedChip = folder;
+        renderDashboardPage();
+      }
+      return;
+    }
+    if (cwd === "__new_domain__") {
+      await promptRegisterDomain();
+      return;
+    }
     dashboardSelectedChip = cwd;
     renderDashboardPage();
   });
   return chip;
 }
 
+// Minimal "register a new domain" flow. Folder comes from the native picker
+// (which can also create a new folder); the name defaults to the folder's
+// basename and is confirmed/renamed via the same inline-editable text input
+// used everywhere else in the sidebar (makeInlineEditable) rather than
+// window.prompt() - a documented-unreliable native dialog in this Electron
+// build (see the Category CRUD comment above). Kept intentionally simple per
+// the task's "keep it simple" - no dedicated modal/form. A domain's
+// CLAUDE.md is optional, so nothing here requires or creates one.
+async function promptRegisterDomain() {
+  const folder = await window.maestro.pickDomainFolder();
+  if (!folder) {
+    return;
+  }
+  const defaultName = folder.split(/[\\/]/).filter(Boolean).pop() || folder;
+
+  // Render a temporary chip holding the inline-edit input so the flow stays
+  // visually consistent with the chip grid instead of popping a dialog.
+  const chipGrid = document.querySelector(".dash-chip-grid");
+  if (!chipGrid) {
+    return;
+  }
+  const placeholder = document.createElement("span");
+  placeholder.textContent = defaultName;
+  const tempChip = document.createElement("div");
+  tempChip.className = "dash-chip";
+  tempChip.append(placeholder);
+  chipGrid.append(tempChip);
+
+  makeInlineEditable(placeholder, defaultName, async (finalName) => {
+    tempChip.remove();
+    if (!finalName) {
+      return;
+    }
+    const result = await window.maestro.registerDomain({ name: finalName, path: folder });
+    if (!result.ok) {
+      showToast(result.error || "Couldn't register domain.");
+      return;
+    }
+    dashboardSelectedChip = result.domain.path;
+    renderDashboardPage();
+  });
+}
+
 // Passive confirmation strip - nothing to check, nothing to decide. Names the
-// selected project (falling back to the first known one, or a generic label
-// when none are known yet) so the sentence reads correctly either way.
-function dashAutoContextStripEl(selectedCwd, projectNames, knownProjects) {
-  const selectedIndex = knownProjects.indexOf(selectedCwd);
-  const projectLabel = selectedIndex >= 0 ? projectNames[selectedIndex] : projectNames[0] || "the project";
+// selected project (falling back to the first chip, or a generic label when
+// none are known yet) so the sentence reads correctly either way. `chips` is
+// the same { cwd, label, icon } list dashboardNewSessionSection built, so
+// this works identically for a repo chip or a non-repo domain chip - the
+// only difference is a domain's file list doesn't assume PLAN.md/
+// DECISIONS.md exist (those are repo conventions; a domain's CLAUDE.md is
+// even optional).
+function dashAutoContextStripEl(selectedCwd, chips) {
+  const selected = chips.find((c) => c.cwd === selectedCwd) || chips[0] || null;
+  const projectLabel = selected ? selected.label : "the project";
+  const isDomain = selected ? selected.icon !== REPO_CHIP_ICON : false;
 
   const strip = document.createElement("div");
   strip.className = "dash-auto-context";
@@ -4517,7 +4603,8 @@ function dashAutoContextStripEl(selectedCwd, projectNames, knownProjects) {
 
   const files = document.createElement("div");
   files.className = "dash-auto-context-files";
-  ["CLAUDE.md", "PLAN.md", "DECISIONS.md", "memory/*.md"].forEach((name) => {
+  const fileNames = isDomain ? ["CLAUDE.md (optional)", "memory/*.md"] : ["CLAUDE.md", "PLAN.md", "DECISIONS.md", "memory/*.md"];
+  fileNames.forEach((name) => {
     const code = document.createElement("code");
     code.textContent = name;
     files.append(code);

@@ -2771,6 +2771,9 @@ button.primary {
 }
 
 .dash-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   background: var(--bg);
   border: 1px solid var(--border);
   padding: 6px 12px;
@@ -2788,6 +2791,14 @@ button.primary {
 .dash-chip-selected {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+/* Distinguishes a repo chip (folder icon) from a non-repo "life-domain"
+   project chip (its own icon, e.g. gym/diabetes/kombucha) - see the approved
+   dashboard mock's .type-ic. */
+.dash-chip-ic {
+  font-size: 11.5px;
+  opacity: 0.85;
 }
 
 /* Passive confirmation strip - replaces the old manual load-context
