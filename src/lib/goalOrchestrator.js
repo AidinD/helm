@@ -782,13 +782,52 @@ function detectEscalationSignal(iterations, latestRecord, escalationConfig, comm
 }
 
 /**
+ * Confirms `worktreePath` is the root of its OWN git working tree, i.e. that
+ * `git rev-parse --show-toplevel` run there resolves back to the same path.
+ * This is the last-line defense for the whole feature's core safety invariant:
+ * a `git reset --hard` / `git clean -fd` must only ever touch the isolated
+ * throwaway worktree, never a parent checkout. The worktree lives at
+ * `<parent>/<repo>-worktrees/<id>` — a SIBLING of the primary repo, not a
+ * child — so if git's own repo-discovery ever walks UP out of that dir (e.g.
+ * the worktree was deregistered/pruned mid-run but its directory still exists,
+ * and some ancestor of it happens to itself be a git repo), toplevel would
+ * resolve to that ancestor and a raw reset/clean there would wipe unrelated
+ * work. Comparing toplevel === worktreePath fails that case closed.
+ */
+export function isOwnWorktreeRoot(worktreePath) {
+  try {
+    const top = execFileSync("git", ["-C", worktreePath, "rev-parse", "--show-toplevel"], {
+      encoding: "utf8",
+      windowsHide: true,
+    }).trim();
+    if (!top) {
+      return false;
+    }
+    // Normalize both sides: git prints forward slashes, Windows paths are
+    // case-insensitive, and either side may have a trailing separator.
+    const norm = (p) => path.resolve(p).replace(/[\\/]+$/, "").toLowerCase();
+    return norm(top) === norm(worktreePath);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Discards all uncommitted changes in the worktree — used after a failed
  * (success:false) or hard-error iteration, mirroring gnhf's verified
  * failure-rollback behavior. Best-effort with a clear log on failure rather
  * than throwing: a reset failing is rare and recoverable by inspection, and
- * shouldn't crash the whole goal run.
+ * shouldn't crash the whole goal run. Refuses to run at all unless the path is
+ * confirmed to be its own worktree root (see `isOwnWorktreeRoot`) — a defense
+ * against ever pointing a destructive reset/clean at a parent checkout.
  */
 function discardWorktreeChanges(worktreePath) {
+  if (!isOwnWorktreeRoot(worktreePath)) {
+    console.error(
+      `[goalOrchestrator] Refusing to reset/clean ${worktreePath}: not confirmed as its own git worktree root (safety guard).`
+    );
+    return false;
+  }
   try {
     runGit(worktreePath, ["reset", "--hard"]);
     runGit(worktreePath, ["clean", "-fd"]);
@@ -1029,7 +1068,7 @@ export async function runGoal({
     // resumed run whose plan-phase iteration was hard-failed and rolled back
     // after phase.json had already been advanced, or plan.md being manually
     // removed from the worktree between iterations.
-    if (phase === "implement" && !planContent) {
+    if (phase === "implement" && (!planContent || !planContent.trim())) {
       phase = "plan";
       writePhase(worktreePath, phase);
     }
