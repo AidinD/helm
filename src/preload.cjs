@@ -69,7 +69,11 @@ contextBridge.exposeInMainWorld("maestro", {
   // Fas 3 Point 11 — autonomous goal orchestrator. runGoal starts a run and
   // resolves with { ok, goalRunId }; progress arrives over onGoalEvent (its
   // own channel, parallel to session events); cancelGoal flips the run's
-  // cancel flag so it stops between iterations.
+  // cancel flag so it stops between iterations. `opts` is passed straight
+  // through to the "goal:run" handler, including the optional
+  // `escalationConfig` (Point 12 Phase-0 escalation, opt-in — see
+  // goalOrchestrator.js's runGoal doc comment); onGoalEvent also receives an
+  // `{ kind: "escalation", escalation }` event when a run pauses on a signal.
   runGoal: (opts) => ipcRenderer.invoke("goal:run", opts),
   suggestVerifyCommand: (projectPath) => ipcRenderer.invoke("goal:suggestVerifyCommand", { projectPath }),
   cancelGoal: (goalRunId) => ipcRenderer.invoke("goal:cancel", { goalRunId }),
