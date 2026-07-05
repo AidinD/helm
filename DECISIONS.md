@@ -1,5 +1,52 @@
 # Decisions
 
+## 2026-07-05 — True real-time streaming transcription via whisper-stream.exe, replacing rolling re-transcription
+
+Follow-up to the 2026-07-04 "continuous voice input" entry (rolling re-transcription of the whole clip-so-far every `VOICE_ROLLING_INTERVAL_MS`).
+That entry stated Whisper "is not a streaming model" and settled for rolling re-transcription as the pragmatic ceiling.
+The captain explicitly chose to go further: use whisper.cpp's own real-time streaming tool instead of hand-rolling a windowing scheme, so text grows word-by-word while speaking, like dictation.
+
+**Binary: `whisper-stream.exe`, not `stream.exe`.**
+`.whisper/Release/` ships both.
+`stream.exe` is whisper.cpp's deprecated name for this tool - running it just prints a deprecation warning to stderr and exits immediately (confirmed by actually running it), so it is unusable.
+`whisper-stream.exe` (390KB, vs. `stream.exe`'s 28KB stub) is the real, current SDL2-based streaming binary and is what `src/lib/whisperStream.js` spawns.
+
+**stdout format, reverse-engineered from the real whisper.cpp source (`examples/stream/stream.cpp`) plus a live ~5-8s silent capture against this exact build/model:**
+In sliding-window mode (`--step`/`--length`, what we use), every processing iteration prints `"\x1b[2K\r" + 100 spaces + "\x1b[2K\r" + <window text, no trailing newline>` - an ANSI clear-line+CR done twice, then the CURRENT window's full transcript REPRINTED in place (not an incremental append).
+Every `n_new_line = max(1, length_ms/step_ms - 1)` iterations, a bare `"\n"` is printed and the internal audio buffer rolls forward, keeping only `--keep` ms of audio.
+Because whisper-stream runs with its default `no_context=true` (no `-kc` flag), nothing about the recognized TEXT is actually carried across that roll - the `"\n"` is whisper-stream's own cosmetic scrollback break, not a hard linguistic guarantee that prior text can never change.
+It is still treated as this app's commit boundary because it is the only one the tool provides, and in practice each window has stabilized by the time it rolls off (that is the whole purpose of `--keep`'s audio overlap).
+A plain `"[Start speaking]\r\n"` banner precedes the first window.
+
+**Parsing approach (`src/lib/whisperStream.js`'s `parseStreamChunk`):** re-splits the ENTIRE buffered-so-far stdout on the full boundary triplet (`clear, 100 spaces, clear`) on every call, rather than doing an in-place incremental regex-and-slice.
+Every resulting segment except the last is a fully-finished reprint; the last segment always stays buffered since more stdout may still extend it (avoids flickering a truncated word into the composer).
+Within a finished segment, a bare `"\n"` (not part of the boundary) is whisper-stream's own commit point - text before it becomes a `"committed"` event, text after it (with no further `"\n"` before the next boundary) becomes a `"partial"` event.
+`"<|nospeech|>"` (whisper's silence marker) collapses to an empty string rather than being surfaced.
+Verified deterministic with a throwaway standalone script feeding the same sample through as one whole chunk, byte-by-byte, and randomly-sized chunks (all three produced byte-identical event sequences) - both against a synthetic sample built from the source's exact print sequence, and against a real captured `whisper-stream.exe` run (silent room, so all `<|nospeech|>`, zero spurious events, correct trailing-incomplete-reprint buffering).
+
+**Architecture:** in `voice:streamStart` (`src/main.js`), whisper-stream.exe is spawned directly from the main process (not routed through the existing `voiceWorker.js` utility process) - unlike whisper-cli/transformers.js inference, nothing CPU-bound runs on this process's own event loop here, just an async spawn plus incremental stdout reads, so the utility-process indirection that exists specifically to protect the event loop from blocking ONNX/whisper-cli calls isn't needed.
+Partial/committed events stream to the renderer over a new dedicated IPC channel, `"voice:streamEvent"`, mirroring the existing `goal:event`/`session:event` pattern (every payload carries a `streamId` so a stale hold's late events can never be misapplied to a fresh one).
+
+**Trigger unchanged, mic ownership switches.**
+The hold-to-record trigger (mic button mousedown/mouseup/mouseleave, Alt-in-composer keydown/keyup/blur) is untouched.
+`startVoiceRecording` (`src/renderer/renderer.js`) now tries `tryStartVoiceStream` first: if `config.voiceEngine === "whispercpp"` AND the main process confirms whisper-stream.exe + the model are actually installed, whisper-stream.exe owns the microphone directly via SDL2 and the renderer does NOT call `getUserMedia`/`MediaRecorder` for that hold at all.
+If unavailable (missing binary/model, or `voiceEngine: "transformers"`), it falls back to the existing rolling re-transcription path unchanged - same trigger, same UX, just a different backend, so a machine without `.whisper/Release/whisper-stream.exe` degrades gracefully instead of losing continuous voice input.
+
+**Lifecycle / orphan prevention.**
+Stopping the hold (`stopVoiceRecording` -> `stopVoiceStreamIfActive`) removes the pane from `activeVoiceStreams` BEFORE awaiting the kill, so the process's own later "exit" event (which always fires, clean stop or not) finds nothing to act on.
+Killing uses the same Windows `taskkill /T /F` tree-kill `main.js` already relies on for `claude.exe` subprocesses, not a plain `child.kill()` - whisper-stream links SDL2, which is not guaranteed to release the microphone on a bare kill signal on every setup.
+`app.on("before-quit")` now also sweeps `liveVoiceStreams` with the synchronous kill variant, so quitting the app while a hold is active can't leave whisper-stream.exe orphaned and holding the mic - the exact same concern the existing `liveChildren`/`voiceWorker` cleanup in that handler addresses for other subprocess kinds.
+An unexpected exit/error mid-hold (e.g. losing the capture device) surfaces as a mic-button title and releases the hold rather than leaving the UI stuck showing "recording" for a process that is actually gone; text already committed before the crash is left in the composer rather than discarded.
+
+**Tuning: `--step 700 --length 5000 --keep 200`.**
+`--step 700` gives sub-second visible updates (matching the word-by-word ask) while staying well inside the ~1.3s/11s-clip inference time already measured on the captain's RTX 3070 (see `whisperCpp.js`) - a 5s window transcribes considerably faster than that, so 700ms steps should not queue up.
+`--length 5000` keeps each window short enough to stay fast on this GPU while still giving whisper a few seconds of context per inference (very short windows alone tend to fragment words and hurt accuracy).
+`--keep 200` is whisper-stream's own default, left alone - it only needs to bridge one word's worth of boundary overlap.
+
+**Not verified: real microphone behavior.**
+Everything above was verified statically (source code, `--help` output, a live silent capture, `node --check`, and a standalone parser test against both synthetic and real captured stdout) - none of it proves real speech actually renders as smooth word-by-word growth in the composer, that Swedish accuracy holds up at these window sizes, or that the tuning constants feel responsive rather than choppy in practice.
+That needs the captain's live microphone test: hold the mic button (or Alt), speak Swedish continuously, confirm text grows live in the composer word by word without long pauses; release and confirm the committed text is retained; try a longer hold to check the process survives multiple window rolls; and, on a machine/config where `.whisper/Release/whisper-stream.exe` is deliberately renamed away or the config is set to `voiceEngine: "transformers"`, confirm the mic button still falls back to the old rolling behavior rather than silently doing nothing.
+
 ## 2026-07-04 - Voice input perf fix: q8 quantization + off-main-loop worker process + slower rolling interval
 
 Follow-up to the same-day voice-input entries (hold-to-record, multilingual, language picker, kb-whisper-small swap, rolling re-transcription).

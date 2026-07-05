@@ -176,6 +176,13 @@ const activeRecordings = new Map(); // index -> { mediaRecorder, stream, chunks 
 // right after the await below so a released hold never starts a recording
 // nothing will ever stop.
 const heldRecordings = new Set(); // index
+// index -> { streamId, voiceStart, voiceLen, committed } for a hold using
+// the TRUE real-time streaming path (whisper-stream.exe, see
+// src/lib/whisperStream.js), as opposed to activeRecordings above (the
+// MediaRecorder + rolling-re-transcription path). A pane is in exactly one
+// of these two maps at a time, never both — see startVoiceRecording's
+// dispatch below.
+const activeVoiceStreams = new Map();
 
 // CONTINUOUS ("live") transcription — the captain's ask: show what's being heard
 // progressively WHILE holding, like Claude Desktop, instead of only on
@@ -223,6 +230,150 @@ function replaceVoiceSpan(currentValue, voiceStart, voiceLen, newVoiceText) {
   return { value: before + insert + after, newVoiceLen: insert.length };
 }
 
+// TRUE real-time streaming transcription (whisper-stream.exe, see
+// src/lib/whisperStream.js) — the word-by-word-while-speaking upgrade over
+// the rolling re-transcription above. In this mode, whisper-stream.exe OWNS
+// the microphone directly via SDL2 (spawned in the main process), so the
+// renderer does NOT call getUserMedia/MediaRecorder at all for this pane's
+// hold — the two mic-capture paths are mutually exclusive per hold. Only
+// engaged when config.voiceEngine is "whispercpp" AND the main process
+// confirms whisper-stream.exe + the model are actually installed
+// (voice:streamStart returns { ok: false } otherwise, e.g. on a machine that
+// only has the .whisper/ whisper-cli half installed); startVoiceRecording
+// falls back to the rolling path in that case, so the feature degrades
+// gracefully rather than silently doing nothing.
+//
+// One IPC event channel, "voice:streamEvent" (mirrors goal:event/
+// session:event's shape: every payload carries the id of the run it belongs
+// to, here streamId, so a stale/previous hold's late events can never be
+// misapplied to a fresh one), dispatches into whichever pane's
+// activeVoiceStreams entry has that streamId.
+let voiceStreamListenerWired = false;
+
+function wireVoiceStreamListener() {
+  if (voiceStreamListenerWired) {
+    return;
+  }
+  voiceStreamListenerWired = true;
+  window.maestro.onVoiceStreamEvent((payload) => {
+    for (const [index, entry] of activeVoiceStreams.entries()) {
+      if (entry.streamId !== payload.streamId) {
+        continue;
+      }
+      if (payload.kind === "partial") {
+        entry.livePartial = payload.text || "";
+        applyVoiceStreamText(entry);
+      } else if (payload.kind === "committed") {
+        entry.committed = entry.committed ? `${entry.committed} ${payload.text}` : payload.text || "";
+        entry.livePartial = "";
+        applyVoiceStreamText(entry);
+      } else if (payload.kind === "error") {
+        // whisper-stream.exe failed to spawn or crashed mid-hold (e.g. lost
+        // the capture device). The process is already gone or dying on the
+        // main-process side at this point, so there is nothing left to stop
+        // here — just release the hold and surface the failure. Text already
+        // committed into the composer (from before the crash) is left as-is
+        // rather than discarded; the user can keep typing or retry the hold.
+        console.error("[maestro] voice stream error:", payload.message);
+        activeVoiceStreams.delete(index);
+        heldRecordings.delete(index);
+        entry.micBtn.classList.remove("recording");
+        entry.micBtn.innerHTML = MIC_ICON_IDLE;
+        entry.micBtn.title = `Streaming voice input failed, hold again to retry: ${payload.message}`;
+      } else if (payload.kind === "exit") {
+        // A clean stop (stopVoiceStreamIfActive) already removed this pane
+        // from activeVoiceStreams before killing the process, so a normal
+        // exit finds nothing here. Reaching this with the entry still
+        // present means the process exited on its own without an "error"
+        // event ever firing (e.g. exit code 0 for an unforeseen reason) —
+        // treat it the same as an error so the UI never gets stuck showing
+        // "recording" for a process that is actually gone.
+        activeVoiceStreams.delete(index);
+        heldRecordings.delete(index);
+        entry.micBtn.classList.remove("recording");
+        entry.micBtn.innerHTML = MIC_ICON_IDLE;
+        entry.micBtn.title = "Streaming voice input stopped unexpectedly, hold again to retry";
+      }
+      return; // streamId is unique per hold; no need to keep scanning.
+    }
+  });
+}
+
+// Pushes the stream's current committed+partial text into the composer's
+// voice span, same replaceVoiceSpan mechanism the rolling path uses so both
+// paths share identical "don't clobber text the user typed before/after the
+// voice span" behavior.
+function applyVoiceStreamText(entry) {
+  const fullText = entry.committed && entry.livePartial
+    ? `${entry.committed} ${entry.livePartial}`
+    : entry.committed || entry.livePartial || "";
+  const { value, newVoiceLen } = replaceVoiceSpan(entry.promptEl.value, entry.voiceStart, entry.voiceLen, fullText);
+  entry.promptEl.value = value;
+  entry.voiceLen = newVoiceLen;
+  const caret = entry.voiceStart + newVoiceLen;
+  entry.promptEl.setSelectionRange(caret, caret);
+  entry.promptEl.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+// Attempts to start the streaming path for this hold. Returns true if it
+// took over the hold (caller must not also start the rolling path), false if
+// it declined (engine isn't whispercpp, or the main process reports the
+// binary/model missing) and the caller should fall back.
+async function tryStartVoiceStream(index, micBtn, promptEl, language) {
+  if ((state.config?.voiceEngine || "whispercpp") !== "whispercpp") {
+    return false; // streaming only exists for the whisper.cpp backend
+  }
+  wireVoiceStreamListener();
+  const res = await window.maestro.startVoiceStream(language);
+  if (!heldRecordings.has(index)) {
+    // Hold released while the spawn round-trip was pending — if it did
+    // start, stop it immediately rather than leaving it running unheld.
+    if (res.ok) {
+      window.maestro.stopVoiceStream(res.streamId);
+    }
+    return true; // claim the hold either way so the caller doesn't also fall back to the rolling path
+  }
+  if (!res.ok) {
+    console.warn("[maestro] real-time voice streaming unavailable, falling back to rolling re-transcription:", res.error);
+    return false;
+  }
+  const selStart = typeof promptEl.selectionStart === "number" ? promptEl.selectionStart : promptEl.value.length;
+  activeVoiceStreams.set(index, {
+    streamId: res.streamId,
+    promptEl,
+    micBtn,
+    voiceStart: selStart,
+    voiceLen: 0,
+    committed: "",
+    livePartial: "",
+  });
+  micBtn.classList.add("recording");
+  micBtn.innerHTML = MIC_ICON_RECORDING;
+  micBtn.title = "Recording — release to stop (live streaming transcription)";
+  return true;
+}
+
+// Stops an in-progress stream for `index`, if any. Returns true if one was
+// active (and has now been stopped) so the caller knows not to also attempt
+// the rolling-path stop.
+async function stopVoiceStreamIfActive(index) {
+  const entry = activeVoiceStreams.get(index);
+  if (!entry) {
+    return false;
+  }
+  activeVoiceStreams.delete(index);
+  await window.maestro.stopVoiceStream(entry.streamId);
+  // Whatever text is already in the composer's voice span (committed +
+  // last live partial) IS the final result — unlike the rolling path, there
+  // is no separate "final transcription" pass to run, since whisper-stream
+  // has already been continuously transcribing in real time.
+  entry.micBtn.classList.remove("recording");
+  entry.micBtn.innerHTML = MIC_ICON_IDLE;
+  entry.micBtn.title = "Hold to record voice input (transcribed locally, offline) — or hold Alt in the composer";
+  entry.promptEl.focus();
+  return true;
+}
+
 // Inline SVGs, not emoji, for the mic button's two states — matches the
 // convention set by wireScrollToBottomButton's down-arrow: currentColor
 // strokes/fills so the glyph inherits the button's own text color (works
@@ -238,10 +389,22 @@ const MIC_ICON_IDLE =
 const MIC_ICON_RECORDING = '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>';
 
 async function startVoiceRecording(index, micBtn, promptEl) {
-  if (activeRecordings.has(index) || heldRecordings.has(index)) {
+  if (activeRecordings.has(index) || activeVoiceStreams.has(index) || heldRecordings.has(index)) {
     return; // already recording, or already mid-startup for this pane (button + Alt held together fire this twice).
   }
   heldRecordings.add(index);
+  const language = state.config?.voiceLanguage || "swedish";
+  // Try the true real-time streaming path first (whisper-stream.exe); it
+  // owns the microphone itself via SDL2, so on success we must NOT also
+  // start getUserMedia/MediaRecorder below. Falls back to the rolling
+  // re-transcription path (unchanged from here on) when streaming isn't
+  // available — see tryStartVoiceStream's docstring.
+  if (await tryStartVoiceStream(index, micBtn, promptEl, language)) {
+    return;
+  }
+  if (!heldRecordings.has(index)) {
+    return; // released during the streaming attempt's own round-trip
+  }
   let stream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -380,6 +543,7 @@ function stopVoiceRecording(index) {
   // ready yet — startVoiceRecording's post-await check relies on this to
   // bail out instead of starting a recording nothing will ever stop.
   heldRecordings.delete(index);
+  stopVoiceStreamIfActive(index);
   const active = activeRecordings.get(index);
   if (active) {
     active.mediaRecorder.stop();

@@ -16,6 +16,18 @@ contextBridge.exposeInMainWorld("maestro", {
   copyToClipboard: (text) => ipcRenderer.invoke("clipboard:write", text),
   saveImage: (base64Data, ext) => ipcRenderer.invoke("image:save", { base64Data, ext }),
   transcribeVoice: (samples, language) => ipcRenderer.invoke("voice:transcribe", { samples, language }),
+  // True real-time streaming transcription (continuous voice input via
+  // whisper-stream.exe, see src/lib/whisperStream.js). startVoiceStream
+  // resolves with { ok, streamId } (or { ok: false, error } if the binary/
+  // model isn't installed); onVoiceStreamEvent fires { streamId, kind:
+  // "partial" | "committed" | "error" | "exit", text? } as they arrive.
+  startVoiceStream: (language) => ipcRenderer.invoke("voice:streamStart", { language }),
+  stopVoiceStream: (streamId) => ipcRenderer.invoke("voice:streamStop", { streamId }),
+  onVoiceStreamEvent: (handler) => {
+    const listener = (_event, payload) => handler(payload);
+    ipcRenderer.on("voice:streamEvent", listener);
+    return () => ipcRenderer.removeListener("voice:streamEvent", listener);
+  },
   archiveSession: (sessionId, archived) => ipcRenderer.invoke("session:archive", { sessionId, archived }),
   forkSession: (cliSessionId, userMsgIndex) => ipcRenderer.invoke("session:fork", { cliSessionId, userMsgIndex }),
   switchSessionRootFolder: (cliSessionId, sessionId, newCwd) =>
