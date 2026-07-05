@@ -2566,62 +2566,25 @@ button.primary {
   margin-bottom: 10px;
 }
 
-/* --- In motion --- */
-.dash-motion-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 12px;
-}
-
-.dash-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 12px 14px;
-  cursor: pointer;
-}
-
-.dash-card:hover {
-  background: var(--bg-card-hover);
-}
-
-.dash-motion-top {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 6px;
-}
-
-.dash-goal-tag {
-  font-size: 10px;
-  color: var(--accent);
+/* --- Needs you & in motion (merged attention queue, Variant A) ---
+   Replaces the earlier separate "In motion" grid + "Orchestrator proposes"
+   list with one row style shared by both proposal rows (archive
+   suggestions, with inline approve/dismiss) and session rows (waiting/active,
+   click to open). Status is a small colored affordance on the row itself
+   (.dash-state-ic) rather than a separate section. */
+.dash-count-urgent {
   background: var(--bg);
-  border: 1px solid var(--border);
-  padding: 1px 7px;
-  border-radius: 999px;
+  color: var(--waiting);
+  border: 1px solid var(--waiting);
 }
 
-.dash-motion-title {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text);
-  margin-bottom: 3px;
-}
-
-.dash-motion-detail {
-  font-size: 11.5px;
-  color: var(--text-faint);
-  margin-bottom: 8px;
-}
-
-/* --- Orchestrator proposes --- */
-.dash-propose-list {
+.dash-queue-list {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
-.dash-propose-card {
+.dash-queue-row {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -2631,23 +2594,78 @@ button.primary {
   padding: 10px 14px;
 }
 
-.dash-propose-card.dash-resolved {
+.dash-queue-row:hover {
+  background: var(--bg-card-hover);
+}
+
+.dash-queue-row.dash-resolved {
   opacity: 0.4;
   pointer-events: none;
 }
 
-.dash-propose-body {
+.dash-state-ic {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12.5px;
+  flex-shrink: 0;
+}
+
+.dash-state-needs {
+  background: var(--bg);
+  color: var(--waiting);
+  border: 1px solid var(--waiting);
+}
+
+.dash-state-working {
+  background: var(--bg);
+  color: var(--active);
+  border: 1px solid var(--border);
+}
+
+.dash-pulse-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--active);
+  box-shadow: 0 0 5px var(--active);
+}
+
+.dash-q-body {
   flex: 1;
   min-width: 0;
 }
 
-.dash-propose-title {
-  font-size: 12.5px;
-  color: var(--text);
+.dash-q-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin-bottom: 2px;
 }
 
-.dash-propose-why {
+.dash-goal-tag {
+  font-size: 10px;
+  color: var(--accent);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  padding: 1px 7px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.dash-q-title {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dash-q-why {
   font-size: 11px;
   color: var(--text-faint);
   overflow: hidden;
@@ -2655,7 +2673,13 @@ button.primary {
   white-space: nowrap;
 }
 
-.dash-propose-actions {
+.dash-q-meta {
+  font-size: 10.5px;
+  color: var(--waiting);
+  flex-shrink: 0;
+}
+
+.dash-queue-actions {
   display: flex;
   gap: 6px;
   flex-shrink: 0;
@@ -2741,11 +2765,11 @@ button.primary {
   border-radius: 3px;
 }
 
-/* --- New session --- */
+/* --- New session ---
+   Variant A: single column (project chips + a passive auto-context strip)
+   instead of the earlier two-column "pick a project / load context"
+   checklist layout. */
 .dash-new-session-panel {
-  display: grid;
-  grid-template-columns: 1.3fr 1fr;
-  gap: 20px;
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -2787,39 +2811,59 @@ button.primary {
   color: var(--accent);
 }
 
-.dash-load-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.dash-load-item {
+/* Passive confirmation strip - replaces the old manual load-context
+   checklist entirely. Nothing to check, nothing to decide: it states what a
+   session rooted in the selected project already auto-loads. */
+.dash-auto-context {
+  margin-top: 16px;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+}
+
+.dash-auto-context-ic {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12.5px;
+  flex-shrink: 0;
+}
+
+.dash-auto-context-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.dash-auto-context-title {
   font-size: 12px;
-  color: var(--text-dim);
-  padding: 5px 8px;
-  border-radius: 6px;
-}
-
-.dash-load-item:hover {
-  background: var(--bg-card-hover);
-}
-
-.dash-load-item input[type="checkbox"] {
-  accent-color: var(--accent);
-}
-
-.dash-load-file-name {
-  font-family: ui-monospace, Consolas, monospace;
   color: var(--text);
+  margin-bottom: 3px;
 }
 
-.dash-load-file-note {
+.dash-auto-context-files {
+  font-size: 11px;
   color: var(--text-faint);
-  font-size: 10.5px;
-  margin-left: auto;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.dash-auto-context-files code {
+  font-family: ui-monospace, Consolas, monospace;
+  background: var(--bg-card);
+  color: var(--text-dim);
+  padding: 1px 6px;
+  border-radius: 4px;
 }
 
 .dash-launch-row {
