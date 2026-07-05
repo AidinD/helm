@@ -4027,11 +4027,12 @@ function dashboardFocusToggleEl() {
 // Replaces the old "open the orchestrator" affordance (which resumed one
 // privileged, ever-growing session) per PLAN.md's orchestrator-lifespan
 // redesign: this always starts a brand-new session, pre-pointed at
-// orchestrator-instructions.md, never resumed history. Rooted in a dedicated
-// NEUTRAL dir (orchestrator:info's cwd, ~/.maestro), not a project repo - an
-// orchestrator sits above projects and dispatches into whatever it names, so
-// its own cwd is just a harmless launch anchor, never where work lands (see
-// orchestrator-instructions.md).
+// orchestrator-instructions.md, never resumed history. Rooted in the Claude
+// "meta home" (orchestrator:info's cwd) - the dir with the canonical CLAUDE.md
+// AND the cwd-keyed auto-memory, so the orchestrator actually starts with the
+// accumulated rules/memory in context. It's above every code project (not
+// Maestro, not a work repo), so it dispatches into whatever it names rather
+// than doing hands-on work in its own cwd (see orchestrator-instructions.md).
 function startOrchestratorSessionBtnEl() {
   const btn = document.createElement("button");
   btn.className = "text-btn";
@@ -4045,7 +4046,7 @@ function startOrchestratorSessionBtnEl() {
       return;
     }
     navigateToPage("chat");
-    const draft = `Read ${info.instructionsPath} and act as an orchestrator for this session. You're rooted in a neutral working dir, above any one project - survey the current state (your Jot board and the projects you're working on) and tell me what needs attention and what to dispatch. Do coordination and dispatch from here; do hands-on code work in the project it belongs to (a dispatched agent or a project-rooted session), not in this cwd.`;
+    const draft = `Read ${info.instructionsPath} and act as an orchestrator for this session. You're rooted in the Claude meta-home (above any one code project), so your CLAUDE.md rules and accumulated memory are in context - survey the current state (your Jot board and the projects you're working on) and tell me what needs attention and what to dispatch. Do coordination and dispatch from here; do hands-on code work in the project it belongs to (a dispatched agent or a project-rooted session), not in this cwd.`;
     openFreshDraftInPane(info.cwd, draft, { paneOverrides: { isOrchestrator: true } });
   });
   return btn;

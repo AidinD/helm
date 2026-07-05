@@ -484,22 +484,33 @@ ipcMain.handle("app:version", () => computeVersionString());
 // session from the Dashboard (PLAN.md's orchestrator-lifespan redesign).
 // There is no privileged, always-present orchestrator session anymore — this
 // just hands the renderer a cwd for a fresh orchestrator session plus the path
-// to its operating manual. The cwd is a DEDICATED NEUTRAL dir (~/.maestro),
-// never a project repo: an orchestrator sits ABOVE projects and dispatches INTO
-// them, so rooting it in a repo (it used to root in Maestro's own) only creates
-// a footgun where any hands-on file/git work lands in that repo. instructionsPath
-// is absolute so the session reads the manual regardless of cwd. Read-only, no
-// session-of-its-own state.
+// to its operating manual. The cwd is the Claude "meta home" — the dir holding
+// the canonical CLAUDE.md AND the auto-memory (feedback/project rules). This
+// matters: auto-memory is cwd-KEYED, so an empty neutral dir (an earlier
+// attempt used ~/.maestro) would start the orchestrator with NO memory at all —
+// none of the accumulated behavioral rules. The meta home is still above every
+// code project (not Maestro, not a work repo), so it stays a coordinator root,
+// not a place code work lands. Derived from the ~/.claude/CLAUDE.md @import line
+// so it tracks wherever the canonical rules live; falls back to the home dir if
+// that can't be resolved. instructionsPath is absolute so the session reads the
+// manual regardless. Read-only, no session-of-its-own state.
 ipcMain.handle("orchestrator:info", () => {
-  const neutralCwd = path.join(os.homedir(), ".maestro");
+  let cwd = os.homedir();
   try {
-    fs.mkdirSync(neutralCwd, { recursive: true });
+    const stub = fs.readFileSync(path.join(os.homedir(), ".claude", "CLAUDE.md"), "utf8");
+    const importMatch = stub.match(/^@(.+?CLAUDE\.md)\s*$/m);
+    if (importMatch) {
+      const metaHome = path.dirname(importMatch[1].trim());
+      if (fs.existsSync(metaHome)) {
+        cwd = metaHome;
+      }
+    }
   } catch {
-    // fall back to home below if the dedicated dir can't be created
+    // fall back to the home dir set above
   }
   return {
     ok: true,
-    cwd: fs.existsSync(neutralCwd) ? neutralCwd : os.homedir(),
+    cwd,
     instructionsPath: path.join(__dirname, "lib", "orchestrator-instructions.md"),
   };
 });
