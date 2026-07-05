@@ -520,9 +520,23 @@ function runIteration({ worktreePath, goal, notesContent, planContent, repoMapCo
 
     const systemPrompt = PHASE_PROMPTS[phase] || PHASE_PROMPTS.implement;
 
+    const claudePath = resolveClaudeBinary();
+    // The prompt carries the goal text + model-generated notes/repo-map - the
+    // only attacker-influenceable input in this spawn (ITERATION_SCHEMA and the
+    // system prompt below are static constants). When claude isn't a .exe we
+    // must go through a shell (e.g. an npm-global claude.cmd shim), and an
+    // argv-passed prompt would then be re-parsed by cmd.exe: a command-injection
+    // + space-truncation surface (ship-review finding). So in shell mode we omit
+    // the positional prompt and feed it over stdin instead (claude -p reads the
+    // prompt from stdin when no positional prompt is given - verified), keeping
+    // attacker-influenced text out of the shell command line entirely. The .exe
+    // path (shell:false, nothing to inject into) keeps the faster
+    // positional-prompt form unchanged.
+    const useShell = !claudePath.toLowerCase().endsWith(".exe");
+
     const args = [
       "-p",
-      prompt,
+      ...(useShell ? [] : [prompt]),
       "--output-format",
       "json",
       "--json-schema",
@@ -549,17 +563,32 @@ function runIteration({ worktreePath, goal, notesContent, planContent, repoMapCo
       args.push("--effort", effort);
     }
 
-    const claudePath = resolveClaudeBinary();
     let child;
     try {
       child = spawn(claudePath, args, {
         cwd: worktreePath,
-        shell: !claudePath.toLowerCase().endsWith(".exe"),
+        shell: useShell,
         env: process.env,
       });
     } catch (err) {
       resolve({ ok: false, error: `Failed to spawn claude: ${err.message}` });
       return;
+    }
+    if (useShell) {
+      // Deliver the prompt over stdin (see the useShell note above), then close
+      // stdin so claude -p starts instead of waiting for more input.
+      try {
+        child.stdin.write(prompt);
+        child.stdin.end();
+      } catch (err) {
+        try {
+          child.kill();
+        } catch {
+          // best-effort: the spawn may have already failed
+        }
+        resolve({ ok: false, error: `Failed to write prompt to claude stdin: ${err.message}` });
+        return;
+      }
     }
 
     let out = "";
