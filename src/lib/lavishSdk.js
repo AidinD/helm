@@ -22,6 +22,8 @@
 // SDK records it as `lavishId`, so anchoring is exact rather than a recomputed
 // best-effort CSS selector.
 
+import { encodeToon } from "./toon.js";
+
 /**
  * The record shape the injected SDK posts back per annotation:
  *   { uid, selector, tag, text, prompt, lavishId? }
@@ -401,6 +403,12 @@ ${sdkTag}
  * Turn the collected annotations into a single formatted TEXT block for an
  * agent prompt. Pure function (no DOM) so it can be unit-tested standalone.
  *
+ * The annotation list itself (a uniform array of small objects) is encoded as
+ * TOON rather than one numbered line per item — same information, far fewer
+ * tokens once there are more than a couple of annotations (see toon.js's own
+ * header comment and DECISIONS.md 2026-07-04). A one-line format hint is
+ * included so the receiving agent knows how to read the table.
+ *
  * @param {Array<{selector?:string, lavishId?:string, tag?:string, text?:string, prompt:string}>} annotations
  * @param {string} [domSnapshot] the indented uid/tag/text tree, if captured
  * @returns {string}
@@ -411,16 +419,22 @@ export function formatAnnotationsAsPrompt(annotations, domSnapshot) {
     return "";
   }
 
-  const lines = ["The user annotated these elements in the plan mockup:", ""];
-  list.forEach((a, i) => {
-    // Prefer the stable data-lavish-id anchor when present; fall back to the
-    // best-effort CSS selector.
-    const anchor = a.lavishId ? `#[data-lavish-id=${a.lavishId}]` : a.selector || a.tag || "(element)";
-    const text = (a.text || "").trim();
-    const textPart = text ? ` "${text}"` : "";
-    lines.push(`${i + 1}. [${anchor}]${textPart}`);
-    lines.push(`   -> ${String(a.prompt || "").trim()}`);
-  });
+  // Project to the exact fields the agent needs, with the anchor already
+  // resolved (stable data-lavish-id preferred over the best-effort CSS
+  // selector) so the TOON table has one clear "where" column instead of two
+  // overlapping ones.
+  const rows = list.map((a) => ({
+    anchor: a.lavishId ? `#[data-lavish-id=${a.lavishId}]` : a.selector || a.tag || "(element)",
+    text: (a.text || "").trim(),
+    feedback: String(a.prompt || "").trim(),
+  }));
+
+  const lines = [
+    "The user annotated these elements in the plan mockup.",
+    "Data is in TOON: a header row of column names in {}, then one delimited row per item.",
+    "",
+    encodeToon(rows),
+  ];
 
   if (domSnapshot && String(domSnapshot).trim()) {
     lines.push("");

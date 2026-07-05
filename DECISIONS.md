@@ -1,5 +1,22 @@
 # Decisions
 
+## 2026-07-05 - TOON encoding for the Lavish annotation-list prompt
+
+Board task: apply the AXI/TOON token-efficiency principle (deferred 2026-07-04, "fold TOON in with structured-injection features as they mature") to prompts Maestro builds for its own sub-agent calls.
+Audited the four candidate call sites named in the task - the status classifier and judge (`orchestratorHelper.js`, `judge.js`), the goal orchestrator (`goalOrchestrator.js`), and the model/effort suggester (`suggest.js`, which turned out to be a pure regex heuristic with no LLM call at all).
+**Finding: none of them embed an array of objects today.** Each already sends a short hand-built text summary (one session's recent turns, one run's tool list, one goal's notes.md), matching the 2026-07-04 finding that these surfaces were already compact.
+The one genuine array-of-uniform-objects going into any Claude-facing prompt in the whole codebase is the Lavish annotation list (`formatAnnotationsAsPrompt` in `src/lib/lavishSdk.js`) - though it feeds the primary rooted session's composer, not one of Maestro's own internal sub-agent calls.
+This is exactly the "structured-injection feature... as it matures" case the prior decision flagged as the right moment to fold TOON in, so applied it there instead of forcing a conversion onto surfaces that don't have the shape TOON targets.
+
+**Built `src/lib/toon.js`:** a small, dependency-free `encodeToon(value)` covering only the shapes Maestro actually needs - an array of uniform objects becomes a `N{col1,col2,...}:` header plus one delimited row per item, a plain object becomes indented `key: value` lines (recursing for nested objects/arrays), and values containing the delimiter/newline/quote get JSON-style quoted+escaped.
+Not a full TOON spec implementation by design - correctness and readability for these shapes over spec completeness.
+
+**Changed `formatAnnotationsAsPrompt`:** the annotation list is now projected to `{anchor, text, feedback}` per row (anchor already resolves lavishId-vs-selector, so the TOON table has one clear "where" column) and encoded with `encodeToon` instead of a hand-built numbered list, with a one-line format hint ("Data is in TOON: a header row of column names in {}, then one row per item") so the receiving agent knows how to read it.
+Updated `spike/test-lavish.mjs`'s assertions to match the new TOON output shape - same semantic coverage (intro line, anchor resolution, empty-text handling, DOM snapshot section), all 15 assertions still pass, including the untouched CSP-hash drift guard.
+
+**Measured on a representative 8-annotation batch:** TOON-encoded array is 1111 -> 804 chars vs raw `JSON.stringify` of the same array (27.6% smaller); vs the OLD hand-formatted numbered-list text it had already replaced, the full new output was roughly a wash at 8 items (the format-hint line adds back what the table saves) but pulls ahead at realistic larger batches - at 20 annotations, 13.6% smaller than the old hand-formatted list and 39.4% smaller than raw JSON.
+The win scales with row count since the header is paid once; small batches see little to no benefit, which matches the AXI write-up's own caveat that gains are biggest against verbose JSON/MCP output, not against an already-lean format.
+
 ## 2026-07-05 — True real-time streaming transcription via whisper-stream.exe, replacing rolling re-transcription
 
 Follow-up to the 2026-07-04 "continuous voice input" entry (rolling re-transcription of the whole clip-so-far every `VOICE_ROLLING_INTERVAL_MS`).

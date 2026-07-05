@@ -45,17 +45,20 @@ const out = formatAnnotationsAsPrompt(
 assert.match(out, /The user annotated these elements/, "has intro line");
 ok("has intro header");
 
-assert.match(out, /1\. \[div#hero > h1\] "Welcome home"/, "selector + text formatted");
-ok("selector-anchored line formatted correctly");
+assert.match(out, /Data is in TOON/, "has TOON format hint");
+ok("has TOON format hint for the receiving agent");
 
-assert.match(out, /-> Make this a floating overlay/, "prompt on its own line");
-ok("prompt rendered after arrow");
+assert.match(out, /3\{anchor,text,feedback\}:/, "TOON header row lists the projected columns");
+ok("TOON header row present with expected columns");
 
-assert.match(out, /2\. \[#\[data-lavish-id=cta\]\] "Sign up"/, "lavishId preferred over selector");
+assert.match(out, /div#hero > h1,Welcome home,Make this a floating overlay/, "selector-anchored row formatted");
+ok("selector-anchored row formatted correctly");
+
+assert.match(out, /#\[data-lavish-id=cta\],Sign up,Use the brand accent color/, "lavishId preferred over selector");
 ok("data-lavish-id anchor preferred when present");
 
-assert.match(out, /3\. \[p\]\n\s+-> Delete this paragraph/, "empty text -> no quoted text part");
-ok("empty text omits the quoted snippet");
+assert.match(out, /p,,Delete this paragraph/, "empty text -> empty cell, not omitted");
+ok("empty text renders as an empty cell (row shape stays intact)");
 
 assert.match(out, /DOM snapshot of the mockup/, "includes snapshot section");
 assert.match(out, /uid=2 h1 "Welcome home"/, "snapshot body included");
