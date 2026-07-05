@@ -89,6 +89,17 @@ const DEFAULT_CONFIG = {
   // language NAME that transformers.js expects ("swedish"/"english"/etc.), or
   // "auto" to let Whisper auto-detect the language per utterance.
   voiceLanguage: "swedish",
+  // Which transcription backend the mic button uses (see src/lib/voice.js
+  // and src/lib/whisperCpp.js). "whispercpp" is the default: a whisper.cpp +
+  // CUDA subprocess, ~10-20x faster than the transformers.js path on Aidin's
+  // RTX 3070 (see docs/transcription-research.md) while using the same
+  // Swedish-specialized KB-Whisper model family, just in GGML format instead
+  // of ONNX. "transformers" is the original @huggingface/transformers path,
+  // kept as a fallback for machines without the .whisper/ binary+model
+  // installed (voiceWorker.js also auto-falls-back to it if whisper.cpp is
+  // requested but missing, so this value mainly matters as an explicit
+  // opt-out).
+  voiceEngine: "whispercpp",
   // model name -> real context-window size, LEARNED from the CLI's own
   // result events (evt.modelUsage[model].contextWindow) as sessions run
   // through Maestro. Authoritative per model; the gauge prefers this over

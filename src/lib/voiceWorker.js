@@ -17,7 +17,7 @@
 //
 // Communication protocol (main.js <-> this worker), over Electron's
 // `MessagePortMain`-based utility-process IPC (`process.parentPort`):
-//   main -> worker: { id, samples: number[], language: string }
+//   main -> worker: { id, samples: number[], language: string, engine: string }
 //   worker -> main: { id, ok: true, text } | { id, ok: false, error }
 // `id` round-trips a request to its response so overlapping calls (the
 // rolling re-transcription tick firing while a previous one is still
@@ -26,11 +26,32 @@
 // plain number array (same reasoning as the renderer->main hop already
 // documented in main.js: structured-clone of a Float32Array isn't reliable
 // across every Electron IPC boundary), rebuilt into a Float32Array here.
-import { transcribeAudio } from "./voice.js";
+//
+// `engine` selects the transcription backend (config.voiceEngine, see
+// config.js): "whispercpp" spawns the whisper.cpp CUDA subprocess (see
+// whisperCpp.js — ~10-20x faster, see docs/transcription-research.md),
+// "transformers" uses the original @huggingface/transformers ONNX pipeline
+// (voice.js). whisper.cpp's binary+model live outside the repo (.whisper/,
+// gitignored) and may not be installed on every machine, so a request for
+// "whispercpp" silently falls back to "transformers" (with a logged
+// warning) when whisperCpp.isAvailable() is false, rather than failing the
+// transcription outright.
+import { transcribeAudio as transcribeWithTransformers } from "./voice.js";
+import { transcribeAudio as transcribeWithWhisperCpp, isAvailable as whisperCppAvailable } from "./whisperCpp.js";
+
+function transcribe(samples, language, engine) {
+  if (engine === "whispercpp") {
+    if (whisperCppAvailable()) {
+      return transcribeWithWhisperCpp(samples, language);
+    }
+    console.warn("[maestro] voiceEngine is \"whispercpp\" but .whisper/ binary+model are missing; falling back to transformers.js");
+  }
+  return transcribeWithTransformers(samples, language);
+}
 
 process.parentPort.on("message", (event) => {
-  const { id, samples, language } = event.data;
-  transcribeAudio(Float32Array.from(samples), language)
+  const { id, samples, language, engine } = event.data;
+  transcribe(Float32Array.from(samples), language, engine)
     .then((text) => {
       process.parentPort.postMessage({ id, ok: true, text });
     })
