@@ -816,7 +816,7 @@ export function detectNoNetProgress(iterations, streak) {
  * `{}` and still get sensible behavior; see `runGoal`'s own doc comment for
  * the full option list.
  */
-function detectEscalationSignal(iterations, latestRecord, escalationConfig) {
+export function detectEscalationSignal(iterations, latestRecord, escalationConfig) {
   const keywords = escalationConfig.ambiguityKeywords || DEFAULT_AMBIGUITY_KEYWORDS;
   const maxCostPerIterationUsd = escalationConfig.maxCostPerIterationUsd ?? DEFAULT_MAX_COST_PER_ITERATION_USD;
   const noProgressStreak = escalationConfig.noProgressStreak ?? DEFAULT_NO_PROGRESS_STREAK;
