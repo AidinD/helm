@@ -388,6 +388,31 @@ const MIC_ICON_IDLE =
   "</svg>";
 const MIC_ICON_RECORDING = '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>';
 
+// Globe icon for the "open global CLAUDE.md folder" button, and a
+// file/document icon for the "open this project's CLAUDE.md folder" button
+// (see updateClaudeMdLinks below) — replaces the previous full-color emoji
+// (🌐/📄) per CLAUDE.md "Icons over emoji": currentColor stroke so both
+// inherit .icon-btn's normal/hover text color instead of rendering as fixed-
+// color pictographs regardless of theme.
+const GLOBE_ICON =
+  '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+  '<circle cx="12" cy="12" r="9"/>' +
+  '<path d="M3 12h18"/>' +
+  '<path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18"/>' +
+  "</svg>";
+const DOCUMENT_ICON =
+  '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+  '<path d="M7 2h7l5 5v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"/>' +
+  '<path d="M14 2v5h5"/>' +
+  "</svg>";
+// Paperclip icon for non-image attachments (composer file-attach button, and
+// the small marker on a non-image attachment chip) — same replacement, same
+// reasoning as GLOBE_ICON/DOCUMENT_ICON above.
+const PAPERCLIP_ICON =
+  '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+  '<path d="M21 12.5l-8.5 8.5a4.5 4.5 0 0 1-6.36-6.36l9.19-9.19a3 3 0 0 1 4.24 4.24l-9.19 9.19a1.5 1.5 0 0 1-2.12-2.12l8.49-8.49"/>' +
+  "</svg>";
+
 async function startVoiceRecording(index, micBtn, promptEl) {
   if (activeRecordings.has(index) || activeVoiceStreams.has(index) || heldRecordings.has(index)) {
     return; // already recording, or already mid-startup for this pane (button + Alt held together fire this twice).
@@ -2830,7 +2855,7 @@ function updateClaudeMdLinks(header, cwd) {
 
   const globalBtn = document.createElement("button");
   globalBtn.className = "icon-btn";
-  globalBtn.textContent = "🌐";
+  globalBtn.innerHTML = GLOBE_ICON;
   globalBtn.title = "Open your global CLAUDE.md folder";
   globalBtn.addEventListener("click", async (e) => {
     e.stopPropagation();
@@ -2851,7 +2876,7 @@ function updateClaudeMdLinks(header, cwd) {
       }
       const projectBtn = document.createElement("button");
       projectBtn.className = "icon-btn";
-      projectBtn.textContent = "📄";
+      projectBtn.innerHTML = DOCUMENT_ICON;
       projectBtn.title = "Open this project's folder";
       projectBtn.addEventListener("click", async (e) => {
         e.stopPropagation();
@@ -2996,7 +3021,10 @@ function paneComposerEl(index) {
         thumb.addEventListener("click", () => showImageLightbox(thumb.src));
         chip.append(thumb);
       } else {
-        chip.append(document.createTextNode("📎 "));
+        const clip = document.createElement("span");
+        clip.className = "attachment-clip-icon";
+        clip.innerHTML = PAPERCLIP_ICON;
+        chip.append(clip);
       }
       chip.append(document.createTextNode(att.name));
       const remove = document.createElement("button");
@@ -3165,7 +3193,7 @@ function paneComposerEl(index) {
   // handles whatever it can from there; Maestro doesn't need to know the type.
   const attachBtn = document.createElement("button");
   attachBtn.className = "icon-btn";
-  attachBtn.textContent = "📎";
+  attachBtn.innerHTML = PAPERCLIP_ICON;
   attachBtn.title = "Attach a file";
   attachBtn.addEventListener("click", async () => {
     const filePaths = await window.maestro.pickFiles();
