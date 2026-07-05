@@ -4337,8 +4337,9 @@ function dashSessionRowEl(session) {
   const why = document.createElement("div");
   why.className = "dash-q-why";
   const bits = [session.model ? session.model.replace("claude-", "") : "model unknown", relTime(session.lastActivityAt)];
-  why.textContent =
-    (session.status === "waiting" ? "Waiting on you · " : "") + bits.join(" · ") + " · context-budget + worktree path pending";
+  // Note: context-budget + worktree path are intentionally omitted until that
+  // telemetry is actually wired - a placeholder suffix here read as clutter.
+  why.textContent = (session.status === "waiting" ? "Waiting on you · " : "") + bits.join(" · ");
   qbody.append(why);
   row.append(qbody);
 
@@ -5460,7 +5461,7 @@ function renderLavishPage() {
   page.innerHTML = "";
 
   const header = document.createElement("h2");
-  header.textContent = "Interactive plan";
+  header.textContent = "Plan";
   page.append(header);
 
   const intro = document.createElement("div");
@@ -5822,11 +5823,11 @@ function routineRowEl(task) {
   const row = document.createElement("div");
   row.className = "dash-queue-row";
 
+  // A scheduled task is a static definition, not running work - use a neutral
+  // clock glyph, not the pulsing "working" dot (which implies live activity).
   const ic = document.createElement("div");
-  ic.className = "dash-state-ic dash-state-working";
-  const dot = document.createElement("span");
-  dot.className = "dash-pulse-dot";
-  ic.append(dot);
+  ic.className = "dash-state-ic";
+  ic.textContent = "🕒";
   row.append(ic);
 
   const qbody = document.createElement("div");
@@ -5850,7 +5851,7 @@ function routineRowEl(task) {
 
   const openBtn = document.createElement("button");
   openBtn.className = "text-btn";
-  openBtn.textContent = "Open SKILL.md";
+  openBtn.textContent = "Copy path";
   openBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     window.maestro.copyToClipboard(task.skillPath);
@@ -5919,7 +5920,6 @@ function renderAgentsPage() {
     ["waiting", "needs you"],
     ["done", "done / committed"],
     ["failed", "failed / rolled back"],
-    ["idle", "idle / background"],
   ].forEach(([cls, label]) => {
     const span = document.createElement("span");
     const dot = document.createElement("span");
@@ -6345,7 +6345,7 @@ function renderSettingsPage() {
 
   block.append(
     settingsToggleRow(
-      "Orchestrator helper (Fas 3)",
+      "Orchestrator helper",
       "Periodically reads recent messages in idle/waiting sessions (a cheap Haiku call, ~15 min intervals) to tell apart a real open question from a finished answer, or genuinely stuck from genuinely idle. Sharpens the archive suggestion above and shows its read as a small note on the session row. A proposal only — never archives or acts on its own.",
       state.config.orchestratorHelper?.enabled === true,
       async (checked) => {
@@ -6359,7 +6359,7 @@ function renderSettingsPage() {
 
   block.append(
     settingsToggleRow(
-      "Auto-compact large idle sessions (Fas 3)",
+      "Auto-compact large idle sessions",
       `Automatically runs /compact on a session left idle for ~${state.config.autoCompact?.idleMinutes || 10} min whose context has grown past ~${Math.round((state.config.autoCompact?.thresholdTokens || 150000) / 1000)}k tokens (checked on the ~15 min sweep). Time-based, so it won't fire mid-work — only after you've stepped away. Unlike everything else here this ACTS on its own — it summarizes the session's context (lossy, but the full history stays in the transcript on disk). A small note appears on the row after it happens.`,
       state.config.autoCompact?.enabled === true,
       async (checked) => {
@@ -6373,7 +6373,7 @@ function renderSettingsPage() {
 
   block.append(
     settingsToggleRow(
-      "Proactively check suggestion accuracy (Fas 3)",
+      "Proactively check suggestion accuracy",
       "Periodically re-checks the same \"Suggestion accuracy\" comparison shown on the Analysis page (no extra cost — it's the existing usage log, no model call) and surfaces a dismissible note there when overriding the model/effort suggestion has been judged \"appropriate\" meaningfully more often than following it. Checked on the same sweep as the items above, after enough new judged runs accumulate. Never changes the suggestion heuristic itself — only tells you it might be worth revisiting.",
       state.config.suggestionAccuracyCheck?.enabled === true,
       async (checked) => {
