@@ -17,12 +17,19 @@
 // lets the caller fall back to the transformers.js path when they are
 // missing, e.g. on a machine that hasn't had the .whisper/ folder populated
 // yet.
+//
+// As of 2026-07-05, transcribeAudio() below prefers a THIRD, warmer path
+// over whisper-cli.exe when available: whisper-server.exe (see
+// whisperServer.js), a long-lived process that loads the model once instead
+// of paying whisper-cli's ~460ms model-load on every single-clip call. See
+// transcribeAudio's own docstring for the fallback chain.
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { isServerBinaryAvailable, ensureServerRunning, transcribeViaServer, stopServer, getServerPid } from "./whisperServer.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -65,20 +72,23 @@ export function resolveLanguageCode(language) {
 }
 
 /**
- * Writes a mono Float32Array of PCM samples (range [-1, 1]) at the given
- * sample rate to `filePath` as a 16-bit PCM WAV file. whisper.cpp (via its
- * bundled miniaudio decoder) reads standard PCM WAV directly, so no
- * resampling/format conversion library is needed beyond this — the
- * renderer's recorder already decodes to 16kHz mono before sending samples
- * over IPC (see voice.js's transcribeAudio docstring), so sampleRate is
- * expected to already be 16000 in normal use.
+ * Builds a 16-bit PCM WAV file (as an in-memory Buffer) from a mono
+ * Float32Array of PCM samples (range [-1, 1]) at the given sample rate.
+ * whisper.cpp (via its bundled miniaudio decoder) reads standard PCM WAV
+ * directly, so no resampling/format conversion library is needed beyond this
+ * — the renderer's recorder already decodes to 16kHz mono before sending
+ * samples over IPC (see voice.js's transcribeAudio docstring), so sampleRate
+ * is expected to already be 16000 in normal use.
  *
  * Hand-rolled instead of pulling in a WAV-writing dependency: the format is
  * a fixed 44-byte canonical header (no extra chunks) followed by raw 16-bit
  * little-endian PCM data, which is simple enough to not warrant a
- * dependency for it.
+ * dependency for it. Returns a Buffer rather than writing straight to disk
+ * so callers that only need the bytes (e.g. the warm whisper-server HTTP
+ * path, which POSTs the WAV directly) don't need to round-trip through a
+ * temp file just to read it back.
  */
-export function writeWavFile(filePath, float32Samples, sampleRate = 16000) {
+export function buildWavBuffer(float32Samples, sampleRate = 16000) {
   const numSamples = float32Samples.length;
   const bytesPerSample = 2; // 16-bit PCM
   const numChannels = 1;
@@ -116,15 +126,27 @@ export function writeWavFile(filePath, float32Samples, sampleRate = 16000) {
     offset += 2;
   }
 
-  fs.writeFileSync(filePath, buffer);
+  return buffer;
+}
+
+/**
+ * Writes a mono Float32Array of PCM samples to `filePath` as a 16-bit PCM
+ * WAV file. Thin wrapper around buildWavBuffer for callers (whisper-cli.exe,
+ * which only accepts a file path, not stdin) that need the WAV on disk.
+ */
+export function writeWavFile(filePath, float32Samples, sampleRate = 16000) {
+  fs.writeFileSync(filePath, buildWavBuffer(float32Samples, sampleRate));
 }
 
 /**
  * Transcribes a mono Float32Array of 16kHz PCM samples via whisper.cpp.
- * Writes the samples to a temp WAV, spawns whisper-cli.exe, parses stdout
- * (which whisper-cli keeps clean of its own log noise — all diagnostic
- * output goes to stderr, verified against this exact build), and cleans up
- * the temp file whether or not the spawn succeeded.
+ *
+ * Tries the warm whisper-server.exe path first (see whisperServer.js): a
+ * long-lived HTTP server that loads the model once, avoiding the ~460ms
+ * per-call model-load whisper-cli.exe pays on every invocation. If the
+ * server binary is missing, fails to start, or a request to it errors, this
+ * transparently falls back to the original whisper-cli.exe-per-call path
+ * below — never crashes, never loses a transcription over the optimization.
  *
  * Flags used (confirmed via `whisper-cli.exe --help` against the build in
  * .whisper/Release):
@@ -142,16 +164,23 @@ export function writeWavFile(filePath, float32Samples, sampleRate = 16000) {
  *   voice.js's transcribeAudio.
  */
 export async function transcribeAudio(float32Samples, language) {
+  const langCode = resolveLanguageCode(language);
+
+  if (isServerBinaryAvailable()) {
+    try {
+      const wavBuffer = buildWavBuffer(float32Samples, 16000);
+      const port = await ensureServerRunning();
+      return await transcribeViaServer(port, wavBuffer, langCode);
+    } catch (err) {
+      console.warn(`[maestro] whisper-server warm path failed, falling back to whisper-cli.exe: ${err.message}`);
+      // Fall through to the whisper-cli.exe path below.
+    }
+  }
+
   const tempPath = path.join(os.tmpdir(), `maestro-voice-${crypto.randomUUID()}.wav`);
   writeWavFile(tempPath, float32Samples, 16000);
   try {
-    const args = ["-m", MODEL_PATH, "-f", tempPath, "-bo", "1", "-bs", "1", "-nt"];
-    const langCode = resolveLanguageCode(language);
-    if (langCode) {
-      args.push("-l", langCode);
-    } else {
-      args.push("-l", "auto");
-    }
+    const args = ["-m", MODEL_PATH, "-f", tempPath, "-bo", "1", "-bs", "1", "-nt", "-l", langCode || "auto"];
     const stdout = await runWhisperCli(args);
     return stdout.trim();
   } finally {
@@ -188,4 +217,24 @@ function runWhisperCli(args) {
       resolve(stdout);
     });
   });
+}
+
+/**
+ * Stops the warm whisper-server.exe process, if one was started. Re-exported
+ * from whisperServer.js so callers only need to import this one module for
+ * both transcription and shutdown — see voiceWorker.js's own exit handling
+ * for where this is invoked.
+ */
+export function stopWarmServer(options) {
+  stopServer(options);
+}
+
+/**
+ * PID of the currently running warm whisper-server.exe, or null. Re-exported
+ * from whisperServer.js — see that module's getServerPid for why main.js
+ * needs this (tracking the PID directly for a synchronous tree-kill on
+ * shutdown, rather than relying on cross-process message-then-kill timing).
+ */
+export function getWarmServerPid() {
+  return getServerPid();
 }
