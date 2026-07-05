@@ -55,6 +55,10 @@ export function loadJot(jotConfig = {}) {
       // Optional absolute folder this list is bound to (Jot's Category.repoPath).
       // When set, it drives a deterministic path match that beats name-matching.
       repoPath: typeof cat.repoPath === "string" && cat.repoPath.trim() ? cat.repoPath.trim() : null,
+      // Optional work/private classification set by the user in Jot (1.5.14+
+      // W/P chip on the category). Unset on older or never-classified lists,
+      // in which case it's neutral, not "unknown" or an error.
+      domain: cat.domain === "work" || cat.domain === "private" ? cat.domain : null,
       open: 0,
       inProgress: 0,
       review: 0,
@@ -400,6 +404,10 @@ export function loadGoals(jotConfig = {}) {
       deadline: typeof todo.deadline === "number" ? todo.deadline : null,
       category: cat ? cat.name : null,
       color: cat ? cat.color || null : null,
+      // Real work/private classification from the owning category (Jot's
+      // Category.domain), not a guess. null when the category has none set,
+      // which is a neutral goal - shown in both Focus modes, never dimmed.
+      domain: cat && (cat.domain === "work" || cat.domain === "private") ? cat.domain : null,
       isEpic: subtaskTotal > 0,
       subtaskDone,
       subtaskTotal,

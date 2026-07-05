@@ -3978,17 +3978,13 @@ async function renderDashboardPage() {
 
 // --- Focus work/private toggle -----------------------------------------
 // Real, functional UI logic: flips dashboardFocusMode and dims goal cards
-// whose (heuristic) domain doesn't match. There is no persisted work/private
-// domain field on a Jot goal today (loadGoals in src/lib/jot.js only exposes
-// category/priority/deadline) — domainForGoal() below is a placeholder
-// keyword heuristic over the category name, not a real classifier, and is
-// labeled as such in the section hint text. The toggle mechanism itself
-// (state + emphasis/dim behavior) is real, not a stub.
-const PRIVATE_CATEGORY_HINTS = ["private", "personal", "gym", "health", "diabetes", "kombucha", "family"];
-
+// whose domain doesn't match. The domain itself comes straight from Jot's
+// Category.domain field (set via Jot's own W/P chip, 1.5.14+) and is threaded
+// through loadGoals in src/lib/jot.js onto each goal - no heuristic here.
+// A goal whose category has no domain set is neutral: it matches BOTH Focus
+// modes and is never dimmed, same as before a domain is ever assigned.
 function domainForGoal(goal) {
-  const cat = (goal.category || "").toLowerCase();
-  return PRIVATE_CATEGORY_HINTS.some((hint) => cat.includes(hint)) ? "private" : "work";
+  return goal.domain === "work" || goal.domain === "private" ? goal.domain : null;
 }
 
 function dashboardFocusToggleEl() {
@@ -4340,8 +4336,9 @@ function dashSessionRowEl(session) {
 
 // --- Goals -----------------------------------------------------------------
 // Real data: the same jot:goals IPC / loadGoals() as the Focus page. Cards
-// dim when they don't match the Focus toggle's mode, per domainForGoal's
-// heuristic (see comment above the toggle).
+// dim when their domain doesn't match the Focus toggle's mode, per
+// domainForGoal (see comment above the toggle). A neutral goal (no domain set
+// on its Jot category) is shown in both modes and never dimmed.
 async function dashboardGoalsSection() {
   const result = await window.maestro.getJotGoals();
 
@@ -4356,11 +4353,6 @@ async function dashboardGoalsSection() {
   } else if (result.goals.length === 0) {
     body.append(dashEmpty("No active goals in Jot right now."));
   } else {
-    const domainNote = document.createElement("div");
-    domainNote.className = "dash-placeholder-note dash-domain-note";
-    domainNote.textContent = "Work/Private split above is a keyword heuristic over the Jot category name (pending a real domain field on Jot goals) — it dims non-matching cards rather than hiding them.";
-    body.append(domainNote);
-
     const grid = document.createElement("div");
     grid.className = "dash-goals-grid";
     result.goals.forEach((goal) => grid.append(dashGoalCardEl(goal)));
@@ -4373,7 +4365,7 @@ async function dashboardGoalsSection() {
 function dashGoalCardEl(goal) {
   const domain = domainForGoal(goal);
   const card = document.createElement("div");
-  card.className = "dash-goal-card" + (domain !== dashboardFocusMode ? " dash-dimmed" : "");
+  card.className = "dash-goal-card" + (domain !== null && domain !== dashboardFocusMode ? " dash-dimmed" : "");
 
   const head = document.createElement("div");
   head.className = "dash-goal-head";
@@ -4381,10 +4373,12 @@ function dashGoalCardEl(goal) {
   name.className = "dash-goal-name";
   name.textContent = goal.text || "(untitled goal)";
   head.append(name);
-  const badge = document.createElement("span");
-  badge.className = "dash-domain-badge dash-domain-" + domain;
-  badge.textContent = domain === "work" ? "Work" : "Private";
-  head.append(badge);
+  if (domain !== null) {
+    const badge = document.createElement("span");
+    badge.className = "dash-domain-badge dash-domain-" + domain;
+    badge.textContent = domain === "work" ? "Work" : "Private";
+    head.append(badge);
+  }
   card.append(head);
 
   const meta = document.createElement("div");
