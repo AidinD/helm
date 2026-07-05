@@ -521,22 +521,9 @@ function runIteration({ worktreePath, goal, notesContent, planContent, repoMapCo
     const systemPrompt = PHASE_PROMPTS[phase] || PHASE_PROMPTS.implement;
 
     const claudePath = resolveClaudeBinary();
-    // The prompt carries the goal text + model-generated notes/repo-map - the
-    // only attacker-influenceable input in this spawn (ITERATION_SCHEMA and the
-    // system prompt below are static constants). When claude isn't a .exe we
-    // must go through a shell (e.g. an npm-global claude.cmd shim), and an
-    // argv-passed prompt would then be re-parsed by cmd.exe: a command-injection
-    // + space-truncation surface (ship-review finding). So in shell mode we omit
-    // the positional prompt and feed it over stdin instead (claude -p reads the
-    // prompt from stdin when no positional prompt is given - verified), keeping
-    // attacker-influenced text out of the shell command line entirely. The .exe
-    // path (shell:false, nothing to inject into) keeps the faster
-    // positional-prompt form unchanged.
-    const useShell = !claudePath.toLowerCase().endsWith(".exe");
-
     const args = [
       "-p",
-      ...(useShell ? [] : [prompt]),
+      prompt,
       "--output-format",
       "json",
       "--json-schema",
@@ -563,32 +550,22 @@ function runIteration({ worktreePath, goal, notesContent, planContent, repoMapCo
       args.push("--effort", effort);
     }
 
+    // Spawn WITHOUT a shell: the prompt, JSON schema, and system prompt all go
+    // as discrete argv elements. runGoal guarantees claudePath is a native .exe
+    // (see its up-front check), so no shell is needed. A .cmd/.bat shim would
+    // require shell:true, and cmd.exe would then unescape argv - corrupting the
+    // JSON schema (dropping quotes) and truncating the multi-word system prompt
+    // at the first space - so that case is rejected up front, not mangled here.
     let child;
     try {
       child = spawn(claudePath, args, {
         cwd: worktreePath,
-        shell: useShell,
+        shell: false,
         env: process.env,
       });
     } catch (err) {
       resolve({ ok: false, error: `Failed to spawn claude: ${err.message}` });
       return;
-    }
-    if (useShell) {
-      // Deliver the prompt over stdin (see the useShell note above), then close
-      // stdin so claude -p starts instead of waiting for more input.
-      try {
-        child.stdin.write(prompt);
-        child.stdin.end();
-      } catch (err) {
-        try {
-          child.kill();
-        } catch {
-          // best-effort: the spawn may have already failed
-        }
-        resolve({ ok: false, error: `Failed to write prompt to claude stdin: ${err.message}` });
-        return;
-      }
     }
 
     let out = "";
@@ -1134,6 +1111,22 @@ export async function runGoal({
     }
   } catch (err) {
     throw new Error(`runGoal: projectPath is not a git repository: ${projectPath} (${err.message})`);
+  }
+
+  // Goal iterations spawn claude WITHOUT a shell (see runIteration), passing the
+  // prompt + JSON schema + system prompt as discrete argv elements. That needs a
+  // native claude.exe: a .cmd/.bat shim (e.g. an npm-global `claude`) can only be
+  // run through cmd.exe, which unescapes argv and corrupts the JSON schema
+  // (drops quotes -> invalid JSON) and truncates the multi-word system prompt at
+  // the first space. Fail loudly here rather than silently feed every iteration a
+  // broken schema (ship-review finding).
+  const claudeBinary = resolveClaudeBinary();
+  if (!claudeBinary.toLowerCase().endsWith(".exe")) {
+    throw new Error(
+      `runGoal requires a native claude.exe; resolved "${claudeBinary}". A .cmd/.bat shim ` +
+        `(e.g. npm-global claude) would run through cmd.exe and corrupt the --json-schema and ` +
+        `--system-prompt arguments. Install the native claude binary to use goal runs.`
+    );
   }
 
   // `deps: "junction"` so an iteration can actually run builds/tests in the
