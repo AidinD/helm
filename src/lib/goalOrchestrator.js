@@ -59,6 +59,35 @@ import { buildRepoMap } from "./repoMap.js";
  * shape does not change meaningfully iteration-to-iteration within one goal
  * run, so recomputing it every iteration would just be wasted work) and it is
  * prepended to every iteration's prompt via `repoMapContent` below.
+ *
+ * Context-budget KPI (praktiker mechanism #2, Dex Horthy's ~40% "dumb zone"
+ * budget): each iteration's own token usage and the model's real context
+ * window are read straight off the same `claude -p --output-format json`
+ * payload every iteration already produces (see `extractUsage` - the batch
+ * equivalent of the fields `launcher.js` reads off its own stream-json
+ * events), turned into a `fillPct`, and attached to every iteration record
+ * alongside `costUsd`. When fill crosses that threshold, notes.md - the one
+ * piece of state that keeps growing across iterations - is truncated so it
+ * doesn't push the NEXT iteration even further into the same dumb zone. This
+ * only surfaces the KPI on the data; a UI badge for it is a deferred
+ * Goal-page follow-up, not built here.
+ *
+ * Point 12 Phase-0 escalation (free Tier-1 signals, opt-in via
+ * `escalationConfig`, default OFF): a prior design (DECISIONS.md/PLAN.md's
+ * Point 12 "coach" framing) called for escalation to be a PAUSE between
+ * iterations, not an abort - the worktree/commits are kept exactly as a
+ * `cancelled` run leaves them, so a human (or a future resume path) can pick
+ * the run back up later. Four signals are computed purely from data the loop
+ * already has - repeated verify failures with the same signature, an
+ * ambiguity/decision keyword in the iteration's own JSON self-report, a
+ * per-iteration cost soft-cap, and a flat commit count across successful
+ * iterations (no net progress) - see `detectEscalationSignal`. When one
+ * fires, `stoppedReason` becomes `"escalated"`, the fired signal is returned
+ * on `escalation` and passed to the optional `onEscalation` callback (the
+ * hook a future human-gated card would render from), and the loop simply
+ * stops issuing new iterations. Absent `escalationConfig`, none of this runs
+ * and behavior is byte-for-byte unchanged, mirroring `verifyCommand`'s own
+ * opt-in shape.
  */
 
 const NOTES_DIR = ".maestro-goal";
@@ -90,6 +119,22 @@ const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 // loop forever.
 const VERIFY_TIMEOUT_MS = 10 * 60_000;
 const VERIFY_OUTPUT_TAIL_CHARS = 4000;
+
+// Context-budget KPI (praktiker #2, Dex Horthy's ~40% "dumb zone" — see
+// PLAN.md's practitioner-research section): model recall degrades once a
+// single turn's context fill gets deep into its window, well before the
+// window is actually full. This is the same threshold PLAN.md already
+// documents for keeping a worker's OWN context under budget; here it doubles
+// as the trigger for guarding notes.md against unbounded growth, since a
+// notes.md that keeps growing every iteration is exactly what pushes a later
+// iteration's fill toward that zone.
+const CONTEXT_FILL_WARN_THRESHOLD = 0.4;
+// A cheap cap on notes.md itself once the fill warning has fired — keeps the
+// file from being the reason the NEXT iteration also runs hot, without
+// discarding earlier history outright (the newest content, closest to the
+// current step, is kept; the oldest is summarized away by a marker instead of
+// silently vanishing).
+const NOTES_MAX_CHARS_AFTER_WARNING = 20_000;
 
 const ITERATION_SCHEMA = JSON.stringify({
   type: "object",
@@ -305,6 +350,73 @@ function truncate(text, max) {
 }
 
 /**
+ * Extracts the context-budget KPI (praktiker #2) from one iteration's
+ * `claude -p --output-format json` result payload. Reads the same fields
+ * `launcher.js` already reads off the equivalent stream-json `result` event
+ * (`evt.usage` for token counts, `evt.modelUsage[model].contextWindow` for
+ * the model's real window size) — this is the batch-mode ("json", not
+ * "stream-json") shape of the identical CLI result payload, so the field
+ * names are the same, just without the streaming wrapper.
+ *
+ * Returns `{ totalTokens, contextWindow, fillPct }`, with `contextWindow`
+ * and `fillPct` as `null` when the model's context window isn't reported
+ * (e.g. an unrecognized model string) — never throws, since a missing/odd
+ * usage shape must not fail an otherwise-successful iteration.
+ */
+function extractUsage(parsed) {
+  const usage = parsed?.usage || {};
+  const totalTokens =
+    (usage.input_tokens || 0) +
+    (usage.output_tokens || 0) +
+    (usage.cache_creation_input_tokens || 0) +
+    (usage.cache_read_input_tokens || 0);
+
+  let contextWindow = null;
+  if (parsed?.modelUsage && typeof parsed.modelUsage === "object") {
+    for (const modelUsage of Object.values(parsed.modelUsage)) {
+      if (modelUsage && typeof modelUsage.contextWindow === "number" && modelUsage.contextWindow > 0) {
+        contextWindow = modelUsage.contextWindow;
+        break;
+      }
+    }
+  }
+
+  const fillPct = contextWindow ? totalTokens / contextWindow : null;
+  return { totalTokens, contextWindow, fillPct };
+}
+
+/**
+ * Truncates notes.md once fill has crossed the "dumb zone" threshold, so a
+ * long-running goal's own continuity file doesn't become the reason later
+ * iterations ALSO run hot (Horthy's ~40% budget, see the module doc comment /
+ * CONTEXT_FILL_WARN_THRESHOLD). Keeps the header plus the newest content
+ * (closest to the current step, most relevant for the next iteration) and
+ * replaces the discarded older middle with an explicit marker rather than
+ * silently vanishing it — a human or a later iteration can always still see
+ * SOMETHING was cut and how much. Best-effort: a truncation failure must
+ * never fail the iteration loop over housekeeping.
+ */
+function truncateNotesIfNeeded(worktreePath) {
+  try {
+    const file = notesPath(worktreePath);
+    const content = fs.readFileSync(file, "utf8");
+    if (content.length <= NOTES_MAX_CHARS_AFTER_WARNING) {
+      return false;
+    }
+    const header = content.slice(0, 400);
+    const tail = content.slice(-NOTES_MAX_CHARS_AFTER_WARNING);
+    const marker = `\n\n[... earlier notes truncated - context fill crossed the ${Math.round(
+      CONTEXT_FILL_WARN_THRESHOLD * 100
+    )}% budget, older history dropped to keep future iterations' prompts small ...]\n\n`;
+    fs.writeFileSync(file, header + marker + tail, "utf8");
+    return true;
+  } catch (err) {
+    console.error(`[goalOrchestrator] Failed to truncate notes.md for ${worktreePath}: ${err.message}`);
+    return false;
+  }
+}
+
+/**
  * Runs one fresh `claude -p` iteration with structured JSON output. Resolves
  * to { ok:true, result:{success,summary,keyChanges,keyLearnings}, costUsd }
  * or { ok:false, error } — never throws, so the caller's loop can always
@@ -453,7 +565,7 @@ function runIteration({ worktreePath, goal, notesContent, planContent, repoMapCo
         finish({ ok: false, error: "Iteration response did not match the expected schema." });
         return;
       }
-      finish({ ok: true, result, costUsd: parsed.total_cost_usd || 0 });
+      finish({ ok: true, result, costUsd: parsed.total_cost_usd || 0, usage: extractUsage(parsed) });
     });
   });
 }
@@ -524,6 +636,149 @@ function runVerifyCommand(worktreePath, verifyCommand) {
       finish({ ok: code === 0, output: tail });
     });
   });
+}
+
+// Point 12 Phase-0 escalation (free Tier-1 signals — see the DECISIONS.md/
+// PLAN.md Point 12 design and the module doc comment). All four signals below
+// are computed purely from data the loop already has on hand (iteration
+// records, verify output, commit counts) — no extra LLM call, no judgment
+// call beyond a fixed threshold/keyword check. This is deliberately a coarse
+// first pass ("Tier-1"): a future coach/classifier layer (Point 12's
+// broader framing in PLAN.md) can add smarter, LLM-judged signals later
+// without touching this mechanism — it only has to also produce the same
+// `{ signal, detail }` shape `detectEscalationSignal` below returns.
+const DEFAULT_AMBIGUITY_KEYWORDS = ["unclear", "ambiguous", "could not determine", "needs a decision"];
+const DEFAULT_MAX_COST_PER_ITERATION_USD = 2;
+const DEFAULT_NO_PROGRESS_STREAK = 2;
+
+/**
+ * Reduces a verify-failure output tail to a short, stable signature so two
+ * iterations failing on the SAME underlying problem can be recognized as a
+ * repeat rather than compared as opaque blobs of build/test output (which
+ * always differ at least in timing/line numbers). Deliberately crude: strips
+ * digits (timings, line/col numbers, PIDs) and collapses whitespace, then
+ * keeps only the first few lines — the actual error header/message is almost
+ * always there, and this is a free heuristic, not a diff engine.
+ */
+function verifyFailureSignature(output) {
+  if (!output) {
+    return "";
+  }
+  return output
+    .replace(/\d+/g, "#")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, 5)
+    .join(" | ");
+}
+
+/**
+ * Signal (a): the same verify-command failure signature repeating across
+ * consecutive verify-gated iterations — the loop is stuck retrying the same
+ * broken thing rather than making distinct attempts, which is exactly the
+ * "not converging on its own" situation escalation exists for.
+ */
+function detectRepeatedVerifyFailure(iterations, minRepeats) {
+  const verifyFailures = iterations.filter((r) => r.verified === false && r.verifyOutput);
+  if (verifyFailures.length < minRepeats) {
+    return null;
+  }
+  const recent = verifyFailures.slice(-minRepeats);
+  const signatures = recent.map((r) => verifyFailureSignature(r.verifyOutput));
+  const first = signatures[0];
+  if (first && signatures.every((sig) => sig === first)) {
+    return `Verify command failed with the same signature ${minRepeats} times in a row (iterations ${recent
+      .map((r) => r.iteration)
+      .join(", ")}).`;
+  }
+  return null;
+}
+
+/**
+ * Signal (b): the iteration's own structured JSON self-report contains an
+ * ambiguity/decision keyword in `summary` or `keyLearnings` — the model
+ * itself is telling us it hit a fork only a human can resolve, in its own
+ * words, no separate classifier call needed to notice that.
+ */
+function detectAmbiguitySignal(record, keywords) {
+  if (!record.result) {
+    return null;
+  }
+  const haystack = [record.result.summary, ...(record.result.keyLearnings || [])].join(" \n ").toLowerCase();
+  const hit = keywords.find((kw) => haystack.includes(kw.toLowerCase()));
+  if (hit) {
+    return `Iteration ${record.iteration}'s self-report contains the ambiguity phrase "${hit}".`;
+  }
+  return null;
+}
+
+/**
+ * Signal (c): a single iteration's own cost crossed the configured
+ * soft-cap — cheap to check, and a real early-warning for a run quietly
+ * burning far more than a normal small step should (e.g. a runaway tool-use
+ * loop inside that one subprocess).
+ */
+function detectCostSoftCap(record, maxCostPerIterationUsd) {
+  if (typeof record.costUsd !== "number") {
+    return null;
+  }
+  if (record.costUsd > maxCostPerIterationUsd) {
+    return `Iteration ${record.iteration} cost $${record.costUsd.toFixed(
+      2
+    )}, above the $${maxCostPerIterationUsd.toFixed(2)}/iteration soft cap.`;
+  }
+  return null;
+}
+
+/**
+ * Signal (d): no net progress — `streak` or more consecutive SUCCESSFUL,
+ * COMMITTED iterations in a row with the commit count never actually moving
+ * up. This is intentionally distinct from `consecutiveFailures` (which
+ * already stops the run on outright failures): this catches the quieter
+ * failure mode of an agent reporting success and getting past the verify
+ * gate, but not actually landing commits (e.g. `commitIteration` finding
+ * nothing to commit each time) — busy-looking but not moving the goal
+ * forward.
+ */
+function detectNoNetProgress(iterations, streak, commitCountByIteration) {
+  const successes = iterations.filter((r) => r.ok && r.result && r.result.success !== false);
+  if (successes.length < streak) {
+    return null;
+  }
+  const recent = successes.slice(-streak);
+  if (!recent.every((r) => !r.committed)) {
+    return null;
+  }
+  const counts = recent.map((r) => commitCountByIteration.get(r.iteration) ?? 0);
+  const first = counts[0];
+  if (counts.every((c) => c === first)) {
+    return `${streak} consecutive successful iterations in a row produced no new commits (commit count stayed at ${first}).`;
+  }
+  return null;
+}
+
+/**
+ * Runs all Phase-0 Tier-1 signals against the run so far and returns the
+ * first one that fires (or null). Order is fixed but not meaningful beyond
+ * determinism — only one signal is ever needed to trigger a pause.
+ * `escalationConfig` fields all have defaults so a caller can opt in with
+ * `{}` and still get sensible behavior; see `runGoal`'s own doc comment for
+ * the full option list.
+ */
+function detectEscalationSignal(iterations, latestRecord, escalationConfig, commitCountByIteration) {
+  const keywords = escalationConfig.ambiguityKeywords || DEFAULT_AMBIGUITY_KEYWORDS;
+  const maxCostPerIterationUsd = escalationConfig.maxCostPerIterationUsd ?? DEFAULT_MAX_COST_PER_ITERATION_USD;
+  const noProgressStreak = escalationConfig.noProgressStreak ?? DEFAULT_NO_PROGRESS_STREAK;
+  const repeatedVerifyFailureThreshold = escalationConfig.repeatedVerifyFailureThreshold ?? 2;
+
+  const reasons = [
+    { signal: "repeated_verify_failure", detail: detectRepeatedVerifyFailure(iterations, repeatedVerifyFailureThreshold) },
+    { signal: "ambiguity_reported", detail: detectAmbiguitySignal(latestRecord, keywords) },
+    { signal: "cost_soft_cap", detail: detectCostSoftCap(latestRecord, maxCostPerIterationUsd) },
+    { signal: "no_net_progress", detail: detectNoNetProgress(iterations, noProgressStreak, commitCountByIteration) },
+  ];
+  return reasons.find((r) => r.detail) || null;
 }
 
 /**
@@ -624,16 +879,54 @@ function countCommitsOnBranch(worktreePath, baseCommit) {
  * @param {(iterationRecord: object) => void} [opts.onIteration] - optional
  *   callback fired after each iteration with its result, for a future UI/CLI
  *   caller to show live progress. Never awaited, never allowed to throw the
- *   loop off course.
+ *   loop off course. Each record also carries the context-budget KPI
+ *   (praktiker #2): `fillPct`/`totalTokens` (null when the model's context
+ *   window wasn't reported), and, once `fillPct` crosses
+ *   `CONTEXT_FILL_WARN_THRESHOLD` (~40%, Horthy's "dumb zone"),
+ *   `contextBudgetWarning: true` plus `notesTruncated` recording whether
+ *   notes.md was truncated to guard against unbounded growth feeding that
+ *   same problem into later iterations.
+ * @param {object} [opts.escalationConfig] - opt-in (default undefined/absent
+ *   = OFF, mirroring `verifyCommand`'s own opt-in shape — no behavior change
+ *   when omitted). When present, enables Point 12 Phase-0 escalation: free,
+ *   no-extra-LLM-call "Tier-1" signals computed from the loop's own data,
+ *   checked after every iteration. When a signal fires, the run PAUSES
+ *   (not aborts) between iterations — the worktree and all commits so far
+ *   are kept exactly as `cancelled` leaves them, `stoppedReason` is set to
+ *   `"escalated"`, and `escalation` on the return value carries the signal
+ *   that fired. `onEscalation`, if provided, is called once with that same
+ *   escalation record — the hook a future UI uses to show a human-gated
+ *   card. A caller can later start a NEW `runGoal` against the same
+ *   `projectPath` with the same worktree/branch resumed (nothing here
+ *   removes them) to continue, exactly like resuming after `cancelled`.
+ *   All threshold fields are optional with sane defaults — pass `{}` to
+ *   enable with defaults:
+ *   - `opts.escalationConfig.ambiguityKeywords` - string list checked
+ *     (case-insensitively) against each iteration's own `summary`/
+ *     `keyLearnings`. Default: unclear/ambiguous/"could not determine"/
+ *     "needs a decision".
+ *   - `opts.escalationConfig.maxCostPerIterationUsd` - soft cap on a single
+ *     iteration's own `costUsd`. Default 2.
+ *   - `opts.escalationConfig.noProgressStreak` - how many consecutive
+ *     successful-but-uncommitted iterations with a flat commit count counts
+ *     as no net progress. Default 2.
+ *   - `opts.escalationConfig.repeatedVerifyFailureThreshold` - how many
+ *     consecutive verify-gated failures with the same failure signature
+ *     counts as stuck-repeating. Default 2. Only meaningful alongside
+ *     `verifyCommand`.
+ * @param {(escalationRecord: object) => void} [opts.onEscalation] - optional,
+ *   only meaningful with `escalationConfig` set. See above.
  * @param {{ cancelled: boolean }} [opts.cancelToken] - optional simple
  *   cancellation flag. Checked between iterations (never mid-iteration — an
  *   in-flight subprocess always runs to completion or its own timeout); once
  *   `cancelToken.cancelled` is true, no further iterations start.
  * @returns {Promise<{ worktreePath: string, branchName: string, notes: string,
  *   phase: string, plan: (string|null), commitCount: number,
- *   iterations: object[], stoppedReason: string }>} `iterations` records each
- *   carry a `phase` field (`"research"`, `"plan"`, or `"implement"`) alongside
- *   the pre-existing `ok`/`result`/`committed`/`verified` fields.
+ *   iterations: object[], stoppedReason: string, escalation: (object|null) }>}
+ *   `iterations` records each carry a `phase` field (`"research"`, `"plan"`,
+ *   or `"implement"`) alongside the pre-existing `ok`/`result`/`committed`/
+ *   `verified` fields, plus the context-budget KPI fields described above.
+ *   `escalation` is non-null only when `stoppedReason === "escalated"`.
  */
 export async function runGoal({
   projectPath,
@@ -643,6 +936,8 @@ export async function runGoal({
   effort,
   verifyCommand,
   onIteration,
+  escalationConfig,
+  onEscalation,
   cancelToken,
 }) {
   if (!projectPath || !goal) {
@@ -700,6 +995,20 @@ export async function runGoal({
   // no phase.json yet, so this starts at PHASE_ORDER[0] ("research").
   let phase = readPhase(worktreePath);
   writePhase(worktreePath, phase);
+
+  // Point 12 Phase-0 escalation state (see runGoal's own doc comment /
+  // detectEscalationSignal). `escalationEnabled` is captured once so an
+  // absent `escalationConfig` truly changes nothing below beyond this one
+  // boolean check per iteration - the whole point of the opt-in default-OFF
+  // shape. `commitCountByIteration` records the branch's total commit count
+  // AFTER each iteration completes, keyed by iteration number, so the
+  // no-net-progress signal can compare counts across iterations without
+  // re-deriving history from the records themselves (commitCount isn't on
+  // the record - it's a side-channel git fact, same as `countCommitsOnBranch`
+  // below already treats it).
+  const escalationEnabled = Boolean(escalationConfig);
+  const commitCountByIteration = new Map();
+  let escalation = null;
 
   for (let i = 1; i <= maxIterations; i++) {
     if (cancelToken?.cancelled) {
@@ -765,6 +1074,8 @@ export async function runGoal({
         result: outcome.result,
         committed: false,
         costUsd: outcome.costUsd,
+        fillPct: outcome.usage?.fillPct ?? null,
+        totalTokens: outcome.usage?.totalTokens ?? null,
       };
       consecutiveFailures += 1;
     } else if (verifyGateApplies) {
@@ -787,6 +1098,8 @@ export async function runGoal({
           committed,
           verified: true,
           costUsd: outcome.costUsd,
+          fillPct: outcome.usage?.fillPct ?? null,
+          totalTokens: outcome.usage?.totalTokens ?? null,
         };
         consecutiveFailures = 0;
         phase = nextPhase(phase);
@@ -817,6 +1130,8 @@ export async function runGoal({
           verified: false,
           verifyOutput: verifyOutcome.output,
           costUsd: outcome.costUsd,
+          fillPct: outcome.usage?.fillPct ?? null,
+          totalTokens: outcome.usage?.totalTokens ?? null,
         };
         consecutiveFailures += 1;
       }
@@ -835,6 +1150,8 @@ export async function runGoal({
         result: outcome.result,
         committed,
         costUsd: outcome.costUsd,
+        fillPct: outcome.usage?.fillPct ?? null,
+        totalTokens: outcome.usage?.totalTokens ?? null,
       };
       consecutiveFailures = 0;
       // Advance research -> plan -> implement on a successful phase-completing
@@ -846,12 +1163,53 @@ export async function runGoal({
       writePhase(worktreePath, phase);
     }
 
+    // Context-budget guard (praktiker #2): if THIS iteration's own fill
+    // crossed the "dumb zone" threshold, flag it on the record so a future
+    // UI can surface it, and truncate notes.md now, before the NEXT
+    // iteration re-reads it fresh — otherwise a growing notes.md compounds
+    // the problem it's meant to fix (later iterations start even hotter).
+    if (typeof record.fillPct === "number" && record.fillPct >= CONTEXT_FILL_WARN_THRESHOLD) {
+      record.contextBudgetWarning = true;
+      record.notesTruncated = truncateNotesIfNeeded(worktreePath);
+    }
+
     iterations.push(record);
     if (onIteration) {
       try {
         onIteration(record);
       } catch {
         // never let a caller's callback break the loop
+      }
+    }
+
+    // Point 12 Phase-0 escalation (opt-in, see doc comment): checked AFTER
+    // this iteration's own record/notes/commit bookkeeping is fully settled,
+    // so a pause always lands on a clean, already-consistent state - never
+    // half inside an iteration's own commit/rollback handling above. Checked
+    // BEFORE the two-consecutive-failures break below on purpose: escalation
+    // is a softer, earlier signal than that hard stop, and firing here means
+    // the loop pauses (worktree/commits kept, resumable) rather than falling
+    // through to the harsher unconditional abort path.
+    if (escalationEnabled) {
+      commitCountByIteration.set(i, countCommitsOnBranch(worktreePath, baseCommit));
+      const signal = detectEscalationSignal(iterations, record, escalationConfig, commitCountByIteration);
+      if (signal) {
+        escalation = {
+          iteration: i,
+          signal: signal.signal,
+          detail: signal.detail,
+          worktreePath,
+          branchName,
+        };
+        stoppedReason = "escalated";
+        if (onEscalation) {
+          try {
+            onEscalation(escalation);
+          } catch {
+            // never let a caller's callback break the loop
+          }
+        }
+        break;
       }
     }
 
@@ -878,8 +1236,13 @@ export async function runGoal({
   // Runs WITH commits are deliberately kept - the whole point is to leave that
   // work in the isolated worktree for the human to review/merge. Best-effort:
   // a cleanup failure must never turn a finished run into a thrown error.
+  //
+  // An ESCALATED (paused) run is NEVER auto-cleaned, even with zero commits -
+  // pause means "stop and wait for a human," not "abort," and a resume must
+  // find the same worktree/branch/notes.md/phase.json still there. This is
+  // the one case that overrides the zero-commits rule below.
   let cleanedUp = false;
-  if (commitCount === 0) {
+  if (commitCount === 0 && stoppedReason !== "escalated") {
     try {
       discardWorktreeChanges(worktreePath);
       removeWorktree(projectPath, worktreePath, { force: true });
@@ -909,5 +1272,10 @@ export async function runGoal({
     iterations,
     stoppedReason,
     cleanedUp,
+    // Point 12 Phase-0 escalation (see doc comment): non-null exactly when
+    // stoppedReason === "escalated" - the signal that fired, for a future
+    // human-gated card to render. Always null when escalationConfig was not
+    // provided (feature fully opt-in).
+    escalation,
   };
 }
