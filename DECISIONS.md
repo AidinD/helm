@@ -1,5 +1,19 @@
 # Decisions
 
+## 2026-07-05 - Removed the warm whisper-server (built the same day), reverting single-clip transcription to whisper-cli
+
+Earlier the same day a warm `whisper-server.exe` was added (whisperServer.js) so the single-clip transcription path loads the model once instead of paying whisper-cli's ~460ms model-load per call (~350-530ms warm vs ~1.2s cli, 2-3x).
+Going through it in review surfaced the flaw: `startVoiceRecording` always prefers the real-time streaming path (`whisper-stream.exe`) and only falls back to the single-clip path when streaming is unavailable - so on any machine where streaming works (the captain's does), the warm server is NEVER exercised in normal use.
+It only ever sped up a rarely-hit fallback.
+Decision: remove it. A managed long-lived server process - PID tracking pushed worker->main, a synchronous `taskkill /T /F` in before-quit, an exit backstop - is real, ongoing maintenance surface, and kill-on-quit PID tracking is a classic source of orphaned/mis-killed processes.
+Carrying that lifecycle risk to shave a rarely-hit fallback from 1.2s to 0.4s isn't worth it; per-call `whisper-cli.exe` at ~1.2s (measured 901ms on 1s of audio incl. model load) is perfectly acceptable for a degraded path.
+This matches the engineering-philosophy preference for simplicity/maintainability over unnecessary complexity.
+
+Removed: `src/lib/whisperServer.js` (deleted), the warm-path branch + `stopWarmServer`/`getWarmServerPid` re-exports in whisperCpp.js, the serverPid push + exit backstop in voiceWorker.js, and the `voiceServerPid` tracking + before-quit taskkill in main.js.
+`whisperCpp.transcribeAudio` is back to a clean whisper-cli-per-call, unchanged otherwise; the streaming path (whisper-stream.exe) and the transformers.js fallback are untouched.
+Verified via `spike/test-whispercpp-cli-path.mjs` (real cli subprocess transcribes end-to-end after the removal) + no-dangling-reference grep + `node --check` on all three edited files.
+If a streaming-unavailable machine ever makes single-clip the primary path and 1.2s becomes the bottleneck there, revisit - but build it lazily/without a persistent kill-on-quit process, or just accept cli latency for a degraded mode.
+
 ## 2026-07-05 - goalOrchestrator progress/success semantics: `producedChanges` + no-op convergence (ship-review cluster A-D)
 
 An adversarial ship-review (two fresh opus contexts) of the autonomous goal-execution core surfaced a cluster of correctness issues; the captain approved fixing all of them.
