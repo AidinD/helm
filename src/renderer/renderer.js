@@ -3940,7 +3940,7 @@ const SUBTASK_STATUS_LABEL = {
 // goals, actual session-start-from-dashboard) is rendered as a clearly
 // labeled placeholder rather than invented data - see the individual section
 // comments below.
-let dashboardFocusMode = "work"; // "work" | "private" - local UI state, resets on reload
+let dashboardFocusMode = "all"; // "all" | "work" | "private" - local UI state (the Focus filter), resets on reload. "all" = no filtering/dimming.
 let dashboardSelectedChip = null; // which "New session" project chip is selected (a cwd string)
 
 function isDashboardVisible() {
@@ -3979,7 +3979,7 @@ async function renderDashboardPage() {
   heading.append(h2, sub);
   const topbarActions = document.createElement("div");
   topbarActions.className = "dash-topbar-actions";
-  topbarActions.append(dashboardFocusToggleEl(), startOrchestratorSessionBtnEl());
+  topbarActions.append(focusModeToggleEl(), startOrchestratorSessionBtnEl());
   topbar.append(heading, topbarActions);
   page.append(topbar);
 
@@ -3999,7 +3999,11 @@ function domainForGoal(goal) {
   return goal.domain === "work" || goal.domain === "private" ? goal.domain : null;
 }
 
-function dashboardFocusToggleEl() {
+// Shared Focus-filter toggle (All / Work / Private) used by BOTH the dashboard
+// (dims non-matching goal cards; "All" = no dimming) and the Focus page
+// (filters the list; "All" = show everything). `rerender` is the page's own
+// re-render fn so the toggle refreshes the right view.
+function focusModeToggleEl(rerender = renderDashboardPage) {
   const wrap = document.createElement("div");
   wrap.className = "dash-focus-toggle";
 
@@ -4010,13 +4014,14 @@ function dashboardFocusToggleEl() {
 
   const seg = document.createElement("div");
   seg.className = "view-toggle";
-  for (const mode of ["work", "private"]) {
+  const LABELS = { all: "All", work: "Work", private: "Private" };
+  for (const mode of ["all", "work", "private"]) {
     const btn = document.createElement("button");
-    btn.textContent = mode === "work" ? "Work" : "Private";
+    btn.textContent = LABELS[mode];
     btn.classList.toggle("active", dashboardFocusMode === mode);
     btn.addEventListener("click", () => {
       dashboardFocusMode = mode;
-      renderDashboardPage();
+      rerender();
     });
     seg.append(btn);
   }
@@ -4378,7 +4383,9 @@ async function dashboardGoalsSection() {
 function dashGoalCardEl(goal) {
   const domain = domainForGoal(goal);
   const card = document.createElement("div");
-  card.className = "dash-goal-card" + (domain !== null && domain !== dashboardFocusMode ? " dash-dimmed" : "");
+  card.className =
+    "dash-goal-card" +
+    (dashboardFocusMode !== "all" && domain !== null && domain !== dashboardFocusMode ? " dash-dimmed" : "");
 
   const head = document.createElement("div");
   head.className = "dash-goal-head";
@@ -4670,16 +4677,32 @@ async function renderFocusPage() {
     return;
   }
 
+  // Focus filter (All / Work / Private). Unlike the dashboard toggle (which
+  // dims non-matching cards), on the Focus page it actually NARROWS the list so
+  // you don't see everything. Neutral goals (no domain set) always show.
+  page.append(focusModeToggleEl(renderFocusPage));
+  const goals =
+    dashboardFocusMode === "all"
+      ? result.goals
+      : result.goals.filter((g) => {
+          const d = domainForGoal(g);
+          return d === null || d === dashboardFocusMode;
+        });
+
   const intro = document.createElement("div");
   intro.className = "analysis-totals";
+  const filterNote = dashboardFocusMode === "all" ? "" : ` (${dashboardFocusMode} + unset)`;
   intro.textContent =
-    `${result.goals.length} active goal${result.goals.length === 1 ? "" : "s"} (open or in progress), ranked by what deserves your focus now. Backed by Jot.`;
+    `${goals.length} active goal${goals.length === 1 ? "" : "s"}${filterNote} (open or in progress), ranked by what deserves your focus now. Backed by Jot.`;
   page.append(intro);
 
-  if (result.goals.length === 0) {
+  if (goals.length === 0) {
     const empty = document.createElement("div");
     empty.className = "pane-empty";
-    empty.textContent = "No active goals in Jot right now.";
+    empty.textContent =
+      dashboardFocusMode === "all"
+        ? "No active goals in Jot right now."
+        : `No ${dashboardFocusMode} goals active right now.`;
     page.append(empty);
     return;
   }
@@ -4691,8 +4714,8 @@ async function renderFocusPage() {
   const list = document.createElement("div");
   list.className = "focus-list";
   const TOP_N = 3;
-  result.goals.forEach((goal, i) => {
-    if (i === TOP_N && result.goals.length > TOP_N) {
+  goals.forEach((goal, i) => {
+    if (i === TOP_N && goals.length > TOP_N) {
       const divider = document.createElement("div");
       divider.className = "focus-divider";
       divider.textContent = "Also active";
