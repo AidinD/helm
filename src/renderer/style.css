@@ -2459,3 +2459,347 @@ button.primary {
 .fit-pill-too_strong {
   color: var(--active);
 }
+
+/* ===== Dashboard page (rebuild slice 1) =====
+   New additive page mounted beside "Chat" in #pageToggle — reuses the same
+   .analysis-page shell, .bg-card surfaces, .text-btn/.icon-btn button family,
+   and .status-dot colors as the rest of the app rather than the standalone
+   palette from the interactive mock. See renderDashboardPage in renderer.js. */
+.dash-topbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+
+.dash-focus-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.dash-focus-label {
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+
+.dash-board {
+  margin-bottom: 26px;
+}
+
+.dash-board-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.dash-board-head h3 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+  font-weight: 600;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dash-count {
+  background: var(--bg-card);
+  color: var(--text-faint);
+  font-size: 10.5px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.dash-hint {
+  font-size: 11px;
+  color: var(--text-faint);
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+}
+
+.dash-placeholder-note {
+  font-size: 10.5px;
+  color: var(--text-faint);
+  font-style: italic;
+}
+
+.dash-domain-note {
+  margin-bottom: 10px;
+}
+
+/* --- In motion --- */
+.dash-motion-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.dash-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  cursor: pointer;
+}
+
+.dash-card:hover {
+  background: var(--bg-card-hover);
+}
+
+.dash-motion-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.dash-goal-tag {
+  font-size: 10px;
+  color: var(--accent);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  padding: 1px 7px;
+  border-radius: 999px;
+}
+
+.dash-motion-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  margin-bottom: 3px;
+}
+
+.dash-motion-detail {
+  font-size: 11.5px;
+  color: var(--text-faint);
+  margin-bottom: 8px;
+}
+
+/* --- Orchestrator proposes --- */
+.dash-propose-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dash-propose-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+}
+
+.dash-propose-card.dash-resolved {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.dash-propose-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.dash-propose-title {
+  font-size: 12.5px;
+  color: var(--text);
+  margin-bottom: 2px;
+}
+
+.dash-propose-why {
+  font-size: 11px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dash-propose-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* --- Goals --- */
+.dash-goals-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 14px;
+}
+
+.dash-goal-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+.dash-goal-card:hover {
+  background: var(--bg-card-hover);
+}
+
+.dash-goal-card.dash-dimmed {
+  opacity: 0.4;
+}
+
+.dash-goal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.dash-goal-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.dash-domain-badge {
+  font-size: 9.5px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.dash-domain-work {
+  background: var(--bg);
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+
+.dash-domain-private {
+  background: var(--bg);
+  color: var(--active);
+  border: 1px solid var(--active);
+}
+
+.dash-goal-meta {
+  font-size: 11px;
+  color: var(--text-faint);
+  margin-bottom: 10px;
+}
+
+.dash-goal-progress-bar {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.dash-goal-progress-bar > div {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 3px;
+}
+
+/* --- New session --- */
+.dash-new-session-panel {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr;
+  gap: 20px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px 18px;
+}
+
+.dash-ns-col-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  margin-bottom: 10px;
+  font-weight: 600;
+}
+
+.dash-chip-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.dash-chip {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.dash-chip:hover {
+  color: var(--text);
+  border-color: var(--text-faint);
+}
+
+.dash-chip-selected {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.dash-load-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dash-load-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+  padding: 5px 8px;
+  border-radius: 6px;
+}
+
+.dash-load-item:hover {
+  background: var(--bg-card-hover);
+}
+
+.dash-load-item input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+
+.dash-load-file-name {
+  font-family: ui-monospace, Consolas, monospace;
+  color: var(--text);
+}
+
+.dash-load-file-note {
+  color: var(--text-faint);
+  font-size: 10.5px;
+  margin-left: auto;
+}
+
+.dash-launch-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 14px;
+}
