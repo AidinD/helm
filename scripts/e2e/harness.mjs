@@ -325,14 +325,29 @@ class Harness {
 
   /**
    * Capture a full-page PNG screenshot to outPath.
+   *
+   * The CDP Page.captureScreenshot call can occasionally hang (observed
+   * 2026-07-05: an E2E run's top-level await never settled on this call),
+   * which would stall a whole test. It is raced against a timeout so a flaky
+   * screenshot rejects instead of hanging - callers can treat it as
+   * best-effort (try/catch) without the run getting stuck.
    * @param {string} outPath
+   * @param {number} [timeoutMs] reject if the capture takes longer. Default 10000.
    * @returns {Promise<number>} bytes written
    */
-  async screenshot(outPath) {
-    const { data } = await this.cdp.send("Page.captureScreenshot", {
-      format: "png",
-      captureBeyondViewport: false,
-    });
+  async screenshot(outPath, timeoutMs = 10000) {
+    const { data } = await Promise.race([
+      this.cdp.send("Page.captureScreenshot", {
+        format: "png",
+        captureBeyondViewport: false,
+      }),
+      new Promise((_, reject) =>
+        setTimeout(
+          () => reject(new Error(`screenshot timed out after ${timeoutMs}ms`)),
+          timeoutMs
+        )
+      ),
+    ]);
     const buf = Buffer.from(data, "base64");
     const { writeFile, mkdir } = await import("node:fs/promises");
     await mkdir(path.dirname(path.resolve(outPath)), { recursive: true });
