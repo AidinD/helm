@@ -483,14 +483,26 @@ ipcMain.handle("app:version", () => computeVersionString());
 // --- Orchestrator info: the paths needed to start a fresh orchestrator
 // session from the Dashboard (PLAN.md's orchestrator-lifespan redesign).
 // There is no privileged, always-present orchestrator session anymore — this
-// just tells the renderer where Maestro's own repo lives (so a fresh session
-// has a cwd to run in) and where its operating manual is, so the renderer can
-// point a brand-new session at it. Read-only, no session-of-its-own state.
-ipcMain.handle("orchestrator:info", () => ({
-  ok: true,
-  cwd: path.dirname(__dirname),
-  instructionsPath: path.join(__dirname, "lib", "orchestrator-instructions.md"),
-}));
+// just hands the renderer a cwd for a fresh orchestrator session plus the path
+// to its operating manual. The cwd is a DEDICATED NEUTRAL dir (~/.maestro),
+// never a project repo: an orchestrator sits ABOVE projects and dispatches INTO
+// them, so rooting it in a repo (it used to root in Maestro's own) only creates
+// a footgun where any hands-on file/git work lands in that repo. instructionsPath
+// is absolute so the session reads the manual regardless of cwd. Read-only, no
+// session-of-its-own state.
+ipcMain.handle("orchestrator:info", () => {
+  const neutralCwd = path.join(os.homedir(), ".maestro");
+  try {
+    fs.mkdirSync(neutralCwd, { recursive: true });
+  } catch {
+    // fall back to home below if the dedicated dir can't be created
+  }
+  return {
+    ok: true,
+    cwd: fs.existsSync(neutralCwd) ? neutralCwd : os.homedir(),
+    instructionsPath: path.join(__dirname, "lib", "orchestrator-instructions.md"),
+  };
+});
 
 // --- Stale-build indicator: hands back the running build's own identity plus
 // the most recent periodic staleness check (see runStaleBuildCheck below).
