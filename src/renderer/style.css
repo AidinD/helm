@@ -2112,6 +2112,13 @@ button.primary {
   color: var(--text);
 }
 
+/* RPI phase label (Research/Plan/Implement) - descriptive, not a status, so
+   deliberately plainer than .goal-iter-badge (no border/uppercase). */
+.goal-iter-phase {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
 .goal-iter-badge {
   font-size: 10.5px;
   text-transform: uppercase;
@@ -2120,6 +2127,21 @@ button.primary {
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 1px 6px;
+  margin-left: auto;
+}
+
+/* Context-fill KPI badge - muted like the other badges normally; once
+   contextBudgetWarning fires (fill >= ~40%, the same "dumb zone" threshold
+   goalOrchestrator.js itself uses), switch to the app's existing --waiting
+   amber rather than introducing a new color, matching the "attention color
+   only for active/attention states" rule. */
+.goal-iter-fill {
+  font-variant-numeric: tabular-nums;
+}
+
+.goal-iter-fill-warn {
+  color: var(--waiting);
+  border-color: var(--waiting);
 }
 
 .goal-iter-summary {
@@ -2143,6 +2165,18 @@ button.primary {
   font-size: 12px;
   color: var(--text-dim);
   line-height: 1.5;
+}
+
+/* Expandable plan.md block (reuses .tool-group/.tool-call-output - see
+   goalPlanBlock in renderer.js) - a couple of goal-page-specific tweaks so it
+   doesn't look like a chat tool call. */
+.goal-plan-block {
+  margin-bottom: 4px;
+}
+
+.goal-plan-content {
+  white-space: pre-wrap;
+  max-height: 400px;
 }
 
 .goal-summary-card {
@@ -2193,6 +2227,33 @@ button.primary {
   margin-top: 12px;
   padding-top: 12px;
   border-top: 1px solid var(--border);
+}
+
+/* "Escalate on trouble" checkbox - reuses .settings-toggle-row's layout but
+   without its bottom border/margin (it sits mid-form, not in a list of its
+   own), and a bit tighter above/below than that row's own list spacing. */
+.goal-escalate-row {
+  padding-bottom: 0;
+  margin-bottom: 0;
+  margin-top: 10px;
+  border-bottom: none;
+}
+
+/* Point 12 Phase-0 escalation card - a variant of .goal-summary-card using
+   the app's existing --waiting amber (the same color already used for other
+   "needs you" states) instead of --accent, so a human-gated pause reads as
+   visually distinct from a normal completed-run summary. */
+.goal-escalation-card {
+  border-color: var(--waiting);
+}
+
+.goal-escalation-title {
+  color: var(--waiting);
+}
+
+.goal-escalation-detail {
+  margin-bottom: 10px;
+  color: var(--text-dim);
 }
 
 /* ---- Lavish (interactive plan) v1 ---- */

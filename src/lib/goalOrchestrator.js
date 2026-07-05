@@ -885,7 +885,10 @@ function countCommitsOnBranch(worktreePath, baseCommit) {
  *   `CONTEXT_FILL_WARN_THRESHOLD` (~40%, Horthy's "dumb zone"),
  *   `contextBudgetWarning: true` plus `notesTruncated` recording whether
  *   notes.md was truncated to guard against unbounded growth feeding that
- *   same problem into later iterations.
+ *   same problem into later iterations. `plan` carries the CURRENT
+ *   `.maestro-goal/plan.md` content as of right after this iteration (null
+ *   before the plan phase has written one yet), so a live caller can surface
+ *   the plan without waiting for the run to finish.
  * @param {object} [opts.escalationConfig] - opt-in (default undefined/absent
  *   = OFF, mirroring `verifyCommand`'s own opt-in shape — no behavior change
  *   when omitted). When present, enables Point 12 Phase-0 escalation: free,
@@ -1171,6 +1174,21 @@ export async function runGoal({
     if (typeof record.fillPct === "number" && record.fillPct >= CONTEXT_FILL_WARN_THRESHOLD) {
       record.contextBudgetWarning = true;
       record.notesTruncated = truncateNotesIfNeeded(worktreePath);
+    }
+
+    // Re-read plan.md fresh (rather than reusing the `planContent` this
+    // iteration started with) so a live caller's onIteration sees the plan
+    // AS OF right after this iteration - notably the plan-phase iteration
+    // that just wrote it for the first time. Attached to every record (not
+    // just plan-phase ones) so a UI never has to hunt back through earlier
+    // records to find the latest plan; null once no plan.md exists yet
+    // (e.g. still in the research phase). Best-effort: `readPlan` itself
+    // never throws, but wrapped anyway since this is pure UI convenience and
+    // must never be the reason an otherwise-good iteration record is lost.
+    try {
+      record.plan = readPlan(worktreePath);
+    } catch {
+      record.plan = null;
     }
 
     iterations.push(record);

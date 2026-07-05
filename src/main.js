@@ -864,62 +864,78 @@ ipcMain.handle("goal:suggestVerifyCommand", async (_event, { projectPath }) => {
 // "session:event"), so goal progress never collides with normal session
 // streaming. Every payload carries the goalRunId so the renderer can ignore
 // events from a stale/previous run.
-ipcMain.handle("goal:run", async (_event, { projectPath, goal, maxIterations, model, effort, verifyCommand }) => {
-  if (!projectPath || !goal) {
-    return { ok: false, error: "projectPath and goal are required" };
-  }
-  // Hard-clamp iterations at the trust boundary, not just the UI. This spawns
-  // real autonomous claude subprocesses that make real commits and spend real
-  // tokens; the renderer's input max="20" is only an HTML hint (a user typing
-  // 500, or any future non-UI caller, would otherwise get 500 real
-  // iterations). Floor 1, ceiling 20 (review finding).
-  const GOAL_ITERATION_CEILING = 20;
-  const requestedMax = parseInt(maxIterations, 10);
-  const clampedMax = Number.isFinite(requestedMax)
-    ? Math.min(Math.max(1, requestedMax), GOAL_ITERATION_CEILING)
-    : undefined; // undefined -> runGoal's own default
-  const goalRunId = crypto.randomUUID();
-  const cancelToken = { cancelled: false };
-  liveGoalRuns.set(goalRunId, { cancelToken });
-
-  const send = (payload) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send("goal:event", { goalRunId, ...payload });
+ipcMain.handle(
+  "goal:run",
+  async (_event, { projectPath, goal, maxIterations, model, effort, verifyCommand, escalationConfig }) => {
+    if (!projectPath || !goal) {
+      return { ok: false, error: "projectPath and goal are required" };
     }
-  };
+    // Hard-clamp iterations at the trust boundary, not just the UI. This spawns
+    // real autonomous claude subprocesses that make real commits and spend real
+    // tokens; the renderer's input max="20" is only an HTML hint (a user typing
+    // 500, or any future non-UI caller, would otherwise get 500 real
+    // iterations). Floor 1, ceiling 20 (review finding).
+    const GOAL_ITERATION_CEILING = 20;
+    const requestedMax = parseInt(maxIterations, 10);
+    const clampedMax = Number.isFinite(requestedMax)
+      ? Math.min(Math.max(1, requestedMax), GOAL_ITERATION_CEILING)
+      : undefined; // undefined -> runGoal's own default
+    const goalRunId = crypto.randomUUID();
+    const cancelToken = { cancelled: false };
+    liveGoalRuns.set(goalRunId, { cancelToken });
 
-  send({ kind: "started", goal, maxIterations: clampedMax || null });
+    const send = (payload) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("goal:event", { goalRunId, ...payload });
+      }
+    };
 
-  // Fire-and-return: the handler resolves immediately with the goalRunId so
-  // the renderer can wire up its Cancel button, while the run itself proceeds
-  // and streams progress over goal:event. Errors are reported over the same
-  // channel, never left to reject an already-resolved invoke.
-  runGoal({
-    projectPath,
-    goal,
-    maxIterations: clampedMax,
-    model: model || undefined,
-    effort: effort || undefined,
-    // Optional independent build/test verification gate (Point 11
-    // hardening) - a plain shell command string, e.g. "npm test". Passed
-    // straight through; runGoal treats an empty/missing value as "no gate"
-    // (unchanged pre-existing behavior).
-    verifyCommand: verifyCommand || undefined,
-    cancelToken,
-    onIteration: (record) => send({ kind: "iteration", record }),
-  })
-    .then((result) => {
-      send({ kind: "done", result });
+    send({ kind: "started", goal, maxIterations: clampedMax || null });
+
+    // Fire-and-return: the handler resolves immediately with the goalRunId so
+    // the renderer can wire up its Cancel button, while the run itself proceeds
+    // and streams progress over goal:event. Errors are reported over the same
+    // channel, never left to reject an already-resolved invoke.
+    runGoal({
+      projectPath,
+      goal,
+      maxIterations: clampedMax,
+      model: model || undefined,
+      effort: effort || undefined,
+      // Optional independent build/test verification gate (Point 11
+      // hardening) - a plain shell command string, e.g. "npm test". Passed
+      // straight through; runGoal treats an empty/missing value as "no gate"
+      // (unchanged pre-existing behavior).
+      verifyCommand: verifyCommand || undefined,
+      // Point 12 Phase-0 escalation - opt-in, mirrors verifyCommand's own
+      // opt-in shape. The renderer only ever sends a plain object (possibly
+      // empty, `{}`, for "enable with defaults") when the user checked
+      // "Escalate on trouble"; an unchecked box sends `undefined`, which
+      // keeps runGoal's pre-existing behavior (no escalation) unchanged.
+      escalationConfig: escalationConfig || undefined,
+      cancelToken,
+      onIteration: (record) => send({ kind: "iteration", record }),
+      // Forwarded to the renderer as its own "escalation" goal:event kind, on
+      // the same channel as "iteration"/"done"/"error", so the Goal page can
+      // show a human-gated card the moment the run actually pauses, rather
+      // than waiting for the "done" event that follows shortly after (runGoal
+      // still resolves normally on an escalated stop, carrying the same
+      // escalation object in its own `result.escalation`).
+      onEscalation: (escalation) => send({ kind: "escalation", escalation }),
     })
-    .catch((err) => {
-      send({ kind: "error", error: err?.message || String(err) });
-    })
-    .finally(() => {
-      liveGoalRuns.delete(goalRunId);
-    });
+      .then((result) => {
+        send({ kind: "done", result });
+      })
+      .catch((err) => {
+        send({ kind: "error", error: err?.message || String(err) });
+      })
+      .finally(() => {
+        liveGoalRuns.delete(goalRunId);
+      });
 
-  return { ok: true, goalRunId };
-});
+    return { ok: true, goalRunId };
+  }
+);
 
 // --- Cancel an in-flight goal run: flip its cancelToken so the orchestrator
 // stops at the next iteration boundary (an in-flight iteration always runs to

@@ -6,8 +6,15 @@ let archiveSearchTerm = ""; // filters the Archive page's two lists by title/fol
 let selectedGoalId = null; // Focus page: which goal's breakdown is expanded
 // Goal page (Fas 3 Point 11) — the single in-flight autonomous run's live
 // state, or null when nothing is running. A first-pass draft: one run at a
-// time. { goalRunId, goal, status, iterations: [...], result, error }.
+// time. { goalRunId, goal, status, iterations: [...], result, error,
+// escalation }. `escalation` (Point 12 Phase-0, opt-in) is set when the run
+// pauses on a signal instead of finishing normally - see goalOrchestrator.js.
 let goalRunState = null;
+// Persists the "Escalate on trouble" checkbox across re-renders of the form
+// (renderGoalPage rebuilds the whole page's DOM each time), same role the
+// verify-command field's value plays via goalRunState once a run exists -
+// but this needs to survive BEFORE a run exists too, so it gets its own var.
+let goalEscalateOnTrouble = false;
 let selectedSessionId = null;
 let focusedPaneIndex = 0;
 let dragSessionId = null;
@@ -4977,6 +4984,32 @@ function renderGoalPage() {
     suggestVerifyCommandFor(cwdInput.value.trim());
   });
 
+  // Point 12 Phase-0 escalation (opt-in, default OFF, mirrors verifyCommand's
+  // own opt-in shape) — a checkbox rather than a field of thresholds, since
+  // Phase-0 is deliberately "free Tier-1 signals with sane defaults", not a
+  // tuning panel. Checking it sends `escalationConfig: {}` on goal:run, which
+  // enables escalation with all of goalOrchestrator.js's defaults.
+  const escalateRow = document.createElement("label");
+  escalateRow.className = "settings-toggle-row goal-escalate-row";
+  const escalateCheckbox = document.createElement("input");
+  escalateCheckbox.type = "checkbox";
+  escalateCheckbox.checked = goalEscalateOnTrouble;
+  escalateCheckbox.disabled = running;
+  escalateCheckbox.addEventListener("change", () => {
+    goalEscalateOnTrouble = escalateCheckbox.checked;
+  });
+  const escalateText = document.createElement("div");
+  escalateText.className = "settings-toggle-text";
+  const escalateTitle = document.createElement("div");
+  escalateTitle.className = "settings-toggle-title";
+  escalateTitle.textContent = "Escalate on trouble";
+  const escalateDesc = document.createElement("div");
+  escalateDesc.className = "settings-toggle-desc";
+  escalateDesc.textContent =
+    "Pause the run for you to review instead of continuing blind, when it repeats the same verify failure, reports an ambiguity it can't resolve, an iteration's cost spikes, or several iterations in a row land no new commits.";
+  escalateText.append(escalateTitle, escalateDesc);
+  escalateRow.append(escalateCheckbox, escalateText);
+
   const err = document.createElement("div");
   err.className = "goal-error";
 
@@ -4991,6 +5024,10 @@ function renderGoalPage() {
     const projectPath = cwdInput.value.trim();
     const maxIterations = parseInt(iterInput.value, 10) || 5;
     const verifyCommand = verifyInput.value.trim();
+    // `{}` (not `true`) enables escalation with goalOrchestrator.js's own
+    // Phase-0 defaults; unchecked sends `undefined`, keeping the pre-existing
+    // no-escalation behavior exactly (mirrors verifyCommand's opt-in shape).
+    const escalationConfig = escalateCheckbox.checked ? {} : undefined;
     err.textContent = "";
     if (!goal) {
       err.textContent = "Enter a goal first.";
@@ -5000,7 +5037,7 @@ function renderGoalPage() {
       err.textContent = "Pick a project folder first.";
       return;
     }
-    const res = await window.maestro.runGoal({ projectPath, goal, maxIterations, verifyCommand });
+    const res = await window.maestro.runGoal({ projectPath, goal, maxIterations, verifyCommand, escalationConfig });
     if (!res || !res.ok) {
       err.textContent = "Failed to start: " + (res?.error || "unknown error");
       return;
@@ -5011,10 +5048,12 @@ function renderGoalPage() {
       projectPath,
       maxIterations,
       verifyCommand,
+      escalationConfig,
       status: "running",
       iterations: [],
       result: null,
       error: null,
+      escalation: null,
     };
     renderGoalPage();
   });
@@ -5044,6 +5083,7 @@ function renderGoalPage() {
     verifyLabel,
     verifyInput,
     verifyHint,
+    escalateRow,
     err,
     actionRow
   );
@@ -5057,13 +5097,26 @@ function renderGoalPage() {
     const statusLine = document.createElement("div");
     statusLine.className = "goal-status-line";
     if (goalRunState.status === "running") {
-      statusLine.textContent = `Running · ${goalRunState.iterations.length} iteration(s) so far…`;
+      statusLine.textContent = goalRunState.escalation
+        ? `Paused · ${goalRunState.iterations.length} iteration(s) so far…`
+        : `Running · ${goalRunState.iterations.length} iteration(s) so far…`;
     } else if (goalRunState.status === "done") {
-      statusLine.textContent = "Run finished.";
+      statusLine.textContent = goalRunState.escalation ? "Run paused for you." : "Run finished.";
     } else if (goalRunState.status === "error") {
       statusLine.textContent = "Run ended with an error.";
     }
     progress.append(statusLine);
+
+    // RPI phase (research -> plan -> implement, see goalOrchestrator.js):
+    // the plan itself is the plan-phase's one durable artifact, so surface it
+    // as soon as any iteration has reached/passed the plan phase - a plain
+    // expandable block (the app's existing `.tool-group` <details> pattern),
+    // not its own card, since it is reference material for the run rather
+    // than a per-iteration event.
+    const planContent = goalRunState.result?.plan ?? goalRunState.latestPlan ?? null;
+    if (planContent) {
+      progress.append(goalPlanBlock(planContent));
+    }
 
     goalRunState.iterations.forEach((rec) => {
       progress.append(goalIterationCard(rec));
@@ -5072,8 +5125,17 @@ function renderGoalPage() {
     page.append(progress);
   }
 
+  // ---- Escalation (Point 12 Phase-0, opt-in) ----
+  // Shown as soon as the escalation event arrives, independent of whether the
+  // "done" event (which carries the same info in its `result`) has landed
+  // yet - a human-gated pause should be visible immediately, not only once
+  // the run has fully wound down.
+  if (goalRunState && goalRunState.escalation) {
+    page.append(goalEscalationCard(goalRunState.escalation));
+  }
+
   // ---- Final summary ----
-  if (goalRunState && goalRunState.status === "done" && goalRunState.result) {
+  if (goalRunState && goalRunState.status === "done" && goalRunState.result && goalRunState.result.stoppedReason !== "escalated") {
     page.append(goalSummaryCard(goalRunState.result));
   }
   if (goalRunState && goalRunState.status === "error") {
@@ -5082,6 +5144,26 @@ function renderGoalPage() {
     errCard.textContent = "Error: " + (goalRunState.error || "unknown error");
     page.append(errCard);
   }
+}
+
+// RPI phase (research/plan/implement) display labels - short and title-cased
+// for the iteration card, matching the app's other compact-label conventions.
+const GOAL_PHASE_LABELS = { research: "Research", plan: "Plan", implement: "Implement" };
+
+// An expandable block showing the current `.maestro-goal/plan.md` content -
+// reuses the same <details>/.tool-group pattern as tool-call output elsewhere
+// in the app, rather than inventing a new expandable widget.
+function goalPlanBlock(planContent) {
+  const details = document.createElement("details");
+  details.className = "tool-group goal-plan-block";
+  const summary = document.createElement("summary");
+  summary.textContent = "Plan (.maestro-goal/plan.md)";
+  details.append(summary);
+  const pre = document.createElement("pre");
+  pre.className = "tool-call-output goal-plan-content";
+  pre.textContent = planContent;
+  details.append(pre);
+  return details;
 }
 
 function goalIterationCard(rec) {
@@ -5094,6 +5176,18 @@ function goalIterationCard(rec) {
   const num = document.createElement("span");
   num.className = "goal-iter-num";
   num.textContent = `Iteration ${rec.iteration}`;
+  head.append(num);
+
+  // RPI phase (research/plan/implement) - a small muted label, same slot as
+  // the committed/discarded/error badge but visually distinct (no border)
+  // since it is descriptive, not a status.
+  if (rec.phase && GOAL_PHASE_LABELS[rec.phase]) {
+    const phaseLabel = document.createElement("span");
+    phaseLabel.className = "goal-iter-phase";
+    phaseLabel.textContent = GOAL_PHASE_LABELS[rec.phase];
+    head.append(phaseLabel);
+  }
+
   const badge = document.createElement("span");
   badge.className = "goal-iter-badge";
   if (rec.ok && rec.result) {
@@ -5101,7 +5195,29 @@ function goalIterationCard(rec) {
   } else {
     badge.textContent = "error";
   }
-  head.append(num, badge);
+  head.append(badge);
+
+  // Context-fill KPI (praktiker #2) - muted normally, attention color once it
+  // crosses the same "dumb zone" threshold goalOrchestrator.js itself flags
+  // via `contextBudgetWarning`. Only shown when a fill percentage is actually
+  // available (null when the model's context window wasn't reported).
+  if (typeof rec.fillPct === "number") {
+    const fillBadge = document.createElement("span");
+    fillBadge.className = "goal-iter-badge goal-iter-fill" + (rec.contextBudgetWarning ? " goal-iter-fill-warn" : "");
+    fillBadge.textContent = `${Math.round(rec.fillPct * 100)}% ctx`;
+    if (typeof rec.costUsd === "number") {
+      fillBadge.title = `$${rec.costUsd.toFixed(4)} this iteration`;
+    }
+    head.append(fillBadge);
+  } else if (typeof rec.costUsd === "number" && rec.costUsd > 0) {
+    // No context-window readout for this model, but cost is still known -
+    // show it alone rather than silently dropping the only KPI available.
+    const costBadge = document.createElement("span");
+    costBadge.className = "goal-iter-badge goal-iter-fill";
+    costBadge.textContent = `$${rec.costUsd.toFixed(3)}`;
+    head.append(costBadge);
+  }
+
   card.append(head);
 
   if (rec.ok && rec.result) {
@@ -5170,6 +5286,79 @@ function goalSummaryCard(result) {
   return card;
 }
 
+// Human-readable labels for the Point 12 Phase-0 signal names
+// (detectEscalationSignal in goalOrchestrator.js) - the raw signal string is
+// still shown (in the detail line) for anyone who wants the exact mechanism,
+// this is just a friendlier headline.
+const GOAL_ESCALATION_SIGNAL_LABELS = {
+  repeated_verify_failure: "Stuck on the same verify failure",
+  ambiguity_reported: "Reported an ambiguity it can't resolve",
+  cost_soft_cap: "An iteration's cost spiked",
+  no_net_progress: "Several iterations landed no new commits",
+};
+
+// A human-gated card for a Point 12 Phase-0 escalation (opt-in - see the
+// "Escalate on trouble" checkbox and goalOrchestrator.js's runGoal doc
+// comment). Visually a variant of .goal-summary-card (same shape: title, key/
+// value rows, a closing note) but with the --waiting amber the rest of the
+// app already uses for "needs you" states, so it reads as a distinct,
+// attention-worthy pause rather than a normal completion.
+//
+// Resume: goalOrchestrator.js does NOT yet expose a "continue this exact run"
+// entry point - `runGoal` always creates a brand-new worktree/branch. The
+// worktree/branch/notes.md/phase.json ARE preserved on disk (the whole point
+// of pausing rather than aborting), so a one-click resume is architecturally
+// possible, but wiring a NEW runGoal call to an EXISTING worktree instead of
+// creating a fresh one is real orchestrator work, not a renderer-only change.
+// Rather than fake a resume button that silently starts an unrelated new run
+// against the same project, this card surfaces the paused worktree/branch so
+// the user can inspect or continue the work by hand today, and says plainly
+// that one-click resume is a follow-up.
+function goalEscalationCard(escalation) {
+  const card = document.createElement("div");
+  card.className = "goal-summary-card goal-escalation-card";
+
+  const title = document.createElement("div");
+  title.className = "goal-summary-title goal-escalation-title";
+  title.textContent =
+    "Paused for you - " + (GOAL_ESCALATION_SIGNAL_LABELS[escalation.signal] || escalation.signal || "escalation");
+  card.append(title);
+
+  if (escalation.detail) {
+    const detail = document.createElement("div");
+    detail.className = "goal-iter-summary goal-escalation-detail";
+    detail.textContent = escalation.detail;
+    card.append(detail);
+  }
+
+  const rows = [
+    ["Paused at iteration", String(escalation.iteration ?? "?")],
+    ["Signal", escalation.signal || "(unknown)"],
+    ["Branch", escalation.branchName || "(unknown)"],
+    ["Worktree", escalation.worktreePath || "(unknown)"],
+  ];
+  rows.forEach(([k, v]) => {
+    const row = document.createElement("div");
+    row.className = "goal-summary-row";
+    const key = document.createElement("span");
+    key.className = "goal-summary-key";
+    key.textContent = k;
+    const val = document.createElement("span");
+    val.className = "goal-summary-val";
+    val.textContent = v;
+    row.append(key, val);
+    card.append(row);
+  });
+
+  const note = document.createElement("div");
+  note.className = "goal-summary-note";
+  note.textContent =
+    "The run paused here rather than continuing blind - nothing was discarded. Its worktree, branch, notes.md and plan.md are all preserved above for you to inspect, and you can continue the work by hand in that worktree. One-click resume from this card is a planned follow-up, not wired up yet.";
+  card.append(note);
+
+  return card;
+}
+
 // Live goal-run events (own channel, parallel to session events). Each payload
 // carries goalRunId; events from a stale run (a previous run, or after a new
 // one started) are ignored so late events can't clobber current state.
@@ -5179,12 +5368,24 @@ window.maestro.onGoalEvent((evt) => {
   }
   if (evt.kind === "iteration") {
     goalRunState.iterations.push(evt.record);
+    // Track the latest plan.md content as it arrives (see goalOrchestrator.js
+    // record.plan), so the Goal page can show the plan live instead of only
+    // once the run finishes and its final `result.plan` is available.
+    if (evt.record.plan) {
+      goalRunState.latestPlan = evt.record.plan;
+    }
   } else if (evt.kind === "done") {
     goalRunState.status = "done";
     goalRunState.result = evt.result;
   } else if (evt.kind === "error") {
     goalRunState.status = "error";
     goalRunState.error = evt.error;
+  } else if (evt.kind === "escalation") {
+    // Point 12 Phase-0 escalation (opt-in) - arrives BEFORE "done" (see
+    // main.js's goal:run handler), so the escalation card can show up the
+    // moment the run actually pauses rather than waiting for the run's
+    // promise to resolve and send "done" with the same info.
+    goalRunState.escalation = evt.escalation;
   }
   // Only re-render if the Goal/Agents page is actually visible, to avoid
   // clobbering another page the user may have switched to mid-run.
