@@ -336,20 +336,27 @@ ipcMain.handle("image:save", (_event, { base64Data, ext }) => {
   }
 });
 
-// --- Voice input: transcribe recorded mic audio locally (offline Whisper via
-// @huggingface/transformers — see src/lib/voice.js for why this option was
-// picked over the OS speech API / whisper.cpp bindings / OpenSuperWhisper).
+// --- Voice input: transcribe recorded mic audio locally (offline Whisper).
+// Two backends behind config.voiceEngine (see config.js): "whispercpp"
+// (default, src/lib/whisperCpp.js) spawns a whisper.cpp + CUDA subprocess,
+// ~10-20x faster than the original path on the captain's RTX 3070 (see
+// docs/transcription-research.md); "transformers" (src/lib/voice.js) is the
+// original @huggingface/transformers ONNX pipeline, kept as a fallback for
+// machines without the .whisper/ binary+model installed. See voice.js for
+// why transformers.js was originally picked over the OS speech API /
+// whisper.cpp Node bindings / OpenSuperWhisper.
 //
-// The actual ONNX inference runs in a dedicated utility process (see
+// Both backends' inference runs in a dedicated utility process (see
 // src/lib/voiceWorker.js), NOT here on the main process. The captain's feedback
 // after the Swedish-quality model swap: "even the mic button feels laggy" -
 // the CPU-bound Whisper inference used to run directly on this IPC handler,
 // which is on the main process's event loop, so a multi-second
 // transcription blocked EVERY other IPC round-trip (session polling, the
 // mic button's own state, etc.) until it finished. utilityProcess.fork()
-// gives the model its own OS process and event loop; this process now only
-// ever does a cheap postMessage + await reply, so the UI stays responsive
-// no matter how long a transcription takes.
+// gives inference its own OS process and event loop; this process only
+// ever does a cheap postMessage + await reply (or, for whisper.cpp, an
+// async child_process.spawn from within that worker process), so the UI
+// stays responsive no matter how long a transcription takes.
 //
 // The worker is spawned lazily on first use (not at app startup) so apps
 // that never touch voice input never pay the ~1s process-spawn cost or hold
@@ -388,11 +395,11 @@ function getVoiceWorker() {
   return voiceWorker;
 }
 
-function transcribeInWorker(samples, language) {
+function transcribeInWorker(samples, language, engine) {
   return new Promise((resolve, reject) => {
     const id = ++voiceRequestId;
     pendingVoiceRequests.set(id, { resolve, reject });
-    getVoiceWorker().postMessage({ id, samples, language });
+    getVoiceWorker().postMessage({ id, samples, language, engine });
   });
 }
 
@@ -402,7 +409,8 @@ function transcribeInWorker(samples, language) {
 // as-is to the worker, which rebuilds the typed array on its side). ---
 ipcMain.handle("voice:transcribe", async (_event, { samples, language }) => {
   try {
-    const message = await transcribeInWorker(samples, language);
+    const engine = loadConfig().voiceEngine || "whispercpp";
+    const message = await transcribeInWorker(samples, language, engine);
     if (!message.ok) {
       throw new Error(message.error);
     }

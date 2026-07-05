@@ -2,3 +2,8 @@ node_modules/
 config.json
 usage-log.jsonl
 pasted-images/
+# whisper.cpp CUDA binary + GGML model for voice transcription (see
+# src/lib/whisperCpp.js and docs/transcription-research.md) — ~1.5GB of
+# CUDA DLLs and model weights, installed manually per-machine, never
+# committed.
+.whisper/
