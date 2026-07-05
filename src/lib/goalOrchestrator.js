@@ -34,11 +34,37 @@ import { createWorktree, removeWorktree } from "./worktree.js";
  * plumbing, and judge.js/orchestratorHelper.js's cost-optimized structured-
  * output recipe (--output-format json + --json-schema) for each iteration's
  * result, rather than parsing free text.
+ *
+ * RPI phasing (added after v1, per PLAN.md's practitioner-research section /
+ * Dex Horthy's 12-Factor Agents, and DECISIONS.md's 2026-07-04 entry): rather
+ * than every iteration running the same "work on the smallest next step"
+ * prompt, a goal run now moves through three phases in order — `research`
+ * (read-only investigation, findings written to notes.md), `plan` (a durable
+ * `.maestro-goal/plan.md` artifact, no code edits), then `implement` (today's
+ * pre-existing behavior, gated on plan.md existing, iterating until done or
+ * maxIterations). The phase is persisted to `.maestro-goal/phase.json` so it
+ * survives the same fresh-subprocess-per-iteration model notes.md already
+ * survives, and is included on every iteration record so a future UI layer
+ * can display it and gate an "approve plan before implement" human checkpoint
+ * — that approval UI is a deferred follow-up, NOT built by this change; today
+ * the phase auto-advances the moment a phase-completing iteration succeeds.
  */
 
 const NOTES_DIR = ".maestro-goal";
 const NOTES_FILENAME = "notes.md";
+const PHASE_FILENAME = "phase.json";
+const PLAN_FILENAME = "plan.md";
 const DEFAULT_MAX_ITERATIONS = 5;
+
+// RPI phasing (Dex Horthy, 12-Factor Agents — see PLAN.md's practitioner-
+// research section and DECISIONS.md's 2026-07-04 entry): instead of every
+// iteration running the same undifferentiated "work on the smallest next
+// step" prompt, the first iteration researches, the second plans (writing a
+// durable plan.md artifact), and only then does the loop switch to the
+// existing implement behavior for the remaining iterations. The plan
+// artifact is itself file-memory, readable by later iterations AND by a
+// future UI layer without re-deriving it from notes.md prose.
+const PHASE_ORDER = ["research", "plan", "implement"];
 
 // Generous — an iteration is a real coding turn (may run builds/tests/lint
 // itself), not a cheap classifier call. Bounds a hung subprocess (e.g. an
@@ -65,33 +91,96 @@ const ITERATION_SCHEMA = JSON.stringify({
   required: ["success", "summary", "keyChanges", "keyLearnings"],
 });
 
-const ITERATION_SYSTEM_PROMPT = [
+const COMMON_ITERATION_RULES = [
   "You are one iteration of a fresh-context autonomous coding agent working",
   "toward a larger goal, one small step at a time. You have NO memory of",
   "previous iterations except the notes.md content included in your prompt —",
   "treat that as the complete record of what's already been done and learned.",
   "",
-  "Rules for this iteration:",
-  "1. Work on the SMALLEST next logical step toward the goal, not the whole",
-  "   goal at once. Leave the rest for future iterations.",
-  "2. Run any relevant build/test/lint yourself and fix what you find before",
-  "   finishing — don't leave broken code for the next iteration to inherit.",
-  "3. Do NOT run `git commit` yourself. The orchestrator commits your changes",
-  "   after this call returns, using your own summary as the commit message.",
-  "4. Stop any background processes/servers you started before finishing —",
-  "   nothing should be left running after your turn ends.",
-  "5. Set success:false if you could not make real, safe progress this",
-  "   iteration (e.g. the step turned out to be ambiguous, blocked, or you",
-  "   hit an error you couldn't resolve). The orchestrator will discard ALL",
-  "   file changes from a success:false iteration, so do not set success:true",
-  "   unless the working tree is actually in a good, coherent state.",
-  "6. Respond only in the requested JSON schema. summary is ONE sentence",
-  "   describing what this iteration actually did (used verbatim as the git",
-  "   commit message). keyChanges is a short list of concrete changes made.",
-  "   keyLearnings is a short list of anything future iterations should know",
-  "   (dead ends, gotchas, decisions made) — this is the ONLY way that",
-  "   knowledge survives into the next iteration.",
+  "Rules that apply to every iteration regardless of phase:",
+  "- Do NOT run `git commit` yourself. The orchestrator commits your changes",
+  "  after this call returns, using your own summary as the commit message.",
+  "- Stop any background processes/servers you started before finishing —",
+  "  nothing should be left running after your turn ends.",
+  "- Set success:false if you could not make real, safe progress this",
+  "  iteration (e.g. the step turned out to be ambiguous, blocked, or you hit",
+  "  an error you couldn't resolve). The orchestrator will discard ALL file",
+  "  changes from a success:false iteration, so do not set success:true unless",
+  "  the working tree is actually in a good, coherent state.",
+  "- Respond only in the requested JSON schema. summary is ONE sentence",
+  "  describing what this iteration actually did (used verbatim as the git",
+  "  commit message). keyChanges is a short list of concrete changes made.",
+  "  keyLearnings is a short list of anything future iterations should know",
+  "  (dead ends, gotchas, decisions made) — this is the ONLY way that",
+  "  knowledge survives into the next iteration.",
 ].join("\n");
+
+// RPI phasing (PLAN.md's practitioner-research section, Dex Horthy /
+// 12-Factor Agents): each phase gets its own narrow system prompt instead of
+// one undifferentiated "work on the smallest next step" prompt for every
+// iteration. `implement` is today's pre-existing behavior, unchanged in
+// substance — `research` and `plan` are new, deliberately restricted phases
+// that run before it.
+const PHASE_PROMPTS = {
+  research: [
+    COMMON_ITERATION_RULES,
+    "",
+    "This iteration's phase is RESEARCH.",
+    "",
+    "Rules specific to this phase:",
+    "1. Investigate the codebase and any other available context needed to",
+    "   understand how to achieve the overall goal. Read files, search for",
+    "   relevant code, run read-only inspection commands as needed.",
+    "2. Do NOT edit, create, or delete any file except notes.md, and do NOT",
+    "   run any command that changes the working tree (no code edits, no",
+    "   `git` mutations, no installs). This phase is read-only by design —",
+    "   the orchestrator does not verify tree cleanliness for this phase, so",
+    "   the instruction alone is the only guard.",
+    "3. Before finishing, write your findings to the continuity notes file at",
+    "   `.maestro-goal/notes.md` (append, do not overwrite): what the",
+    "   relevant code/architecture looks like, constraints discovered, open",
+    "   questions, and a recommended approach. This is the ONLY deliverable",
+    "   of this phase — the next phase (plan) will read it instead of",
+    "   re-researching from scratch.",
+    "4. Set success:true once you've written useful findings to notes.md,",
+    "   even though no other file changed — a research iteration with no code",
+    "   diff is expected and is not itself a failure.",
+  ].join("\n"),
+
+  plan: [
+    COMMON_ITERATION_RULES,
+    "",
+    "This iteration's phase is PLAN.",
+    "",
+    "Rules specific to this phase:",
+    "1. Using the goal and the research notes below, write a concrete,",
+    "   actionable implementation plan to `.maestro-goal/plan.md`. Create the",
+    "   file if it does not exist, or replace it if it does — plan.md always",
+    "   reflects the current, single best plan, not a history of revisions.",
+    "2. The plan should break the goal into a sequence of small, concrete",
+    "   implementation steps an `implement`-phase iteration (which only ever",
+    "   works on one smallest-next-step at a time, with no memory beyond",
+    "   notes.md and this plan) can follow one at a time.",
+    "3. Do NOT make any other code changes this iteration. This phase's only",
+    "   deliverable is `.maestro-goal/plan.md` itself.",
+    "4. Set success:true once `.maestro-goal/plan.md` has been written with a",
+    "   real plan — that alone is a complete, successful iteration for this",
+    "   phase.",
+  ].join("\n"),
+
+  implement: [
+    COMMON_ITERATION_RULES,
+    "",
+    "This iteration's phase is IMPLEMENT.",
+    "",
+    "Rules specific to this phase:",
+    "1. A plan already exists at `.maestro-goal/plan.md` (included below).",
+    "   Work on the SMALLEST next logical step from that plan, not the whole",
+    "   goal at once. Leave the rest for future iterations.",
+    "2. Run any relevant build/test/lint yourself and fix what you find before",
+    "   finishing — don't leave broken code for the next iteration to inherit.",
+  ].join("\n"),
+};
 
 function runGit(cwd, args) {
   return execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8", windowsHide: true });
@@ -135,6 +224,68 @@ function appendNotes(worktreePath, iterationNumber, result) {
   fs.appendFileSync(file, lines.join("\n"), "utf8");
 }
 
+function phasePath(worktreePath) {
+  return path.join(worktreePath, NOTES_DIR, PHASE_FILENAME);
+}
+
+function planPath(worktreePath) {
+  return path.join(worktreePath, NOTES_DIR, PLAN_FILENAME);
+}
+
+/**
+ * Reads the persisted RPI phase, defaulting to the first phase (`research`)
+ * when no phase file exists yet (a brand-new goal run). Persisting phase to
+ * disk under the same `.maestro-goal/` dir as notes.md — rather than only in
+ * a JS variable local to the `runGoal` loop — matters because that directory
+ * is the one piece of state that survives the fresh-subprocess-per-iteration
+ * model; a future caller inspecting or resuming a goal run from just the
+ * worktree (e.g. after an app restart) can recover which phase it stopped in
+ * the same way it recovers notes.md.
+ */
+function readPhase(worktreePath) {
+  const file = phasePath(worktreePath);
+  if (!fs.existsSync(file)) {
+    return PHASE_ORDER[0];
+  }
+  try {
+    const data = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (PHASE_ORDER.includes(data.phase)) {
+      return data.phase;
+    }
+  } catch {
+    // Corrupt/unreadable phase file - fall back to the first phase rather
+    // than throwing; a goal run should never hard-fail on bookkeeping state.
+  }
+  return PHASE_ORDER[0];
+}
+
+/** Persists the current RPI phase to `.maestro-goal/phase.json`. */
+function writePhase(worktreePath, phase) {
+  const dir = path.join(worktreePath, NOTES_DIR);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  fs.writeFileSync(phasePath(worktreePath), JSON.stringify({ phase }, null, 2) + "\n", "utf8");
+}
+
+/** Returns the phase after `phase` in PHASE_ORDER, or `phase` itself if it is already the last one (implement iterates in place). */
+function nextPhase(phase) {
+  const idx = PHASE_ORDER.indexOf(phase);
+  if (idx === -1 || idx === PHASE_ORDER.length - 1) {
+    return phase;
+  }
+  return PHASE_ORDER[idx + 1];
+}
+
+/** Reads the current plan.md content, or null if it hasn't been written yet. */
+function readPlan(worktreePath) {
+  const file = planPath(worktreePath);
+  if (!fs.existsSync(file)) {
+    return null;
+  }
+  return fs.readFileSync(file, "utf8");
+}
+
 function truncate(text, max) {
   if (!text) {
     return "";
@@ -148,10 +299,15 @@ function truncate(text, max) {
  * or { ok:false, error } — never throws, so the caller's loop can always
  * decide what to do next (including treating a hard process error as a
  * failed iteration to roll back).
+ *
+ * `phase` selects the system prompt from PHASE_PROMPTS (RPI phasing — see
+ * that map's doc comment). `planContent` is included in the user prompt when
+ * present (plan phase's own output, consumed by later plan/implement
+ * iterations); it is null before the plan phase has run.
  */
-function runIteration({ worktreePath, goal, notesContent, model, effort }) {
+function runIteration({ worktreePath, goal, notesContent, planContent, phase, model, effort }) {
   return new Promise((resolve) => {
-    const prompt = [
+    const promptLines = [
       `Overall goal: ${goal}`,
       "",
       "Notes from previous iterations (may be empty on the first iteration):",
@@ -159,8 +315,26 @@ function runIteration({ worktreePath, goal, notesContent, model, effort }) {
       notesContent || "(no previous iterations yet)",
       "---",
       "",
-      "Work on the smallest next logical step toward the overall goal above.",
-    ].join("\n");
+    ];
+    if (planContent) {
+      promptLines.push(
+        "Current implementation plan (.maestro-goal/plan.md):",
+        "---",
+        planContent,
+        "---",
+        ""
+      );
+    }
+    if (phase === "research") {
+      promptLines.push("Research the codebase and write your findings to notes.md as instructed.");
+    } else if (phase === "plan") {
+      promptLines.push("Write the implementation plan to .maestro-goal/plan.md as instructed.");
+    } else {
+      promptLines.push("Work on the smallest next logical step toward the overall goal above.");
+    }
+    const prompt = promptLines.join("\n");
+
+    const systemPrompt = PHASE_PROMPTS[phase] || PHASE_PROMPTS.implement;
 
     const args = [
       "-p",
@@ -170,7 +344,7 @@ function runIteration({ worktreePath, goal, notesContent, model, effort }) {
       "--json-schema",
       ITERATION_SCHEMA,
       "--system-prompt",
-      ITERATION_SYSTEM_PROMPT,
+      systemPrompt,
       // Without an explicit permission mode, a real goal that edits files /
       // runs a build / touches git hits a permission prompt the headless
       // child has no TTY to answer, so it hangs until ITERATION_TIMEOUT_MS,
@@ -412,14 +586,16 @@ function countCommitsOnBranch(worktreePath, baseCommit) {
  * @param {string} [opts.verifyCommand] - optional independent verification
  *   gate (e.g. "npm test" or "npm run build"), run as a shell command with
  *   the worktree as cwd. Closes the "trusts the agent's own self-reported
- *   success" gap (PLAN.md Point 11 hardening): when set, an iteration that
- *   reports success:true is only ACCEPTED (notes appended as success,
- *   committed) if this command then also exits 0 in the worktree. If it
- *   exits non-zero or times out, the iteration is treated exactly like any
- *   other failure — discarded via the same reset --hard/clean -fd rollback,
- *   with the command's output tail recorded in notes.md so the next
- *   fresh-context iteration knows what actually broke. Defaults to
- *   undefined, which keeps the pre-existing behavior unchanged (no gate).
+ *   success" gap (PLAN.md Point 11 hardening): when set, an IMPLEMENT-phase
+ *   iteration that reports success:true is only ACCEPTED (notes appended as
+ *   success, committed) if this command then also exits 0 in the worktree.
+ *   If it exits non-zero or times out, the iteration is treated exactly like
+ *   any other failure — discarded via the same reset --hard/clean -fd
+ *   rollback, with the command's output tail recorded in notes.md so the next
+ *   fresh-context iteration knows what actually broke. Does NOT apply to
+ *   research/plan-phase iterations (they don't produce code to verify).
+ *   Defaults to undefined, which keeps the pre-existing behavior unchanged
+ *   (no gate).
  * @param {(iterationRecord: object) => void} [opts.onIteration] - optional
  *   callback fired after each iteration with its result, for a future UI/CLI
  *   caller to show live progress. Never awaited, never allowed to throw the
@@ -429,7 +605,10 @@ function countCommitsOnBranch(worktreePath, baseCommit) {
  *   in-flight subprocess always runs to completion or its own timeout); once
  *   `cancelToken.cancelled` is true, no further iterations start.
  * @returns {Promise<{ worktreePath: string, branchName: string, notes: string,
- *   commitCount: number, iterations: object[], stoppedReason: string }>}
+ *   phase: string, plan: (string|null), commitCount: number,
+ *   iterations: object[], stoppedReason: string }>} `iterations` records each
+ *   carry a `phase` field (`"research"`, `"plan"`, or `"implement"`) alongside
+ *   the pre-existing `ok`/`result`/`committed`/`verified` fields.
  */
 export async function runGoal({
   projectPath,
@@ -473,6 +652,11 @@ export async function runGoal({
   const iterations = [];
   let consecutiveFailures = 0;
   let stoppedReason = "max_iterations_reached";
+  // RPI phase, persisted to phase.json so it survives the fresh-subprocess-
+  // per-iteration model the same way notes.md does. A brand-new worktree has
+  // no phase.json yet, so this starts at PHASE_ORDER[0] ("research").
+  let phase = readPhase(worktreePath);
+  writePhase(worktreePath, phase);
 
   for (let i = 1; i <= maxIterations; i++) {
     if (cancelToken?.cancelled) {
@@ -481,7 +665,28 @@ export async function runGoal({
     }
 
     const notesContent = readOrCreateNotes(worktreePath);
-    const outcome = await runIteration({ worktreePath, goal, notesContent, model, effort });
+    let planContent = readPlan(worktreePath);
+
+    // Gate: implement must not run without a plan. This should not normally
+    // trigger (implement only follows a successful plan-phase iteration that
+    // itself required writing plan.md to notes/records), but it is a cheap,
+    // self-healing safety net against a phase.json/plan.md mismatch - e.g. a
+    // resumed run whose plan-phase iteration was hard-failed and rolled back
+    // after phase.json had already been advanced, or plan.md being manually
+    // removed from the worktree between iterations.
+    if (phase === "implement" && !planContent) {
+      phase = "plan";
+      writePhase(worktreePath, phase);
+    }
+
+    const outcome = await runIteration({ worktreePath, goal, notesContent, planContent, phase, model, effort });
+
+    // The verification gate only makes sense once there is code to verify —
+    // research/plan iterations deliberately make no code changes, so gating
+    // them on `verifyCommand` would just fail a build/test run against an
+    // unchanged tree for no reason. Only implement-phase iterations run it.
+    const verifyGateApplies = Boolean(verifyCommand) && phase === "implement";
+    const iterationPhase = phase;
 
     let record;
     if (!outcome.ok) {
@@ -496,20 +701,21 @@ export async function runGoal({
         keyLearnings: [`Iteration ${i} hard-failed: ${outcome.error}`],
       };
       appendNotes(worktreePath, i, syntheticResult);
-      record = { iteration: i, ok: false, error: outcome.error, committed: false };
+      record = { iteration: i, phase: iterationPhase, ok: false, error: outcome.error, committed: false };
       consecutiveFailures += 1;
     } else if (outcome.result.success === false) {
       discardWorktreeChanges(worktreePath);
       appendNotes(worktreePath, i, outcome.result);
       record = {
         iteration: i,
+        phase: iterationPhase,
         ok: true,
         result: outcome.result,
         committed: false,
         costUsd: outcome.costUsd,
       };
       consecutiveFailures += 1;
-    } else if (verifyCommand) {
+    } else if (verifyGateApplies) {
       // Independent verification gate (PLAN.md Point 11 hardening): the
       // agent's own success:true is necessary but not sufficient. Run the
       // configured command in the worktree BEFORE appending notes or
@@ -523,6 +729,7 @@ export async function runGoal({
         const committed = commitIteration(worktreePath, i, outcome.result.summary);
         record = {
           iteration: i,
+          phase: iterationPhase,
           ok: true,
           result: outcome.result,
           committed,
@@ -530,6 +737,8 @@ export async function runGoal({
           costUsd: outcome.costUsd,
         };
         consecutiveFailures = 0;
+        phase = nextPhase(phase);
+        writePhase(worktreePath, phase);
       } else {
         // Verification failed — treat exactly like a success:false iteration:
         // roll back through the existing discard path (no new destructive
@@ -549,6 +758,7 @@ export async function runGoal({
         appendNotes(worktreePath, i, verifyFailureResult);
         record = {
           iteration: i,
+          phase: iterationPhase,
           ok: true,
           result: outcome.result,
           committed: false,
@@ -568,12 +778,20 @@ export async function runGoal({
       const committed = commitIteration(worktreePath, i, outcome.result.summary);
       record = {
         iteration: i,
+        phase: iterationPhase,
         ok: true,
         result: outcome.result,
         committed,
         costUsd: outcome.costUsd,
       };
       consecutiveFailures = 0;
+      // Advance research -> plan -> implement on a successful phase-completing
+      // iteration, instead of looping the same phase maxIterations times.
+      // `nextPhase` is a no-op once already at "implement" (the last phase),
+      // so implement iterations keep re-running implement until done or
+      // maxIterations, matching the pre-RPI behavior for that phase.
+      phase = nextPhase(phase);
+      writePhase(worktreePath, phase);
     }
 
     iterations.push(record);
@@ -595,6 +813,7 @@ export async function runGoal({
   }
 
   const finalNotes = readOrCreateNotes(worktreePath);
+  const finalPlan = readPlan(worktreePath);
   const commitCount = countCommitsOnBranch(worktreePath, baseCommit);
 
   // Auto-clean up a run that produced NOTHING to review (zero commits) - a
@@ -627,6 +846,13 @@ export async function runGoal({
     worktreePath,
     branchName,
     notes: finalNotes,
+    // The final RPI phase reached and the current plan.md content (null if
+    // the run stopped before the plan phase ever wrote one) - observable so
+    // a future UI can show "which phase did this run end in" and, later,
+    // gate an "approve plan before implement" human checkpoint on it. That
+    // approval UI is a deferred follow-up; this only makes the data visible.
+    phase,
+    plan: finalPlan,
     commitCount,
     iterations,
     stoppedReason,
