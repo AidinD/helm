@@ -3800,6 +3800,7 @@ async function refresh() {
   pruneStaleLaunchHistory();
   pruneStaleBackgroundTasks();
   renderBackgroundTasksBadge();
+  refreshDashboardIfVisible();
 }
 
 // First-load: after sessions are in, auto-open the most-recently-active
@@ -3947,6 +3948,457 @@ const SUBTASK_STATUS_LABEL = {
   review: "◎ review",
   done: "● done",
 };
+
+// ============================== Dashboard page (rebuild slice 1) ==============================
+//
+// PLAN.md's "Target UI" mock: a new destination alongside the existing chat
+// UI, organized around goals/in-motion-work/proposals rather than a flat
+// session list. Purely additive — this page mounts beside "Chat" in the same
+// #pageToggle nav; nothing about the existing chat view, sidebar, or
+// orchestrator session changes. Making this the default landing page (and
+// retiring the privileged orchestrator session) is a LATER slice per
+// PLAN.md's orchestrator-lifespan redesign — not done here.
+//
+// Real data used here: state.sessions (In motion, Orchestrator proposes —
+// same fields the sidebar already reads) and jot:goals (Goals — the same IPC
+// renderFocusPage uses). Anything without existing plumbing (background
+// worktree telemetry, a real work/private domain tag on Jot goals, actual
+// session-start-from-dashboard) is rendered as a clearly labeled placeholder
+// rather than invented data — see the individual section comments below.
+let dashboardFocusMode = "work"; // "work" | "private" — local UI state, resets on reload
+let dashboardSelectedChip = null; // which "New session" project chip is selected
+
+function isDashboardVisible() {
+  return !document.getElementById("dashboardPage").classList.contains("hidden");
+}
+
+// Re-renders the Dashboard if it's the currently visible page — called from
+// the same 30s refresh() tick that already re-polls state.sessions, so the
+// "In motion" / "Orchestrator proposes" sections stay live without a second
+// polling loop. A no-op (and cheap to call) when the page isn't open.
+function refreshDashboardIfVisible() {
+  if (isDashboardVisible()) {
+    renderDashboardPage();
+  }
+}
+
+async function renderDashboardPage() {
+  const page = document.getElementById("dashboardPage");
+  page.innerHTML = "";
+  page.className = "analysis-page dashboard-page";
+
+  const topbar = document.createElement("div");
+  topbar.className = "dash-topbar";
+  const heading = document.createElement("div");
+  const h2 = document.createElement("h2");
+  h2.textContent = "Dashboard";
+  const sub = document.createElement("div");
+  sub.className = "analysis-totals";
+  sub.style.marginBottom = "0";
+  sub.textContent = "A new home alongside Chat — nothing about the existing session view changed.";
+  heading.append(h2, sub);
+  topbar.append(heading, dashboardFocusToggleEl());
+  page.append(topbar);
+
+  page.append(dashboardInMotionSection());
+  page.append(dashboardProposesSection());
+  page.append(await dashboardGoalsSection());
+  page.append(dashboardNewSessionSection());
+}
+
+// --- Focus work/private toggle -----------------------------------------
+// Real, functional UI logic: flips dashboardFocusMode and dims goal cards
+// whose (heuristic) domain doesn't match. There is no persisted work/private
+// domain field on a Jot goal today (loadGoals in src/lib/jot.js only exposes
+// category/priority/deadline) — domainForGoal() below is a placeholder
+// keyword heuristic over the category name, not a real classifier, and is
+// labeled as such in the section hint text. The toggle mechanism itself
+// (state + emphasis/dim behavior) is real, not a stub.
+const PRIVATE_CATEGORY_HINTS = ["private", "personal", "gym", "health", "diabetes", "kombucha", "family"];
+
+function domainForGoal(goal) {
+  const cat = (goal.category || "").toLowerCase();
+  return PRIVATE_CATEGORY_HINTS.some((hint) => cat.includes(hint)) ? "private" : "work";
+}
+
+function dashboardFocusToggleEl() {
+  const wrap = document.createElement("div");
+  wrap.className = "dash-focus-toggle";
+
+  const label = document.createElement("span");
+  label.className = "dash-focus-label";
+  label.textContent = "Focus";
+  wrap.append(label);
+
+  const seg = document.createElement("div");
+  seg.className = "view-toggle";
+  for (const mode of ["work", "private"]) {
+    const btn = document.createElement("button");
+    btn.textContent = mode === "work" ? "Work" : "Private";
+    btn.classList.toggle("active", dashboardFocusMode === mode);
+    btn.addEventListener("click", () => {
+      dashboardFocusMode = mode;
+      renderDashboardPage();
+    });
+    seg.append(btn);
+  }
+  wrap.append(seg);
+  return wrap;
+}
+
+// --- In motion -----------------------------------------------------------
+// Real data: state.sessions filtered to "active" (currently streaming a
+// reply) and "waiting" (needs you — a run just finished and wants input).
+// This is genuinely "ephemeral work in flight" per the mock's intent, using
+// the exact same status field the sidebar's status-dot already reads. What
+// is NOT wired up: the mock's per-card context-budget bar and worktree path
+// (PLAN.md's worker/isolated-worktree model isn't built yet — Maestro today
+// runs sessions directly, not via dispatched worktree workers) — labeled
+// below rather than faked.
+function dashboardInMotionSection() {
+  const inMotion = state.sessions.filter((s) => !s.isArchived && (s.status === "active" || s.status === "waiting"));
+
+  const section = document.createElement("section");
+  section.className = "dash-board";
+  section.append(dashBoardHead("In motion", inMotion.length, "Sessions currently working or waiting on you"));
+
+  const body = document.createElement("div");
+  body.className = "dash-board-body";
+  if (inMotion.length === 0) {
+    body.append(dashEmpty("Nothing in motion right now."));
+  } else {
+    const grid = document.createElement("div");
+    grid.className = "dash-motion-grid";
+    sortByAttention(inMotion).forEach((s) => grid.append(dashMotionCardEl(s)));
+    body.append(grid);
+  }
+  section.append(body);
+  return section;
+}
+
+function dashMotionCardEl(session) {
+  const card = document.createElement("div");
+  card.className = "dash-card dash-motion-card";
+  card.addEventListener("click", () => {
+    document.querySelector('#pageToggle button[data-page="chat"]')?.click();
+    openSessionInPane(session, focusedPaneIndex);
+  });
+
+  const top = document.createElement("div");
+  top.className = "dash-motion-top";
+  const dot = document.createElement("span");
+  dot.className = `status-dot ${session.status}`;
+  top.append(dot);
+  if (session.jot?.category) {
+    const tag = document.createElement("span");
+    tag.className = "dash-goal-tag";
+    tag.textContent = session.jot.category;
+    top.append(tag);
+  }
+  card.append(top);
+
+  const title = document.createElement("div");
+  title.className = "dash-motion-title";
+  title.textContent = session.title;
+  card.append(title);
+
+  const detail = document.createElement("div");
+  detail.className = "dash-motion-detail";
+  const bits = [session.model ? session.model.replace("claude-", "") : "model unknown", relTime(session.lastActivityAt)];
+  detail.textContent = bits.join(" · ");
+  card.append(detail);
+
+  const pending = document.createElement("div");
+  pending.className = "dash-placeholder-note";
+  pending.textContent = "Context-budget bar + worktree path (live sessions wire-up pending)";
+  card.append(pending);
+
+  return card;
+}
+
+// --- Orchestrator proposes -------------------------------------------------
+// Real data, reusing the exact archive-suggestion + orchestratorTag signals
+// the sidebar already surfaces per-session (see rowEl in this file and
+// runOrchestratorSweep in main.js) — never a new classifier, just a
+// dashboard-level view of the same human-gated proposals. Approve/Dismiss
+// call the same archiveSession/removeFromMaestro-style paths already used
+// elsewhere; nothing here acts without a click. Proposal KINDS the mock
+// shows beyond archive suggestions (stale Jot task, "merge this worker
+// branch") have no backing signal yet in Maestro and are NOT fabricated here.
+function dashboardProposesSection() {
+  const hasOpenJotWork = (s) => s.jot && (s.jot.review > 0 || s.jot.inProgress > 0 || s.jot.open > 0);
+  const classifierSaysDone = (s) => s.orchestratorTag?.statusTag === "done_not_archived";
+  const suggestionsEnabled = state.config.archiveSuggestions?.enabled === true;
+
+  const proposals = suggestionsEnabled
+    ? state.sessions.filter(
+        (s) => !s.isArchived && (s.status === "idle" || classifierSaysDone(s)) && !hasOpenJotWork(s) && !isOrchestratorSession(s)
+      )
+    : [];
+
+  const section = document.createElement("section");
+  section.className = "dash-board";
+  section.append(dashBoardHead("Orchestrator proposes", proposals.length, "Human-gated — nothing here happens without a click"));
+
+  const body = document.createElement("div");
+  body.className = "dash-board-body";
+  if (!suggestionsEnabled) {
+    body.append(dashEmpty('Archive suggestions are off (Settings → "Suggest archiving idle sessions").'));
+  } else if (proposals.length === 0) {
+    body.append(dashEmpty("No suggestions right now."));
+  } else {
+    const list = document.createElement("div");
+    list.className = "dash-propose-list";
+    sortByAttention(proposals).forEach((s) => list.append(dashProposeCardEl(s)));
+    body.append(list);
+  }
+  section.append(body);
+  return section;
+}
+
+function dashProposeCardEl(session) {
+  const card = document.createElement("div");
+  card.className = "dash-propose-card";
+
+  const body = document.createElement("div");
+  body.className = "dash-propose-body";
+  const title = document.createElement("div");
+  title.className = "dash-propose-title";
+  title.textContent = `Archive finished session: "${session.title}"`;
+  const why = document.createElement("div");
+  why.className = "dash-propose-why";
+  why.textContent = session.orchestratorTag?.reason || "No activity, no open Jot work — looks wrapped up.";
+  body.append(title, why);
+  card.append(body);
+
+  const actions = document.createElement("div");
+  actions.className = "dash-propose-actions";
+  const approve = document.createElement("button");
+  approve.className = "text-btn";
+  approve.textContent = "Archive";
+  approve.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    await archiveSession(session);
+    refreshDashboardIfVisible();
+  });
+  const dismiss = document.createElement("button");
+  dismiss.className = "text-btn";
+  dismiss.textContent = "Dismiss";
+  dismiss.addEventListener("click", (e) => {
+    e.stopPropagation();
+    card.classList.add("dash-resolved");
+  });
+  actions.append(approve, dismiss);
+  card.append(actions);
+  return card;
+}
+
+// --- Goals -----------------------------------------------------------------
+// Real data: the same jot:goals IPC / loadGoals() as the Focus page. Cards
+// dim when they don't match the Focus toggle's mode, per domainForGoal's
+// heuristic (see comment above the toggle).
+async function dashboardGoalsSection() {
+  const result = await window.maestro.getJotGoals();
+
+  const section = document.createElement("section");
+  section.className = "dash-board";
+  section.append(dashBoardHead("Goals", result.ok ? result.goals.length : 0, "Work organized by goal, not a flat session list"));
+
+  const body = document.createElement("div");
+  body.className = "dash-board-body";
+  if (!result.ok) {
+    body.append(dashEmpty("Jot data unavailable — check Settings."));
+  } else if (result.goals.length === 0) {
+    body.append(dashEmpty("No active goals in Jot right now."));
+  } else {
+    const domainNote = document.createElement("div");
+    domainNote.className = "dash-placeholder-note dash-domain-note";
+    domainNote.textContent = "Work/Private split above is a keyword heuristic over the Jot category name (pending a real domain field on Jot goals) — it dims non-matching cards rather than hiding them.";
+    body.append(domainNote);
+
+    const grid = document.createElement("div");
+    grid.className = "dash-goals-grid";
+    result.goals.forEach((goal) => grid.append(dashGoalCardEl(goal)));
+    body.append(grid);
+  }
+  section.append(body);
+  return section;
+}
+
+function dashGoalCardEl(goal) {
+  const domain = domainForGoal(goal);
+  const card = document.createElement("div");
+  card.className = "dash-goal-card" + (domain !== dashboardFocusMode ? " dash-dimmed" : "");
+
+  const head = document.createElement("div");
+  head.className = "dash-goal-head";
+  const name = document.createElement("span");
+  name.className = "dash-goal-name";
+  name.textContent = goal.text || "(untitled goal)";
+  head.append(name);
+  const badge = document.createElement("span");
+  badge.className = "dash-domain-badge dash-domain-" + domain;
+  badge.textContent = domain === "work" ? "Work" : "Private";
+  head.append(badge);
+  card.append(head);
+
+  const meta = document.createElement("div");
+  meta.className = "dash-goal-meta";
+  const bits = [];
+  if (goal.category) {
+    bits.push(goal.category);
+  }
+  if (goal.subtaskTotal > 0) {
+    bits.push(`${goal.subtaskDone}/${goal.subtaskTotal} subtasks`);
+  }
+  const dl = goalDeadlineText(goal.deadline);
+  if (dl) {
+    bits.push(dl);
+  }
+  meta.textContent = bits.join(" · ") || "no subtasks yet";
+  card.append(meta);
+
+  if (goal.subtaskTotal > 0) {
+    const bar = document.createElement("div");
+    bar.className = "dash-goal-progress-bar";
+    const fill = document.createElement("div");
+    fill.style.width = `${Math.round((goal.subtaskDone / goal.subtaskTotal) * 100)}%`;
+    bar.append(fill);
+    card.append(bar);
+  }
+
+  card.addEventListener("click", () => {
+    document.querySelector('#pageToggle button[data-page="focus"]')?.click();
+    selectedGoalId = goal.id;
+  });
+
+  return card;
+}
+
+// --- New session -------------------------------------------------------
+// Real: project chips render from actual repo cwd's seen among state.sessions
+// (so the chip list reflects real projects Maestro has touched), plus the
+// static Jot-goal-category chips for non-repo life-domains per the mock.
+// Placeholder: clicking "Start fresh session" does NOT yet start anything —
+// there is no per-file "load CLAUDE.md/PLAN.md/DECISIONS.md into a fresh
+// session" IPC built yet, so it shows a toast explaining that instead of
+// silently doing nothing or faking a session start.
+function dashboardNewSessionSection() {
+  const section = document.createElement("section");
+  section.className = "dash-board";
+  section.append(dashBoardHead("New session", null, "Fresh context every time — loaded from files, never resumed history"));
+
+  const body = document.createElement("div");
+  body.className = "dash-board-body";
+  const panel = document.createElement("div");
+  panel.className = "dash-new-session-panel";
+
+  const projectCol = document.createElement("div");
+  const projectTitle = document.createElement("div");
+  projectTitle.className = "dash-ns-col-title";
+  projectTitle.textContent = "1. Pick a project";
+  projectCol.append(projectTitle);
+
+  const chipGrid = document.createElement("div");
+  chipGrid.className = "dash-chip-grid";
+  const knownProjects = [...new Set(state.sessions.filter((s) => s.cwd).map((s) => s.cwd))];
+  const projectNames = knownProjects.map((cwd) => cwd.split(/[\\/]/).filter(Boolean).pop() || cwd);
+  projectNames.forEach((name, i) => chipGrid.append(dashChipEl(name, knownProjects[i])));
+  chipGrid.append(dashChipEl("+ other…", null));
+  projectCol.append(chipGrid);
+
+  const loadCol = document.createElement("div");
+  const loadTitle = document.createElement("div");
+  loadTitle.className = "dash-ns-col-title";
+  loadTitle.textContent = "2. Load context";
+  loadCol.append(loadTitle);
+  const loadList = document.createElement("div");
+  loadList.className = "dash-load-list";
+  [
+    { name: "CLAUDE.md", note: "rules + skills", checked: true },
+    { name: "PLAN.md", note: "current phase + open threads", checked: true },
+    { name: "DECISIONS.md", note: "last entries", checked: true },
+    { name: "memory/*.md", note: "project + feedback notes", checked: false },
+  ].forEach((item) => loadList.append(dashLoadItemEl(item)));
+  loadCol.append(loadList);
+
+  panel.append(projectCol, loadCol);
+
+  const launchRow = document.createElement("div");
+  launchRow.className = "dash-launch-row";
+  const note = document.createElement("span");
+  note.className = "dash-placeholder-note";
+  note.textContent = "Start fresh session: stub only — no start-from-dashboard IPC built yet";
+  const startBtn = document.createElement("button");
+  startBtn.className = "text-btn";
+  startBtn.textContent = "Start fresh session";
+  startBtn.addEventListener("click", () => {
+    showToast(
+      dashboardSelectedChip
+        ? `Would start a fresh session rooted in "${dashboardSelectedChip}" — not wired up yet.`
+        : "Pick a project chip first — starting a session from here isn't wired up yet."
+    );
+  });
+  launchRow.append(note, startBtn);
+
+  body.append(panel, launchRow);
+  section.append(body);
+  return section;
+}
+
+function dashChipEl(label, cwd) {
+  const chip = document.createElement("div");
+  chip.className = "dash-chip" + (dashboardSelectedChip === cwd ? " dash-chip-selected" : "");
+  chip.textContent = label;
+  chip.addEventListener("click", () => {
+    dashboardSelectedChip = cwd;
+    renderDashboardPage();
+  });
+  return chip;
+}
+
+function dashLoadItemEl(item) {
+  const label = document.createElement("label");
+  label.className = "dash-load-item";
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.checked = item.checked;
+  const name = document.createElement("span");
+  name.className = "dash-load-file-name";
+  name.textContent = item.name;
+  const noteEl = document.createElement("span");
+  noteEl.className = "dash-load-file-note";
+  noteEl.textContent = item.note;
+  label.append(checkbox, name, noteEl);
+  return label;
+}
+
+// --- Shared small pieces ----------------------------------------------
+
+function dashBoardHead(title, count, hint) {
+  const head = document.createElement("div");
+  head.className = "dash-board-head";
+  const h3 = document.createElement("h3");
+  h3.textContent = title;
+  if (typeof count === "number") {
+    const c = document.createElement("span");
+    c.className = "dash-count";
+    c.textContent = String(count);
+    h3.append(c);
+  }
+  const hintEl = document.createElement("span");
+  hintEl.className = "dash-hint";
+  hintEl.textContent = hint;
+  head.append(h3, hintEl);
+  return head;
+}
+
+function dashEmpty(text) {
+  const empty = document.createElement("div");
+  empty.className = "pane-empty";
+  empty.textContent = text;
+  return empty;
+}
 
 async function renderFocusPage() {
   const page = document.getElementById("focusPage");
@@ -4792,13 +5244,16 @@ document.getElementById("pageToggle").addEventListener("click", (e) => {
   document.querySelectorAll("#pageToggle button").forEach((b) => b.classList.toggle("active", b === btn));
   const page = btn.dataset.page;
   document.getElementById("chatPage").classList.toggle("hidden", page !== "chat");
+  document.getElementById("dashboardPage").classList.toggle("hidden", page !== "dashboard");
   document.getElementById("focusPage").classList.toggle("hidden", page !== "focus");
   document.getElementById("goalPage").classList.toggle("hidden", page !== "goal");
   document.getElementById("lavishPage").classList.toggle("hidden", page !== "lavish");
   document.getElementById("analysisPage").classList.toggle("hidden", page !== "analysis");
   document.getElementById("archivePage").classList.toggle("hidden", page !== "archive");
   document.getElementById("settingsPage").classList.toggle("hidden", page !== "settings");
-  if (page === "focus") {
+  if (page === "dashboard") {
+    renderDashboardPage();
+  } else if (page === "focus") {
     renderFocusPage();
   } else if (page === "goal") {
     renderGoalPage();
