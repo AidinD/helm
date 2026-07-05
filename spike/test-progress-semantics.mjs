@@ -63,6 +63,27 @@ try {
     "a change OUTSIDE .maestro-goal/ (src.js) -> producedRealChanges true"
   );
 
+  // L2 (ship-review): a real file renamed INTO .maestro-goal/ still counts as
+  // real work - its source left the tree. Needs a clean committed tree so git
+  // reports an actual rename ("R old -> new"), not add+delete.
+  git(repo, ["add", "-A"]);
+  git(repo, ["commit", "-q", "-m", "wip"]);
+  assert(producedRealChanges(repo) === false, "clean committed tree -> producedRealChanges false");
+  git(repo, ["mv", "src.js", ".maestro-goal/moved.md"]);
+  assert(
+    producedRealChanges(repo) === true,
+    "real file renamed INTO .maestro-goal/ -> true (source left the tree; dest alone would read as bookkeeping)"
+  );
+  git(repo, ["add", "-A"]);
+  git(repo, ["commit", "-q", "-m", "wip2"]);
+
+  // L3 (ship-review): non-ASCII paths (git C-quotes them) classify by the
+  // .maestro-goal/ prefix, not corrupted by separator rewriting.
+  fs.writeFileSync(path.join(repo, ".maestro-goal", "anteckningar-åäö.md"), "x\n");
+  assert(producedRealChanges(repo) === false, "non-ASCII file INSIDE .maestro-goal/ -> false");
+  fs.writeFileSync(path.join(repo, "källkod-åäö.js"), "x\n");
+  assert(producedRealChanges(repo) === true, "non-ASCII file OUTSIDE .maestro-goal/ -> true");
+
   // --- detectNoNetProgress: implement-phase only, keys off producedChanges ---
   const impl = (n, produced) => ({ iteration: n, ok: true, phase: "implement", result: { success: true }, producedChanges: produced });
   const research = (n) => ({ iteration: n, ok: true, phase: "research", result: { success: true }, producedChanges: false });
