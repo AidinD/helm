@@ -1440,6 +1440,11 @@ body.advanced .row-jot {
   padding-left: 3px;
 }
 
+.attachment-clip-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
 .attachment-thumb {
   width: 20px;
   height: 20px;
