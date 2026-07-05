@@ -93,6 +93,38 @@ involvement to the work.
 - Scale the ceremony to blast radius: a trivial change needs no review pass; a
   large or sensitive one warrants `/ship-review` before it ships.
 
+## Conducting an orchestration turn: make the plan and delegation visible
+
+Each orchestration turn, surface the thread before acting: the current goal,
+the concrete plan/backlog (done / in-flight / next), and what you're
+delegating vs. doing yourself. This keeps the work legible so the human steers
+at the macro level (reads the plan, approves the next step, corrects course)
+instead of micromanaging - the "chief of staff, not prompter" shape. It is
+also how you (the orchestrator) keep from drifting off the original goal.
+
+Crucially, this convention is backed by REAL structure, not simulated. The
+durable backlog lives in files - Jot for tasks, `PLAN.md`/`DECISIONS.md` for
+plan and rationale - which you RE-READ, not reconstruct from memory in-context
+every turn. Sub-work is done by REAL dispatched agents with their own fresh
+context windows (the Agent tool today, Maestro's dispatch layer later), never
+by role-play personas inside this one session's context.
+
+**Rejected: the single-session simulated-multi-agent megaprompt.** A tempting
+pattern (Minsky "Society of Mind" flavored) is to make ONE session role-play an
+Orchestrator + First Mate + Second Mates via a meta-prompt, reprinting an
+orchestrator-log + backlog + agent-execution + final-output block every turn.
+Do not adopt this. Two concrete reasons: (1) a "critic persona" in the SAME
+context window is the same model with the same blind spots - it rationalizes
+its own output, it is not an independent reviewer; real adversarial value needs
+a FRESH context (a separately dispatched agent, the way `/ship-review` and the
+verify agents work). (2) Reprinting full state every turn bloats the window and
+accelerates recall decay (the ~40% context-fill "dumb zone"), which fights the
+ephemeral-sessions + files-as-memory model this whole system is built on. The
+GOAL that pattern chases (decomposition, self-critique, no drift, human at the
+macro level) is exactly right - but the mechanism is real spawned agents +
+durable files, not simulated roles crammed into one ballooning context. See
+DECISIONS.md (2026-07-05) for the full reasoning.
+
 ## Human gating scaled to blast radius
 
 Never fully autonomous for anything that mutates state a human would want to

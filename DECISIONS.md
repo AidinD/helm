@@ -1,5 +1,21 @@
 # Decisions
 
+## 2026-07-05 - Orchestrator turns use real agents + files, not a simulated-multi-agent megaprompt
+
+Aidin shared a popular blueprint for turning ONE Claude session into an autonomous org: a meta-prompt where the session role-plays an Orchestrator + First Mate + Second Mates, reprinting an orchestrator-log + backlog + agent-execution + final-output block (XML-tagged) in every response, invoking sub-agent "personas" for coding/critique inside the same context.
+He asked whether we should implement it.
+Decision: NO to the mechanism, YES to the goals - and we already implement the goals for real.
+
+Why not the mechanism:
+1. Simulated personas are not isolated. A `<agent_critic>` in the SAME context window is the same model with the same blind spots - it rationalizes its own output rather than independently refuting it. Real adversarial value requires a FRESH context, which is exactly what our dispatched review/verify agents (and `/ship-review`) provide by spawning separate sessions.
+2. It accelerates context-rot. Reprinting full orchestrator state every turn bloats the window and pushes it into the ~40% "dumb zone" (Horthy) where recall degrades - the opposite of the claimed anti-drift benefit, and directly against the ephemeral-sessions + files-as-memory model this system is built on (see the 2026-07-03 strategic-reorientation and practitioner-research entries).
+3. It is the durable megasession we explicitly rejected, dressed up: one long-lived session holding everything, no parallelism, no isolation.
+
+What the blueprint gets right (and we already do): decomposition beats "be smart" (orchestrator-instructions.md), a visible backlog fights drift (but Jot/PLAN.md do it durably, not by reprinting in-context), self-critique matters (but via fresh-context agents), and the human should operate at the macro level (the orchestrator/Maestro vision).
+Minsky's "Society of Mind" is actually served BETTER by many real isolated agents than by three personas in one window.
+
+What we adopted: a lightweight convention in orchestrator-instructions.md - make the plan/backlog and the delegate-vs-do-it-yourself split visible each orchestration turn - explicitly backed by real dispatched agents (own fresh context) and durable files, NOT by simulated roles. The essay itself was partly AI-generated marketing prose (overclaims like "quality increases exponentially"); took the real ideas (Minsky, Anthropic's orchestrator-worker), left the hype.
+
 ## 2026-07-05 - TOON encoding for the Lavish annotation-list prompt
 
 Board task: apply the AXI/TOON token-efficiency principle (deferred 2026-07-04, "fold TOON in with structured-injection features as they mature") to prompts Maestro builds for its own sub-agent calls.
