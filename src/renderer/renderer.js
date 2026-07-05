@@ -1140,64 +1140,6 @@ async function reorderCategory(draggedLabel, targetLabel, before) {
 
 // ============================== Row + section rendering ==============================
 
-// The orchestrator's own chat — one static, prominent card, not a row inside
-// an accordion. Per feedback: it's special, always exists, and you shouldn't
-// need to think about which group it's in.
-function orchestratorCardEl(session) {
-  const card = document.createElement("div");
-  card.className = "orchestrator-card" + (session.sessionId === selectedSessionId ? " selected" : "");
-
-  const titleLine = document.createElement("div");
-  titleLine.className = "orchestrator-card-title-line";
-  const badge = document.createElement("span");
-  badge.className = "orchestrator-card-badge";
-  badge.textContent = "◆";
-  const title = document.createElement("span");
-  title.className = "orchestrator-card-title";
-  title.textContent = session.title;
-  const dot = document.createElement("span");
-  dot.className = `status-dot ${session.status}`;
-  titleLine.append(badge, title, dot);
-  card.append(titleLine);
-
-  if (session.jot) {
-    const meta = document.createElement("div");
-    meta.className = "orchestrator-card-meta";
-    const parts = [];
-    if (session.jot.review > 0) {
-      parts.push(`${session.jot.review} review`);
-    }
-    if (session.jot.inProgress > 0) {
-      parts.push(`${session.jot.inProgress} wip`);
-    }
-    if (session.jot.open > 0) {
-      parts.push(`${session.jot.open} open`);
-    }
-    meta.textContent = parts.length ? parts.join(" · ") : "up to date";
-    card.append(meta);
-  }
-
-  card.addEventListener("click", () => openSessionInPane(session, focusedPaneIndex));
-  title.addEventListener("dblclick", (e) => {
-    e.stopPropagation();
-    makeInlineEditable(title, session.title, (v) => renameSessionTo(session, v));
-  });
-  card.dataset.hasMenu = "1";
-  card.addEventListener("contextmenu", (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    showContextMenu(e.clientX, e.clientY, [
-      { label: "Open here", onClick: () => openSessionInPane(session, focusedPaneIndex) },
-      { label: "Open in split pane", onClick: () => openSessionInPane(session, focusedPaneIndex === 0 ? 1 : 0, true) },
-      { label: "Rename chat (or double-click it)", onClick: () => makeInlineEditable(title, session.title, (v) => renameSessionTo(session, v)) },
-      { sep: true },
-      { label: "Unmark as Maestro chat", onClick: () => toggleManualMaestroTag(session) },
-    ]);
-  });
-
-  return card;
-}
-
 function rowEl(session) {
   const row = document.createElement("div");
   row.className = "row" + (session.sessionId === selectedSessionId ? " selected" : "");
@@ -1580,7 +1522,12 @@ function openFreshDraftInPane(cwd, draftText, opts = {}) {
     ({ index, addedPane } = pickDraftTargetPane(opts.avoidIndex));
   }
   stopLiveStatsTicker(index);
-  panes[index] = { ...freshPane(), cwd: cwd || "" };
+  // paneOverrides lets a caller stamp extra fields (e.g. isOrchestrator) onto
+  // the fresh pane BEFORE the one render below, instead of mutating panes[]
+  // and re-rendering afterward — a second render would wipe the draft text
+  // set into the composer's textarea further down, since the composer isn't
+  // backed by any persisted pane field.
+  panes[index] = { ...freshPane(), cwd: cwd || "", ...(opts.paneOverrides || {}) };
   focusedPaneIndex = index;
   if (addedPane) {
     renderWorkspace(); // handles the .split class itself; pane count changed
@@ -1999,21 +1946,14 @@ function renderSidebar() {
     return;
   }
 
-  // The orchestrator chat is special, not just another group: one static,
-  // prominent card at the top — never duplicated into Needs-attention, its
-  // original category, or Unsorted (per feedback that a plain accordion
-  // section made it look like it belonged in multiple places at once).
-  // Lives in its own #sidebarPinned slot, a sibling of the scrollable
-  // #sidebarBody rather than its first child — appending it INSIDE the
-  // scrolling body meant it scrolled out of view with everything else,
-  // defeating the point of "always visible."
-  const maestroSessions = visible.filter(isOrchestratorSession);
-  const maestroIds = new Set(maestroSessions.map((s) => s.sessionId));
-  if (maestroSessions.length > 0) {
-    pinned.append(orchestratorCardEl(sortByAttention(maestroSessions)[0]));
-  }
-
-  const attention = visible.filter((s) => s.needsAttention && !maestroIds.has(s.sessionId));
+  // No privileged "orchestrator session" pinned above everything else
+  // anymore (PLAN.md's orchestrator-lifespan redesign) — a session tagged as
+  // Maestro-building work (isOrchestratorSession) still gets its "◆" marker
+  // inline (see rowEl) but otherwise flows into Needs-attention/its
+  // group/Unsorted exactly like any other session. #sidebarPinned is left
+  // unused here (still cleared above) rather than removed outright, in case
+  // a future slice pins something else there.
+  const attention = visible.filter((s) => s.needsAttention);
   if (attention.length > 0) {
     body.append(
       sectionEl({ label: "Needs your attention", sessions: attention, collapsed: false, pinned: true, droppable: false })
@@ -2021,14 +1961,13 @@ function renderSidebar() {
   }
 
   const groups = state.config.groups || [];
-  const grouped = new Set(maestroIds);
+  const grouped = new Set();
   for (const group of groups) {
     const members = (group.sessionIds || [])
       .map(sessionById)
       .filter(Boolean)
       .filter((s) => !s.isArchived)
-      .filter(matchesSearch)
-      .filter((s) => !maestroIds.has(s.sessionId));
+      .filter(matchesSearch);
     (group.sessionIds || []).forEach((id) => grouped.add(id));
     body.append(
       sectionEl({
@@ -3831,24 +3770,15 @@ async function refresh() {
   refreshDashboardIfVisible();
 }
 
-// First-load: after sessions are in, auto-open the most-recently-active
-// orchestrator session in pane 0 (Aidin's ask — Maestro is his orchestration
-// hub, so that session is almost always where he wants to land). Guarded so
-// it only fires when pane 0 is still the untouched fresh pane, never
-// clobbering anything the user has already opened, and only run once at
-// startup (not on the 30s refresh).
+// First-load: land on the Dashboard, not on any specific chat. PLAN.md's
+// orchestrator-lifespan redesign retired the old behavior here (auto-opening
+// the most-recently-active "orchestrator" session in pane 0) — there is no
+// privileged session to land on anymore. The Dashboard (overview + attention
+// spotlight) is the home now; Chat is one destination among the page tabs,
+// reached the same way any other page is.
 async function startup() {
   await refresh();
-  const pane0 = panes[0];
-  if (!pane0 || pane0.sessionId || pane0.turns.length > 0) {
-    return;
-  }
-  const orchestrator = state.sessions
-    .filter((s) => isOrchestratorSession(s) && !s.isArchived)
-    .sort((a, b) => (b.lastActivityAt || 0) - (a.lastActivityAt || 0))[0];
-  if (orchestrator) {
-    openSessionInPane(orchestrator, 0);
-  }
+  document.querySelector('#pageToggle button[data-page="dashboard"]')?.click();
 }
 
 // The modelFit event is the normal way launchPaneHistory entries get cleaned
@@ -3977,15 +3907,16 @@ const SUBTASK_STATUS_LABEL = {
   done: "● done",
 };
 
-// ============================== Dashboard page (rebuild slice 2: Variant A) ==============================
+// ============================== Dashboard page (Variant A, now the default landing page) ==============================
 //
 // Approved design "Variant A (attention-first)" - see the mock this was built
-// from for the exact target layout/structure. Purely additive - this page
-// mounts beside "Chat" in the same #pageToggle nav; nothing about the
-// existing chat view, sidebar, or orchestrator session changes. Making this
-// the default landing page (and retiring the privileged orchestrator
-// session) is a LATER slice per PLAN.md's orchestrator-lifespan redesign -
-// not done here.
+// from for the exact target layout/structure. This is now the app's home
+// page (see startup() below) per PLAN.md's orchestrator-lifespan redesign:
+// there is no privileged "orchestrator session" to land on anymore, so the
+// app opens on this overview instead. Chat is still fully functional and
+// reachable via its own page tab exactly as before - nothing about starting,
+// opening, or running a session was removed, only the old default-to-a-
+// specific-chat behavior.
 //
 // Variant A's structural change from the earlier v2 shape: the old separate
 // "In motion" and "Orchestrator proposes" sections are now ONE merged,
@@ -4032,9 +3963,12 @@ async function renderDashboardPage() {
   const sub = document.createElement("div");
   sub.className = "analysis-totals";
   sub.style.marginBottom = "0";
-  sub.textContent = "A new home alongside Chat — nothing about the existing session view changed.";
+  sub.textContent = "No orchestrator session is open right now — it's a faculty, not a room. Start one fresh whenever you need it.";
   heading.append(h2, sub);
-  topbar.append(heading, dashboardFocusToggleEl());
+  const topbarActions = document.createElement("div");
+  topbarActions.className = "dash-topbar-actions";
+  topbarActions.append(dashboardFocusToggleEl(), startOrchestratorSessionBtnEl());
+  topbar.append(heading, topbarActions);
   page.append(topbar);
 
   page.append(dashboardQueueSection());
@@ -4082,6 +4016,33 @@ function dashboardFocusToggleEl() {
   return wrap;
 }
 
+// Replaces the old "open the orchestrator" affordance (which resumed one
+// privileged, ever-growing session) per PLAN.md's orchestrator-lifespan
+// redesign: this always starts a brand-new session, pre-pointed at
+// orchestrator-instructions.md, never resumed history. Rooted in Maestro's
+// own repo (orchestrator:info's cwd) purely because a session needs SOME
+// cwd to run in and that's where the instructions file lives - the
+// orchestrator's actual work is never confined to that repo (it dispatches
+// into whatever project it names explicitly; see orchestrator-instructions.md).
+function startOrchestratorSessionBtnEl() {
+  const btn = document.createElement("button");
+  btn.className = "text-btn";
+  btn.textContent = "+ New orchestrator session";
+  btn.title = "Starts a fresh session pointed at orchestrator-instructions.md - never resumes a prior one";
+  btn.addEventListener("click", async () => {
+    const info = await window.maestro.getOrchestratorInfo();
+    if (!info.ok) {
+      showToast("Couldn't resolve Maestro's own repo path - see console.");
+      console.error("[maestro] orchestrator:info failed:", info.error);
+      return;
+    }
+    document.querySelector('#pageToggle button[data-page="chat"]')?.click();
+    const draft = `Read ${info.instructionsPath} and act as Maestro's orchestrator for this session. Start by checking current state (Jot, PLAN.md/DECISIONS.md) and telling me what needs attention.`;
+    openFreshDraftInPane(info.cwd, draft, { paneOverrides: { isOrchestrator: true } });
+  });
+  return btn;
+}
+
 // --- Needs you & in motion (merged attention queue) ------------------------
 // Variant A's key structural change: ONE prioritized list instead of two
 // separate sections. Two row kinds share the list:
@@ -4097,45 +4058,60 @@ function dashboardFocusToggleEl() {
 // sessions (both need a click) sort above active sessions (no action needed,
 // just visibility), and attentionScore breaks ties within each group so the
 // most pressing item within a tier still floats up.
+//
+// Archive-proposal grouping: with archiveSuggestions on, a long-idle inbox
+// can produce dozens of individual "Archive finished session" rows that bury
+// genuine needs-you items (observed: ~38 rows on a real board). All archive
+// proposals collapse into ONE row ("N sessions ready to archive") with
+// "Archive all" / "Review" - individual running/waiting SESSIONS never
+// collapse, only the archive-cleanup proposal kind. "Review" expands the
+// group inline into its normal per-session Archive/Dismiss rows (same
+// dashProposeRowEl used before this change) rather than hiding that control
+// behind a second page.
 // NOT wired up: the mock's per-row context-budget bar and worktree path
 // (PLAN.md's worker/isolated-worktree model isn't built yet - Maestro today
 // runs sessions directly, not via dispatched worktree workers) - labeled as a
 // placeholder rather than faked. Proposal KINDS beyond archive suggestions
 // (stale Jot task, "merge this worker branch") have no backing signal yet in
 // Maestro and are NOT fabricated here.
-function dashboardAttentionQueue() {
+let dashboardArchiveGroupExpanded = false; // local UI state, resets on reload
+
+function dashboardProposalSessions() {
   const hasOpenJotWork = (s) => s.jot && (s.jot.review > 0 || s.jot.inProgress > 0 || s.jot.open > 0);
   const classifierSaysDone = (s) => s.orchestratorTag?.statusTag === "done_not_archived";
   const suggestionsEnabled = state.config.archiveSuggestions?.enabled === true;
+  if (!suggestionsEnabled) {
+    return [];
+  }
+  const proposalSessions = state.sessions.filter(
+    (s) => !s.isArchived && (s.status === "idle" || classifierSaysDone(s)) && !hasOpenJotWork(s) && !isOrchestratorSession(s)
+  );
+  return sortByAttention(proposalSessions);
+}
 
-  const proposalSessions = suggestionsEnabled
-    ? state.sessions.filter(
-        (s) => !s.isArchived && (s.status === "idle" || classifierSaysDone(s)) && !hasOpenJotWork(s) && !isOrchestratorSession(s)
-      )
-    : [];
-  const proposals = sortByAttention(proposalSessions).map((s) => ({ kind: "proposal", session: s, needsAction: true }));
-
+function dashboardInMotionRows() {
   const inMotionSessions = state.sessions.filter((s) => !s.isArchived && (s.status === "active" || s.status === "waiting"));
-  const inMotion = sortByAttention(inMotionSessions).map((s) => ({
+  return sortByAttention(inMotionSessions).map((s) => ({
     kind: "session",
     session: s,
     needsAction: s.status === "waiting",
   }));
-
-  // Stable-ish ordering: needs-action rows first (proposals, then waiting
-  // sessions - both already attention-sorted within their own group above),
-  // then in-progress rows below. Array.sort is stable in V8, so ties keep
-  // the attentionScore order each group arrived in.
-  const rows = [...proposals, ...inMotion].sort((a, b) => Number(b.needsAction) - Number(a.needsAction));
-  return rows;
 }
 
 function dashboardQueueSection() {
-  const rows = dashboardAttentionQueue();
-  const needsActionCount = rows.filter((r) => r.needsAction).length;
+  const proposalSessions = dashboardProposalSessions();
+  const inMotion = dashboardInMotionRows();
   const suggestionsEnabled = state.config.archiveSuggestions?.enabled === true;
 
-  const countLabel = rows.length === 0 ? null : needsActionCount > 0 ? `${needsActionCount} need a click` : "all clear";
+  // Needs-action count: the whole archive group counts as ONE click (the
+  // "Archive all" button), not one per proposal - it should read as the
+  // small number of distinct decisions actually waiting on you, not the
+  // number of individual sessions that happen to share the same decision.
+  const waitingSessionCount = inMotion.filter((r) => r.needsAction).length;
+  const needsActionCount = (proposalSessions.length > 0 ? 1 : 0) + waitingSessionCount;
+  const totalRows = proposalSessions.length + inMotion.length;
+
+  const countLabel = totalRows === 0 ? null : needsActionCount > 0 ? `${needsActionCount} need a click` : "all clear";
 
   const section = document.createElement("section");
   section.className = "dash-board";
@@ -4150,7 +4126,7 @@ function dashboardQueueSection() {
 
   const body = document.createElement("div");
   body.className = "dash-board-body";
-  if (rows.length === 0) {
+  if (totalRows === 0) {
     body.append(
       dashEmpty(
         suggestionsEnabled
@@ -4161,11 +4137,76 @@ function dashboardQueueSection() {
   } else {
     const list = document.createElement("div");
     list.className = "dash-queue-list";
-    rows.forEach((row) => list.append(row.kind === "proposal" ? dashProposeRowEl(row.session) : dashSessionRowEl(row.session)));
+    if (proposalSessions.length > 0) {
+      list.append(dashArchiveGroupEl(proposalSessions));
+    }
+    inMotion.forEach((row) => list.append(dashSessionRowEl(row.session)));
     body.append(list);
   }
   section.append(body);
   return section;
+}
+
+// One collapsed row standing in for every archive proposal. Expands in place
+// (no navigation) into the same per-session Archive/Dismiss rows the old
+// flat list used, via dashProposeRowEl - "Review" doesn't change what each
+// row can do, only whether all of them are shown at once by default.
+function dashArchiveGroupEl(proposalSessions) {
+  const wrap = document.createElement("div");
+  wrap.className = "dash-archive-group";
+
+  const row = document.createElement("div");
+  row.className = "dash-queue-row dash-archive-group-row";
+  row.append(dashQueueStateIcon("proposal", null));
+
+  const qbody = document.createElement("div");
+  qbody.className = "dash-q-body";
+  const top = document.createElement("div");
+  top.className = "dash-q-top";
+  const title = document.createElement("span");
+  title.className = "dash-q-title";
+  title.textContent = `${proposalSessions.length} session${proposalSessions.length === 1 ? "" : "s"} ready to archive`;
+  top.append(title);
+  qbody.append(top);
+  const why = document.createElement("div");
+  why.className = "dash-q-why";
+  why.textContent = "No activity, no open Jot work - looks wrapped up. Grouped so real needs-you items stay visible above.";
+  qbody.append(why);
+  row.append(qbody);
+
+  const actions = document.createElement("div");
+  actions.className = "dash-queue-actions";
+  const archiveAll = document.createElement("button");
+  archiveAll.className = "text-btn";
+  archiveAll.textContent = "Archive all";
+  archiveAll.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    archiveAll.disabled = true;
+    for (const session of proposalSessions) {
+      await archiveSession(session);
+    }
+    refreshDashboardIfVisible();
+  });
+  const review = document.createElement("button");
+  review.className = "text-btn";
+  review.textContent = dashboardArchiveGroupExpanded ? "Hide" : "Review";
+  review.addEventListener("click", (e) => {
+    e.stopPropagation();
+    dashboardArchiveGroupExpanded = !dashboardArchiveGroupExpanded;
+    refreshDashboardIfVisible();
+  });
+  actions.append(archiveAll, review);
+  row.append(actions);
+  wrap.append(row);
+
+  if (dashboardArchiveGroupExpanded) {
+    const expanded = document.createElement("div");
+    expanded.className = "dash-archive-group-expanded";
+    proposalSessions.forEach((session) => expanded.append(dashProposeRowEl(session)));
+    wrap.append(expanded);
+  }
+
+  return wrap;
 }
 
 function dashBoardHeadWithLabel(title, countLabel, urgent, hint) {

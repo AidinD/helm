@@ -34,6 +34,7 @@ contextBridge.exposeInMainWorld("maestro", {
     ipcRenderer.invoke("session:switchRootFolder", { cliSessionId, sessionId, newCwd }),
   getUsageSummary: () => ipcRenderer.invoke("usage:summary"),
   getVersion: () => ipcRenderer.invoke("app:version"),
+  getOrchestratorInfo: () => ipcRenderer.invoke("orchestrator:info"),
   // Stale-build indicator: getBuildStatus() returns the running build's own
   // identity plus whatever the last periodic on-disk check found; onBuildStaleUpdate
   // fires only when that check's result actually changes (see runStaleBuildCheck

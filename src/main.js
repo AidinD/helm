@@ -478,6 +478,18 @@ ipcMain.handle("usage:summary", () => readUsageSummary());
 // to 0 on every version bump instead of growing forever. ---
 ipcMain.handle("app:version", () => computeVersionString());
 
+// --- Orchestrator info: the paths needed to start a fresh orchestrator
+// session from the Dashboard (PLAN.md's orchestrator-lifespan redesign).
+// There is no privileged, always-present orchestrator session anymore — this
+// just tells the renderer where Maestro's own repo lives (so a fresh session
+// has a cwd to run in) and where its operating manual is, so the renderer can
+// point a brand-new session at it. Read-only, no session-of-its-own state.
+ipcMain.handle("orchestrator:info", () => ({
+  ok: true,
+  cwd: path.dirname(__dirname),
+  instructionsPath: path.join(__dirname, "lib", "orchestrator-instructions.md"),
+}));
+
 // --- Stale-build indicator: hands back the running build's own identity plus
 // the most recent periodic staleness check (see runStaleBuildCheck below).
 // The renderer calls this once on startup to paint the initial state, then

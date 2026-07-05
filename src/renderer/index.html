@@ -19,8 +19,8 @@
       <div class="brand"><span class="logo">◆</span><h1>Maestro</h1><span class="app-version" id="appVersion"></span><button class="stale-build-pill hidden" id="staleBuildPill" type="button" title="A newer build is on disk. Restart Maestro to pick it up."></button></div>
       <div class="header-controls">
         <div class="view-toggle" id="pageToggle">
-          <button data-page="chat" class="active">Chat</button>
-          <button data-page="dashboard">Dashboard</button>
+          <button data-page="chat">Chat</button>
+          <button data-page="dashboard" class="active">Dashboard</button>
           <button data-page="focus">Focus</button>
           <button data-page="goal">Goal</button>
           <button data-page="lavish">Plan</button>
@@ -37,7 +37,7 @@
       </div>
     </header>
 
-    <div class="layout" id="chatPage">
+    <div class="layout hidden" id="chatPage">
       <nav class="sidebar" id="sidebar">
         <button id="newChat" class="new-chat-btn">+ New chat</button>
         <div class="sidebar-toolbar">
@@ -56,7 +56,7 @@
       <div class="workspace" id="workspace"></div>
     </div>
 
-    <div class="analysis-page hidden" id="dashboardPage"></div>
+    <div class="analysis-page" id="dashboardPage"></div>
     <div class="analysis-page hidden" id="focusPage"></div>
     <div class="analysis-page hidden" id="goalPage"></div>
     <div class="analysis-page hidden" id="lavishPage"></div>
