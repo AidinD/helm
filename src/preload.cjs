@@ -78,4 +78,7 @@ contextBridge.exposeInMainWorld("maestro", {
     ipcRenderer.on("goal:event", listener);
     return () => ipcRenderer.removeListener("goal:event", listener);
   },
+  // Routines page (read-only) - lists Claude Code's own scheduled tasks from
+  // ~/.claude/scheduled-tasks/. No scheduler lives in Maestro; this just reads.
+  listRoutines: () => ipcRenderer.invoke("routines:list"),
 });
