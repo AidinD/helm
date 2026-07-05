@@ -1,5 +1,28 @@
 # Decisions
 
+## 2026-07-05 - goalOrchestrator progress/success semantics: `producedChanges` + no-op convergence (ship-review cluster A-D)
+
+An adversarial ship-review (two fresh opus contexts) of the autonomous goal-execution core surfaced a cluster of correctness issues; Aidin approved fixing all of them.
+The root one: `appendNotes` runs BEFORE `commitIteration`, so the orchestrator's own notes.md/plan.md write always dirties the worktree, which means `git status` is never empty at commit time and `record.committed` is effectively always true.
+So `committed` could not distinguish "the agent changed real code" from "the orchestrator wrote bookkeeping," and the `no_net_progress` escalation signal - which keyed off `!committed` - could therefore essentially never fire (dead logic).
+Consequence: an agent that repeatedly reports `success:true` while doing nothing burned every remaining iteration and its tokens undetected (`consecutiveFailures` resets on any "success", so the two-failures stop never caught it either).
+A live E2E run demonstrated the failure mode for real: an implement iteration reported "Created hello.txt" with `success:true` but never wrote the file - and the new signal caught it (`producedChanges:false`).
+
+Decision - the honest work signal is "did files change OUTSIDE `.maestro-goal/`", measured BEFORE the notes append:
+- Added `producedRealChanges(worktreePath)` (parses `git status --porcelain`, ignores `.maestro-goal/`), recorded as `record.producedChanges` each iteration; fails open (returns true) on any git error so a hiccup never wrongly flags a stall.
+- Kept the atomic notes+code commit as-is (that ordering is deliberate - the commit is meant to capture notes.md too); the fix is the SIGNAL, not the commit behavior.
+- Re-keyed `detectNoNetProgress` off `producedChanges`, and restricted it to implement-phase iterations (research/plan legitimately produce no code outside `.maestro-goal/`, so counting them would false-positive). This let the now-redundant `commitCountByIteration` map + its per-iteration `countCommitsOnBranch` call be removed entirely.
+- Added a DEFAULT-ON stop: `NO_OP_CONVERGENCE_STREAK` (2) consecutive no-op implement successes -> new `stoppedReason: "no_op_convergence"`. Chosen as a clean STOP, not a failure: a no-op implement success is ambiguous (agent stuck, or goal already satisfied) - either way, stop wasting iterations and let the human review the kept worktree, rather than mislabel it an error. Fires independently of the opt-in escalation feature so the token-waste is bounded by default.
+
+Also in the same pass (smaller, from the same review):
+- **Deliverable gate (finding 1.1):** `advancePhaseAfterSuccess` only advances plan -> implement once `plan.md` exists with real content (`.trim()`); a plan-phase success that wrote no usable plan re-runs plan instead of implementing against nothing.
+- **Notes truncation (finding 4.1):** `truncateNotesIfNeeded` now rescues every "Key learnings" bullet from the dropped middle into a preserved ledger (`extractKeyLearnings`), so a long run's early decisions/dead-ends aren't silently lost to a later fresh-context iteration.
+- **IPC input (finding, low):** `runGoal` now validates `projectPath` is a git work tree before any worktree/branch op, instead of trusting the IPC caller's bare truthiness check.
+- **Rollback safety (committed earlier, 64f0346):** `discardWorktreeChanges` refuses to `reset --hard`/`clean -fd` unless `isOwnWorktreeRoot` confirms the target's git toplevel equals the path itself - blocks the one narrow way a destructive reset could reach a parent checkout (a deregistered worktree whose dir sits inside an ancestor repo).
+
+Explicitly NOT fixed: the spawn fallback for a broken `claude` install (`shell:true` + prompt-as-argv) stays as-is with its loud warning - hardening it means routing the prompt via stdin, a larger separate change; the normal `.exe` path is already `shell:false`-safe.
+Verification: 18-assertion deterministic unit spike (`test-progress-semantics.mjs`), the destructive-git spike (`test-discard-guard.mjs`), and two real end-to-end `runGoal` spikes (one flaked and proved the detection works; the clean re-run showed research/plan `producedChanges:false` vs implement `true`, hello.txt created, primary checkout untouched).
+
 ## 2026-07-05 - Orchestrator turns use real agents + files, not a simulated-multi-agent megaprompt
 
 Aidin shared a popular blueprint for turning ONE Claude session into an autonomous org: a meta-prompt where the session role-plays an Orchestrator + First Mate + Second Mates, reprinting an orchestrator-log + backlog + agent-execution + final-output block (XML-tagged) in every response, invoking sub-agent "personas" for coding/critique inside the same context.
