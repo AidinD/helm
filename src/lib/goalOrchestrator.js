@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { resolveClaudeBinary } from "./launcher.js";
 import { createWorktree, removeWorktree } from "./worktree.js";
+import { buildRepoMap } from "./repoMap.js";
 
 /**
  * Fas 3 Point 11 v1 — a real goal orchestrator, adapted (not copied) from
@@ -48,6 +49,16 @@ import { createWorktree, removeWorktree } from "./worktree.js";
  * can display it and gate an "approve plan before implement" human checkpoint
  * — that approval UI is a deferred follow-up, NOT built by this change; today
  * the phase auto-advances the moment a phase-completing iteration succeeds.
+ *
+ * Repo-map priming (praktiker mechanism #5, PLAN.md/DECISIONS.md's
+ * Paul Gauthier/aider entry): every iteration is a fresh, context-blind
+ * subprocess that otherwise has to re-discover the repo's shape from scratch
+ * via Read/Grep before it can even start reasoning about the goal. `repoMap.js`
+ * builds a compact, budget-capped signature map of the project once per
+ * `runGoal` call (right after the worktree is created - the repo's overall
+ * shape does not change meaningfully iteration-to-iteration within one goal
+ * run, so recomputing it every iteration would just be wasted work) and it is
+ * prepended to every iteration's prompt via `repoMapContent` below.
  */
 
 const NOTES_DIR = ".maestro-goal";
@@ -303,19 +314,33 @@ function truncate(text, max) {
  * `phase` selects the system prompt from PHASE_PROMPTS (RPI phasing — see
  * that map's doc comment). `planContent` is included in the user prompt when
  * present (plan phase's own output, consumed by later plan/implement
- * iterations); it is null before the plan phase has run.
+ * iterations); it is null before the plan phase has run. `repoMapContent` is
+ * the repo-map priming text (see module doc comment / repoMap.js), computed
+ * once per `runGoal` call and passed through unchanged to every iteration;
+ * it is empty for a repo-map build that failed or found nothing to map, in
+ * which case that section is simply omitted from the prompt.
  */
-function runIteration({ worktreePath, goal, notesContent, planContent, phase, model, effort }) {
+function runIteration({ worktreePath, goal, notesContent, planContent, repoMapContent, phase, model, effort }) {
   return new Promise((resolve) => {
-    const promptLines = [
-      `Overall goal: ${goal}`,
-      "",
+    const promptLines = [`Overall goal: ${goal}`, ""];
+    if (repoMapContent) {
+      promptLines.push(
+        "Repo map (file paths with the code signatures found in them — a cheap",
+        "orientation aid, not a substitute for reading a file when its actual",
+        "content matters):",
+        "---",
+        repoMapContent,
+        "---",
+        ""
+      );
+    }
+    promptLines.push(
       "Notes from previous iterations (may be empty on the first iteration):",
       "---",
       notesContent || "(no previous iterations yet)",
       "---",
-      "",
-    ];
+      ""
+    );
     if (planContent) {
       promptLines.push(
         "Current implementation plan (.maestro-goal/plan.md):",
@@ -649,6 +674,24 @@ export async function runGoal({
     baseCommit = null;
   }
 
+  // Repo-map priming (see module doc comment / repoMap.js): built ONCE here,
+  // right after the worktree exists, and reused unchanged by every iteration
+  // below. A goal run's iterations all operate on the same repo whose overall
+  // shape does not meaningfully shift turn-to-turn, so recomputing this per
+  // iteration would just re-pay the same `git ls-files` + regex-scan cost for
+  // no benefit - unlike notes.md/plan.md, which genuinely change every
+  // iteration and so are correctly re-read each time below. Best-effort: a
+  // repo-map build failure (e.g. `git ls-files` fails for some reason) must
+  // never abort an otherwise-runnable goal, so it degrades to an empty map
+  // (silently omitted from the prompt by `runIteration`) rather than throwing.
+  let repoMapContent = "";
+  try {
+    const repoMap = await buildRepoMap(worktreePath);
+    repoMapContent = repoMap.map;
+  } catch (err) {
+    console.error(`[goalOrchestrator] Repo-map build failed for ${worktreePath}: ${err.message}`);
+  }
+
   const iterations = [];
   let consecutiveFailures = 0;
   let stoppedReason = "max_iterations_reached";
@@ -679,7 +722,16 @@ export async function runGoal({
       writePhase(worktreePath, phase);
     }
 
-    const outcome = await runIteration({ worktreePath, goal, notesContent, planContent, phase, model, effort });
+    const outcome = await runIteration({
+      worktreePath,
+      goal,
+      notesContent,
+      planContent,
+      repoMapContent,
+      phase,
+      model,
+      effort,
+    });
 
     // The verification gate only makes sense once there is code to verify —
     // research/plan iterations deliberately make no code changes, so gating
