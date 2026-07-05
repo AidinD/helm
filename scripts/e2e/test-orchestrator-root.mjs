@@ -1,13 +1,26 @@
-// E2E: a "New orchestrator session" roots in a dedicated NEUTRAL dir
-// (~/.maestro), never a project repo. Regression guard for the fix where it
-// used to root in Maestro's own repo (a footgun - hands-on work would land
-// there). Drives a real launched Maestro via the CDP harness.
+// E2E: a "New orchestrator session" roots in the Claude "meta home" - the dir
+// that carries BOTH the canonical CLAUDE.md AND the cwd-keyed auto-memory - so
+// the orchestrator starts with the accumulated rules + memory in context, and
+// never in a code project repo. Regression guard for two fixes: (1) it used to
+// root in Maestro's own repo (a footgun), and (2) an interim neutral ~/.maestro
+// dir was empty, so the orchestrator would have had NO memory. Drives a real
+// launched Maestro via the CDP harness.
 //
 // Run:  node scripts/e2e/test-orchestrator-root.mjs
+import os from "node:os";
+import path from "node:path";
+import fs from "node:fs";
 import { launch } from "./harness.mjs";
 
 function log(...a) {
   console.log("[orch-e2e]", ...a);
+}
+
+// Claude Code keys a project's auto-memory dir by its sanitized cwd: each of
+// ':' '\' '/' and space becomes '-'. Mirror that so we can check the memory dir.
+function memoryDirFor(cwd) {
+  const key = cwd.replace(/[:\\/ ]/g, "-");
+  return path.join(os.homedir(), ".claude", "projects", key, "memory");
 }
 
 const app = await launch();
@@ -22,27 +35,33 @@ function assert(cond, msg) {
 try {
   await app.waitForSelector("#pageToggle", 30000, { visible: true });
 
-  // The fix, straight from the IPC the button uses.
   const info = await app.eval("window.maestro.getOrchestratorInfo()");
   log("orchestrator:info ->", JSON.stringify(info));
   const cwd = (info && info.cwd) || "";
-  assert(/[\\/]\.maestro$/.test(cwd), `cwd is the neutral ~/.maestro dir (got ${JSON.stringify(cwd)})`);
+
+  assert(!!cwd && fs.existsSync(cwd), `cwd exists on disk (got ${JSON.stringify(cwd)})`);
   assert(!/[\\/]Tools[\\/]maestro$/i.test(cwd), "cwd is NOT the Maestro project repo");
   assert(
     /orchestrator-instructions\.md$/.test((info && info.instructionsPath) || ""),
     "instructionsPath still points at the operating manual (absolute)"
   );
 
-  // Click the actual button (on the dashboard) and confirm the opened pane is
-  // rooted in the neutral dir - proves the renderer plumbs info.cwd through.
+  // The whole point of the meta-home root: CLAUDE files + memory are present.
+  assert(fs.existsSync(path.join(cwd, "CLAUDE.md")), "cwd has a CLAUDE.md (the orchestrator gets the rules)");
+  const memDir = memoryDirFor(cwd);
+  const memFiles = fs.existsSync(memDir) ? fs.readdirSync(memDir).filter((f) => f.endsWith(".md")) : [];
+  log(`memory dir: ${memDir} (${memFiles.length} .md files)`);
+  assert(memFiles.length > 0, `cwd's auto-memory dir is populated (${memFiles.length} .md files) - orchestrator has memory`);
+  assert(memFiles.includes("MEMORY.md"), "memory dir includes the MEMORY.md index");
+
+  // Click the actual button and confirm the opened pane is rooted in the same
+  // meta-home cwd - proves the renderer plumbs info.cwd through.
   await app.eval('(document.querySelector(\'#pageToggle button[data-page="dashboard"]\') || {}).click?.()');
   const clicked = await app.eval(
     "(() => { const b = [...document.querySelectorAll('button')].find((x) => x.textContent.includes('New orchestrator session')); if (!b) return false; b.click(); return true; })()"
   );
   assert(clicked, "found + clicked the '+ New orchestrator session' button");
   await app.waitForSelector("#chatPage", 8000, { visible: true });
-
-  // Best-effort: read the opened orchestrator pane's cwd from renderer state.
   let paneCwd = null;
   try {
     paneCwd = await app.eval(
@@ -52,7 +71,10 @@ try {
     log("(pane cwd not readable from page scope:", e.message + ")");
   }
   if (paneCwd) {
-    assert(/[\\/]\.maestro$/.test(paneCwd), `opened orchestrator pane is rooted in ~/.maestro (got ${JSON.stringify(paneCwd)})`);
+    assert(
+      path.resolve(paneCwd).toLowerCase() === path.resolve(cwd).toLowerCase(),
+      `opened orchestrator pane is rooted in the meta-home (got ${JSON.stringify(paneCwd)})`
+    );
   } else {
     log("(skipped pane-cwd assertion - not exposed; IPC check above already proves the root)");
   }
@@ -63,7 +85,7 @@ try {
     log("  console error:", e.text);
   }
 
-  log(exitCode === 0 ? "VERIFY OK: orchestrator session roots in the neutral dir." : "VERIFY FAILED.");
+  log(exitCode === 0 ? "VERIFY OK: orchestrator roots in the meta-home with CLAUDE.md + memory present." : "VERIFY FAILED.");
 } catch (err) {
   exitCode = 1;
   log("ERROR:", err.message);
