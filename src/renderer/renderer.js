@@ -7075,19 +7075,13 @@ function renderSettingsPage() {
   languageRow.append(languageLabel, settingsLanguageDD.el);
   voiceGroup.append(languageRow);
 
-  // Two-column layout so the settings groups use the window's width instead of
-  // one tall stacked column. Left = the big Passive group; right = the shorter
-  // Acts + Voice groups stacked, which keeps the two columns roughly balanced.
-  // Collapses to one column on a narrow window (see .settings-columns CSS).
+  // Each group gets its OWN column (auto-fit grid) so every heading tops its
+  // own column, instead of the shorter groups being stacked awkwardly under
+  // one another. Auto-fit collapses to fewer columns on a narrow window (see
+  // .settings-columns CSS).
   const columns = document.createElement("div");
   columns.className = "settings-columns";
-  const leftCol = document.createElement("div");
-  leftCol.className = "settings-col";
-  leftCol.append(passiveGroup);
-  const rightCol = document.createElement("div");
-  rightCol.className = "settings-col";
-  rightCol.append(activeGroup, voiceGroup);
-  columns.append(leftCol, rightCol);
+  columns.append(passiveGroup, activeGroup, voiceGroup);
   block.append(columns);
 
   page.append(block);

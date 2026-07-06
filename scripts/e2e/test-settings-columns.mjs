@@ -1,6 +1,7 @@
-// E2E: the Settings groups render in a two-column layout at desktop width
-// (Passive in the left column; Acts + Voice in the right), collapsing logic via
-// CSS media query. Real launched Maestro via CDP at a wide viewport.
+// E2E: each Settings group is its own column at desktop width (auto-fit grid) -
+// Passive | Acts | Voice side by side, headings top-aligned - so no group is
+// stacked awkwardly under another. Real launched Maestro via CDP at a wide
+// viewport. Collapses to fewer columns on a narrow window (auto-fit, no assert).
 //
 // Run:  node scripts/e2e/test-settings-columns.mjs
 import { launch } from "./harness.mjs";
@@ -22,56 +23,43 @@ try {
   await app.eval(`(() => { navigateToPage("settings"); return true; })()`);
   await app.waitForSelector("#settingsPage .settings-columns", 8000);
 
-  // The container is a grid, and the two columns actually render SIDE BY SIDE
-  // at desktop width (same top, second column to the right of the first) -
-  // the real proof of a two-column layout, robust to how the browser reports
-  // the computed grid-template-columns value.
-  const grid = await app.eval(`(() => {
-    const settingsHidden = document.getElementById("settingsPage").classList.contains("hidden");
+  const info = await app.eval(`(() => {
     const el = document.querySelector("#settingsPage .settings-columns");
-    const cols = el.querySelectorAll(".settings-col");
-    const a = cols[0].getBoundingClientRect();
-    const b = cols[1].getBoundingClientRect();
-    return JSON.stringify({
-      settingsHidden,
-      display: getComputedStyle(el).display,
-      aW: Math.round(a.width), bW: Math.round(b.width),
-      sameRow: Math.abs(a.top - b.top) < 4,
-      sideBySide: b.left > a.right - 4,
-      aRight: Math.round(a.right), bLeft: Math.round(b.left),
+    const groups = [...el.querySelectorAll(":scope > .settings-group")];
+    const rows = groups.map((g) => {
+      const r = g.getBoundingClientRect();
+      return { heading: g.querySelector(".settings-group-heading")?.textContent || "", top: Math.round(r.top), left: Math.round(r.left), w: Math.round(r.width) };
     });
+    return JSON.stringify({ display: getComputedStyle(el).display, nGroups: groups.length, rows });
   })()`);
-  const g = JSON.parse(grid);
-  log("grid:", grid);
-  assert(!g.settingsHidden, "settings page is visible");
+  const g = JSON.parse(info);
+  log("layout:", info);
+
   assert(g.display === "grid", ".settings-columns is a grid");
-  assert(g.aW > 100 && g.bW > 100, `both columns have real width (a=${g.aW}, b=${g.bW})`);
-  assert(g.sameRow && g.sideBySide, `the two columns render side by side at desktop width (aRight=${g.aRight}, bLeft=${g.bLeft})`);
+  assert(g.nGroups === 3, `three groups as direct grid columns (got ${g.nGroups})`);
+  assert(g.rows.every((r) => r.w > 100), "each group column has real width");
 
-  // Left column holds the Passive group; right holds Acts + Voice.
-  const layout = await app.eval(`(() => {
-    const cols = document.querySelectorAll("#settingsPage .settings-col");
-    const headings = (col) => [...col.querySelectorAll(".settings-group-heading")].map(h => h.textContent);
-    return JSON.stringify({ nCols: cols.length, left: headings(cols[0]), right: headings(cols[1]) });
-  })()`);
-  const l = JSON.parse(layout);
-  log("layout:", layout);
-  assert(l.nCols === 2, "two .settings-col columns");
-  assert(l.left.some((h) => /Passive/.test(h)), "left column has the Passive group");
-  assert(l.right.some((h) => /Acts on your data/.test(h)) && l.right.some((h) => /Voice/.test(h)), "right column has Acts + Voice groups");
+  // Side by side: all three share (about) the same top and have increasing left.
+  const [a, b, c] = g.rows;
+  const sameTop = Math.abs(a.top - b.top) < 4 && Math.abs(b.top - c.top) < 4;
+  const increasingLeft = a.left < b.left && b.left < c.left;
+  assert(sameTop, `all three group headings are top-aligned on one row (tops ${a.top}/${b.top}/${c.top})`);
+  assert(increasingLeft, `columns are ordered left-to-right (lefts ${a.left}/${b.left}/${c.left})`);
 
-  // Nothing lost: still 3 groups, all 6 toggles.
-  const groups = await app.eval(`document.querySelectorAll("#settingsPage .settings-group").length`);
+  // Correct order: Passive, then Acts, then Voice.
+  assert(/Passive/.test(a.heading), "first column is Passive");
+  assert(/Acts on your data/.test(b.heading), "second column is Acts on your data");
+  assert(/Voice/.test(c.heading), "third column is Voice transcription");
+
   const toggles = await app.eval(`document.querySelectorAll("#settingsPage .settings-toggle-row").length`);
-  assert(groups === 3, `all 3 groups present (got ${groups})`);
-  assert(toggles === 6, `all 6 toggles present (got ${toggles})`);
+  assert(toggles === 6, `all 6 toggles preserved (got ${toggles})`);
 
   const errors = app.getConsoleErrors();
   assert(errors.length === 0, `no console errors (got ${errors.length})`);
   for (const e of errors) {
     log("  console error:", e.text);
   }
-  log(exitCode === 0 ? "VERIFY OK: settings groups in a balanced two-column layout." : "VERIFY FAILED.");
+  log(exitCode === 0 ? "VERIFY OK: each settings group is its own top-aligned column." : "VERIFY FAILED.");
 } catch (err) {
   exitCode = 1;
   log("ERROR:", err.message);

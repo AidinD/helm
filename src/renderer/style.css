@@ -2513,7 +2513,9 @@ button.primary {
 }
 
 .settings-block {
-  max-width: 480px;
+  /* Wider than the old single-column 480px so the group columns below have
+     room to breathe (each needs ~240px for readable toggle descriptions). */
+  max-width: 900px;
 }
 
 .settings-toggle-row {
@@ -2532,26 +2534,16 @@ button.primary {
   margin-bottom: 0;
 }
 
-/* Two-column layout for the settings groups - uses the window width instead of
-   one tall stacked column. align-items:start so the shorter right column
-   doesn't stretch to match the left. Collapses to one column on a narrow
-   window. */
+/* Each settings group is its own column (auto-fit) so every heading tops its
+   own column, rather than the shorter groups being stacked under one another.
+   auto-fit + minmax collapses to fewer columns as the window narrows, with no
+   media query needed. align-items:start so a short group's column doesn't
+   stretch to match a tall one. */
 .settings-columns {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 28px;
   align-items: start;
-}
-
-@media (max-width: 760px) {
-  .settings-columns {
-    grid-template-columns: 1fr;
-  }
-}
-
-.settings-col {
-  display: flex;
-  flex-direction: column;
 }
 
 .settings-group {
