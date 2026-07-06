@@ -3603,3 +3603,22 @@ himself (captain as integrator via Dashboard + Jot), not an always-on relay;
 build the well-supported second-mate->crew layer first with model-tiering +
 ephemeral workers + a 2-level depth cap. To confirm with Aidin before building
 the first-mate tier. The tiered vocabulary + operating rules above still stand.
+
+**Refinements (2026-07-06, same-day discussion) - resolves the evidence check:**
+- **First mate = bookend + on-demand, dormant between**, not a standing relay:
+  active at day-start ("what matters today?" -> spins up second mates) and
+  day-end (summary), or ad hoc for real cross-project synthesis; you talk to
+  second mates directly during the day. This IS what the research prescribed, so
+  the skepticism is honored, not overridden. **Two named first mates** (work,
+  private) is the norm (the firewalled-domains case), cheap because a dormant
+  session bills no tokens.
+- **Model per tier is by JUDGMENT, not hierarchy level** (Aidin's correction to
+  my naive "higher tier = cheaper"): first mate -> Sonnet (pure delegate/
+  prioritize/summarize; not Haiku - day-prioritization is real judgment); second
+  mate -> Opus (it validates/reviews/bugfixes - the judgment tier); crew -> by
+  task complexity (Point 9's per-prompt suggestion). Explains the earlier
+  "orchestrator = Opus": that role was second-mate work (validate + build).
+- **Feedback pipe** for first-mate refresh: gauge threshold -> attention notice
+  at a sensible moment (idle / day boundary, never mid-task) -> one-click ->
+  automatic summarize-to-files + fresh same-named session. Phased plan steps
+  5-6 in `docs/orchestration-model.md` (refresh pipe + tree/fleet view).
