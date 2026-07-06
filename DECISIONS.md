@@ -3588,3 +3588,18 @@ cwd-based). The second-mate -> crew machinery largely exists (Autopilot /
 tier: **session/run-spawns-run + structured report-back**. Phased plan in
 `docs/orchestration-model.md`; PLAN.md's reorientation section updated to
 "ephemeral by tier" rather than pure-ephemeral.
+
+**Evidence check (2026-07-06, same day) - the first-mate tier is NOT settled.**
+A research pass (`docs/research-orchestration-2026-07-06.md`) strongly supports
+the **second mate -> crew** layer (2-level coordinator->workers on independent
+parallel projects) but is skeptical of the **first mate as a standing 3rd
+agent tier**: effective agent hierarchies cap at ~2 levels (Claude Code's Agent
+Teams disallows nesting outright), and a cross-project coordinator only earns
+its coordination tax on *genuine* cross-project work, not as a routine relay.
+Token cost is real (~4-15x a single agent; multi-agent wins largely by spending
+more tokens, ~80% of Anthropic's benchmark variance). **Likely refinement:** the
+first mate is on-demand (invoked for real cross-project synthesis) or is Aidin
+himself (captain as integrator via Dashboard + Jot), not an always-on relay;
+build the well-supported second-mate->crew layer first with model-tiering +
+ephemeral workers + a 2-level depth cap. To confirm with Aidin before building
+the first-mate tier. The tiered vocabulary + operating rules above still stand.

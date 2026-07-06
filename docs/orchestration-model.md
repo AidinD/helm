@@ -3,6 +3,21 @@
 The mental model Maestro is built around, and how you actually work in it.
 Settled with Aidin 2026-07-06 (see DECISIONS.md for the decision + rationale).
 
+> **Evidence check (2026-07-06), unresolved - revisit before building the first-mate tier.**
+> A research pass (`docs/research-orchestration-2026-07-06.md`) supports the
+> **second mate -> crew** layer strongly (2-level coordinator->workers on
+> independent parallel projects is well-founded) but is **skeptical of the
+> first mate as a standing tier**: the evidence caps effective agent hierarchies
+> at ~2 levels (Claude Code's own Agent Teams disallows nesting), and says a
+> cross-project coordinator only earns its coordination tax when doing *genuine*
+> cross-project work (propagating a fix, sequencing attention, rate-limit
+> contention) - not as a mandatory relay for routine dispatch. Likely refinement:
+> the first mate is **on-demand or it's you** (captain as integrator, aided by
+> Dashboard + Jot), not an always-on relay. Token cost of going multi-agent is
+> real (~4-15x a single agent; it wins largely by spending more tokens). To
+> confirm with Aidin before the tier is built - the tiers/rules below stand as
+> the shared vocabulary regardless.
+
 ## The tiers
 
 Aidin is the captain of a ship.
