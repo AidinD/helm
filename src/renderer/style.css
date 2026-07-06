@@ -1451,6 +1451,25 @@ body.advanced .row-jot {
   outline: none;
 }
 
+/* Brief self-removing flash when a draft is programmatically inserted
+   (openFreshDraftInPane) - signals "loaded, review and press Enter" so a
+   silently-populated composer doesn't read as "nothing happened". Animation,
+   not a toggled state, so nothing has to remove the class later. */
+.composer-shell-draft-flash {
+  animation: composer-draft-flash 1.1s ease-out;
+}
+
+@keyframes composer-draft-flash {
+  0% {
+    border-color: var(--active);
+    box-shadow: 0 0 0 2px rgba(78, 161, 217, 0.35);
+  }
+  100% {
+    border-color: var(--border);
+    box-shadow: none;
+  }
+}
+
 .composer-controls {
   display: flex;
   align-items: center;
