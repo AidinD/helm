@@ -1,4 +1,5 @@
 import { spawn, execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { resolveClaudeBinary } from "./launcher.js";
@@ -479,7 +480,7 @@ function truncateNotesIfNeeded(worktreePath) {
  * it is empty for a repo-map build that failed or found nothing to map, in
  * which case that section is simply omitted from the prompt.
  */
-function runIteration({ worktreePath, goal, notesContent, planContent, repoMapContent, phase, model, effort }) {
+function runIteration({ worktreePath, goal, notesContent, planContent, repoMapContent, phase, model, effort, onChild }) {
   return new Promise((resolve) => {
     const promptLines = [`Overall goal: ${goal}`, ""];
     if (repoMapContent) {
@@ -568,6 +569,18 @@ function runIteration({ worktreePath, goal, notesContent, planContent, repoMapCo
       return;
     }
 
+    // Report the freshly-spawned child up to runGoal's caller (main.js) so it
+    // can be tracked for the before-quit orphan sweep and for goal:cancel's
+    // in-flight kill (see main.js's liveGoalRuns child tracking). Best-effort:
+    // a throwing callback must never break the iteration itself.
+    if (onChild) {
+      try {
+        onChild(child);
+      } catch {
+        // ignore — tracking is best-effort, not load-bearing for the run.
+      }
+    }
+
     let out = "";
     let stderrText = "";
     let settled = false;
@@ -638,7 +651,7 @@ function runIteration({ worktreePath, goal, notesContent, planContent, repoMapCo
  * (e.g. "npm test"), matching worktree.js's own npm-via-shell convention on
  * Windows.
  */
-function runVerifyCommand(worktreePath, verifyCommand) {
+function runVerifyCommand(worktreePath, verifyCommand, onChild) {
   return new Promise((resolve) => {
     let child;
     try {
@@ -651,6 +664,17 @@ function runVerifyCommand(worktreePath, verifyCommand) {
     } catch (err) {
       resolve({ ok: false, output: `Failed to spawn verify command: ${err.message}` });
       return;
+    }
+
+    // Same child tracking as runIteration (see there) — the verify command
+    // spawns its own process tree that must be swept on quit and killable by
+    // goal:cancel. Best-effort: a throwing callback must not break verify.
+    if (onChild) {
+      try {
+        onChild(child);
+      } catch {
+        // ignore — tracking is best-effort.
+      }
     }
 
     let out = "";
@@ -1105,6 +1129,7 @@ export async function runGoal({
   escalationConfig,
   onEscalation,
   cancelToken,
+  onChild,
 }) {
   if (!projectPath || !goal) {
     throw new Error("runGoal requires both projectPath and goal.");
@@ -1153,9 +1178,15 @@ export async function runGoal({
   // worktree (createWorktree's own fail-safe) - the first iteration would
   // just see a missing node_modules and can `npm install` itself, same as
   // before this change.
+  // A crypto.randomUUID() suffix (not Date.now()+short-random) so two runs
+  // started in the same millisecond can never collide on the worktree id /
+  // branch name and have the second worktree creation throw. Keep the
+  // human-readable `goal-`/`maestro/goal-` prefixes for at-a-glance
+  // identification; only the collision-prone suffix changes.
+  const runUuid = randomUUID();
   const { worktreePath, branchName } = createWorktree(projectPath, {
-    id: `goal-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    branchName: `maestro/goal-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    id: `goal-${runUuid}`,
+    branchName: `maestro/goal-${runUuid}`,
     deps: "junction",
   });
   // The exact commit this worktree forked from — the baseline for counting
@@ -1237,6 +1268,7 @@ export async function runGoal({
       phase,
       model,
       effort,
+      onChild,
     });
 
     // The verification gate only makes sense once there is code to verify —
@@ -1287,7 +1319,7 @@ export async function runGoal({
       // committing anything, so a failing verification is indistinguishable
       // from any other failed iteration downstream — same rollback, same
       // consecutive-failure counting, same stop conditions.
-      const verifyOutcome = await runVerifyCommand(worktreePath, verifyCommand);
+      const verifyOutcome = await runVerifyCommand(worktreePath, verifyCommand, onChild);
       if (verifyOutcome.ok) {
         // Verified green — accept exactly like the no-gate path below.
         appendNotes(worktreePath, i, outcome.result);
