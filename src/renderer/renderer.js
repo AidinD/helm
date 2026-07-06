@@ -3554,6 +3554,21 @@ function setModelFitLine(index, text, verdict) {
   line.className = "model-fit-line" + (verdict ? ` model-fit-${verdict}` : "");
 }
 
+// Surfaces what "Auto" actually resolved to, at the moment it's resolved for
+// THIS send - replacing the as-you-type guess (which can go stale between
+// typing and hitting Send) so the last thing shown before the run starts is
+// the real pick, not a debounced heuristic. Per PLAN.md 9/10: suggest AND let
+// the user choose, which requires seeing the resolved choice before paying
+// for the run, not only in setModelFitLine's post-hoc verdict.
+function setResolvedAutoHint(index, modelLabel, effort) {
+  const paneEl = document.querySelector(`.pane[data-pane="${index}"]`);
+  const hint = paneEl?.querySelector(".suggest-hint");
+  if (!hint) {
+    return;
+  }
+  hint.textContent = `Auto → ${modelLabel} · ${effort}`;
+}
+
 async function sendFromPane(index, els) {
   const pane = panes[index];
   const cwd = els.cwdInput.value.trim();
@@ -3615,6 +3630,12 @@ async function sendFromPane(index, els) {
   const suggestion = await window.maestro.suggestModelEffort(prompt);
   const model = els.modelDD.value === "auto" ? suggestion.model : els.modelDD.value;
   const effort = els.effortDD.value === "auto" ? suggestion.effort : els.effortDD.value;
+  if (els.modelDD.value === "auto" || els.effortDD.value === "auto") {
+    // Shown just before startSession fires below - the resolved pick, not the
+    // debounced as-you-type guess, so there's a real moment to notice/override
+    // before the run (and its cost) actually begins.
+    setResolvedAutoHint(index, model.replace("claude-", ""), effort);
+  }
 
   // "Switch root folder" (Aidin's question about the "…" picker on an
   // EXISTING session — it silently broke the next send with "No conversation
