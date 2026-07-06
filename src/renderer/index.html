@@ -27,11 +27,12 @@
       </div>
     </header>
 
-    <!-- Chat-only controls live on their OWN row under the header, not in the
-         global header-controls. Keeping them out of the header means the primary
-         tabs (Dashboard/Chat/Plan) never shift when you switch views; this row
-         simply appears on Chat and is gone elsewhere (Aidin design note
-         2026-07-05: "flytta inte bara dölj" + tabs jumping). -->
+    <!-- Chat-only controls. Declared once here (so their listeners wire up
+         once) but RELOCATED by paneHeaderEl into the primary pane's header row
+         on render - so they sit on the "New session" row, not a dedicated bar,
+         and never shift the primary tabs (Aidin design note 2026-07-06: move
+         them down onto that row, drop the extra row). Starts hidden; unhidden
+         when moved into the pane header. -->
     <div class="chat-toolbar hidden" id="chatToolbar">
       <div class="view-toggle" id="viewToggle">
         <button data-mode="simple" class="active">Simple</button>

@@ -2922,6 +2922,21 @@ function paneHeaderEl(index) {
     });
     actions.append(close);
   }
+  // The chat-global controls (Simple/Advanced, split, background tasks) ride on
+  // the PRIMARY pane's header row rather than a dedicated bar - so no extra row,
+  // and the top header stays just the primary tabs + gear (Aidin design note
+  // 2026-07-06: move them down onto the New-session row, drop the extra row).
+  // #chatToolbar is a static, once-wired element in index.html; appendChild
+  // MOVES it here (listeners intact) and it's re-appended on every pane-0
+  // render. margin-left:auto on .chat-toolbar clusters it to the right, left of
+  // the pane-specific +/✕ actions. Only pane 0 gets it; the split pane doesn't.
+  if (index === 0) {
+    const toolbar = document.getElementById("chatToolbar");
+    if (toolbar) {
+      toolbar.classList.remove("hidden");
+      header.append(toolbar);
+    }
+  }
   header.append(actions);
   return header;
 }
@@ -6079,11 +6094,10 @@ function navigateToPage(page) {
   document.getElementById("settingsPage").classList.toggle("hidden", page !== "settings");
 
   // Chat-specific controls (Simple/Advanced view mode, split-view, background
-  // tasks) live on their own row (#chatToolbar) below the header, not in the
-  // global header. Show that row only on Chat. Keeping them out of the header
-  // means the primary tabs never shift when the controls appear/disappear
-  // (Aidin design note 2026-07-05: moved, not just hidden; tabs were jumping).
-  document.getElementById("chatToolbar").classList.toggle("hidden", page !== "chat");
+  // tasks) live in the primary pane's header (see paneHeaderEl), inside
+  // #chatPage - so they're hidden with the whole chat view off-Chat and need no
+  // explicit toggle here. Keeping them out of the top header means the primary
+  // tabs never shift when switching views.
 
   // Primary bar active state is group-aware: clicking a sub-nav facet (e.g.
   // Goal) must keep the Dashboard primary tab lit, not deactivate it.
