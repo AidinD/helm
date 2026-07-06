@@ -42,12 +42,19 @@ const runningBuildIdentity = captureRunningBuildIdentity();
 let latestBuildStatus = { stale: false, runningVersion: runningBuildIdentity.version, runningCommit: runningBuildIdentity.commit, currentVersion: runningBuildIdentity.version };
 const liveChildren = new Map(); // launchId -> child process, for the Stop button
 // Fas 3 Point 11 (goal orchestrator) — one entry per in-flight goal run,
-// goalRunId -> { cancelToken }. The orchestrator itself checks
-// cancelToken.cancelled BETWEEN iterations (never mid-iteration), so
-// "goal:cancel" just flips the flag on the matching run and the loop stops
-// at its next boundary. In-memory only: a goal run is inherently tied to the
-// app being open, and a run's real durable output is the worktree/branch/
-// commits it leaves on disk, not this transient handle.
+// goalRunId -> { cancelToken, currentChild }. The orchestrator checks
+// cancelToken.cancelled BETWEEN iterations, so "goal:cancel" flips the flag
+// (the loop stops at its next boundary) AND — via currentChild — kills the
+// iteration/verify child process tree that is running RIGHT NOW, so an
+// in-flight iteration (up to ITERATION_TIMEOUT_MS) doesn't keep going after
+// cancel. currentChild is the single child the run currently has spawned
+// (iterations/verify never overlap within one run); the orchestrator reports
+// each freshly-spawned child via runGoal's onChild callback and this map
+// entry always holds the latest. before-quit sweeps these too, so quitting
+// mid-goal-run doesn't orphan the goal's claude.exe/verify trees the same way
+// liveChildren covers normal sessions. In-memory only: a goal run is
+// inherently tied to the app being open, and a run's real durable output is
+// the worktree/branch/commits it leaves on disk, not this transient handle.
 const liveGoalRuns = new Map();
 // Fas 3 orchestrator-helper classifier results, sessionId -> { statusTag,
 // reason, classifiedAtActivity }. In-memory only (lost on restart — a fresh
@@ -885,7 +892,8 @@ ipcMain.handle(
       : undefined; // undefined -> runGoal's own default
     const goalRunId = crypto.randomUUID();
     const cancelToken = { cancelled: false };
-    liveGoalRuns.set(goalRunId, { cancelToken });
+    const runEntry = { cancelToken, currentChild: null };
+    liveGoalRuns.set(goalRunId, runEntry);
 
     const send = (payload) => {
       if (mainWindow && !mainWindow.isDestroyed()) {
@@ -917,6 +925,13 @@ ipcMain.handle(
       // keeps runGoal's pre-existing behavior (no escalation) unchanged.
       escalationConfig: escalationConfig || undefined,
       cancelToken,
+      // Track each freshly-spawned iteration/verify child so before-quit can
+      // sweep its tree (L1) and goal:cancel can kill the in-flight one
+      // immediately (L2). Iterations/verify never overlap within a run, so a
+      // single currentChild slot always holding the latest is sufficient.
+      onChild: (child) => {
+        runEntry.currentChild = child;
+      },
       onIteration: (record) => send({ kind: "iteration", record }),
       // Forwarded to the renderer as its own "escalation" goal:event kind, on
       // the same channel as "iteration"/"done"/"error", so the Goal page can
@@ -941,14 +956,21 @@ ipcMain.handle(
 );
 
 // --- Cancel an in-flight goal run: flip its cancelToken so the orchestrator
-// stops at the next iteration boundary (an in-flight iteration always runs to
-// its own completion or timeout — there is no mid-iteration kill). ---
+// stops at the next iteration boundary, AND kill the child process tree that
+// is running right now so the in-flight iteration/verify doesn't keep running
+// (up to ITERATION_TIMEOUT_MS) after the click. Killing the child makes that
+// iteration's spawn resolve as a failed/errored outcome; the loop then hits
+// the cancelToken check at its next boundary and exits cleanly. ---
 ipcMain.handle("goal:cancel", (_event, { goalRunId }) => {
   const run = liveGoalRuns.get(goalRunId);
   if (!run) {
     return { ok: false, error: "no running goal for that id" };
   }
   run.cancelToken.cancelled = true;
+  if (run.currentChild) {
+    killChildTree(run.currentChild);
+    run.currentChild = null;
+  }
   return { ok: true };
 });
 
@@ -1241,6 +1263,17 @@ app.on("before-quit", () => {
     killChildTree(child, { sync: true });
   }
   liveChildren.clear();
+  // Same orphan-prevention concern as liveChildren, but for goal-run children:
+  // each in-flight goal run's currently-spawned iteration/verify process tree.
+  // Without this, quitting mid-goal-run leaves the goal's claude.exe/verify
+  // trees orphaned (goal children are tracked in liveGoalRuns, not
+  // liveChildren). Synchronous kill for the same teardown-race reason.
+  for (const run of liveGoalRuns.values()) {
+    if (run.currentChild) {
+      killChildTree(run.currentChild, { sync: true });
+    }
+  }
+  liveGoalRuns.clear();
   // Same orphan-prevention concern as liveChildren above, but for any
   // whisper-stream.exe still holding the microphone (continuous voice mode
   // left active when the app quits). SDL2's audio capture does not get
