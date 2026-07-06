@@ -24,6 +24,15 @@ skills, CLAUDE.md, settings, permissions, and MCP are preserved.
 | 13 | See my token/quota | 1 (investigate source) |
 | 14 | More later | reserved |
 
+## Superseded framing → see the tiered orchestration model (2026-07-06)
+
+The reorientation below (2026-07-03) was refined into the tiered
+captain / first mate / second mate / crew model — ephemeral applies *by tier*
+(crew + second mates), while a thin, file-backed, cross-project **first mate**
+is the deliberate durable exception. Read `docs/orchestration-model.md` for the
+current model and DECISIONS.md (2026-07-06) for why. The text below is kept for
+history; where it reads as "pure ephemeral", substitute "ephemeral by tier".
+
 ## Strategic reorientation (2026-07-03): ephemeral sessions, not a durable fleet
 
 The captain's realization: he's been working in long-lived sessions, roughly one
