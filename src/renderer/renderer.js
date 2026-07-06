@@ -2946,10 +2946,84 @@ function paneHeaderEl(index) {
   return header;
 }
 
+// Convention for "this session generated a vision mockup": a Write/Edit to an
+// HTML file whose name contains "mockup" (case-insensitive), e.g.
+// dashboard-mockup.html. Deliberately narrow so ordinary .html writes don't pop
+// the "Open in Plan" banner - the orchestrator/Claude names vision mockups this
+// way on purpose.
+function isMockupPath(p) {
+  if (!p) {
+    return false;
+  }
+  const name = String(p)
+    .split(/[\\/]/)
+    .pop()
+    .toLowerCase();
+  return name.endsWith(".html") && name.includes("mockup");
+}
+
+// Fills (or clears) a pane's "Open in Plan" banner from pane.detectedMockup.
+// A dedicated element updated in place so it survives without a full composer
+// rebuild (which would drop typed text).
+function renderMockupBanner(index, el, pane) {
+  el.innerHTML = "";
+  if (!pane.detectedMockup) {
+    el.classList.add("hidden");
+    return;
+  }
+  el.classList.remove("hidden");
+  const label = document.createElement("span");
+  label.className = "pane-mockup-label";
+  label.textContent = `Mockup generated: ${pane.detectedMockup.name}`;
+  const openBtn = document.createElement("button");
+  openBtn.className = "text-btn";
+  openBtn.textContent = "Open in Plan";
+  openBtn.addEventListener("click", async () => {
+    const res = await openMockupFileInPlan(pane.detectedMockup.path);
+    if (!res.ok) {
+      label.textContent = "Couldn't open mockup: " + res.error;
+    }
+  });
+  const dismiss = document.createElement("button");
+  dismiss.className = "icon-btn pane-mockup-dismiss";
+  dismiss.textContent = "✕";
+  dismiss.title = "Dismiss";
+  dismiss.addEventListener("click", () => {
+    pane.detectedMockup = null;
+    renderMockupBanner(index, el, pane);
+  });
+  el.append(label, openBtn, dismiss);
+}
+
+// Records a detected mockup on the pane and refreshes its banner live (no full
+// rebuild). Called from the tool_use session event.
+function showMockupBanner(index, filePath) {
+  const pane = panes[index];
+  if (!pane) {
+    return;
+  }
+  const name = String(filePath).split(/[\\/]/).pop();
+  pane.detectedMockup = { path: filePath, name };
+  const paneEl = document.querySelector(`.pane[data-pane="${index}"]`);
+  const el = paneEl?.querySelector(".pane-mockup-banner");
+  if (el) {
+    renderMockupBanner(index, el, pane);
+  }
+}
+
 function paneComposerEl(index) {
   const pane = panes[index];
   const wrap = document.createElement("div");
   wrap.className = "pane-composer";
+
+  // "Open in Plan" banner - appears when this session writes a mockup HTML file
+  // (see the tool_use handler in onSessionEvent). Persisted on
+  // pane.detectedMockup so it survives composer rebuilds; updated in place by
+  // showMockupBanner. Sits above the status line so it's noticed.
+  const mockupBanner = document.createElement("div");
+  mockupBanner.className = "pane-mockup-banner hidden";
+  wrap.append(mockupBanner);
+  renderMockupBanner(index, mockupBanner, pane);
 
   // Status lives right above the composer (was in the header, easy to miss
   // while your eyes are on the prompt box) — visible exactly where you're
@@ -6953,6 +7027,11 @@ window.maestro.onSessionEvent((evt) => {
     case "tool_use":
       setPaneBusyUI(index, `Working — ${evt.toolName}`);
       pulsePaneStatusIcon(index);
+      // If this session just wrote a mockup HTML file, offer to open it in the
+      // Plan view for annotation (option A: generate -> annotate in one step).
+      if (isMockupPath(evt.filePath)) {
+        showMockupBanner(index, evt.filePath);
+      }
       break;
     case "usage":
       // Incremental per-message usage (launcher.js reads it straight off each

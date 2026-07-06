@@ -1378,6 +1378,34 @@ body.advanced .row-jot {
   padding: 10px 14px 12px;
 }
 
+/* "Open in Plan" banner shown when a session writes a mockup HTML file. Subtle
+   card row (no accent fill - color stays reserved for active states), with the
+   action + dismiss on the right. */
+.pane-mockup-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  padding: 6px 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.pane-mockup-label {
+  color: var(--text-dim);
+}
+
+.pane-mockup-banner .text-btn {
+  margin-left: auto;
+}
+
+.pane-mockup-dismiss {
+  width: 22px;
+  height: 22px;
+}
+
 .composer-shell {
   background: var(--bg-card);
   border: 1px solid var(--border);
