@@ -7641,6 +7641,247 @@ window.maestro.onSessionEvent((evt) => {
   // consumes (disabled, errored launch, etc).
 });
 
+// ============================== Command palette (Cmd/Ctrl+K) ==============================
+// A keyboard-first fuzzy launcher over EXISTING affordances - it never
+// reimplements navigation or session logic, it just calls the same functions
+// the buttons do (navigateToPage, openSessionInPane, openFreshDraftInPane) or
+// clicks the real button (#splitToggle, #backgroundTasksBtn). The command
+// registry is rebuilt every open because entities (sessions, projects) are
+// live. State is renderer-local; nothing persists.
+let cmdkSelectedIndex = 0;
+let cmdkCommands = []; // filtered list currently shown (in render order)
+
+// Case-insensitive subsequence fuzzy match: every char of the query must
+// appear in order somewhere in the label. Substring naturally satisfies this,
+// so "gda"/"dash"/"go dash" all match "Go to Dashboard". No scoring beyond
+// registry order - kept deliberately lean.
+function cmdkFuzzyMatch(query, label) {
+  const q = query.toLowerCase();
+  const l = label.toLowerCase();
+  let li = 0;
+  for (let qi = 0; qi < q.length; qi++) {
+    const ch = q[qi];
+    li = l.indexOf(ch, li);
+    if (li === -1) {
+      return false;
+    }
+    li++;
+  }
+  return true;
+}
+
+// Rebuilds the full command registry from current app state. Order is
+// nav-first, then actions, then live session/project entities - so an empty
+// query shows navigation at the top.
+function cmdkBuildCommands() {
+  const cmds = [];
+
+  // NAVIGATION - one per router page (see navigateToPage's valid pages).
+  const navPages = [
+    ["Go to Dashboard / Overview", "dashboard"],
+    ["Go to Autopilot", "goal"],
+    ["Go to Routines", "routines"],
+    ["Go to Chat", "chat"],
+    ["Go to Plan", "lavish"],
+    ["Go to Skills", "analysis"],
+    ["Go to Archive", "archive"],
+    ["Go to Settings", "settings"],
+  ];
+  for (const [label, page] of navPages) {
+    cmds.push({ label, tag: "Nav", run: () => navigateToPage(page) });
+  }
+
+  // ACTIONS - only when the underlying affordance exists in the DOM.
+  const newChatBtn = document.getElementById("newChat");
+  if (newChatBtn) {
+    cmds.push({
+      label: "New chat",
+      tag: "Action",
+      run: () => {
+        navigateToPage("chat");
+        newChatBtn.click();
+      },
+    });
+  }
+  // "New orchestrator session" reuses the exact dashboard launcher behavior by
+  // building that button and clicking it (it self-navigates to chat + drops
+  // the orchestrator draft) - no duplicated orchestrator:info logic here.
+  cmds.push({
+    label: "New orchestrator session",
+    tag: "Action",
+    run: () => startOrchestratorSessionBtnEl().click(),
+  });
+  const splitBtn = document.getElementById("splitToggle");
+  if (splitBtn) {
+    cmds.push({ label: "Toggle split view", tag: "Action", run: () => splitBtn.click() });
+  }
+  const bgBtn = document.getElementById("backgroundTasksBtn");
+  if (bgBtn) {
+    cmds.push({ label: "Background tasks", tag: "Action", run: () => bgBtn.click() });
+  }
+
+  // SESSION ENTITIES - non-archived sessions open in the focused pane (same as
+  // clicking one in the sidebar), switching to Chat first.
+  for (const session of state.sessions) {
+    if (session.isArchived) {
+      continue;
+    }
+    const statusLabel = STATUS_LABEL[session.status] || session.status || "";
+    cmds.push({
+      label: `Open session: ${session.title || "Untitled"}`,
+      tag: statusLabel ? `Session · ${statusLabel}` : "Session",
+      run: () => {
+        navigateToPage("chat");
+        openSessionInPane(session, focusedPaneIndex);
+      },
+    });
+  }
+
+  // PROJECT ENTITIES - repo projects derived from cwd's Maestro has seen among
+  // its sessions (the same repo-chip source as the dashboard launcher; kept
+  // synchronous, so no async listDomains here - domains are omitted to keep
+  // the palette instant). Starting one reuses the chip's Start-fresh flow.
+  const knownRepos = [...new Set(state.sessions.filter((s) => s.cwd).map((s) => s.cwd))];
+  for (const cwd of knownRepos) {
+    const label = cwd.split(/[\\/]/).filter(Boolean).pop() || cwd;
+    cmds.push({
+      label: `New session in ${label}`,
+      tag: "Project",
+      run: () => {
+        navigateToPage("chat");
+        openFreshDraftInPane(cwd, "");
+      },
+    });
+  }
+
+  return cmds;
+}
+
+function cmdkIsOpen() {
+  return !document.getElementById("commandPalette").classList.contains("hidden");
+}
+
+function cmdkRenderList() {
+  const listEl = document.getElementById("cmdkList");
+  listEl.innerHTML = "";
+  if (cmdkCommands.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "cmdk-empty";
+    empty.textContent = "No matches";
+    listEl.append(empty);
+    return;
+  }
+  const frag = document.createDocumentFragment();
+  cmdkCommands.forEach((cmd, i) => {
+    const row = document.createElement("div");
+    row.className = "cmdk-row" + (i === cmdkSelectedIndex ? " is-selected" : "");
+    row.dataset.index = String(i);
+    const label = document.createElement("span");
+    label.className = "cmdk-row-label";
+    label.textContent = cmd.label;
+    const tag = document.createElement("span");
+    tag.className = "cmdk-row-tag";
+    tag.textContent = cmd.tag;
+    row.append(label, tag);
+    // Mouse hover selects (keeps parity with keyboard selection); click runs.
+    row.addEventListener("mouseenter", () => cmdkSetSelected(i));
+    row.addEventListener("click", () => cmdkRun(i));
+    frag.append(row);
+  });
+  listEl.append(frag);
+}
+
+function cmdkSetSelected(i) {
+  if (i === cmdkSelectedIndex) {
+    return;
+  }
+  cmdkSelectedIndex = i;
+  const rows = document.querySelectorAll("#cmdkList .cmdk-row");
+  rows.forEach((r, idx) => r.classList.toggle("is-selected", idx === cmdkSelectedIndex));
+}
+
+function cmdkFilter() {
+  const query = document.getElementById("cmdkInput").value.trim();
+  const all = cmdkBuildCommands();
+  cmdkCommands = query ? all.filter((c) => cmdkFuzzyMatch(query, c.label)) : all;
+  cmdkSelectedIndex = 0;
+  cmdkRenderList();
+}
+
+function cmdkOpen() {
+  const palette = document.getElementById("commandPalette");
+  palette.classList.remove("hidden");
+  const input = document.getElementById("cmdkInput");
+  input.value = "";
+  cmdkFilter();
+  input.focus();
+}
+
+function cmdkClose() {
+  const palette = document.getElementById("commandPalette");
+  palette.classList.add("hidden");
+  document.getElementById("cmdkInput").value = "";
+  cmdkCommands = [];
+  cmdkSelectedIndex = 0;
+}
+
+function cmdkRun(i) {
+  const cmd = cmdkCommands[i];
+  cmdkClose();
+  if (cmd) {
+    cmd.run();
+  }
+}
+
+function cmdkMoveSelection(delta) {
+  if (cmdkCommands.length === 0) {
+    return;
+  }
+  const next = (cmdkSelectedIndex + delta + cmdkCommands.length) % cmdkCommands.length;
+  cmdkSetSelected(next);
+  const row = document.querySelector(`#cmdkList .cmdk-row[data-index="${next}"]`);
+  if (row) {
+    row.scrollIntoView({ block: "nearest" });
+  }
+}
+
+// Global toggle: Cmd/Ctrl+K opens/closes. Registered on document so it works
+// from anywhere; guarded so it doesn't fight existing shortcuts (it only
+// claims the Ctrl/Cmd+K combo, which nothing else uses).
+document.addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && (e.key === "k" || e.key === "K")) {
+    e.preventDefault();
+    if (cmdkIsOpen()) {
+      cmdkClose();
+    } else {
+      cmdkOpen();
+    }
+    return;
+  }
+  if (!cmdkIsOpen()) {
+    return;
+  }
+  // Palette-local keys, handled only while open.
+  if (e.key === "Escape") {
+    e.preventDefault();
+    cmdkClose();
+  } else if (e.key === "ArrowDown" || (e.ctrlKey && (e.key === "j" || e.key === "J"))) {
+    e.preventDefault();
+    cmdkMoveSelection(1);
+  } else if (e.key === "ArrowUp" || (e.ctrlKey && (e.key === "p" || e.key === "P"))) {
+    // Up-alias is Ctrl+p (not Ctrl+k): Ctrl+k is the open/close toggle above,
+    // so it can't double as "move up" without the toggle swallowing it first.
+    e.preventDefault();
+    cmdkMoveSelection(-1);
+  } else if (e.key === "Enter") {
+    e.preventDefault();
+    cmdkRun(cmdkSelectedIndex);
+  }
+});
+
+document.getElementById("cmdkInput").addEventListener("input", cmdkFilter);
+document.getElementById("cmdkBackdrop").addEventListener("click", cmdkClose);
+
 renderWorkspace();
 renderBackgroundTasksBadge();
 startup();

@@ -1559,6 +1559,122 @@ body.advanced .row-jot {
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
 }
 
+/* --- Command palette (Cmd/Ctrl+K) --- Lean/dark; the only accent is the
+   selected row. Sits above everything (image lightbox is 2000). */
+.cmdk {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+}
+
+.cmdk.hidden {
+  display: none;
+}
+
+.cmdk-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.cmdk-modal {
+  position: relative;
+  margin-top: 12vh;
+  width: 560px;
+  max-width: 90vw;
+  max-height: 62vh;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.cmdk-input {
+  background: transparent;
+  color: var(--text);
+  border: none;
+  border-bottom: 1px solid var(--border);
+  padding: 13px 16px;
+  font: inherit;
+  font-size: 14px;
+  outline: none;
+}
+
+.cmdk-input::placeholder {
+  color: var(--text-faint);
+}
+
+.cmdk-list {
+  overflow-y: auto;
+  padding: 6px;
+  min-height: 0;
+}
+
+.cmdk-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.cmdk-row-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cmdk-row-tag {
+  flex: none;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+/* Selected row is the sole accent - keyboard selection and mouse hover both
+   land here (JS keeps a single .is-selected in sync). */
+.cmdk-row.is-selected {
+  background: var(--accent);
+  color: #1a1a17;
+}
+
+.cmdk-row.is-selected .cmdk-row-tag {
+  color: rgba(26, 26, 23, 0.7);
+}
+
+.cmdk-empty {
+  padding: 14px 12px;
+  font-size: 13px;
+  color: var(--text-faint);
+  text-align: center;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .cmdk-modal {
+    animation: cmdk-in 90ms ease-out;
+  }
+  @keyframes cmdk-in {
+    from {
+      opacity: 0;
+      transform: translateY(-4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+}
+
 .attachment-remove {
   background: transparent;
   border: none;

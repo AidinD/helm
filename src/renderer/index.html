@@ -86,6 +86,19 @@
 
     <div id="contextMenu" class="context-menu hidden"></div>
 
+    <!-- Command palette (Cmd/Ctrl+K): a keyboard-first launcher over existing
+         affordances (navigateToPage, openSessionInPane, the new-session flow).
+         Built as a static overlay like #contextMenu; the results list is
+         populated dynamically each open since entities (sessions/projects) are
+         live. Hidden by default. -->
+    <div id="commandPalette" class="cmdk hidden">
+      <div class="cmdk-backdrop" id="cmdkBackdrop"></div>
+      <div class="cmdk-modal" role="dialog" aria-label="Command palette">
+        <input type="text" id="cmdkInput" class="cmdk-input" placeholder="Type a command or search…" autocomplete="off" spellcheck="false" />
+        <div id="cmdkList" class="cmdk-list"></div>
+      </div>
+    </div>
+
     <script src="renderer.js"></script>
   </body>
 </html>
