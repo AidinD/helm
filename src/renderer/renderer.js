@@ -5856,6 +5856,38 @@ let lavishState = {
   loadError: "",
 };
 
+// Recently-loaded mockup FILE PATHS, most-recent-first, capped at 5.
+// Renderer-only persistence (localStorage) - no main.js IPC needed. Read once
+// at startup; every successful file-path load pushes/reorders and re-saves.
+const LAVISH_RECENT_KEY = "maestro.lavish.recentMockups";
+const LAVISH_RECENT_MAX = 5;
+
+function loadLavishRecents() {
+  try {
+    const raw = localStorage.getItem(LAVISH_RECENT_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((p) => typeof p === "string" && p) : [];
+  } catch {
+    return [];
+  }
+}
+
+function addLavishRecent(filePath) {
+  if (!filePath) {
+    return;
+  }
+  const deduped = lavishRecents.filter((p) => p !== filePath);
+  deduped.unshift(filePath);
+  lavishRecents = deduped.slice(0, LAVISH_RECENT_MAX);
+  try {
+    localStorage.setItem(LAVISH_RECENT_KEY, JSON.stringify(lavishRecents));
+  } catch {
+    // localStorage unavailable/full - recents just won't persist this run.
+  }
+}
+
+let lavishRecents = loadLavishRecents();
+
 // Build a mockup's sandboxed srcdoc, load it into the Plan (Lavish) review
 // surface, switch to the Plan view, and render it ready for annotation. Shared
 // by the manual "Load mockup" button and openMockupFileInPlan (the hook a
@@ -5886,7 +5918,11 @@ async function openMockupFileInPlan(filePath) {
   if (!res || !res.ok) {
     return { ok: false, error: res?.error || "unknown error" };
   }
-  return openMockupInPlan(res.html);
+  const built = await openMockupInPlan(res.html);
+  if (built.ok) {
+    addLavishRecent(filePath);
+  }
+  return built;
 }
 
 // Hook for opening a generated mockup straight in the Plan view: main sends
@@ -5959,6 +5995,33 @@ function renderLavishPage() {
   });
   pathRow.append(pathInput, pickBtn);
 
+  // ---- Recent mockups: last few file-path loads, one click to reload ----
+  let recentSection = null;
+  if (lavishRecents.length > 0) {
+    recentSection = document.createElement("div");
+    recentSection.className = "lavish-recent";
+    const recentLabel = document.createElement("div");
+    recentLabel.className = "goal-field-hint lavish-recent-label";
+    recentLabel.textContent = "Recent";
+    recentSection.append(recentLabel);
+    lavishRecents.forEach((recentPath) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "text-btn lavish-recent-row";
+      row.title = recentPath;
+      row.textContent = recentPath.split(/[\\/]/).pop();
+      row.addEventListener("click", async () => {
+        lavishState.loadError = "";
+        const res = await openMockupFileInPlan(recentPath);
+        if (!res.ok) {
+          lavishState.loadError = "Failed to build mockup: " + res.error;
+          renderLavishPage();
+        }
+      });
+      recentSection.append(row);
+    });
+  }
+
   const err = document.createElement("div");
   err.className = "goal-error";
   err.textContent = lavishState.loadError || "";
@@ -5970,30 +6033,29 @@ function renderLavishPage() {
   loadBtn.textContent = "Load mockup";
   loadBtn.addEventListener("click", async () => {
     lavishState.loadError = "";
-    let html = htmlInput.value.trim();
+    const html = htmlInput.value.trim();
     const filePath = pathInput.value.trim();
-    if (!html && filePath) {
-      const res = await window.maestro.readArtifactFile(filePath);
-      if (!res || !res.ok) {
-        lavishState.loadError = "Failed to read file: " + (res?.error || "unknown error");
-        renderLavishPage();
-        return;
-      }
-      html = res.html;
-    }
-    if (!html) {
+    let res;
+    if (html) {
+      res = await openMockupInPlan(html);
+    } else if (filePath) {
+      res = await openMockupFileInPlan(filePath);
+    } else {
       lavishState.loadError = "Paste HTML or pick a file first.";
       renderLavishPage();
       return;
     }
-    const res = await openMockupInPlan(html);
     if (!res.ok) {
       lavishState.loadError = "Failed to build mockup: " + res.error;
       renderLavishPage();
     }
   });
   actionRow.append(loadBtn);
-  form.append(htmlLabel, htmlInput, pathLabel, pathRow, err, actionRow);
+  form.append(htmlLabel, htmlInput, pathLabel, pathRow);
+  if (recentSection) {
+    form.append(recentSection);
+  }
+  form.append(err, actionRow);
   page.append(form);
 
   if (!lavishState.srcdoc) {
