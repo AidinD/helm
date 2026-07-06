@@ -2205,6 +2205,14 @@ button.primary {
   margin-left: auto;
 }
 
+/* Open/Delete worktree actions (finished runs only) sit in the same slot as
+   the live Cancel button - only one of the two is ever rendered per run. */
+.goal-worktree-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
 .goal-progress {
   display: flex;
   flex-direction: column;

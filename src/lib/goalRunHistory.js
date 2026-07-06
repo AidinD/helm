@@ -56,3 +56,16 @@ export function upsertGoalRunRecord(record) {
   }
   writeAll(records);
 }
+
+/**
+ * Removes one record by goalRunId, e.g. once its worktree has been deleted
+ * from the Goal page and there is nothing left on disk worth remembering it
+ * by. A no-op (not an error) if the id isn't present.
+ */
+export function removeGoalRunRecord(goalRunId) {
+  const records = readAll();
+  const next = records.filter((r) => r.goalRunId !== goalRunId);
+  if (next.length !== records.length) {
+    writeAll(next);
+  }
+}
