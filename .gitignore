@@ -2,6 +2,7 @@ node_modules/
 config.json
 domains.json
 usage-log.jsonl
+goal-run-history.json
 pasted-images/
 # whisper.cpp CUDA binary + GGML model for voice transcription (see
 # src/lib/whisperCpp.js and docs/transcription-research.md) — ~1.5GB of
