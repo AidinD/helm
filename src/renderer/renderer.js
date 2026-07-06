@@ -3579,6 +3579,11 @@ async function sendFromPane(index, els) {
     .map((att) => `[Attached ${att.isImage ? "image" : "file"}: ${att.path}]`)
     .join("\n");
   const prompt = attachmentPrefix ? `${attachmentPrefix}\n\n${typedText}` : typedText;
+  // Kept so a failed start below can restore exactly what the user had typed
+  // and attached, instead of forcing a full retype (the attachments array
+  // itself gets replaced with [] right after, not mutated, so this reference
+  // stays intact).
+  const sentAttachments = pane.pendingAttachments;
   pane.pendingAttachments = [];
   els.renderAttachments();
   pane.cwd = cwd;
@@ -3625,6 +3630,11 @@ async function sendFromPane(index, els) {
         stopLiveStatsTicker(index);
         setPaneBusyUI(index, "");
         pane.turns.push({ role: "assistant", kind: "text", text: "⚠ Couldn't switch to the new folder: " + switchRes.error });
+        // Same restore as the startSession failure branch below — don't make
+        // the user retype after a failed folder switch either.
+        els.promptEl.value = typedText;
+        pane.pendingAttachments = sentAttachments;
+        els.renderAttachments();
         bumpSessionActivity(pane.sessionId);
         renderPane(index);
       }
@@ -3657,6 +3667,14 @@ async function sendFromPane(index, els) {
       stopLiveStatsTicker(index);
       setPaneBusyUI(index, "");
       pane.turns.push({ role: "assistant", kind: "text", text: "⚠ Failed to start: " + res.error });
+      // A transient failure (e.g. claude.exe momentarily locked) shouldn't
+      // force a full retype — the composer was already cleared above, so
+      // restore the typed text and re-attach whatever was attached, leaving
+      // the pane exactly as it was before Send was pressed (minus the error
+      // turn now visible in history).
+      els.promptEl.value = typedText;
+      pane.pendingAttachments = sentAttachments;
+      els.renderAttachments();
       bumpSessionActivity(pane.sessionId);
       renderPane(index);
     }
