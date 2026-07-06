@@ -1,6 +1,7 @@
-// E2E: the Plan page shows a "Recent" list of recently-loaded mockup file
-// paths (localStorage-backed, most-recent-first, capped at 5, deduped). Real
-// launched Maestro via CDP.
+// E2E: the Plan "Recent" list remembers both file-path loads AND pasted-HTML
+// loads (each reloadable in one click), most-recent-first, deduped, capped at
+// 5, and migrates the old string[] localStorage format. Real launched Maestro
+// via CDP.
 //
 // Run:  node scripts/e2e/test-lavish-recents.mjs
 import { launch } from "./harness.mjs";
@@ -21,44 +22,58 @@ const rowCount = () => app.eval(`document.querySelectorAll("#lavishPage .lavish-
 try {
   await app.waitForSelector("#pageToggle", 30000, { visible: true });
 
-  // Seed two recents into localStorage + the in-memory list, then render Plan.
+  // Old string[] format migrates to the object shape.
+  const migrated = await app.eval(`(() => {
+    localStorage.setItem("maestro.lavish.recentMockups", JSON.stringify(["C:\\\\old\\\\legacy-mockup.html"]));
+    const r = loadLavishRecents();
+    return JSON.stringify(r);
+  })()`);
+  log("migration:", migrated);
+  const m = JSON.parse(migrated);
+  assert(m.length === 1 && m[0].kind === "file" && /legacy-mockup\.html$/.test(m[0].path), "old string[] entries migrate to { kind:'file', path }");
+
+  // Seed one file + one paste via the runtime helpers, then render Plan.
   await app.eval(`(() => {
-    lavishRecents = ["C:\\\\mocks\\\\alpha-mockup.html", "D:\\\\stuff\\\\beta-mockup.html"];
-    localStorage.setItem("maestro.lavish.recentMockups", JSON.stringify(lavishRecents));
+    lavishRecents = [];
+    localStorage.removeItem("maestro.lavish.recentMockups");
+    addLavishFileRecent("C:\\\\mocks\\\\alpha-mockup.html");
+    addLavishPasteRecent("<h1>Pasted A</h1>");
     navigateToPage("lavish");
     return true;
   })()`);
-  await app.waitForSelector("#lavishPage", 8000, { visible: true });
-
-  assert((await rowCount()) === 2, `two recent rows render (got ${await rowCount()})`);
-  const rows = await app.eval(`[...document.querySelectorAll("#lavishPage .lavish-recent-row")].map(r => ({ text: r.textContent, title: r.title }))`);
+  await app.waitForSelector("#lavishPage .lavish-recent-row", 8000);
+  assert((await rowCount()) === 2, `both a file and a paste recent render (got ${await rowCount()})`);
+  const rows = await app.eval(`[...document.querySelectorAll("#lavishPage .lavish-recent-row")].map(r => r.textContent)`);
   log("rows:", JSON.stringify(rows));
-  assert(rows[0].text === "alpha-mockup.html" && rows[1].text === "beta-mockup.html", "rows show the file basenames, most-recent-first");
-  assert(/alpha-mockup\.html$/.test(rows[0].title), "row title carries the full path");
+  assert(rows[0] === "Pasted mockup 1", "the pasted mockup shows as 'Pasted mockup 1', most-recent-first");
+  assert(rows[1] === "alpha-mockup.html", "the file recent shows its basename");
 
-  // addLavishRecent dedupes + moves to front + caps at 5.
-  const capCheck = await app.eval(`(() => {
-    for (const p of ["a.html","b.html","c.html","d.html","e.html","f.html"]) addLavishRecent(p);
-    addLavishRecent("c.html"); // existing -> should move to front, not duplicate
-    return JSON.stringify({ len: lavishRecents.length, front: lavishRecents[0], dupes: lavishRecents.filter(x => x === "c.html").length });
+  // Re-pasting identical HTML dedupes (keeps one entry, same label) and moves front.
+  const afterRepaste = await app.eval(`(() => {
+    addLavishPasteRecent("<h1>Pasted A</h1>");
+    return JSON.stringify({ n: lavishRecents.length, pastes: lavishRecents.filter(e => e.kind === "paste").length, frontLabel: lavishRecents[0].label });
   })()`);
-  const cap = JSON.parse(capCheck);
-  log("cap check:", capCheck);
-  assert(cap.len === 5, `recents capped at 5 (got ${cap.len})`);
-  assert(cap.front === "c.html", "re-adding an existing path moves it to the front");
-  assert(cap.dupes === 1, "no duplicate entries");
+  log("re-paste:", afterRepaste);
+  const rp = JSON.parse(afterRepaste);
+  assert(rp.pastes === 1 && rp.frontLabel === "Pasted mockup 1", "re-pasting identical HTML dedupes and keeps its label");
+
+  // Cap at 5 across mixed kinds.
+  const cap = await app.eval(`(() => {
+    for (let i = 0; i < 6; i++) addLavishFileRecent("C:\\\\f" + i + "-mockup.html");
+    return lavishRecents.length;
+  })()`);
+  assert(cap === 5, `recents capped at 5 across kinds (got ${cap})`);
 
   const errors = app.getConsoleErrors();
   assert(errors.length === 0, `no console errors (got ${errors.length})`);
   for (const e of errors) {
     log("  console error:", e.text);
   }
-  log(exitCode === 0 ? "VERIFY OK: recent mockups list renders + dedupes + caps." : "VERIFY FAILED.");
+  log(exitCode === 0 ? "VERIFY OK: recents remember file + pasted mockups, migrate, dedupe, cap." : "VERIFY FAILED.");
 } catch (err) {
   exitCode = 1;
   log("ERROR:", err.message);
 } finally {
-  // Clear the seeded recents so the dev app doesn't inherit test data.
   await app.eval(`localStorage.removeItem("maestro.lavish.recentMockups")`).catch(() => {});
   const killOut = await app.close();
   log("cleanup:", killOut || "(nothing killed)");
