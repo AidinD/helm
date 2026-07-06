@@ -19,7 +19,7 @@ let goalRunSeq = 0;
 // goalRunIds whose error/escalation hasn't been seen yet - drives the small
 // attention dot on the primary Dashboard tab so a failed/paused run started
 // off-page (e.g. while on Chat) isn't silently missed. Cleared whenever the
-// user navigates into the Goal or Agents facet (see navigateToPage).
+// user navigates into the Goal facet (see navigateToPage).
 let unseenGoalAttention = new Set();
 // Persists the "Escalate on trouble" checkbox across re-renders of the launcher
 // form (renderGoalPage rebuilds the whole page's DOM each time). A plain module
@@ -4177,11 +4177,6 @@ function refreshDashboardIfVisible() {
   if (isDashboardVisible()) {
     renderDashboardPage();
   }
-  // Agents page's session nodes are also derived from state.sessions - keep
-  // them live on the same poll tick, same no-op-when-hidden guard.
-  if (!document.getElementById("agentsPage").classList.contains("hidden")) {
-    renderAgentsPage();
-  }
 }
 
 async function renderDashboardPage() {
@@ -5908,13 +5903,10 @@ window.maestro.onGoalEvent((evt) => {
     updateGoalAttentionBadge();
     window.maestro.notifyAttention({ title: "Maestro - a run needs you", body: run.goal });
   }
-  // Only re-render if the Goal/Agents page is actually visible, to avoid
+  // Only re-render if the Goal page is actually visible, to avoid
   // clobbering another page the user may have switched to mid-run.
   if (!document.getElementById("goalPage").classList.contains("hidden")) {
     renderGoalPage();
-  }
-  if (!document.getElementById("agentsPage").classList.contains("hidden")) {
-    renderAgentsPage();
   }
 });
 
@@ -6539,184 +6531,6 @@ function routineRowEl(task) {
   return row;
 }
 
-// ============================== Agents page ==============================
-// Maestro's OWN activity - not a rebuild of Claude Code's native Agent View.
-// Two real sources, both already in renderer state:
-//   - state.sessions: manual sessions Maestro is tracking (reuses the same
-//     session.status the sidebar dot and dashboard queue already read).
-//   - goalRuns: the in-flight goalOrchestrator runs (several can run at once,
-//     each in its own worktree), with their iterations as children - the same
-//     state renderGoalPage reads.
-// Each run's iterations are sequential (one worker per run); a true multi-worker
-// fan-out UNDER a single run (several parallel workers in one orchestrator node)
-// does not exist yet - that is marked "(coming)" below rather than faked.
-
-function renderAgentsPage() {
-  const page = document.getElementById("agentsPage");
-  page.innerHTML = "";
-
-  const header = document.createElement("h2");
-  header.textContent = "Agents";
-  page.append(header);
-
-  const intro = document.createElement("div");
-  intro.className = "analysis-totals";
-  intro.textContent = "What Maestro itself is running right now - active sessions and goal-orchestrator runs.";
-  page.append(intro);
-
-  const wrap = document.createElement("div");
-  wrap.className = "tree-wrap";
-
-  // All in-motion goal runs (running or paused-for-escalation - both keep
-  // status "running" until they finish). Several can run at once.
-  const activeGoalRuns = [...goalRuns.values()].filter((r) => r.status === "running");
-  if (activeGoalRuns.length) {
-    activeGoalRuns.forEach((r) => wrap.append(agentsGoalRunNode(r)));
-  } else {
-    const placeholder = document.createElement("div");
-    placeholder.className = "tree-meta-row agents-placeholder";
-    placeholder.textContent = "(goal runs appear here when running)";
-    wrap.append(placeholder);
-  }
-
-  const activeSessions = sortByAttention(state.sessions.filter((s) => !s.isArchived && (s.status === "active" || s.status === "waiting")));
-  activeSessions.forEach((session) => wrap.append(agentsSessionNode(session)));
-
-  if (activeGoalRuns.length === 0 && activeSessions.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "tree-meta-row agents-placeholder";
-    empty.textContent = "Nothing in motion right now.";
-    wrap.append(empty);
-  }
-
-  page.append(wrap);
-
-  const legend = document.createElement("div");
-  legend.className = "legend";
-  [
-    ["running", "running"],
-    ["waiting", "needs you"],
-    ["done", "done / committed"],
-    ["failed", "failed / rolled back"],
-  ].forEach(([cls, label]) => {
-    const span = document.createElement("span");
-    const dot = document.createElement("span");
-    dot.className = `agents-state-dot ${cls}`;
-    span.append(dot, document.createTextNode(label));
-    legend.append(span);
-  });
-  page.append(legend);
-
-  const later = document.createElement("div");
-  later.className = "later-note";
-  later.textContent =
-    "(coming) Gated on the dispatch layer maturing: true multi-worker fan-out (several parallel workers UNDER a single run's node), a timeline scrubber over past runs, and per-node token/cost readout. Several goal runs can already run at once (each its own branch here); within a run, iterations are still sequential.";
-  page.append(later);
-}
-
-function agentsGoalRunNode(run) {
-  const node = document.createElement("div");
-  node.className = "tree-node root";
-
-  const line = document.createElement("div");
-  line.className = "tree-line";
-  const dot = document.createElement("span");
-  dot.className = `agents-state-dot ${run.status === "running" ? "running" : run.status === "error" ? "failed" : "done"}`;
-  const label = document.createElement("span");
-  label.className = "tree-label";
-  const name = document.createElement("span");
-  name.className = "name";
-  name.textContent = `Goal run - "${run.goal || "(no goal text)"}"`;
-  const detail = document.createElement("span");
-  detail.className = "detail";
-  const projectName = (run.projectPath || "").split(/[\\/]/).filter(Boolean).pop() || run.projectPath || "";
-  detail.textContent = `${projectName} · iteration ${run.iterations.length}/${run.maxIterations || "?"}`;
-  label.append(name, detail);
-  const badge = document.createElement("span");
-  badge.className = "tree-badge";
-  badge.textContent = "orchestrator";
-  line.append(dot, label, badge);
-  node.append(line);
-
-  const meta = document.createElement("div");
-  meta.className = "tree-meta-row";
-  meta.textContent = `project: ${run.projectPath || "(unknown)"} · status: ${run.status}`;
-  node.append(meta);
-
-  if (run.iterations.length > 0) {
-    const children = document.createElement("div");
-    children.className = "tree-children";
-    run.iterations.forEach((rec) => children.append(agentsIterationNode(rec)));
-    node.append(children);
-  }
-
-  return node;
-}
-
-function agentsIterationNode(rec) {
-  const node = document.createElement("div");
-  node.className = "tree-node";
-
-  const line = document.createElement("div");
-  line.className = "tree-line";
-  const ok = rec.ok && rec.result && rec.result.success;
-  const dot = document.createElement("span");
-  dot.className = `agents-state-dot ${rec.ok ? "done" : "failed"}`;
-  const label = document.createElement("span");
-  label.className = "tree-label";
-  const name = document.createElement("span");
-  name.className = "name";
-  name.textContent = `Iteration ${rec.iteration}`;
-  const detail = document.createElement("span");
-  detail.className = "detail";
-  detail.textContent = rec.ok && rec.result ? rec.result.summary || "" : rec.error || "failed";
-  label.append(name, detail);
-  const badge = document.createElement("span");
-  badge.className = "tree-badge";
-  badge.textContent = rec.ok ? (ok ? "committed" : "discarded") : "error";
-  line.append(dot, label, badge);
-  node.append(line);
-
-  return node;
-}
-
-function agentsSessionNode(session) {
-  const node = document.createElement("div");
-  node.className = "tree-node root";
-  node.addEventListener("click", () => {
-    navigateToPage("chat");
-    openSessionInPane(session, focusedPaneIndex);
-  });
-
-  const line = document.createElement("div");
-  line.className = "tree-line";
-  const dot = document.createElement("span");
-  dot.className = `agents-state-dot ${session.status === "waiting" ? "waiting" : "running"}`;
-  const label = document.createElement("span");
-  label.className = "tree-label";
-  const name = document.createElement("span");
-  name.className = "name";
-  name.textContent = `Session - "${session.title}"`;
-  const detail = document.createElement("span");
-  detail.className = "detail";
-  const projectName = (session.cwd || "").split(/[\\/]/).filter(Boolean).pop() || session.cwd || "";
-  detail.textContent = `${projectName} · ${session.status === "waiting" ? "waiting for input" : "active"}`;
-  label.append(name, detail);
-  const badge = document.createElement("span");
-  badge.className = "tree-badge";
-  badge.textContent = "manual session";
-  line.append(dot, label, badge);
-  node.append(line);
-
-  const meta = document.createElement("div");
-  meta.className = "tree-meta-row";
-  const modelLabel = session.model ? session.model.replace("claude-", "") : "model unknown";
-  meta.textContent = `${modelLabel}${session.effort ? " / " + session.effort : ""} · ${relTime(session.lastActivityAt)}`;
-  node.append(meta);
-
-  return node;
-}
-
 // ============================== Analysis page ==============================
 // Replaces the earlier popup versions of Skills/Usage — those rendered via
 // submenus that could overflow off-screen near the window edge, and the captain
@@ -6741,7 +6555,7 @@ document.getElementById("settingsGear").innerHTML = GEAR_ICON;
 // toward the group so the primary tab stays lit while viewing it. Skills
 // (analysis) and Archive are reached from their own #headerUtilityNav, not
 // the Settings/gear group.
-const DASHBOARD_FACET_PAGES = ["dashboard", "goal", "agents", "routines", "focus"];
+const DASHBOARD_FACET_PAGES = ["dashboard", "goal", "routines", "focus"];
 
 // Single source of truth for page navigation. Everything (the primary bar,
 // the gear, the sub-nav, and every programmatic jump) routes through here, so
@@ -6753,7 +6567,6 @@ function navigateToPage(page) {
   document.getElementById("goalPage").classList.toggle("hidden", page !== "goal");
   document.getElementById("lavishPage").classList.toggle("hidden", page !== "lavish");
   document.getElementById("routinesPage").classList.toggle("hidden", page !== "routines");
-  document.getElementById("agentsPage").classList.toggle("hidden", page !== "agents");
   document.getElementById("analysisPage").classList.toggle("hidden", page !== "analysis");
   document.getElementById("archivePage").classList.toggle("hidden", page !== "archive");
   document.getElementById("settingsPage").classList.toggle("hidden", page !== "settings");
@@ -6790,7 +6603,7 @@ function navigateToPage(page) {
 
   // Landing on the facet that actually shows the failed/paused run is what
   // counts as "seen" - clears the attention dot from updateGoalAttentionBadge.
-  if (page === "goal" || page === "agents") {
+  if (page === "goal") {
     unseenGoalAttention.clear();
     updateGoalAttentionBadge();
   }
@@ -6805,8 +6618,6 @@ function navigateToPage(page) {
     renderLavishPage();
   } else if (page === "routines") {
     renderRoutinesPage();
-  } else if (page === "agents") {
-    renderAgentsPage();
   } else if (page === "analysis") {
     renderAnalysisPage();
   } else if (page === "archive") {
