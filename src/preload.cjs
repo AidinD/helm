@@ -40,6 +40,9 @@ contextBridge.exposeInMainWorld("maestro", {
   // fires only when that check's result actually changes (see runStaleBuildCheck
   // in main.js), not on every tick.
   getBuildStatus: () => ipcRenderer.invoke("build:status"),
+  // Orchestrator sweep liveness readout (Settings page) — { lastRunAt, ok,
+  // classifiedCount, error }. Read once when Settings renders, no polling.
+  getSweepStatus: () => ipcRenderer.invoke("orchestrator:sweepStatus"),
   onBuildStaleUpdate: (handler) => {
     const listener = (_event, payload) => handler(payload);
     ipcRenderer.on("build:staleUpdate", listener);

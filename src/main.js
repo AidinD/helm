@@ -531,6 +531,12 @@ ipcMain.handle("orchestrator:info", () => {
 // renderer side. ---
 ipcMain.handle("build:status", () => latestBuildStatus);
 
+// --- Orchestrator sweep liveness: last-run timestamp/outcome for the
+// Settings page readout (see lastSweepStatus above, updated at the end of
+// every runOrchestratorSweep call). Read-only, no polling from the renderer
+// side — it's fetched once when the Settings page renders. ---
+ipcMain.handle("orchestrator:sweepStatus", () => lastSweepStatus);
+
 // --- Full chat history for a session (for the pane view) ---
 ipcMain.handle("transcript:get", (_event, { cliSessionId, sessionId }) => {
   const transcriptPath = findTranscriptPath([cliSessionId, sessionId]);
@@ -1108,6 +1114,16 @@ const SUGGESTION_ACCURACY_CHECK_EVERY_N_RUNS = 10;
 // spawns and spend with no lock (caught in review before shipping).
 let sweepInFlight = false;
 
+// Liveness readout for the Settings page (see "orchestrator:sweepStatus"
+// IPC handler below) - the sweep has real cost (classification calls,
+// auto-compact) but runs silently on a timer, so if it ever stalls
+// (sweepInFlight stuck true) or a classify call throws, the only visible
+// symptom is "sessions stopped getting tagged", which is easy to miss.
+// classifiedCount is just toClassify.length from the last run that reached
+// that point - cheap to record, not a new metric the sweep didn't already
+// compute.
+let lastSweepStatus = { lastRunAt: null, ok: null, classifiedCount: 0, error: null };
+
 async function runOrchestratorSweep() {
   if (sweepInFlight) {
     return;
@@ -1121,7 +1137,11 @@ async function runOrchestratorSweep() {
   }
   sweepInFlight = true;
   try {
-    await runOrchestratorSweepBody(config, { classifyOn, compactOn, accuracyCheckOn });
+    const classifiedCount = await runOrchestratorSweepBody(config, { classifyOn, compactOn, accuracyCheckOn });
+    lastSweepStatus = { lastRunAt: Date.now(), ok: true, classifiedCount: classifiedCount || 0, error: null };
+  } catch (err) {
+    lastSweepStatus = { lastRunAt: Date.now(), ok: false, classifiedCount: 0, error: String(err?.message || err) };
+    throw err;
   } finally {
     sweepInFlight = false;
   }
@@ -1140,6 +1160,9 @@ async function runOrchestratorSweepBody(config, { classifyOn, compactOn, accurac
   // and matches Aidin's "aktiv men idle" framing for what to auto-compact.
   const candidates = sessions.filter((s) => !s.isArchived && (s.status === "waiting" || s.status === "idle"));
 
+  // Returned to the caller for the "orchestrator:sweepStatus" liveness readout.
+  let classifiedCount = 0;
+
   if (classifyOn) {
     // Jot data is only used by the classifier's per-session summary — enrich
     // only when actually classifying (the compaction pass never reads it).
@@ -1153,6 +1176,7 @@ async function runOrchestratorSweepBody(config, { classifyOn, compactOn, accurac
       return !prior || prior.classifiedAtActivity !== s.lastActivityAt;
     });
     for (const session of toClassify.slice(0, MAX_CLASSIFICATIONS_PER_SWEEP)) {
+      classifiedCount++;
       // Minimal, explicit projection — see formatJotSummaryForClassifier's own
       // doc comment for why this is a category name + counts, never raw todo
       // text/descriptions.
@@ -1256,6 +1280,8 @@ async function runOrchestratorSweepBody(config, { classifyOn, compactOn, accurac
   if (accuracyCheckOn) {
     runSuggestionAccuracyCheck(config);
   }
+
+  return classifiedCount;
 }
 
 // Fas 3's proactive model/effort suggestion-accuracy review (PLAN.md Phase
