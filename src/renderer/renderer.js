@@ -5375,6 +5375,18 @@ function goalRunDetailEl(run) {
       await window.maestro.cancelGoal(run.goalRunId);
     });
     head.append(cancelBtn);
+  } else {
+    // Worktree cleanup actions - only once the run is no longer live (a
+    // "running" run's worktree is still in use by the in-flight iteration)
+    // and only when a worktree path is actually known (a run that errored
+    // before ever creating one has neither). Covers both live-finished runs
+    // (run.result.worktreePath) and rehydrated-from-disk ones (same shape,
+    // see rehydrateGoalRuns), which is exactly the population that leaves
+    // orphaned worktrees behind with no other way to clean them up.
+    const worktreePath = run.result?.worktreePath;
+    if (worktreePath) {
+      head.append(goalWorktreeActionsEl(run, worktreePath));
+    }
   }
   wrap.append(head);
 
@@ -5430,6 +5442,66 @@ function goalRunDetailEl(run) {
     errCard.textContent = "Error: " + (run.error || "unknown error");
     wrap.append(errCard);
   }
+
+  return wrap;
+}
+
+// Open/Delete actions for a finished (non-running) run's worktree - the
+// worktree + branch a goal-orchestrator run leaves on disk for human review
+// (see goalOrchestrator.js) but which otherwise has no in-app way to inspect
+// or clean up, so orphaned worktrees pile up over daily use. Delete goes
+// through a two-step inline confirm (showContextMenu's existing
+// "Confirm X" re-open pattern - see e.g. archive/delete-category handlers -
+// rather than a native window.confirm(), which is unreliable in this build.
+function goalWorktreeActionsEl(run, worktreePath) {
+  const wrap = document.createElement("span");
+  wrap.className = "goal-worktree-actions";
+
+  const openBtn = document.createElement("button");
+  openBtn.className = "text-btn";
+  openBtn.textContent = "Open worktree";
+  openBtn.title = worktreePath;
+  openBtn.addEventListener("click", () => {
+    window.maestro.openGoalWorktree(worktreePath);
+  });
+  wrap.append(openBtn);
+
+  const deleteBtn = document.createElement("button");
+  deleteBtn.className = "text-btn";
+  deleteBtn.textContent = "Delete worktree";
+  deleteBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    // removeWorktree only removes the worktree checkout itself, never the
+    // branch ref (see lib/worktree.js doc comment) - the confirm copy must
+    // stay accurate about that rather than imply the branch goes away too.
+    const branchNote = run.result?.branchName
+      ? ` (branch "${run.result.branchName}" is kept - delete it by hand if unwanted)`
+      : "";
+    showContextMenu(e.clientX, e.clientY, [
+      {
+        label: `Confirm delete worktree "${worktreePath}"${branchNote}`,
+        danger: true,
+        onClick: async () => {
+          deleteBtn.disabled = true;
+          openBtn.disabled = true;
+          const res = await window.maestro.deleteGoalWorktree({
+            goalRunId: run.goalRunId,
+            projectPath: run.projectPath,
+            worktreePath,
+          });
+          if (!res || !res.ok) {
+            showToast(`Failed to delete worktree: ${res?.error || "unknown error"}`);
+            deleteBtn.disabled = false;
+            openBtn.disabled = false;
+            return;
+          }
+          goalRuns.delete(run.goalRunId);
+          renderGoalPage();
+        },
+      },
+    ]);
+  });
+  wrap.append(deleteBtn);
 
   return wrap;
 }

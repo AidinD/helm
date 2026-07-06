@@ -89,6 +89,12 @@ contextBridge.exposeInMainWorld("maestro", {
   // Persisted goal-run index (survives app restarts) - read once on startup
   // to rehydrate the Goal page's in-memory goalRuns Map with past runs.
   getGoalRunHistory: () => ipcRenderer.invoke("goal:history"),
+  // Per-run worktree cleanup (Goal page). openWorktree just opens the folder
+  // in the OS file explorer; deleteWorktree removes the worktree via
+  // lib/worktree.js's removeWorktree (branch is left alone by design) and,
+  // on success, drops the persisted history record too.
+  openGoalWorktree: (worktreePath) => ipcRenderer.invoke("goal:openWorktree", { worktreePath }),
+  deleteGoalWorktree: (opts) => ipcRenderer.invoke("goal:deleteWorktree", opts),
   onGoalEvent: (handler) => {
     const listener = (_event, payload) => handler(payload);
     ipcRenderer.on("goal:event", listener);

@@ -19,7 +19,8 @@ import { classifySessionStatus, estimateSessionContextTokens, compactSession, ge
 import { savePastedImage, prunePastedImages } from "./lib/images.js";
 import { computeVersionString, captureRunningBuildIdentity, checkForNewerBuild } from "./lib/version.js";
 import { runGoal } from "./lib/goalOrchestrator.js";
-import { loadGoalRunHistory, upsertGoalRunRecord } from "./lib/goalRunHistory.js";
+import { loadGoalRunHistory, upsertGoalRunRecord, removeGoalRunRecord } from "./lib/goalRunHistory.js";
+import { removeWorktree } from "./lib/worktree.js";
 import { loadDomains, registerDomain, removeDomain } from "./lib/domains.js";
 import { listScheduledTasks } from "./lib/routines.js";
 import { buildArtifactSrcdoc, formatAnnotationsAsPrompt } from "./lib/lavishSdk.js";
@@ -1027,6 +1028,40 @@ ipcMain.handle("goal:history", () => {
       ? { ...record, status: "interrupted" }
       : record
   );
+});
+
+// --- Per-run worktree management (Goal page cleanup affordances). A
+// goal-orchestrator run deliberately leaves its worktree + branch on disk for
+// human review (see goalOrchestrator.js) rather than cleaning up after
+// itself, which over daily use means orphaned worktrees pile up with no
+// in-app visibility. These two handlers only ever act on a SPECIFIC
+// worktreePath the renderer already has from a run record - never a
+// generic "clean up everything" sweep. Reuses worktree.js's removeWorktree,
+// which by design only removes the worktree checkout itself and leaves the
+// branch ref alone (deleting a branch is a separate, more destructive
+// decision it deliberately does not make) - so the branch survives after
+// this and can still be found/deleted by hand via `git branch -D` if wanted. ---
+ipcMain.handle("goal:openWorktree", (_event, { worktreePath }) => {
+  if (!worktreePath) {
+    return { ok: false, error: "worktreePath is required" };
+  }
+  shell.openPath(worktreePath);
+  return { ok: true };
+});
+
+ipcMain.handle("goal:deleteWorktree", (_event, { goalRunId, projectPath, worktreePath }) => {
+  if (!projectPath || !worktreePath) {
+    return { ok: false, error: "projectPath and worktreePath are required" };
+  }
+  try {
+    removeWorktree(projectPath, worktreePath);
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err) };
+  }
+  if (goalRunId) {
+    removeGoalRunRecord(goalRunId);
+  }
+  return { ok: true };
 });
 
 function truncateForNotification(text) {
