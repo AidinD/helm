@@ -37,7 +37,7 @@ import { encodeToon } from "./toon.js";
 // the SDK by hash). This is the ONLY inline script the app permits. If the SDK
 // source changes, this must be regenerated and index.html updated to match;
 // spike/test-lavish.mjs asserts the two agree so drift fails loudly.
-export const LAVISH_SDK_SCRIPT_SHA256 = "sha256-lkHyWr9g7zAEbHgv/mmgrhYAKMZBvfcISQGhi51AgZ8=";
+export const LAVISH_SDK_SCRIPT_SHA256 = "sha256-7qivjsfTz8Pbb+3ahDnziZ4KbQ0CZ9376EcBHrsIKOk=";
 
 // The messages the injected SDK <-> host speak over postMessage. Kept as
 // exported constants so the host and the SDK-source string can't drift.
@@ -119,16 +119,6 @@ export function buildArtifactSdkSource() {
     return !!(el && el.closest && el.closest("[data-lavish-ui]"));
   }
 
-  // Native interactive controls should behave natively (type/toggle/focus)
-  // rather than trigger annotation. (lavish-axi isNativeInteractiveControl.)
-  function isInteractiveControl(el) {
-    return !!(
-      el &&
-      el.closest &&
-      el.closest("button,input,select,textarea,option,optgroup,label,summary,[contenteditable]:not([contenteditable='false'])")
-    );
-  }
-
   function highlightElement(el) {
     if (!el) return;
     el.style.outline = "2px solid #f4c95d";
@@ -174,8 +164,9 @@ export function buildArtifactSdkSource() {
     if (annotationMode && !style) {
       style = document.createElement("style");
       style.id = "lavish-cursor-style";
-      style.textContent =
-        "*{cursor:crosshair!important}input,textarea,[contenteditable]:not([contenteditable='false']){cursor:text!important}button,select,label{cursor:pointer!important}";
+      // Crosshair on everything - every element (including buttons/inputs) is
+      // annotatable in a static mockup, so nothing should look "native".
+      style.textContent = "*{cursor:crosshair!important}";
       document.head.appendChild(style);
     }
     if (!annotationMode && style) style.remove();
@@ -281,7 +272,7 @@ export function buildArtifactSdkSource() {
   document.addEventListener(
     "mouseover",
     function (event) {
-      if (!annotationMode || isLavishUi(event.target) || isInteractiveControl(event.target)) return;
+      if (!annotationMode || isLavishUi(event.target)) return;
       var target = event.target;
       if (target === selected) return;
       if (hovered && hovered !== selected) clearHighlight(hovered);
@@ -305,7 +296,12 @@ export function buildArtifactSdkSource() {
   document.addEventListener(
     "click",
     function (event) {
-      if (!annotationMode || isLavishUi(event.target) || isInteractiveControl(event.target)) return;
+      if (!annotationMode || isLavishUi(event.target)) return;
+      // Capture-phase + preventDefault/stopPropagation means the element's own
+      // behavior (a button's submit, a link's navigation) never fires - so even
+      // interactive controls are safely annotatable here. These are static
+      // design mockups, and buttons/inputs are prime annotation targets
+      // ("make this button bigger"), unlike lavish-axi's live-app use case.
       event.preventDefault();
       event.stopPropagation();
       showAnnotationCard(event.target);
