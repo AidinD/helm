@@ -4,6 +4,11 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("maestro", {
   getSessions: () => ipcRenderer.invoke("sessions:get"),
   setConfig: (patch) => ipcRenderer.invoke("config:set", patch),
+  // Away-from-desk attention delivery: notifyAttention fires an OS
+  // notification (main.js gates it on window focus + config); setAttentionCount
+  // best-effort sets the taskbar badge count.
+  notifyAttention: (payload) => ipcRenderer.invoke("attention:notify", payload),
+  setAttentionCount: (n) => ipcRenderer.invoke("attention:setCount", n),
   suggestModelEffort: (prompt) => ipcRenderer.invoke("suggest:modelEffort", prompt),
   getJotGoals: () => ipcRenderer.invoke("jot:goals"),
   addJotSubtask: (parentId, text) => ipcRenderer.invoke("jot:addSubtask", { parentId, text }),
