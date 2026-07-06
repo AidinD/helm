@@ -1,6 +1,6 @@
 const STATUS_LABEL = { waiting: "Needs you", active: "Working", idle: "Idle", archived: "Archived" };
 
-let state = { sessions: [], config: { groups: [], viewMode: "simple" }, quota: null };
+let state = { sessions: [], config: { groups: [], viewMode: "simple" }, quota: null, orchestratorHome: "" };
 let searchTerm = "";
 let archiveSearchTerm = ""; // filters the Archive page's two lists by title/folder
 let selectedGoalId = null; // Focus page: which goal's breakdown is expanded
@@ -733,13 +733,24 @@ function bumpSessionActivity(sessionId) {
   }
 }
 
-// Sessions matched to the "Orchestrator" Jot list are Maestro-building work
-// itself — tagged distinctly so it's never confused with regular project
-// chats. The Jot-name match is fragile (breaks if that list is renamed), so
-// it can also be set manually via right-click, independent of Jot.
+// Windows paths compare case-insensitively and regardless of slash direction
+// or a trailing separator — normalize both sides before matching. Empty never
+// matches (so a session with no cwd isn't mistaken for a rootless orchestrator).
+function samePath(a, b) {
+  const norm = (p) => (p || "").replace(/[\\/]+/g, "/").replace(/\/+$/, "").toLowerCase();
+  return norm(a) !== "" && norm(a) === norm(b);
+}
+
+// An orchestrator session is simply one rooted in the meta-home — the
+// coordinator root above every code project (see main.js "orchestrator:info").
+// Being rooted there IS what makes a session a coordinator rather than project
+// work, so that root is the whole signal: no manual "mark as orchestrator", no
+// fragile Jot-category-name match. This matches the ephemeral model — an
+// orchestrator is how you START a session (fresh, pointed at the meta-home),
+// not a durable flag you toggle on a chat. state.orchestratorHome is fetched
+// once at startup (falls back to "" until then, so nothing tags early).
 function isOrchestratorSession(session) {
-  const manual = state.config.manualMaestroSessions || [];
-  return session.jot?.category === "Orchestrator" || manual.includes(session.sessionId);
+  return samePath(session.cwd, state.orchestratorHome);
 }
 
 // "Delete" a session from Maestro's own view — never touches the desktop
@@ -805,18 +816,6 @@ function showToast(text) {
   el.textContent = text;
   document.body.append(el);
   setTimeout(() => el.remove(), 4000);
-}
-
-// Exclusive (radio-button, not checkbox) — per "shouldn't there just be ONE
-// Maestro chat?" Marking a new one replaces any previous manual pick. The
-// Jot-category auto-match can still independently tag more than one session
-// (that reflects real list membership, not a manual choice), so this only
-// governs the manual override.
-async function toggleManualMaestroTag(session) {
-  const current = state.config.manualMaestroSessions || [];
-  const next = current.includes(session.sessionId) ? [] : [session.sessionId];
-  state.config = await window.maestro.setConfig({ manualMaestroSessions: next });
-  refresh();
 }
 
 // ============================== Context menu ==============================
@@ -1304,10 +1303,6 @@ function rowEl(session) {
       { label: "Open here", onClick: () => openSessionInPane(session, focusedPaneIndex) },
       { label: "Open in split pane", onClick: () => openSessionInPane(session, focusedPaneIndex === 0 ? 1 : 0, true) },
       { label: "Rename chat (or double-click it)", onClick: () => makeInlineEditable(title, session.title, (v) => renameSessionTo(session, v)) },
-      {
-        label: isOrchestratorSession(session) ? "Unmark as Maestro chat" : "Mark as Maestro chat",
-        onClick: () => toggleManualMaestroTag(session),
-      },
       {
         label: "Summarize & carry over to new chat",
         onClick: () => summarizeAndCarryOver(session),
@@ -3963,6 +3958,19 @@ async function refresh() {
 // spotlight) is the home now; Chat is one destination among the page tabs,
 // reached the same way any other page is.
 async function startup() {
+  // Resolve the orchestrator meta-home once so isOrchestratorSession (called
+  // synchronously in every sidebar/dashboard render) can compare cwds without
+  // an async round-trip. Fetched before the first refresh so the initial
+  // render already tags orchestrator sessions correctly.
+  try {
+    const oi = await window.maestro.getOrchestratorInfo();
+    if (oi.ok) {
+      state.orchestratorHome = oi.cwd;
+    }
+  } catch {
+    // Leaves state.orchestratorHome as-is (""); nothing tags as orchestrator
+    // until it resolves, which is a safe default.
+  }
   await rehydrateGoalRuns();
   await refresh();
   navigateToPage("dashboard");
