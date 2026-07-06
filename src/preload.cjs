@@ -59,6 +59,15 @@ contextBridge.exposeInMainWorld("maestro", {
   buildArtifactSrcdoc: (artifactHtml) => ipcRenderer.invoke("lavish:buildSrcdoc", artifactHtml),
   formatAnnotations: (annotations, domSnapshot) =>
     ipcRenderer.invoke("lavish:formatPrompt", { annotations, domSnapshot }),
+  // Open a generated mockup straight in the Plan view for annotation. Main
+  // sends "plan:openMockup" with { filePath } or { html }; the renderer builds
+  // the sandboxed artifact and switches to Plan. The hook the artifact-
+  // generation-during-planning flow will call (nothing sends it yet).
+  onOpenMockup: (handler) => {
+    const listener = (_event, payload) => handler(payload);
+    ipcRenderer.on("plan:openMockup", listener);
+    return () => ipcRenderer.removeListener("plan:openMockup", listener);
+  },
   startSession: (opts) => ipcRenderer.invoke("session:start", opts),
   stopSession: (launchId) => ipcRenderer.invoke("session:stop", { launchId }),
   onSessionEvent: (handler) => {

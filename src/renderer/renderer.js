@@ -5528,6 +5528,62 @@ let lavishState = {
   loadError: "",
 };
 
+// Build a mockup's sandboxed srcdoc, load it into the Plan (Lavish) review
+// surface, switch to the Plan view, and render it ready for annotation. Shared
+// by the manual "Load mockup" button and openMockupFileInPlan (the hook a
+// generated-mockup flow calls), so "generate a mockup -> annotate it in Plan"
+// is one action rather than a copy-paste round-trip. Returns { ok } or
+// { ok: false, error }.
+async function openMockupInPlan(html) {
+  const built = await window.maestro.buildArtifactSrcdoc(html);
+  if (!built || !built.ok) {
+    return { ok: false, error: built?.error || "unknown error" };
+  }
+  lavishState.srcdoc = built.srcdoc;
+  lavishState.annotations = [];
+  lavishState.domSnapshot = "";
+  lavishState.annotateMode = true;
+  lavishState.loadError = "";
+  // navigateToPage("lavish") re-renders the Plan page itself, so the mockup
+  // shows even if the caller was on another view (the IPC hook below).
+  navigateToPage("lavish");
+  return { ok: true };
+}
+
+// Open a mockup that already exists as an HTML file (by absolute path) straight
+// in the Plan view - the entry point for a generated artifact. Reads the file,
+// then hands off to openMockupInPlan. Returns { ok } / { ok: false, error }.
+async function openMockupFileInPlan(filePath) {
+  const res = await window.maestro.readArtifactFile(filePath);
+  if (!res || !res.ok) {
+    return { ok: false, error: res?.error || "unknown error" };
+  }
+  return openMockupInPlan(res.html);
+}
+
+// Hook for opening a generated mockup straight in the Plan view: main sends
+// "plan:openMockup" with { filePath } (a mockup written to disk) or { html }.
+// This is the connection point the artifact-generation-during-planning flow
+// will call so a generated vision-mockup lands in the annotator in one step;
+// nothing sends it yet, so it's inert until that flow is wired.
+if (window.maestro.onOpenMockup) {
+  window.maestro.onOpenMockup(async (payload = {}) => {
+    const { filePath, html } = payload;
+    let res;
+    if (html) {
+      res = await openMockupInPlan(html);
+    } else if (filePath) {
+      res = await openMockupFileInPlan(filePath);
+    } else {
+      res = { ok: false, error: "no filePath or html in plan:openMockup" };
+    }
+    if (!res.ok) {
+      lavishState.loadError = "Failed to open mockup: " + res.error;
+      navigateToPage("lavish");
+    }
+  });
+}
+
 function renderLavishPage() {
   const page = document.getElementById("lavishPage");
   page.innerHTML = "";
@@ -5602,17 +5658,11 @@ function renderLavishPage() {
       renderLavishPage();
       return;
     }
-    const built = await window.maestro.buildArtifactSrcdoc(html);
-    if (!built || !built.ok) {
-      lavishState.loadError = "Failed to build mockup: " + (built?.error || "unknown error");
+    const res = await openMockupInPlan(html);
+    if (!res.ok) {
+      lavishState.loadError = "Failed to build mockup: " + res.error;
       renderLavishPage();
-      return;
     }
-    lavishState.srcdoc = built.srcdoc;
-    lavishState.annotations = [];
-    lavishState.domSnapshot = "";
-    lavishState.annotateMode = true;
-    renderLavishPage();
   });
   actionRow.append(loadBtn);
   form.append(htmlLabel, htmlInput, pathLabel, pathRow, err, actionRow);
