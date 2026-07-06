@@ -4,16 +4,21 @@ let state = { sessions: [], config: { groups: [], viewMode: "simple" }, quota: n
 let searchTerm = "";
 let archiveSearchTerm = ""; // filters the Archive page's two lists by title/folder
 let selectedGoalId = null; // Focus page: which goal's breakdown is expanded
-// Goal page (Fas 3 Point 11) — the single in-flight autonomous run's live
-// state, or null when nothing is running. A first-pass draft: one run at a
-// time. { goalRunId, goal, status, iterations: [...], result, error,
-// escalation }. `escalation` (Point 12 Phase-0, opt-in) is set when the run
-// pauses on a signal instead of finishing normally - see goalOrchestrator.js.
-let goalRunState = null;
-// Persists the "Escalate on trouble" checkbox across re-renders of the form
-// (renderGoalPage rebuilds the whole page's DOM each time), same role the
-// verify-command field's value plays via goalRunState once a run exists -
-// but this needs to survive BEFORE a run exists too, so it gets its own var.
+// Goal page (Fas 3 Point 11) — all autonomous runs this session, keyed by
+// goalRunId. The backend (main.js liveGoalRuns + goal:event carrying
+// goalRunId) already supports several concurrent runs, each in its own
+// isolated worktree; the renderer tracks each as its own entry so the Goal
+// page can launch and watch more than one at a time. Each entry:
+// { goalRunId, ordinal, goal, projectPath, maxIterations, model, effort,
+//   verifyCommand, escalationConfig, status, iterations: [...], result, error,
+//   escalation, latestPlan }. `escalation` (Point 12 Phase-0, opt-in) is set
+// when a run pauses on a signal instead of finishing - see goalOrchestrator.js.
+let goalRuns = new Map();
+// Monotonic label counter so concurrent runs are tellable apart ("Run 1", …).
+let goalRunSeq = 0;
+// Persists the "Escalate on trouble" checkbox across re-renders of the launcher
+// form (renderGoalPage rebuilds the whole page's DOM each time). A plain module
+// var since it must survive before any run exists.
 let goalEscalateOnTrouble = false;
 let selectedSessionId = null;
 let focusedPaneIndex = 0;
@@ -4943,12 +4948,10 @@ function renderGoalPage() {
   const intro = document.createElement("div");
   intro.className = "analysis-totals";
   intro.textContent =
-    "Draft / first pass. Runs a goal to partial completion via fresh autonomous claude iterations in an isolated git worktree. Each successful iteration is committed. It never pushes or merges — the work is left in a worktree for you to review.";
+    "Draft / first pass. Runs a goal to partial completion via fresh autonomous claude iterations in an isolated git worktree. Each successful iteration is committed. It never pushes or merges — the work is left in a worktree for you to review. Several runs can go at once; each launches in its own worktree and shows below.";
   page.append(intro);
 
-  const running = goalRunState && goalRunState.status === "running";
-
-  // ---- Input form ----
+  // ---- Launcher form: starts a NEW run (several may run concurrently) ----
   const form = document.createElement("div");
   form.className = "goal-form";
 
@@ -4959,10 +4962,6 @@ function renderGoalPage() {
   goalInput.className = "goal-textarea";
   goalInput.placeholder = "Describe the goal for the autonomous run…";
   goalInput.rows = 4;
-  goalInput.disabled = running;
-  if (goalRunState) {
-    goalInput.value = goalRunState.goal || "";
-  }
 
   const cwdLabel = document.createElement("label");
   cwdLabel.className = "goal-field-label";
@@ -4975,13 +4974,11 @@ function renderGoalPage() {
   cwdInput.placeholder = "Repo folder to run the goal against";
   // Default to the focused pane's cwd when it has one — matching the composer's
   // own rooting default so the common case needs no folder pick.
-  cwdInput.value = (goalRunState && goalRunState.projectPath) || panes[focusedPaneIndex]?.cwd || "";
-  cwdInput.disabled = running;
+  cwdInput.value = panes[focusedPaneIndex]?.cwd || "";
   const pickBtn = document.createElement("button");
   pickBtn.className = "icon-btn";
   pickBtn.textContent = "…";
   pickBtn.title = "Pick project folder";
-  pickBtn.disabled = running;
   pickBtn.addEventListener("click", async () => {
     const folder = await window.maestro.pickFolder();
     if (folder) {
@@ -4999,8 +4996,39 @@ function renderGoalPage() {
   iterInput.className = "goal-iter-input";
   iterInput.min = "1";
   iterInput.max = "20";
-  iterInput.value = (goalRunState && goalRunState.maxIterations) || 5;
-  iterInput.disabled = running;
+  iterInput.value = 5;
+
+  // Model + effort for the autonomous iterations. "Auto" leaves it to the CLI's
+  // own default (runGoal treats undefined as "no override"). Reuses the exact
+  // dropdownPill component + option lists the composer uses, for consistency.
+  const modelEffortLabel = document.createElement("label");
+  modelEffortLabel.className = "goal-field-label";
+  modelEffortLabel.textContent = "Model / effort (optional)";
+  const modelEffortRow = document.createElement("div");
+  modelEffortRow.className = "goal-cwd-row goal-model-row";
+  const modelDD = dropdownPill(
+    "auto",
+    [
+      { value: "auto", label: "Auto" },
+      { value: "claude-sonnet-5", label: "Sonnet 5" },
+      { value: "claude-opus-4-8", label: "Opus 4.8" },
+      { value: "claude-haiku-4-5-20251001", label: "Haiku 4.5" },
+    ],
+    () => {}
+  );
+  const effortDD = dropdownPill(
+    "auto",
+    [
+      { value: "auto", label: "Auto" },
+      { value: "low", label: "low" },
+      { value: "medium", label: "medium" },
+      { value: "high", label: "high" },
+      { value: "xhigh", label: "xhigh" },
+      { value: "max", label: "max" },
+    ],
+    () => {}
+  );
+  modelEffortRow.append(modelDD.el, effortDD.el);
 
   const verifyLabel = document.createElement("label");
   verifyLabel.className = "goal-field-label";
@@ -5009,8 +5037,7 @@ function renderGoalPage() {
   verifyInput.type = "text";
   verifyInput.className = "goal-verify-input";
   verifyInput.placeholder = "e.g. npm test or npm run build";
-  verifyInput.value = (goalRunState && goalRunState.verifyCommand) || "";
-  verifyInput.disabled = running;
+  verifyInput.value = "";
   const verifyHint = document.createElement("div");
   verifyHint.className = "goal-field-hint";
   verifyHint.textContent =
@@ -5029,7 +5056,7 @@ function renderGoalPage() {
       verifyInput.value = res.command;
     }
   }
-  if (!running && cwdInput.value.trim() && !verifyInput.value.trim()) {
+  if (cwdInput.value.trim() && !verifyInput.value.trim()) {
     suggestVerifyCommandFor(cwdInput.value.trim());
   }
   cwdInput.addEventListener("change", () => {
@@ -5046,7 +5073,6 @@ function renderGoalPage() {
   const escalateCheckbox = document.createElement("input");
   escalateCheckbox.type = "checkbox";
   escalateCheckbox.checked = goalEscalateOnTrouble;
-  escalateCheckbox.disabled = running;
   escalateCheckbox.addEventListener("change", () => {
     goalEscalateOnTrouble = escalateCheckbox.checked;
   });
@@ -5069,13 +5095,14 @@ function renderGoalPage() {
   actionRow.className = "goal-action-row";
   const startBtn = document.createElement("button");
   startBtn.className = "goal-start-btn";
-  startBtn.textContent = running ? "Running…" : "Start goal run";
-  startBtn.disabled = running;
+  startBtn.textContent = "Start goal run";
   startBtn.addEventListener("click", async () => {
     const goal = goalInput.value.trim();
     const projectPath = cwdInput.value.trim();
     const maxIterations = parseInt(iterInput.value, 10) || 5;
     const verifyCommand = verifyInput.value.trim();
+    const model = modelDD.value === "auto" ? undefined : modelDD.value;
+    const effort = effortDD.value === "auto" ? undefined : effortDD.value;
     // `{}` (not `true`) enables escalation with goalOrchestrator.js's own
     // Phase-0 defaults; unchecked sends `undefined`, keeping the pre-existing
     // no-escalation behavior exactly (mirrors verifyCommand's opt-in shape).
@@ -5089,16 +5116,19 @@ function renderGoalPage() {
       err.textContent = "Pick a project folder first.";
       return;
     }
-    const res = await window.maestro.runGoal({ projectPath, goal, maxIterations, verifyCommand, escalationConfig });
+    const res = await window.maestro.runGoal({ projectPath, goal, maxIterations, model, effort, verifyCommand, escalationConfig });
     if (!res || !res.ok) {
       err.textContent = "Failed to start: " + (res?.error || "unknown error");
       return;
     }
-    goalRunState = {
+    goalRuns.set(res.goalRunId, {
       goalRunId: res.goalRunId,
+      ordinal: ++goalRunSeq,
       goal,
       projectPath,
       maxIterations,
+      model,
+      effort,
       verifyCommand,
       escalationConfig,
       status: "running",
@@ -5106,24 +5136,14 @@ function renderGoalPage() {
       result: null,
       error: null,
       escalation: null,
-    };
+      latestPlan: null,
+    });
+    // Clear only the goal field so the launcher is ready for the next run;
+    // folder / verify / model picks usually carry over between runs.
+    goalInput.value = "";
     renderGoalPage();
   });
   actionRow.append(startBtn);
-
-  const cancelBtn = document.createElement("button");
-  cancelBtn.className = "goal-cancel-btn";
-  cancelBtn.textContent = "Cancel";
-  cancelBtn.disabled = !running;
-  cancelBtn.addEventListener("click", async () => {
-    if (!goalRunState) {
-      return;
-    }
-    cancelBtn.disabled = true;
-    cancelBtn.textContent = "Cancelling after current iteration…";
-    await window.maestro.cancelGoal(goalRunState.goalRunId);
-  });
-  actionRow.append(cancelBtn);
 
   form.append(
     goalLabel,
@@ -5132,6 +5152,8 @@ function renderGoalPage() {
     cwdRow,
     iterLabel,
     iterInput,
+    modelEffortLabel,
+    modelEffortRow,
     verifyLabel,
     verifyInput,
     verifyHint,
@@ -5141,61 +5163,95 @@ function renderGoalPage() {
   );
   page.append(form);
 
-  // ---- Live progress ----
-  if (goalRunState) {
-    const progress = document.createElement("div");
-    progress.className = "goal-progress";
-
-    const statusLine = document.createElement("div");
-    statusLine.className = "goal-status-line";
-    if (goalRunState.status === "running") {
-      statusLine.textContent = goalRunState.escalation
-        ? `Paused · ${goalRunState.iterations.length} iteration(s) so far…`
-        : `Running · ${goalRunState.iterations.length} iteration(s) so far…`;
-    } else if (goalRunState.status === "done") {
-      statusLine.textContent = goalRunState.escalation ? "Run paused for you." : "Run finished.";
-    } else if (goalRunState.status === "error") {
-      statusLine.textContent = "Run ended with an error.";
+  // ---- Runs (newest first) ----
+  const runs = [...goalRuns.values()];
+  if (runs.length) {
+    const runsWrap = document.createElement("div");
+    runsWrap.className = "goal-runs";
+    for (const run of runs.reverse()) {
+      runsWrap.append(goalRunDetailEl(run));
     }
-    progress.append(statusLine);
+    page.append(runsWrap);
+  }
+}
 
-    // RPI phase (research -> plan -> implement, see goalOrchestrator.js):
-    // the plan itself is the plan-phase's one durable artifact, so surface it
-    // as soon as any iteration has reached/passed the plan phase - a plain
-    // expandable block (the app's existing `.tool-group` <details> pattern),
-    // not its own card, since it is reference material for the run rather
-    // than a per-iteration event.
-    const planContent = goalRunState.result?.plan ?? goalRunState.latestPlan ?? null;
-    if (planContent) {
-      progress.append(goalPlanBlock(planContent));
-    }
+// One run's live block: heading (ordinal + goal, so concurrent runs are
+// tellable apart) + per-run cancel, then status line, plan, iteration cards,
+// escalation, and final summary/error. Extracted from the old single-run
+// rendering so the Goal page can show several runs at once.
+function goalRunDetailEl(run) {
+  const wrap = document.createElement("div");
+  wrap.className = "goal-run-detail";
 
-    goalRunState.iterations.forEach((rec) => {
-      progress.append(goalIterationCard(rec));
+  const head = document.createElement("div");
+  head.className = "goal-run-head";
+  const title = document.createElement("span");
+  title.className = "goal-run-title";
+  const goalSnippet = run.goal.length > 80 ? run.goal.slice(0, 80) + "…" : run.goal;
+  title.textContent = `Run ${run.ordinal}: ${goalSnippet}`;
+  head.append(title);
+  if (run.status === "running") {
+    const cancelBtn = document.createElement("button");
+    cancelBtn.className = "goal-cancel-btn";
+    cancelBtn.textContent = "Cancel";
+    cancelBtn.addEventListener("click", async () => {
+      cancelBtn.disabled = true;
+      cancelBtn.textContent = "Cancelling after current iteration…";
+      await window.maestro.cancelGoal(run.goalRunId);
     });
+    head.append(cancelBtn);
+  }
+  wrap.append(head);
 
-    page.append(progress);
+  const progress = document.createElement("div");
+  progress.className = "goal-progress";
+
+  const statusLine = document.createElement("div");
+  statusLine.className = "goal-status-line";
+  if (run.status === "running") {
+    statusLine.textContent = run.escalation
+      ? `Paused · ${run.iterations.length} iteration(s) so far…`
+      : `Running · ${run.iterations.length} iteration(s) so far…`;
+  } else if (run.status === "done") {
+    statusLine.textContent = run.escalation ? "Run paused for you." : "Run finished.";
+  } else if (run.status === "error") {
+    statusLine.textContent = "Run ended with an error.";
+  }
+  progress.append(statusLine);
+
+  // RPI phase (research -> plan -> implement, see goalOrchestrator.js): the
+  // plan itself is the plan-phase's one durable artifact, so surface it as soon
+  // as any iteration has reached/passed the plan phase - a plain expandable
+  // block (the app's existing `.tool-group` <details> pattern), not its own
+  // card, since it is reference material for the run rather than an event.
+  const planContent = run.result?.plan ?? run.latestPlan ?? null;
+  if (planContent) {
+    progress.append(goalPlanBlock(planContent));
   }
 
-  // ---- Escalation (Point 12 Phase-0, opt-in) ----
-  // Shown as soon as the escalation event arrives, independent of whether the
-  // "done" event (which carries the same info in its `result`) has landed
-  // yet - a human-gated pause should be visible immediately, not only once
-  // the run has fully wound down.
-  if (goalRunState && goalRunState.escalation) {
-    page.append(goalEscalationCard(goalRunState.escalation));
+  run.iterations.forEach((rec) => {
+    progress.append(goalIterationCard(rec));
+  });
+  wrap.append(progress);
+
+  // Escalation (Point 12 Phase-0, opt-in) - shown as soon as the escalation
+  // event arrives (it precedes "done"), so a human-gated pause is visible
+  // immediately rather than only once the run winds down.
+  if (run.escalation) {
+    wrap.append(goalEscalationCard(run.escalation));
   }
 
-  // ---- Final summary ----
-  if (goalRunState && goalRunState.status === "done" && goalRunState.result && goalRunState.result.stoppedReason !== "escalated") {
-    page.append(goalSummaryCard(goalRunState.result));
+  if (run.status === "done" && run.result && run.result.stoppedReason !== "escalated") {
+    wrap.append(goalSummaryCard(run.result));
   }
-  if (goalRunState && goalRunState.status === "error") {
+  if (run.status === "error") {
     const errCard = document.createElement("div");
     errCard.className = "goal-summary-card goal-summary-error";
-    errCard.textContent = "Error: " + (goalRunState.error || "unknown error");
-    page.append(errCard);
+    errCard.textContent = "Error: " + (run.error || "unknown error");
+    wrap.append(errCard);
   }
+
+  return wrap;
 }
 
 // RPI phase (research/plan/implement) display labels - short and title-cased
@@ -5415,29 +5471,30 @@ function goalEscalationCard(escalation) {
 // carries goalRunId; events from a stale run (a previous run, or after a new
 // one started) are ignored so late events can't clobber current state.
 window.maestro.onGoalEvent((evt) => {
-  if (!goalRunState || evt.goalRunId !== goalRunState.goalRunId) {
+  const run = goalRuns.get(evt.goalRunId);
+  if (!run) {
     return;
   }
   if (evt.kind === "iteration") {
-    goalRunState.iterations.push(evt.record);
+    run.iterations.push(evt.record);
     // Track the latest plan.md content as it arrives (see goalOrchestrator.js
     // record.plan), so the Goal page can show the plan live instead of only
     // once the run finishes and its final `result.plan` is available.
     if (evt.record.plan) {
-      goalRunState.latestPlan = evt.record.plan;
+      run.latestPlan = evt.record.plan;
     }
   } else if (evt.kind === "done") {
-    goalRunState.status = "done";
-    goalRunState.result = evt.result;
+    run.status = "done";
+    run.result = evt.result;
   } else if (evt.kind === "error") {
-    goalRunState.status = "error";
-    goalRunState.error = evt.error;
+    run.status = "error";
+    run.error = evt.error;
   } else if (evt.kind === "escalation") {
     // Point 12 Phase-0 escalation (opt-in) - arrives BEFORE "done" (see
     // main.js's goal:run handler), so the escalation card can show up the
     // moment the run actually pauses rather than waiting for the run's
     // promise to resolve and send "done" with the same info.
-    goalRunState.escalation = evt.escalation;
+    run.escalation = evt.escalation;
   }
   // Only re-render if the Goal/Agents page is actually visible, to avoid
   // clobbering another page the user may have switched to mid-run.
@@ -5884,12 +5941,12 @@ function routineRowEl(task) {
 // Two real sources, both already in renderer state:
 //   - state.sessions: manual sessions Maestro is tracking (reuses the same
 //     session.status the sidebar dot and dashboard queue already read).
-//   - goalRunState: the current goalOrchestrator run (if any), with its
-//     iterations as children - the same state renderGoalPage reads.
-// A true multi-worker fan-out (several workers under one orchestrator node,
-// running in parallel worktrees) does not exist yet - only ever one branch of
-// real children today (one goal run's iterations). That is marked "(coming)"
-// below rather than faked.
+//   - goalRuns: the in-flight goalOrchestrator runs (several can run at once,
+//     each in its own worktree), with their iterations as children - the same
+//     state renderGoalPage reads.
+// Each run's iterations are sequential (one worker per run); a true multi-worker
+// fan-out UNDER a single run (several parallel workers in one orchestrator node)
+// does not exist yet - that is marked "(coming)" below rather than faked.
 
 function renderAgentsPage() {
   const page = document.getElementById("agentsPage");
@@ -5907,8 +5964,11 @@ function renderAgentsPage() {
   const wrap = document.createElement("div");
   wrap.className = "tree-wrap";
 
-  if (goalRunState) {
-    wrap.append(agentsGoalRunNode(goalRunState));
+  // All in-motion goal runs (running or paused-for-escalation - both keep
+  // status "running" until they finish). Several can run at once.
+  const activeGoalRuns = [...goalRuns.values()].filter((r) => r.status === "running");
+  if (activeGoalRuns.length) {
+    activeGoalRuns.forEach((r) => wrap.append(agentsGoalRunNode(r)));
   } else {
     const placeholder = document.createElement("div");
     placeholder.className = "tree-meta-row agents-placeholder";
@@ -5919,7 +5979,7 @@ function renderAgentsPage() {
   const activeSessions = sortByAttention(state.sessions.filter((s) => !s.isArchived && (s.status === "active" || s.status === "waiting")));
   activeSessions.forEach((session) => wrap.append(agentsSessionNode(session)));
 
-  if (!goalRunState && activeSessions.length === 0) {
+  if (activeGoalRuns.length === 0 && activeSessions.length === 0) {
     const empty = document.createElement("div");
     empty.className = "tree-meta-row agents-placeholder";
     empty.textContent = "Nothing in motion right now.";
@@ -5947,7 +6007,7 @@ function renderAgentsPage() {
   const later = document.createElement("div");
   later.className = "later-note";
   later.textContent =
-    "(coming) Gated on the dispatch layer maturing: true multi-worker fan-out (several workers under one orchestrator node, in parallel worktrees), a timeline scrubber over past runs, and per-node token/cost readout. Today this tree only ever has one branch of real children (a single goalOrchestrator run's iterations).";
+    "(coming) Gated on the dispatch layer maturing: true multi-worker fan-out (several parallel workers UNDER a single run's node), a timeline scrubber over past runs, and per-node token/cost readout. Several goal runs can already run at once (each its own branch here); within a run, iterations are still sequential.";
   page.append(later);
 }
 
