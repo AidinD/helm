@@ -114,8 +114,12 @@ function killChildTree(child, { sync = false } = {}) {
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 820,
+    // Match Jot's startup size so the two apps open at the same footprint
+    // (the captain's ask). Min sizes mirror Jot's too.
+    width: 1960,
+    height: 988,
+    minWidth: 760,
+    minHeight: 560,
     backgroundColor: "#1a1a1a",
     title: "Maestro",
     webPreferences: {
