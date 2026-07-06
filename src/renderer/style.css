@@ -2124,6 +2124,38 @@ button.primary {
   cursor: default;
 }
 
+/* Concurrent goal runs: each run is its own block, separated by a top rule so
+   several runs read as distinct units under the shared launcher form. */
+.goal-runs {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  margin-top: 18px;
+}
+
+.goal-run-detail {
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+
+.goal-run-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.goal-run-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* Per-run cancel sits at the right of the run heading. */
+.goal-run-head .goal-cancel-btn {
+  margin-left: auto;
+}
+
 .goal-progress {
   display: flex;
   flex-direction: column;
