@@ -6993,7 +6993,7 @@ function renderSettingsPage() {
     )
   );
 
-  block.append(passiveGroup);
+  // (appended into the two-column layout at the end)
 
   // Active group: these mutate a session's state on their own, unattended.
   const activeGroup = document.createElement("div");
@@ -7014,7 +7014,7 @@ function renderSettingsPage() {
     )
   );
 
-  block.append(activeGroup);
+  // (appended into the two-column layout at the end)
 
   // Config values that exist under the hood but had no UI — surfacing the
   // one with real per-machine variability (voiceEngine: whisper.cpp needs a
@@ -7075,7 +7075,20 @@ function renderSettingsPage() {
   languageRow.append(languageLabel, settingsLanguageDD.el);
   voiceGroup.append(languageRow);
 
-  block.append(voiceGroup);
+  // Two-column layout so the settings groups use the window's width instead of
+  // one tall stacked column. Left = the big Passive group; right = the shorter
+  // Acts + Voice groups stacked, which keeps the two columns roughly balanced.
+  // Collapses to one column on a narrow window (see .settings-columns CSS).
+  const columns = document.createElement("div");
+  columns.className = "settings-columns";
+  const leftCol = document.createElement("div");
+  leftCol.className = "settings-col";
+  leftCol.append(passiveGroup);
+  const rightCol = document.createElement("div");
+  rightCol.className = "settings-col";
+  rightCol.append(activeGroup, voiceGroup);
+  columns.append(leftCol, rightCol);
+  block.append(columns);
 
   page.append(block);
 }
