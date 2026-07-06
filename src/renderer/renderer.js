@@ -16,6 +16,11 @@ let selectedGoalId = null; // Focus page: which goal's breakdown is expanded
 let goalRuns = new Map();
 // Monotonic label counter so concurrent runs are tellable apart ("Run 1", …).
 let goalRunSeq = 0;
+// goalRunIds whose error/escalation hasn't been seen yet - drives the small
+// attention dot on the primary Dashboard tab so a failed/paused run started
+// off-page (e.g. while on Chat) isn't silently missed. Cleared whenever the
+// user navigates into the Goal or Agents facet (see navigateToPage).
+let unseenGoalAttention = new Set();
 // Persists the "Escalate on trouble" checkbox across re-renders of the launcher
 // form (renderGoalPage rebuilds the whole page's DOM each time). A plain module
 // var since it must survive before any run exists.
@@ -5602,12 +5607,21 @@ window.maestro.onGoalEvent((evt) => {
   } else if (evt.kind === "error") {
     run.status = "error";
     run.error = evt.error;
+    // Failures must be visible even off-page (see unseenGoalAttention above) -
+    // a run erroring while the user is on Chat/Plan would otherwise sit
+    // silently until they happen to check the Goal page.
+    unseenGoalAttention.add(run.goalRunId);
+    showToast(`Goal run "${run.goal}" failed: ${run.error}`);
+    updateGoalAttentionBadge();
   } else if (evt.kind === "escalation") {
     // Point 12 Phase-0 escalation (opt-in) - arrives BEFORE "done" (see
     // main.js's goal:run handler), so the escalation card can show up the
     // moment the run actually pauses rather than waiting for the run's
     // promise to resolve and send "done" with the same info.
     run.escalation = evt.escalation;
+    unseenGoalAttention.add(run.goalRunId);
+    showToast(`Goal run "${run.goal}" paused - needs you`);
+    updateGoalAttentionBadge();
   }
   // Only re-render if the Goal/Agents page is actually visible, to avoid
   // clobbering another page the user may have switched to mid-run.
@@ -5618,6 +5632,22 @@ window.maestro.onGoalEvent((evt) => {
     renderAgentsPage();
   }
 });
+
+// Reflects unseenGoalAttention.size as a small dot + count on the primary
+// Dashboard tab, so a run that errored/escalated while the user was on
+// another page stays discoverable after the toast fades. Subtle by design
+// (the captain's UI rule: color only for genuine attention states) - reuses
+// --waiting, the same amber already used for the escalation card and other
+// "needs you" states.
+function updateGoalAttentionBadge() {
+  const badge = document.getElementById("dashboardAttentionBadge");
+  if (!badge) {
+    return;
+  }
+  const count = unseenGoalAttention.size;
+  badge.textContent = count > 9 ? "9+" : String(count);
+  badge.classList.toggle("hidden", count === 0);
+}
 
 // ============================== Lavish (interactive plan) ==============================
 // v1 of the "Lavish"-style interactive-plan feature (PLAN Phase 4). The
@@ -6337,6 +6367,13 @@ function navigateToPage(page) {
   const subnav = document.getElementById("dashboardSubnav");
   subnav.classList.toggle("hidden", !inDashboardGroup);
   subnav.querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.dataset.page === page));
+
+  // Landing on the facet that actually shows the failed/paused run is what
+  // counts as "seen" - clears the attention dot from updateGoalAttentionBadge.
+  if (page === "goal" || page === "agents") {
+    unseenGoalAttention.clear();
+    updateGoalAttentionBadge();
+  }
 
   if (page === "dashboard") {
     renderDashboardPage();
