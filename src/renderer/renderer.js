@@ -5925,6 +5925,8 @@ let lavishState = {
   annotations: [], // [{ uid, selector, tag, text, prompt, lavishId? }]
   domSnapshot: "", // indented uid/tag/text tree from the SDK
   loadError: "",
+  pastedHtml: "", // persists the "Artifact HTML" textarea across re-renders so
+  // loading a mockup doesn't wipe what you pasted (tweak + reload without re-paste)
 };
 
 // Recently-loaded mockups, most-recent-first, capped at 5. Renderer-only
@@ -6077,6 +6079,12 @@ function renderLavishPage() {
   htmlInput.className = "goal-textarea lavish-html-input";
   htmlInput.placeholder = "Paste the HTML of a plan mockup here…";
   htmlInput.rows = 5;
+  // Persist across re-renders (loading a mockup re-renders this page) so the
+  // pasted HTML isn't wiped the moment you click Load - you can tweak + reload.
+  htmlInput.value = lavishState.pastedHtml || "";
+  htmlInput.addEventListener("input", () => {
+    lavishState.pastedHtml = htmlInput.value;
+  });
 
   const pathLabel = document.createElement("label");
   pathLabel.className = "goal-field-label";
