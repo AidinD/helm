@@ -3540,3 +3540,51 @@ falls back to `true` if no real binary could be resolved.
 verification that it received the actual input. A real check needs the
 model to echo back something that could ONLY come from the full prompt (as
 the later re-test did), not just any coherent-sounding reply.
+
+## 2026-07-06 — The orchestration model: a tiered captain / first mate / second mate / crew hierarchy
+
+**Decision (Aidin, settled in conversation):** Maestro's mental model is an
+explicit four-tier hierarchy — captain (Aidin) -> one cross-project **first
+mate** (orchestrator rooted in the meta-home) -> per-project **second mates**
+(orchestrators rooted in a project) -> **crew** (agents / Autopilot runs in
+worktrees). Full model + operating rules in `docs/orchestration-model.md`.
+
+**Why this, and why it changes the earlier framing:**
+The prior "ephemeral sessions, not a durable fleet" reorientation (2026-07-03,
+in PLAN.md) was reacting to a real problem (megasession bloat) but
+over-corrected into near-pure-ephemeral, which quietly discarded something
+valuable: the persistent coordinator Aidin actually wants (the "Maestro chat"
+concept came from exactly this instinct). Aidin re-surfaced it as the
+captain/first-mate analogy, and crucially added that the first mate is
+**cross-project**, not per-project — with per-project **second mates** below it.
+That extra tier is what resolves the tension: ephemeral applies *downward*
+(crew always, second mates per-assignment), while the first mate is a durable
+*role* kept thin (only cross-project priority, memory in files, refreshed on
+saturation) so it does not bloat even while long-lived. Ephemeral-vs-durable
+was a false binary; the answer is *by tier*.
+
+**Two operating rules that fell out of it:**
+- One active first mate at a time (a single unfragmented cross-project view),
+  backed by a succession of refreshed sessions — not eternal, not per-project.
+  Sole exception: firewalled life-domains (work vs personal).
+- Direct access to any tier is always allowed (the hierarchy is the default,
+  not a gate); file-backed continuity (Jot/DECISIONS.md) is what keeps the
+  first mate's picture current when the captain goes direct.
+
+**Alternatives considered and rejected:**
+- *Pure ephemeral* (the 2026-07-03 framing taken literally): loses the
+  first-mate continuity Aidin wants; a fresh officer every time who only ever
+  reads the logbook, never holds the voyage.
+- *Durable orchestrator per project*: still goes long-lived and bloats (this
+  session is proof), and gives no cross-project overview — the level was set
+  too low.
+- *Unbounded recursive agent fan-out* (rejected earlier, 2026-07 quota
+  incident): burned quota with no ceiling. The tiered model is explicitly
+  bounded — a known small set of tiers with explicit dispatch, not recursion.
+
+**What it maps to in code:** cwd = tier (why orchestrator detection is
+cwd-based). The second-mate -> crew machinery largely exists (Autopilot /
+`goalOrchestrator.js`, agent dispatch). The missing piece is the first-mate
+tier: **session/run-spawns-run + structured report-back**. Phased plan in
+`docs/orchestration-model.md`; PLAN.md's reorientation section updated to
+"ephemeral by tier" rather than pure-ephemeral.

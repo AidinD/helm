@@ -6,6 +6,9 @@ decisions and why - both live in this repo, not in global memory.
 `docs/USING-MAESTRO.md` is the day-to-day usage guide (the daily loop, when
 to reach for Chat vs Autopilot vs an orchestrator session, the keyboard
 layer) - point Aidin at it if he asks how to use the app.
+`docs/orchestration-model.md` is the conceptual model the app is built around
+(captain / first mate / second mate / crew tiers; ephemeral by tier; the
+first-mate capability gap) - read it before any orchestration/dispatch work.
 
 ## Restarting during dev
 
