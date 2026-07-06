@@ -7454,8 +7454,14 @@ window.maestro.onSessionEvent((evt) => {
     case "tool_use":
       setPaneBusyUI(index, `Working — ${evt.toolName}`);
       pulsePaneStatusIcon(index);
-      // If this session just wrote a mockup HTML file, offer to open it in the
-      // Plan view for annotation (option A: generate -> annotate in one step).
+      break;
+    case "tool_written":
+      // Fires once the file-writing tool's tool_result confirms the write
+      // actually completed (see launcher.js's "user" message handling) —
+      // not on the earlier tool_use request, which can race the real write
+      // if "Open in Plan" is clicked immediately. If this was a mockup HTML
+      // file, offer to open it in the Plan view for annotation (option A:
+      // generate -> annotate in one step).
       if (isMockupPath(evt.filePath)) {
         showMockupBanner(index, evt.filePath);
       }
