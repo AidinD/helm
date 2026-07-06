@@ -4178,9 +4178,45 @@ async function renderDashboardPage() {
   topbar.append(heading, topbarActions);
   page.append(topbar);
 
+  const goalsResult = await window.maestro.getJotGoals();
+  const isColdStart = dashboardInMotionRows().length === 0 && (!goalsResult.ok || goalsResult.goals.length === 0);
+  if (isColdStart) {
+    page.append(dashboardOnboardingBlock());
+  }
+
   page.append(dashboardQueueSection());
-  page.append(await dashboardGoalsSection());
+  page.append(await dashboardGoalsSection(goalsResult));
   page.append(await dashboardNewSessionSection());
+}
+
+// First-run orientation. Shown only in the cold/low-data state (no active or
+// waiting sessions, and no Jot goals) so it reads as calm guidance rather
+// than a permanent fixture - it naturally disappears once real data exists,
+// no dismiss control needed. Reuses the same .dash-board/.dash-hint tokens as
+// the rest of the dashboard rather than inventing new structure.
+function dashboardOnboardingBlock() {
+  const section = document.createElement("section");
+  section.className = "dash-board dash-onboarding";
+
+  const title = document.createElement("div");
+  title.className = "dash-onboarding-title";
+  title.textContent = "Welcome to your dashboard";
+  section.append(title);
+
+  const list = document.createElement("ul");
+  list.className = "dash-onboarding-list";
+  [
+    '"Needs you & in motion" surfaces sessions waiting on your input or currently working - it stays empty until something is running.',
+    "Work is organized by goal below, pulled straight from your Jot board.",
+    'Pick a project under "New session" and start fresh whenever you\'re ready.',
+  ].forEach((text) => {
+    const li = document.createElement("li");
+    li.textContent = text;
+    list.append(li);
+  });
+  section.append(list);
+
+  return section;
 }
 
 // --- Focus work/private toggle -----------------------------------------
@@ -4553,8 +4589,8 @@ function dashSessionRowEl(session) {
 // dim when their domain doesn't match the Focus toggle's mode, per
 // domainForGoal (see comment above the toggle). A neutral goal (no domain set
 // on its Jot category) is shown in both modes and never dimmed.
-async function dashboardGoalsSection() {
-  const result = await window.maestro.getJotGoals();
+async function dashboardGoalsSection(preloadedResult) {
+  const result = preloadedResult ?? (await window.maestro.getJotGoals());
 
   const section = document.createElement("section");
   section.className = "dash-board";
