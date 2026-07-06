@@ -135,11 +135,11 @@ h1 {
   font-weight: 600;
 }
 
-/* Dashboard sub-nav + Settings utility row: subordinate to the primary bar.
-   No card background, smaller/quieter text; the active facet uses a soft
-   surface fill (not the loud accent that primary tabs get) so it reads as a
-   second tier. The captain's standing rule: subtle, less color, color only for
-   active states. */
+/* Dashboard sub-nav + header utility nav (Skills/Archive): subordinate to the
+   primary bar. No card background, smaller/quieter text; the active facet
+   uses a soft surface fill (not the loud accent that primary tabs get) so it
+   reads as a second tier. The captain's standing rule: subtle, less color, color
+   only for active states. */
 .dashboard-subnav {
   background: transparent;
   padding: 6px 18px;
@@ -167,22 +167,21 @@ h1 {
   margin-left: 0;
 }
 
-.settings-utilities {
+.header-utility-nav {
   background: transparent;
   padding: 0;
-  margin-bottom: 14px;
   gap: 4px;
   justify-content: flex-start;
 }
 
 .dashboard-subnav button,
-.settings-utilities button {
+.header-utility-nav button {
   font-size: 12px;
   padding: 3px 9px;
 }
 
 .dashboard-subnav button.active,
-.settings-utilities button.active {
+.header-utility-nav button.active {
   background: var(--bg-card-hover);
   color: var(--text);
   font-weight: 600;
