@@ -5549,6 +5549,16 @@ function goalRunDetailEl(run) {
   }
   progress.append(statusLine);
 
+  // Fresh-context honesty label: each iteration is a separate `claude -p` with
+  // no accumulated context - continuity between iterations is carried only via
+  // notes.md (see goalOrchestrator.js). Stated plainly so the reader knows an
+  // iteration did not inherit the prior one's in-memory context. A muted
+  // one-liner (reuses .goal-summary-note's muted styling), not a control.
+  const freshNote = document.createElement("div");
+  freshNote.className = "goal-status-line goal-fresh-context-note";
+  freshNote.textContent = "Each iteration runs in fresh context (no carried-over memory); continuity is via notes.md.";
+  progress.append(freshNote);
+
   // RPI phase (research -> plan -> implement, see goalOrchestrator.js): the
   // plan itself is the plan-phase's one durable artifact, so surface it as soon
   // as any iteration has reached/passed the plan phase - a plain expandable
@@ -5670,6 +5680,63 @@ function goalPlanBlock(planContent) {
   return details;
 }
 
+// The exact delegation prompt an iteration was given (record.contract). Reuses
+// goalPlanBlock's <details>/.tool-group/<pre> pattern so it reads as the same
+// kind of expandable reference block, plus a small copy affordance matching the
+// app's existing .copy-btn (icon → ✓) convention. Makes a green result
+// trustworthy: the reviewer can see what the delegate was actually asked to do,
+// not just its self-reported summary.
+function goalContractBlock(contract) {
+  const details = document.createElement("details");
+  details.className = "tool-group goal-contract-block";
+  const summary = document.createElement("summary");
+  summary.textContent = "Contract sent to this iteration";
+  const copyBtn = document.createElement("button");
+  copyBtn.className = "copy-btn";
+  copyBtn.title = "Copy";
+  copyBtn.textContent = "⧉";
+  copyBtn.addEventListener("click", (e) => {
+    // Don't toggle the <details> when the copy icon (inside <summary>) is clicked.
+    e.preventDefault();
+    e.stopPropagation();
+    window.maestro.copyToClipboard(contract);
+    copyBtn.textContent = "✓";
+    copyBtn.classList.add("copied");
+    setTimeout(() => {
+      copyBtn.textContent = "⧉";
+      copyBtn.classList.remove("copied");
+    }, 1200);
+  });
+  summary.append(copyBtn);
+  details.append(summary);
+  const pre = document.createElement("pre");
+  pre.className = "tool-call-output goal-contract-content";
+  pre.textContent = contract;
+  details.append(pre);
+  return details;
+}
+
+// Verify evidence for an iteration (record.verify = { command, passed, output }).
+// Backs the pass/fail badge with the actual command + captured output tail so
+// "verified" is not a bare assertion. Same expandable <details>/.tool-group/<pre>
+// pattern as the plan/contract blocks.
+function goalVerifyBlock(verify) {
+  const details = document.createElement("details");
+  details.className = "tool-group goal-verify-block";
+  const summary = document.createElement("summary");
+  summary.textContent = `Verify evidence · ${verify.passed ? "passed" : "failed"}`;
+  details.append(summary);
+  const cmd = document.createElement("div");
+  cmd.className = "goal-iter-sublabel";
+  cmd.textContent = `Command: ${verify.command}`;
+  details.append(cmd);
+  const pre = document.createElement("pre");
+  pre.className = "tool-call-output goal-verify-content";
+  pre.textContent = verify.output || "(no output captured)";
+  details.append(pre);
+  return details;
+}
+
 function goalIterationCard(rec) {
   const card = document.createElement("div");
   const ok = rec.ok && rec.result && rec.result.success;
@@ -5748,6 +5815,17 @@ function goalIterationCard(rec) {
     errText.className = "goal-iter-summary";
     errText.textContent = rec.error || "Iteration failed.";
     card.append(errText);
+  }
+
+  // Verify evidence (implement-phase iterations that ran the verify gate) -
+  // the actual command + captured output behind the pass/fail badge.
+  if (rec.verify) {
+    card.append(goalVerifyBlock(rec.verify));
+  }
+
+  // The delegation contract - the exact prompt this iteration was given.
+  if (rec.contract) {
+    card.append(goalContractBlock(rec.contract));
   }
 
   return card;

@@ -128,6 +128,13 @@ const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const VERIFY_TIMEOUT_MS = 10 * 60_000;
 const VERIFY_OUTPUT_TAIL_CHARS = 4000;
 
+// The exact delegation prompt sent to an iteration is captured onto its record
+// (record.contract) so a reviewer can see what the delegate was actually asked
+// to do, not just its self-reported result. Capped defensively — a big repo
+// map / notes.md could make the full prompt many KB, and the record flows over
+// IPC to the renderer, so keep it lean.
+const CONTRACT_CAP_CHARS = 6000;
+
 // Context-budget KPI (praktiker #2, Dex Horthy's ~40% "dumb zone" — see
 // PLAN.md's practitioner-research section): model recall degrades once a
 // single turn's context fill gets deep into its window, well before the
@@ -518,6 +525,11 @@ function runIteration({ worktreePath, goal, notesContent, planContent, repoMapCo
       promptLines.push("Work on the smallest next logical step toward the overall goal above.");
     }
     const prompt = promptLines.join("\n");
+    // The delegation contract surfaced to the reviewer (record.contract), capped
+    // so a large prompt can't bloat the record/IPC. Returned on every resolve
+    // path below (success and failure) so the contract is visible even for an
+    // iteration that hard-failed.
+    const contract = truncate(prompt, CONTRACT_CAP_CHARS);
 
     const systemPrompt = PHASE_PROMPTS[phase] || PHASE_PROMPTS.implement;
 
@@ -565,7 +577,7 @@ function runIteration({ worktreePath, goal, notesContent, planContent, repoMapCo
         env: process.env,
       });
     } catch (err) {
-      resolve({ ok: false, error: `Failed to spawn claude: ${err.message}` });
+      resolve({ ok: false, error: `Failed to spawn claude: ${err.message}`, contract });
       return;
     }
 
@@ -590,7 +602,9 @@ function runIteration({ worktreePath, goal, notesContent, planContent, repoMapCo
       }
       settled = true;
       clearTimeout(timeoutId);
-      resolve(value);
+      // Attach the (already-capped) delegation contract to every outcome so the
+      // caller can surface it on the record regardless of success/failure path.
+      resolve({ ...value, contract });
     };
 
     const timeoutId = setTimeout(() => {
@@ -1283,6 +1297,13 @@ export async function runGoal({
     // rolled back regardless).
     const producedChanges = outcome.ok ? producedRealChanges(worktreePath) : false;
 
+    // Verify evidence for THIS iteration (record.verify), set only when the
+    // verify gate actually ran below. Captures the command, pass/fail, and the
+    // captured output tail so a green result is backed by the real output, not
+    // a bare badge. Loop-scoped so it can be attached centrally after the
+    // branch, alongside record.contract / record.plan.
+    let verifyEvidence = null;
+
     let record;
     if (!outcome.ok) {
       // Hard process error (timeout, spawn failure, bad JSON, schema
@@ -1320,6 +1341,13 @@ export async function runGoal({
       // from any other failed iteration downstream — same rollback, same
       // consecutive-failure counting, same stop conditions.
       const verifyOutcome = await runVerifyCommand(worktreePath, verifyCommand, onChild);
+      // Capture the verify evidence for the record (command + pass/fail +
+      // output). runVerifyCommand already caps `output` to VERIFY_OUTPUT_TAIL_CHARS.
+      verifyEvidence = {
+        command: verifyCommand,
+        passed: verifyOutcome.ok,
+        output: verifyOutcome.output || "",
+      };
       if (verifyOutcome.ok) {
         // Verified green — accept exactly like the no-gate path below.
         appendNotes(worktreePath, i, outcome.result);
@@ -1436,6 +1464,17 @@ export async function runGoal({
       record.plan = readPlan(worktreePath);
     } catch {
       record.plan = null;
+    }
+
+    // Delegation contract: the exact (capped) prompt this iteration was given,
+    // captured in runIteration and surfaced so a reviewer can see what the
+    // delegate was actually asked to do. Attached to every record.
+    record.contract = outcome.contract || null;
+    // Verify evidence: present only when the verify gate ran this iteration
+    // (implement phase + a configured verifyCommand). Backs the pass/fail badge
+    // with the real command + captured output.
+    if (verifyEvidence) {
+      record.verify = verifyEvidence;
     }
 
     iterations.push(record);
