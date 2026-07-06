@@ -5927,9 +5927,11 @@ let lavishState = {
   loadError: "",
 };
 
-// Recently-loaded mockup FILE PATHS, most-recent-first, capped at 5.
-// Renderer-only persistence (localStorage) - no main.js IPC needed. Read once
-// at startup; every successful file-path load pushes/reorders and re-saves.
+// Recently-loaded mockups, most-recent-first, capped at 5. Renderer-only
+// persistence (localStorage) - no main.js IPC needed. Each entry is either a
+// file load { kind: "file", path } or a pasted-HTML load { kind: "paste",
+// html, label } - so a pasted mockup (which has no path to remember) can still
+// be reloaded in one click, not just file-path loads.
 const LAVISH_RECENT_KEY = "maestro.lavish.recentMockups";
 const LAVISH_RECENT_MAX = 5;
 
@@ -5937,24 +5939,55 @@ function loadLavishRecents() {
   try {
     const raw = localStorage.getItem(LAVISH_RECENT_KEY);
     const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed.filter((p) => typeof p === "string" && p) : [];
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed
+      // Migrate the old string[] format (bare file paths) to the object shape.
+      .map((e) => (typeof e === "string" ? { kind: "file", path: e } : e))
+      .filter((e) =>
+        e && (e.kind === "file" ? typeof e.path === "string" && e.path : e.kind === "paste" ? typeof e.html === "string" && e.html : false)
+      );
   } catch {
     return [];
   }
 }
 
-function addLavishRecent(filePath) {
-  if (!filePath) {
-    return;
-  }
-  const deduped = lavishRecents.filter((p) => p !== filePath);
-  deduped.unshift(filePath);
-  lavishRecents = deduped.slice(0, LAVISH_RECENT_MAX);
+function persistLavishRecents() {
   try {
     localStorage.setItem(LAVISH_RECENT_KEY, JSON.stringify(lavishRecents));
   } catch {
     // localStorage unavailable/full - recents just won't persist this run.
   }
+}
+
+function addLavishFileRecent(path) {
+  if (!path) {
+    return;
+  }
+  lavishRecents = [{ kind: "file", path }, ...lavishRecents.filter((e) => !(e.kind === "file" && e.path === path))].slice(0, LAVISH_RECENT_MAX);
+  persistLavishRecents();
+}
+
+function addLavishPasteRecent(html) {
+  if (!html) {
+    return;
+  }
+  // Re-pasting identical HTML reuses its existing label and just moves it to
+  // the front; a new paste gets the next "Pasted mockup N" number.
+  const existing = lavishRecents.find((e) => e.kind === "paste" && e.html === html);
+  let label;
+  if (existing) {
+    label = existing.label;
+  } else {
+    const maxN = lavishRecents.reduce((m, e) => {
+      const match = e.kind === "paste" && /(\d+)\s*$/.exec(e.label || "");
+      return match ? Math.max(m, parseInt(match[1], 10)) : m;
+    }, 0);
+    label = `Pasted mockup ${maxN + 1}`;
+  }
+  lavishRecents = [{ kind: "paste", html, label }, ...lavishRecents.filter((e) => !(e.kind === "paste" && e.html === html))].slice(0, LAVISH_RECENT_MAX);
+  persistLavishRecents();
 }
 
 let lavishRecents = loadLavishRecents();
@@ -5991,7 +6024,7 @@ async function openMockupFileInPlan(filePath) {
   }
   const built = await openMockupInPlan(res.html);
   if (built.ok) {
-    addLavishRecent(filePath);
+    addLavishFileRecent(filePath);
   }
   return built;
 }
@@ -6066,7 +6099,7 @@ function renderLavishPage() {
   });
   pathRow.append(pathInput, pickBtn);
 
-  // ---- Recent mockups: last few file-path loads, one click to reload ----
+  // ---- Recent mockups: last few loads (file or pasted), one click to reload ----
   let recentSection = null;
   if (lavishRecents.length > 0) {
     recentSection = document.createElement("div");
@@ -6075,15 +6108,20 @@ function renderLavishPage() {
     recentLabel.className = "goal-field-hint lavish-recent-label";
     recentLabel.textContent = "Recent";
     recentSection.append(recentLabel);
-    lavishRecents.forEach((recentPath) => {
+    lavishRecents.forEach((entry) => {
       const row = document.createElement("button");
       row.type = "button";
       row.className = "text-btn lavish-recent-row";
-      row.title = recentPath;
-      row.textContent = recentPath.split(/[\\/]/).pop();
+      if (entry.kind === "file") {
+        row.title = entry.path;
+        row.textContent = entry.path.split(/[\\/]/).pop();
+      } else {
+        row.title = "Pasted HTML mockup";
+        row.textContent = entry.label || "Pasted mockup";
+      }
       row.addEventListener("click", async () => {
         lavishState.loadError = "";
-        const res = await openMockupFileInPlan(recentPath);
+        const res = entry.kind === "file" ? await openMockupFileInPlan(entry.path) : await openMockupInPlan(entry.html);
         if (!res.ok) {
           lavishState.loadError = "Failed to build mockup: " + res.error;
           renderLavishPage();
@@ -6109,6 +6147,11 @@ function renderLavishPage() {
     let res;
     if (html) {
       res = await openMockupInPlan(html);
+      // A pasted mockup has no path to remember, but keep the HTML itself as a
+      // recent so it's still one click to reload (see addLavishPasteRecent).
+      if (res.ok) {
+        addLavishPasteRecent(html);
+      }
     } else if (filePath) {
       res = await openMockupFileInPlan(filePath);
     } else {
