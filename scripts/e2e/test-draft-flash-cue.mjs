@@ -37,6 +37,12 @@ try {
   assert(f.focused, "composer textarea is focused after draft insert");
   assert(f.atEnd, "cursor is placed at the end of the draft");
 
+  // A toast fired too (the reliable "something happened" signal, visible
+  // wherever you're looking - the flash alone was too easy to miss).
+  const toastText = await app.eval(`[...document.querySelectorAll(".toast")].map(t => t.textContent).join(" | ")`);
+  log("toast:", JSON.stringify(toastText));
+  assert(/Draft loaded/.test(toastText), "a 'Draft loaded' toast appears on draft insert");
+
   // Empty draft: no flash cue (nothing to draw attention to).
   await app.eval(`(() => { const s = document.querySelector('.pane[data-pane="0"] .composer-shell'); if (s) s.classList.remove("composer-shell-draft-flash"); openFreshDraftInPane(null, ""); return true; })()`);
   assert(!(await hasFlash()), "empty draft does NOT trigger the flash cue");

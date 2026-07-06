@@ -1558,13 +1558,15 @@ function openFreshDraftInPane(cwd, draftText, opts = {}) {
     promptEl.focus();
     promptEl.setSelectionRange(promptEl.value.length, promptEl.value.length);
     promptEl.dispatchEvent(new Event("input"));
-    // Non-empty draft landed silently in a textarea otherwise reads as
-    // "nothing happened" (esp. the long orchestrator instruction block) -
-    // a brief self-removing flash on the composer shell (mirrors
-    // .pane-status-icon-ping) makes it obvious a draft is loaded and
-    // waiting for Enter. Skipped for "" drafts (e.g. plain "Start fresh
-    // session"), which have nothing to draw attention to.
+    // A non-empty draft landing silently in the textarea reads as "nothing
+    // happened" (esp. the long orchestrator block, and the composer is at the
+    // bottom while the launcher button is up top - a brief border flash alone
+    // is easy to miss). So: a toast (the app's reliable "something happened"
+    // signal, visible wherever you're looking) PLUS an accent flash on the
+    // composer shell for when your eyes are already there. Skipped for ""
+    // drafts (e.g. plain "Start fresh session"), which have nothing to show.
     if (draftText) {
+      showToast("Draft loaded — review and press Enter to send");
       const shellEl = paneEl.querySelector(".composer-shell");
       if (shellEl) {
         shellEl.classList.remove("composer-shell-draft-flash");
