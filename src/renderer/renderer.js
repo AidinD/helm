@@ -6583,6 +6583,13 @@ document.getElementById("settingsGear").addEventListener("click", () => navigate
 
 // ============================== Settings page ==============================
 
+function settingsGroupHeading(text) {
+  const h = document.createElement("h3");
+  h.className = "settings-group-heading";
+  h.textContent = text;
+  return h;
+}
+
 function settingsToggleRow(title, desc, checked, onChange) {
   const row = document.createElement("label");
   row.className = "settings-toggle-row";
@@ -6748,7 +6755,13 @@ function renderSettingsPage() {
   const block = document.createElement("div");
   block.className = "analysis-block settings-block";
 
-  block.append(
+  // Passive/observational group: these only read and surface a suggestion or
+  // note — they never touch a session on their own.
+  const passiveGroup = document.createElement("div");
+  passiveGroup.className = "settings-group";
+  passiveGroup.append(settingsGroupHeading("Passive — suggests, never acts"));
+
+  passiveGroup.append(
     settingsToggleRow(
       "Model-fit judge",
       "Runs a cheap Haiku call after every completed prompt to flag whether the model/effort choice was too weak, too strong, or appropriate. Adds ~$0.015 per prompt. Shown under the composer, not in the chat history.",
@@ -6761,7 +6774,7 @@ function renderSettingsPage() {
     )
   );
 
-  block.append(
+  passiveGroup.append(
     settingsToggleRow(
       "Notify when a prompt finishes",
       "Shows a native Windows notification (with its default sound) when a session completes a run, so you can switch away while it works.",
@@ -6772,7 +6785,7 @@ function renderSettingsPage() {
     )
   );
 
-  block.append(
+  passiveGroup.append(
     settingsToggleRow(
       "Suggest archiving idle sessions",
       "Shows an \"Archive?\" pill on idle sessions with no open Jot review/in-progress/open work. Archiving still needs your click — this only surfaces the suggestion, it never archives on its own.",
@@ -6786,7 +6799,7 @@ function renderSettingsPage() {
     )
   );
 
-  block.append(
+  passiveGroup.append(
     settingsToggleRow(
       "Orchestrator helper",
       "Periodically reads recent messages in idle/waiting sessions (a cheap Haiku call, ~15 min intervals) to tell apart a real open question from a finished answer, or genuinely stuck from genuinely idle. Sharpens the archive suggestion above and shows its read as a small note on the session row. A proposal only — never archives or acts on its own.",
@@ -6800,7 +6813,27 @@ function renderSettingsPage() {
     )
   );
 
-  block.append(
+  passiveGroup.append(
+    settingsToggleRow(
+      "Proactively check suggestion accuracy",
+      "Periodically re-checks the same \"Suggestion accuracy\" comparison shown on the Analysis page (no extra cost — it's the existing usage log, no model call) and surfaces a dismissible note there when overriding the model/effort suggestion has been judged \"appropriate\" meaningfully more often than following it. Checked on the same sweep as the items above, after enough new judged runs accumulate. Never changes the suggestion heuristic itself — only tells you it might be worth revisiting.",
+      state.config.suggestionAccuracyCheck?.enabled === true,
+      async (checked) => {
+        state.config = await window.maestro.setConfig({
+          suggestionAccuracyCheck: { ...(state.config.suggestionAccuracyCheck || {}), enabled: checked },
+        });
+      }
+    )
+  );
+
+  block.append(passiveGroup);
+
+  // Active group: these mutate a session's state on their own, unattended.
+  const activeGroup = document.createElement("div");
+  activeGroup.className = "settings-group";
+  activeGroup.append(settingsGroupHeading("Acts on your data automatically"));
+
+  activeGroup.append(
     settingsToggleRow(
       "Auto-compact large idle sessions",
       `Automatically runs /compact on a session left idle for ~${state.config.autoCompact?.idleMinutes || 10} min whose context has grown past ~${Math.round((state.config.autoCompact?.thresholdTokens || 150000) / 1000)}k tokens (checked on the ~15 min sweep). Time-based, so it won't fire mid-work — only after you've stepped away. Unlike everything else here this ACTS on its own — it summarizes the session's context (lossy, but the full history stays in the transcript on disk). A small note appears on the row after it happens.`,
@@ -6814,18 +6847,68 @@ function renderSettingsPage() {
     )
   );
 
-  block.append(
-    settingsToggleRow(
-      "Proactively check suggestion accuracy",
-      "Periodically re-checks the same \"Suggestion accuracy\" comparison shown on the Analysis page (no extra cost — it's the existing usage log, no model call) and surfaces a dismissible note there when overriding the model/effort suggestion has been judged \"appropriate\" meaningfully more often than following it. Checked on the same sweep as the items above, after enough new judged runs accumulate. Never changes the suggestion heuristic itself — only tells you it might be worth revisiting.",
-      state.config.suggestionAccuracyCheck?.enabled === true,
-      async (checked) => {
-        state.config = await window.maestro.setConfig({
-          suggestionAccuracyCheck: { ...(state.config.suggestionAccuracyCheck || {}), enabled: checked },
-        });
-      }
-    )
+  block.append(activeGroup);
+
+  // Config values that exist under the hood but had no UI — surfacing the
+  // one with real per-machine variability (voiceEngine: whisper.cpp needs a
+  // local CUDA binary+model, not present on every machine, see config.js)
+  // so it can be seen/forced without hand-editing config.json. voiceLanguage
+  // already has a picker in the composer's mic button, but it's easy to miss
+  // there — mirrored here as a durable, discoverable settings entry too.
+  const voiceGroup = document.createElement("div");
+  voiceGroup.className = "settings-group";
+  voiceGroup.append(settingsGroupHeading("Voice transcription"));
+
+  const engineRow = document.createElement("div");
+  engineRow.className = "settings-select-row";
+  const engineLabel = document.createElement("div");
+  engineLabel.className = "settings-toggle-text";
+  const engineTitle = document.createElement("div");
+  engineTitle.textContent = "Transcription engine";
+  engineTitle.className = "settings-toggle-title";
+  const engineDesc = document.createElement("div");
+  engineDesc.className = "settings-toggle-desc";
+  engineDesc.textContent = "\"whisper.cpp\" is faster (needs the local CUDA binary+model, see docs/transcription-research.md) but not every machine has it installed; \"transformers.js\" always works as a fallback.";
+  engineLabel.append(engineTitle, engineDesc);
+  const engineDD = dropdownPill(
+    state.config?.voiceEngine || "whispercpp",
+    [
+      { value: "whispercpp", label: "whisper.cpp" },
+      { value: "transformers", label: "transformers.js" },
+    ],
+    async (value) => {
+      state.config = await window.maestro.setConfig({ voiceEngine: value });
+    }
   );
+  engineRow.append(engineLabel, engineDD.el);
+  voiceGroup.append(engineRow);
+
+  const languageRow = document.createElement("div");
+  languageRow.className = "settings-select-row";
+  const languageLabel = document.createElement("div");
+  languageLabel.className = "settings-toggle-text";
+  const languageTitle = document.createElement("div");
+  languageTitle.textContent = "Default transcription language";
+  languageTitle.className = "settings-toggle-title";
+  const languageDesc = document.createElement("div");
+  languageDesc.className = "settings-toggle-desc";
+  languageDesc.textContent = "Same global setting as the mic button's language picker in the composer — changing either one changes both.";
+  languageLabel.append(languageTitle, languageDesc);
+  const settingsLanguageDD = dropdownPill(
+    state.config?.voiceLanguage || "swedish",
+    [
+      { value: "auto", label: "Auto-detect" },
+      { value: "swedish", label: "Svenska" },
+      { value: "english", label: "English" },
+    ],
+    async (value) => {
+      state.config = await window.maestro.setConfig({ voiceLanguage: value });
+    }
+  );
+  languageRow.append(languageLabel, settingsLanguageDD.el);
+  voiceGroup.append(languageRow);
+
+  block.append(voiceGroup);
 
   page.append(block);
 }
