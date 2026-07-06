@@ -6078,13 +6078,12 @@ function navigateToPage(page) {
   document.getElementById("archivePage").classList.toggle("hidden", page !== "archive");
   document.getElementById("settingsPage").classList.toggle("hidden", page !== "settings");
 
-  // Chat-specific header controls (Simple/Advanced view mode, split-view, and
-  // background tasks) only apply to Chat - hide them on every other page so the
-  // header isn't cluttered with chat-only controls on Dashboard/Plan/etc.
-  // (the captain design note 2026-07-05).
-  for (const id of ["viewToggle", "splitToggle", "backgroundTasksBtn"]) {
-    document.getElementById(id)?.classList.toggle("hidden", page !== "chat");
-  }
+  // Chat-specific controls (Simple/Advanced view mode, split-view, background
+  // tasks) live on their own row (#chatToolbar) below the header, not in the
+  // global header. Show that row only on Chat. Keeping them out of the header
+  // means the primary tabs never shift when the controls appear/disappear
+  // (the captain design note 2026-07-05: moved, not just hidden; tabs were jumping).
+  document.getElementById("chatToolbar").classList.toggle("hidden", page !== "chat");
 
   // Primary bar active state is group-aware: clicking a sub-nav facet (e.g.
   // Goal) must keep the Dashboard primary tab lit, not deactivate it.
