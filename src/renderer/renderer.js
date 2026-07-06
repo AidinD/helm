@@ -5230,7 +5230,7 @@ function renderGoalPage() {
   page.innerHTML = "";
 
   const header = document.createElement("h2");
-  header.textContent = "Autonomous goal";
+  header.textContent = "Autopilot";
   page.append(header);
 
   const intro = document.createElement("div");
@@ -6698,11 +6698,13 @@ const GEAR_ICON =
 document.getElementById("settingsGear").innerHTML = GEAR_ICON;
 
 // Which pages belong to the Dashboard primary tab (the "work" facets). The
-// primary Dashboard button and the #dashboardSubnav are shown/activated as a
-// group across all of these, not by exact page match. Settings owns the two
-// utility pages (Skills=analysis, Archive) reached from the gear.
+// primary Dashboard button is shown/activated as a group across all of these,
+// not by exact page match. "focus" has no #dashboardSubnav button of its own
+// (it's the click-through detail from a dashboard goal card) but still counts
+// toward the group so the primary tab stays lit while viewing it. Skills
+// (analysis) and Archive are reached from their own #headerUtilityNav, not
+// the Settings/gear group.
 const DASHBOARD_FACET_PAGES = ["dashboard", "goal", "agents", "routines", "focus"];
-const SETTINGS_GROUP_PAGES = ["settings", "analysis", "archive"];
 
 // Single source of truth for page navigation. Everything (the primary bar,
 // the gear, the sub-nav, and every programmatic jump) routes through here, so
@@ -6733,10 +6735,18 @@ function navigateToPage(page) {
     b.classList.toggle("active", bp === "dashboard" ? inDashboardGroup : bp === page);
   });
 
-  // Gear = active whenever we're on Settings or one of its utility pages.
-  document.getElementById("settingsGear").classList.toggle("active", SETTINGS_GROUP_PAGES.includes(page));
+  // Gear = active only for Settings itself; Skills/Archive now live in their
+  // own header utility nav (below) rather than the gear's group.
+  document.getElementById("settingsGear").classList.toggle("active", page === "settings");
+
+  // Header utility nav (Skills/Archive): its own buttons match exactly.
+  document
+    .querySelectorAll("#headerUtilityNav button")
+    .forEach((b) => b.classList.toggle("active", b.dataset.page === page));
 
   // Sub-nav: visible only within the Dashboard group; its buttons match exactly.
+  // "focus" has no button here (see DASHBOARD_FACET_PAGES above), so none of
+  // these highlight while on it - only the primary Dashboard tab stays lit.
   const subnav = document.getElementById("dashboardSubnav");
   subnav.classList.toggle("hidden", !inDashboardGroup);
   subnav.querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.dataset.page === page));
@@ -6782,6 +6792,7 @@ function wirePageNav(containerId) {
 }
 wirePageNav("pageToggle");
 wirePageNav("dashboardSubnav");
+wirePageNav("headerUtilityNav");
 document.getElementById("settingsGear").addEventListener("click", () => navigateToPage("settings"));
 
 // ============================== Settings page ==============================
@@ -6942,18 +6953,8 @@ function renderSettingsPage() {
   header.textContent = "Settings";
   page.append(header);
 
-  // Quiet secondary row reaching the two utility pages that no longer have a
-  // primary tab of their own (Skills = the former "Analysis" page; Archive).
-  const utilRow = document.createElement("div");
-  utilRow.className = "view-toggle settings-utilities";
-  const skillsBtn = document.createElement("button");
-  skillsBtn.textContent = "Skills";
-  skillsBtn.addEventListener("click", () => navigateToPage("analysis"));
-  const archiveBtn = document.createElement("button");
-  archiveBtn.textContent = "Archive";
-  archiveBtn.addEventListener("click", () => navigateToPage("archive"));
-  utilRow.append(skillsBtn, archiveBtn);
-  page.append(utilRow);
+  // Skills (analysis) and Archive moved to their own #headerUtilityNav next
+  // to the gear (2026-07-06) - reachable in one click, no longer buried here.
 
   const block = document.createElement("div");
   block.className = "analysis-block settings-block";
