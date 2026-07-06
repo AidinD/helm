@@ -3922,8 +3922,65 @@ async function refresh() {
 // spotlight) is the home now; Chat is one destination among the page tabs,
 // reached the same way any other page is.
 async function startup() {
+  await rehydrateGoalRuns();
   await refresh();
   navigateToPage("dashboard");
+}
+
+// Seeds goalRuns from the persisted index (src/lib/goalRunHistory.js) so past
+// runs still show on the Goal page after a restart, instead of the in-memory
+// Map silently starting empty every time. Only the compact fields main.js
+// wrote are available (no iteration list/plan — those live in the worktree's
+// own .maestro-goal/notes.md), so each rehydrated entry renders as a plain
+// finished/interrupted summary rather than the richer live-run view. Runs
+// left "running" have already been downgraded to "interrupted" by the
+// goal:history handler if no live process backs them.
+async function rehydrateGoalRuns() {
+  let records = [];
+  try {
+    records = await window.maestro.getGoalRunHistory();
+  } catch {
+    return;
+  }
+  if (!Array.isArray(records) || records.length === 0) {
+    return;
+  }
+  // Oldest first, so ordinals ("Run 1", "Run 2", ...) read in the order the
+  // runs actually happened, same as goalRunSeq's live increment does.
+  for (const record of records) {
+    goalRuns.set(record.goalRunId, {
+      goalRunId: record.goalRunId,
+      ordinal: ++goalRunSeq,
+      goal: record.goal,
+      projectPath: record.projectPath,
+      maxIterations: undefined,
+      model: undefined,
+      effort: undefined,
+      verifyCommand: undefined,
+      escalationConfig: undefined,
+      // "running"/"done"/"error"/"interrupted" — matches the live status
+      // model exactly (an escalated stop is still status "done", with the
+      // distinction carried by `escalation`, same as goalRunDetailEl already
+      // expects). goalRunDetailEl only renders a Cancel button for
+      // status === "running", so a rehydrated "interrupted" run correctly
+      // shows no Cancel affordance.
+      status: record.status,
+      iterations: [],
+      result:
+        record.status === "done"
+          ? {
+              worktreePath: record.worktreePath,
+              branchName: record.branchName,
+              commitCount: record.commitCount,
+              stoppedReason: record.stoppedReason,
+            }
+          : null,
+      error: record.error || null,
+      escalation: record.escalation || null,
+      latestPlan: null,
+      persisted: true,
+    });
+  }
 }
 
 // The modelFit event is the normal way launchPaneHistory entries get cleaned
@@ -5334,6 +5391,11 @@ function goalRunDetailEl(run) {
     statusLine.textContent = run.escalation ? "Run paused for you." : "Run finished.";
   } else if (run.status === "error") {
     statusLine.textContent = "Run ended with an error.";
+  } else if (run.status === "interrupted") {
+    // Rehydrated from disk (see goalRunHistory.js/goal:history): the run was
+    // still "running" when Maestro last shut down, so there is no live
+    // process behind it anymore - its actual outcome is unknown, not "done".
+    statusLine.textContent = "Interrupted by an app restart - check the worktree/branch on disk for what it left behind.";
   }
   progress.append(statusLine);
 

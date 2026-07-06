@@ -86,6 +86,9 @@ contextBridge.exposeInMainWorld("maestro", {
   runGoal: (opts) => ipcRenderer.invoke("goal:run", opts),
   suggestVerifyCommand: (projectPath) => ipcRenderer.invoke("goal:suggestVerifyCommand", { projectPath }),
   cancelGoal: (goalRunId) => ipcRenderer.invoke("goal:cancel", { goalRunId }),
+  // Persisted goal-run index (survives app restarts) - read once on startup
+  // to rehydrate the Goal page's in-memory goalRuns Map with past runs.
+  getGoalRunHistory: () => ipcRenderer.invoke("goal:history"),
   onGoalEvent: (handler) => {
     const listener = (_event, payload) => handler(payload);
     ipcRenderer.on("goal:event", listener);

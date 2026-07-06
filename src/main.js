@@ -19,6 +19,7 @@ import { classifySessionStatus, estimateSessionContextTokens, compactSession, ge
 import { savePastedImage, prunePastedImages } from "./lib/images.js";
 import { computeVersionString, captureRunningBuildIdentity, checkForNewerBuild } from "./lib/version.js";
 import { runGoal } from "./lib/goalOrchestrator.js";
+import { loadGoalRunHistory, upsertGoalRunRecord } from "./lib/goalRunHistory.js";
 import { loadDomains, registerDomain, removeDomain } from "./lib/domains.js";
 import { listScheduledTasks } from "./lib/routines.js";
 import { buildArtifactSrcdoc, formatAnnotationsAsPrompt } from "./lib/lavishSdk.js";
@@ -903,6 +904,25 @@ ipcMain.handle(
 
     send({ kind: "started", goal, maxIterations: clampedMax || null });
 
+    // Persist a compact "running" record now, before the run does anything —
+    // if Maestro is killed/restarted mid-run, rehydration on the next load
+    // sees a stale "running" record with no live process behind it and can
+    // reclassify it as interrupted, instead of the run vanishing entirely.
+    upsertGoalRunRecord({
+      goalRunId,
+      goal,
+      projectPath,
+      status: "running",
+      worktreePath: null,
+      branchName: null,
+      commitCount: null,
+      stoppedReason: null,
+      escalation: null,
+      error: null,
+      startedAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+
     // Fire-and-return: the handler resolves immediately with the goalRunId so
     // the renderer can wire up its Cancel button, while the run itself proceeds
     // and streams progress over goal:event. Errors are reported over the same
@@ -943,9 +963,31 @@ ipcMain.handle(
     })
       .then((result) => {
         send({ kind: "done", result });
+        // status stays "done" even for an escalated stop, mirroring the live
+        // renderer's own model (goalRunDetailEl reads run.status === "done"
+        // plus a separate `escalation` field, never a distinct "escalated"
+        // status) - keeps rehydrated and live runs rendering through the
+        // exact same branches.
+        upsertGoalRunRecord({
+          goalRunId,
+          status: "done",
+          worktreePath: result?.worktreePath || null,
+          branchName: result?.branchName || null,
+          commitCount: typeof result?.commitCount === "number" ? result.commitCount : null,
+          stoppedReason: result?.stoppedReason || null,
+          escalation: result?.escalation || null,
+          updatedAt: Date.now(),
+        });
       })
       .catch((err) => {
-        send({ kind: "error", error: err?.message || String(err) });
+        const errorMessage = err?.message || String(err);
+        send({ kind: "error", error: errorMessage });
+        upsertGoalRunRecord({
+          goalRunId,
+          status: "error",
+          error: errorMessage,
+          updatedAt: Date.now(),
+        });
       })
       .finally(() => {
         liveGoalRuns.delete(goalRunId);
@@ -972,6 +1014,19 @@ ipcMain.handle("goal:cancel", (_event, { goalRunId }) => {
     run.currentChild = null;
   }
   return { ok: true };
+});
+
+// --- Persisted goal-run index (see lib/goalRunHistory.js) — read on renderer
+// startup so past runs survive an app restart. A "running" record with no
+// matching entry in liveGoalRuns means the process behind it is gone (the
+// app was restarted mid-run), so it's downgraded to "interrupted" here
+// rather than left to render as a still-live run with a dead Cancel button.
+ipcMain.handle("goal:history", () => {
+  return loadGoalRunHistory().map((record) =>
+    record.status === "running" && !liveGoalRuns.has(record.goalRunId)
+      ? { ...record, status: "interrupted" }
+      : record
+  );
 });
 
 function truncateForNotification(text) {
