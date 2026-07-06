@@ -3,6 +3,9 @@
 Personal Electron wrapper around the real `claude` CLI. See `PLAN.md` for
 the current build plan and active phase, and `DECISIONS.md` for past
 decisions and why - both live in this repo, not in global memory.
+`docs/USING-MAESTRO.md` is the day-to-day usage guide (the daily loop, when
+to reach for Chat vs Autopilot vs an orchestrator session, the keyboard
+layer) - point Aidin at it if he asks how to use the app.
 
 ## Restarting during dev
 
