@@ -187,7 +187,9 @@ export function startSession({ cwd, prompt, model, effort, permissionMode, resum
           } else if (block.type === "tool_use") {
             // Lets the UI show a live "agent is running X" indicator while a
             // turn is in progress, ahead of the authoritative transcript.
-            emit({ kind: "tool_use", toolName: block.name });
+            // filePath (Write/Edit/MultiEdit's file_path, when present) lets the
+            // renderer notice a generated mockup and offer to open it in Plan.
+            emit({ kind: "tool_use", toolName: block.name, filePath: block.input?.file_path });
           }
         }
       }
