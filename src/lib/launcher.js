@@ -106,6 +106,13 @@ export function startSession({ cwd, prompt, model, effort, permissionMode, resum
   // own authoritative final result.usage exactly for input/cache tokens in
   // that same spike.
   const seenUsageMessageIds = new Set();
+  // Tracks in-flight file-writing tool calls (Write/Edit/MultiEdit) by their
+  // tool_use id so the matching "user" stream-json message carrying that
+  // tool's tool_result can be correlated back to the file it wrote. Used
+  // only to emit the additive "tool_written" event below — the existing
+  // "tool_use" event (which drives the live "Working — X" indicator) is
+  // still emitted the moment the tool is REQUESTED, unchanged.
+  const pendingFileWrites = new Map();
 
   const emit = (evt) => {
     try {
@@ -190,6 +197,39 @@ export function startSession({ cwd, prompt, model, effort, permissionMode, resum
             // filePath (Write/Edit/MultiEdit's file_path, when present) lets the
             // renderer notice a generated mockup and offer to open it in Plan.
             emit({ kind: "tool_use", toolName: block.name, filePath: block.input?.file_path });
+            // Remember this call's id -> file_path so that once the matching
+            // tool_result comes back (in a later "user" message, see below)
+            // we know the write actually completed before telling the
+            // renderer about it. tool_use fires on REQUEST, not completion —
+            // clicking "Open in Plan" right after tool_use can race the
+            // actual file write, so the mockup banner instead waits for this
+            // tool_written event.
+            if (block.id && block.input?.file_path) {
+              pendingFileWrites.set(block.id, block.input.file_path);
+            }
+          }
+        }
+      }
+    } else if (type === "user") {
+      // Claude Code emits a "user"-role message carrying tool_result block(s)
+      // once a tool finishes executing, each tagged with the tool_use_id of
+      // the call it answers. Only used here to detect completion of a
+      // pending file write (see pendingFileWrites above) and emit the
+      // additive "tool_written" event; everything else about "user" messages
+      // is still ignored for this lean slice.
+      const blocks = evt.message?.content;
+      if (Array.isArray(blocks)) {
+        for (const block of blocks) {
+          if (block.type !== "tool_result" || !block.tool_use_id) {
+            continue;
+          }
+          const filePath = pendingFileWrites.get(block.tool_use_id);
+          if (filePath === undefined) {
+            continue;
+          }
+          pendingFileWrites.delete(block.tool_use_id);
+          if (!block.is_error) {
+            emit({ kind: "tool_written", filePath });
           }
         }
       }
