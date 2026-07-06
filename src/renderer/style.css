@@ -2206,6 +2206,15 @@ button.primary {
   padding-top: 14px;
 }
 
+/* Attention accent for a run that errored or escalated - same --waiting amber
+   as the escalation card and the Dashboard attention badge, kept subtle
+   (faint left border only) so it reads as "look here" without competing with
+   the run's own status line/cards. */
+.goal-run-detail-attention {
+  border-left: 3px solid var(--waiting);
+  padding-left: 11px;
+}
+
 .goal-run-head {
   display: flex;
   align-items: center;

@@ -4349,13 +4349,32 @@ function dashboardProposalSessions() {
   return sortByAttention(proposalSessions);
 }
 
+// Goal runs that need attention (errored or escalated/paused) but have no
+// row anywhere else - the amber Dashboard-tab badge (updateGoalAttentionBadge)
+// flags that *something* needs attention, but previously gave no way to get
+// FROM that badge TO the actual run, which lives under Dashboard > Goal. These
+// rows are the fix: same needs-you priority as a "waiting" session, clicking
+// one just switches to the Goal facet where goalRunDetailEl renders the run.
+function dashboardGoalAttentionRuns() {
+  return [...goalRuns.values()].filter((r) => r.status === "error" || r.escalation);
+}
+
 function dashboardInMotionRows() {
   const inMotionSessions = state.sessions.filter((s) => !s.isArchived && (s.status === "active" || s.status === "waiting"));
-  return sortByAttention(inMotionSessions).map((s) => ({
+  const sessionRows = sortByAttention(inMotionSessions).map((s) => ({
     kind: "session",
     session: s,
     needsAction: s.status === "waiting",
   }));
+  // Goal-run rows always read as top-priority needs-you (same as a "waiting"
+  // session), so they lead the list rather than being sorted in by a made-up
+  // attention score.
+  const goalRunRows = dashboardGoalAttentionRuns().map((run) => ({
+    kind: "goalRun",
+    run,
+    needsAction: true,
+  }));
+  return [...goalRunRows, ...sessionRows];
 }
 
 function dashboardQueueSection() {
@@ -4400,7 +4419,7 @@ function dashboardQueueSection() {
     if (proposalSessions.length > 0) {
       list.append(dashArchiveGroupEl(proposalSessions));
     }
-    inMotion.forEach((row) => list.append(dashSessionRowEl(row.session)));
+    inMotion.forEach((row) => list.append(row.kind === "goalRun" ? dashGoalRunRowEl(row.run) : dashSessionRowEl(row.session)));
     body.append(list);
   }
   section.append(body);
@@ -4492,6 +4511,11 @@ function dashQueueStateIcon(kind, session) {
   if (kind === "proposal") {
     ic.className = "dash-state-ic dash-state-needs";
     ic.textContent = "\u{1F4C1}"; // folder - archive proposal
+    return ic;
+  }
+  if (kind === "goalRun") {
+    ic.className = "dash-state-ic dash-state-needs";
+    ic.textContent = "⚠"; // warning - same as a waiting session, goal run needs you too
     return ic;
   }
   if (session.status === "waiting") {
@@ -4595,6 +4619,42 @@ function dashSessionRowEl(session) {
     meta.textContent = "needs input";
     row.append(meta);
   }
+
+  return row;
+}
+
+// Row for a goal run that needs attention (errored or escalated), rendered
+// alongside the session rows above. Same .dash-queue-row/.dash-q-* shell as
+// dashSessionRowEl; clicking just switches to the Goal facet (navigateToPage)
+// where goalRunDetailEl already renders the run itself, with its own attention
+// accent (see .goal-run-detail-attention in style.css) making it easy to spot.
+function dashGoalRunRowEl(run) {
+  const row = document.createElement("div");
+  row.className = "dash-queue-row";
+  row.addEventListener("click", () => navigateToPage("goal"));
+  row.append(dashQueueStateIcon("goalRun", null));
+
+  const qbody = document.createElement("div");
+  qbody.className = "dash-q-body";
+  const top = document.createElement("div");
+  top.className = "dash-q-top";
+  const goalSnippet = run.goal.length > 60 ? run.goal.slice(0, 60) + "…" : run.goal;
+  const title = document.createElement("span");
+  title.className = "dash-q-title";
+  title.textContent = run.status === "error" ? `Goal run "${goalSnippet}" — failed` : `Goal run "${goalSnippet}" — paused, needs you`;
+  top.append(title);
+  qbody.append(top);
+
+  const why = document.createElement("div");
+  why.className = "dash-q-why";
+  why.textContent = run.status === "error" ? run.error || "Run ended with an error." : "Escalated - waiting on your input.";
+  qbody.append(why);
+  row.append(qbody);
+
+  const meta = document.createElement("div");
+  meta.className = "dash-q-meta";
+  meta.textContent = "needs input";
+  row.append(meta);
 
   return row;
 }
@@ -5407,7 +5467,10 @@ function renderGoalPage() {
 // rendering so the Goal page can show several runs at once.
 function goalRunDetailEl(run) {
   const wrap = document.createElement("div");
-  wrap.className = "goal-run-detail";
+  // Subtle amber accent (see .goal-run-detail-attention in style.css) so a
+  // run needing attention is visible at a glance among several run blocks,
+  // not just discoverable by reading each status line.
+  wrap.className = "goal-run-detail" + (run.status === "error" || run.escalation ? " goal-run-detail-attention" : "");
 
   const head = document.createElement("div");
   head.className = "goal-run-head";
