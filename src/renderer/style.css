@@ -2737,6 +2737,22 @@ button.primary {
   border: 1px solid var(--waiting);
 }
 
+/* --- First-run onboarding block (cold/low-data dashboard only) --- */
+.dash-onboarding-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+
+.dash-onboarding-list {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
 .dash-queue-list {
   display: flex;
   flex-direction: column;
