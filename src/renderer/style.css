@@ -157,6 +157,15 @@ h1 {
   margin-left: auto;
 }
 
+/* The toolbar owns the single auto-margin that pushes the right cluster over.
+   Without this, .pane-actions' own margin-left:auto would split the free space
+   between the two, drifting the toolbar toward the centre instead of flush
+   right. Only applies in the primary pane where the toolbar precedes actions;
+   the split pane's close button keeps its own auto-margin. */
+.chat-toolbar + .pane-actions {
+  margin-left: 0;
+}
+
 .settings-utilities {
   background: transparent;
   padding: 0;
