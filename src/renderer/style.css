@@ -146,6 +146,18 @@ h1 {
   justify-content: flex-start;
 }
 
+/* Chat-only control row under the header (Simple/Advanced, split, background
+   tasks). Light, borderless treatment like the dashboard sub-nav so it doesn't
+   read as a heavy second bar; right-aligned so it sits over the workspace. */
+.chat-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 6px 16px;
+  background: transparent;
+  justify-content: flex-end;
+}
+
 .settings-utilities {
   background: transparent;
   padding: 0;
