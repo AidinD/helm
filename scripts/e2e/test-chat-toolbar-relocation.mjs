@@ -55,6 +55,14 @@ try {
   assert(await isVisible("chatToolbar"), "#chatToolbar visible on Chat");
   const leftChat = await leftOf("pageToggle");
 
+  // Right-aligned: the toolbar's right edge hugs the pane-header's right edge
+  // (only the header's right padding + the empty actions span between them).
+  const rightGap = await app.eval(
+    `(() => { const t = document.getElementById("chatToolbar").getBoundingClientRect(); const ph = document.querySelector('.pane[data-pane="0"] .pane-header').getBoundingClientRect(); return Math.round(ph.right - t.right); })()`
+  );
+  log(`toolbar right-edge gap to pane-header right: ${rightGap}px`);
+  assert(rightGap >= 0 && rightGap <= 30, "chat toolbar is right-aligned (small gap to pane-header right edge)");
+
   await goto("lavish");
   await app.waitForSelector("#lavishPage", 8000, { visible: true });
   assert(!(await isVisible("chatToolbar")), "#chatToolbar not visible on Plan");
