@@ -5575,8 +5575,11 @@ function goalWorktreeActionsEl(run, worktreePath) {
   openBtn.className = "text-btn";
   openBtn.textContent = "Open worktree";
   openBtn.title = worktreePath;
-  openBtn.addEventListener("click", () => {
-    window.maestro.openGoalWorktree(worktreePath);
+  openBtn.addEventListener("click", async () => {
+    const res = await window.maestro.openGoalWorktree(worktreePath);
+    if (res && !res.ok) {
+      showToast(res.error || "Couldn't open the worktree.");
+    }
   });
   wrap.append(openBtn);
 
@@ -5608,6 +5611,9 @@ function goalWorktreeActionsEl(run, worktreePath) {
             deleteBtn.disabled = false;
             openBtn.disabled = false;
             return;
+          }
+          if (res.alreadyGone) {
+            showToast("Worktree was already gone - cleared the entry.");
           }
           goalRuns.delete(run.goalRunId);
           renderGoalPage();

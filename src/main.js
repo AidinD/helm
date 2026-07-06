@@ -1051,6 +1051,11 @@ ipcMain.handle("goal:openWorktree", (_event, { worktreePath }) => {
   if (!worktreePath) {
     return { ok: false, error: "worktreePath is required" };
   }
+  // Give feedback instead of silently opening nothing when the worktree has
+  // already been removed from disk (manually, or by an earlier Delete).
+  if (!fs.existsSync(worktreePath)) {
+    return { ok: false, error: "Worktree no longer exists on disk." };
+  }
   shell.openPath(worktreePath);
   return { ok: true };
 });
@@ -1058,6 +1063,16 @@ ipcMain.handle("goal:openWorktree", (_event, { worktreePath }) => {
 ipcMain.handle("goal:deleteWorktree", (_event, { goalRunId, projectPath, worktreePath }) => {
   if (!projectPath || !worktreePath) {
     return { ok: false, error: "projectPath and worktreePath are required" };
+  }
+  // If the worktree is already gone from disk (removed manually or elsewhere),
+  // there's nothing to remove - just clear the stale record so the dead entry
+  // can be cleaned from the UI. Without this, removeWorktree throws "not a
+  // registered worktree" and the user is stuck with an un-clearable row.
+  if (!fs.existsSync(worktreePath)) {
+    if (goalRunId) {
+      removeGoalRunRecord(goalRunId);
+    }
+    return { ok: true, alreadyGone: true };
   }
   try {
     removeWorktree(projectPath, worktreePath);
