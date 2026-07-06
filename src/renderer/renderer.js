@@ -4345,8 +4345,18 @@ function dashboardProposalSessions() {
   if (!suggestionsEnabled) {
     return [];
   }
+  // A dismissed proposal stays hidden only while the session is unchanged
+  // since the dismissal ("not now", not "never") - if lastActivityAt has
+  // moved on, the dismissal is stale and the session is re-proposed.
+  const dismissed = state.config.dismissedArchiveProposals || {};
+  const isDismissed = (s) => dismissed[s.sessionId] === s.lastActivityAt;
   const proposalSessions = state.sessions.filter(
-    (s) => !s.isArchived && (s.status === "idle" || classifierSaysDone(s)) && !hasOpenJotWork(s) && !isOrchestratorSession(s)
+    (s) =>
+      !s.isArchived &&
+      (s.status === "idle" || classifierSaysDone(s)) &&
+      !hasOpenJotWork(s) &&
+      !isOrchestratorSession(s) &&
+      !isDismissed(s)
   );
   return sortByAttention(proposalSessions);
 }
@@ -4572,9 +4582,16 @@ function dashProposeRowEl(session) {
   const dismiss = document.createElement("button");
   dismiss.className = "text-btn";
   dismiss.textContent = "Dismiss";
-  dismiss.addEventListener("click", (e) => {
+  dismiss.addEventListener("click", async (e) => {
     e.stopPropagation();
     row.classList.add("dash-resolved");
+    state.config = await window.maestro.setConfig({
+      dismissedArchiveProposals: {
+        ...(state.config.dismissedArchiveProposals || {}),
+        [session.sessionId]: session.lastActivityAt,
+      },
+    });
+    refreshDashboardIfVisible();
   });
   actions.append(approve, dismiss);
   row.append(actions);
