@@ -18,12 +18,16 @@
     <header>
       <div class="brand"><span class="logo">◆</span><h1>Maestro</h1><span class="app-version" id="appVersion"></span><button class="stale-build-pill hidden" id="staleBuildPill" type="button" title="A newer build is on disk. Restart Maestro to pick it up."></button></div>
       <div class="header-controls">
+        <!-- Dashboard is HOME - the single primary surface (orchestrator-first:
+             live state, not a chat prompt). Chat/Plan are deliberate detours,
+             demoted to the quieter secondary nav with Skills/Archive so the
+             front door is oversight, not a co-equal chat tab (UX research R1). -->
         <div class="view-toggle" id="pageToggle">
           <button data-page="dashboard" class="active">Dashboard<span class="attention-badge hidden" id="dashboardAttentionBadge"></span></button>
-          <button data-page="chat">Chat</button>
-          <button data-page="lavish">Plan</button>
         </div>
         <div class="view-toggle header-utility-nav" id="headerUtilityNav">
+          <button data-page="chat">Chat</button>
+          <button data-page="lavish">Plan</button>
           <button data-page="analysis">Skills</button>
           <button data-page="archive">Archive</button>
         </div>
