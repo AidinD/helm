@@ -2926,6 +2926,14 @@ button.primary {
   margin-bottom: 20px;
 }
 
+/* Wrapper each dashboard section lives in so the refresh tick can swap one
+   section without touching the others (see fillDashboardSections). display:
+   contents removes the wrapper's own box, so the section inside lays out and
+   spaces exactly as if it were a direct child of the page. */
+.dash-section-slot {
+  display: contents;
+}
+
 .dash-topbar-actions {
   display: flex;
   align-items: center;

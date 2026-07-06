@@ -1258,14 +1258,14 @@ function rowEl(session) {
   // helper has actually READ and concluded are genuinely done skip the wait
   // for the window to expire into "idle" — this is what "replaces the idle
   // proxy with something that's actually read the content" (PLAN.md) means
-  // in practice. Never shown for a Maestro-building session (idle between
-  // long autonomous stretches doesn't mean done).
+  // in practice. Orchestrator sessions are suggested for archiving like any
+  // other now — under the ephemeral model they're the common case, so
+  // excluding them would just let finished ones pile up unsuggested.
   const classifierSaysDone = session.orchestratorTag?.statusTag === "done_not_archived";
   if (
     state.config.archiveSuggestions?.enabled === true &&
     (session.status === "idle" || classifierSaysDone) &&
-    !hasOpenJotWork &&
-    !isOrchestratorSession(session)
+    !hasOpenJotWork
   ) {
     const suggest = document.createElement("button");
     suggest.type = "button";
@@ -3895,12 +3895,6 @@ function computeSidebarFingerprint(sessions, config) {
   return sessionsPart + "##" + configPart;
 }
 let lastSidebarFingerprint = null;
-// Same idea as lastSidebarFingerprint but for the dashboard: renderDashboardPage
-// tears the whole page down (innerHTML="") and rebuilds it, so the 30s poll tick
-// must not call it unless something it shows actually changed - otherwise the
-// page visibly flickers while idle. The dashboard derives from the same
-// session+config slice as the sidebar, so it reuses the same fingerprint.
-let lastDashboardFingerprint = null;
 
 async function refresh() {
   const data = await window.maestro.getSessions();
@@ -3940,15 +3934,10 @@ async function refresh() {
   pruneStaleLaunchHistory();
   pruneStaleBackgroundTasks();
   renderBackgroundTasksBadge();
-  // Only rebuild the dashboard when something it shows changed - otherwise the
-  // 30s poll tick calls renderDashboardPage (innerHTML="" + full rebuild + Jot
-  // goals refetch) every time and the page visibly flickers while idle.
-  // Navigation still renders it directly and unconditionally (navigateToPage);
-  // this guard only applies to the unattended timer tick.
-  if (fingerprint !== lastDashboardFingerprint) {
-    lastDashboardFingerprint = fingerprint;
-    refreshDashboardIfVisible();
-  }
+  // The dashboard updates per-section (refreshDashboardIfVisible ->
+  // fillDashboardSections), re-rendering only the sections whose data changed,
+  // so calling it every tick is cheap and never tears down the whole page.
+  refreshDashboardIfVisible();
 }
 
 // First-load: land on the Dashboard, not on any specific chat. PLAN.md's
@@ -4191,13 +4180,85 @@ function isDashboardVisible() {
   return !document.getElementById("dashboardPage").classList.contains("hidden");
 }
 
-// Re-renders the Dashboard if it's the currently visible page — called from
-// the same 30s refresh() tick that already re-polls state.sessions, so the
-// "In motion" / "Orchestrator proposes" sections stay live without a second
-// polling loop. A no-op (and cheap to call) when the page isn't open.
+// Keeps the Dashboard live from the 30s refresh() tick (and after
+// dashboard-mutating actions) WITHOUT a full-page rebuild. Once the shell is
+// built (by renderDashboardPage on navigation), this updates each section in
+// place via fillDashboardSections, re-rendering only the sections whose data
+// changed - so an idle tick repaints nothing and a single session's status
+// change repaints just the queue. A no-op when the page isn't open.
 function refreshDashboardIfVisible() {
   if (isDashboardVisible()) {
-    renderDashboardPage();
+    fillDashboardSections();
+  }
+}
+
+// Per-section fingerprints so fillDashboardSections can skip sections whose
+// source data is unchanged. Reset on each full renderDashboardPage.
+let dashSectionFingerprints = { onboarding: null, queue: null, goals: null, newSession: null };
+
+function dashboardQueueFingerprint(inMotion) {
+  const rows = (inMotion || dashboardInMotionRows())
+    .map((r) => (r.kind === "goalRun" ? `g:${r.run?.goalRunId}:${r.run?.status}` : `s:${r.session.sessionId}:${r.session.status}:${r.session.title}:${r.session.lastActivityAt}`))
+    .join("|");
+  const proposals = dashboardProposalSessions()
+    .map((s) => `${s.sessionId}:${s.lastActivityAt}`)
+    .join(",");
+  return [rows, proposals, dashboardArchiveGroupExpanded, dashboardFocusMode, state.config.archiveSuggestions?.enabled].join("##");
+}
+
+function dashboardGoalsFingerprint(goalsResult) {
+  const goalsPart = goalsResult?.ok ? JSON.stringify(goalsResult.goals) : "err";
+  return goalsPart + "##" + dashboardFocusMode;
+}
+
+function dashboardNewSessionFingerprint() {
+  const cwds = [...new Set(state.sessions.filter((s) => s.cwd).map((s) => s.cwd))].sort().join("|");
+  return [cwds, dashboardSelectedChip, dashboardFocusMode].join("##");
+}
+
+// Re-render only the sections whose data changed, into their existing slots.
+// This is the anti-flicker path: it never touches page.innerHTML, so unchanged
+// sections (and the whole page when nothing changed) stay put. A full rebuild
+// (renderDashboardPage) only happens on navigation or when the shell is missing.
+async function fillDashboardSections({ force = false } = {}) {
+  if (!document.getElementById("dashQueueSlot")) {
+    if (isDashboardVisible()) {
+      await renderDashboardPage();
+    }
+    return;
+  }
+
+  const goalsResult = await window.maestro.getJotGoals();
+  const inMotion = dashboardInMotionRows();
+  const isColdStart = inMotion.length === 0 && (!goalsResult.ok || goalsResult.goals.length === 0);
+
+  const onboardingFp = String(isColdStart);
+  if (force || onboardingFp !== dashSectionFingerprints.onboarding) {
+    dashSectionFingerprints.onboarding = onboardingFp;
+    const slot = document.getElementById("dashOnboardingSlot");
+    if (isColdStart) {
+      slot.replaceChildren(dashboardOnboardingBlock());
+    } else {
+      slot.replaceChildren();
+    }
+  }
+
+  const queueFp = dashboardQueueFingerprint(inMotion);
+  if (force || queueFp !== dashSectionFingerprints.queue) {
+    dashSectionFingerprints.queue = queueFp;
+    document.getElementById("dashQueueSlot").replaceChildren(dashboardQueueSection());
+  }
+
+  const goalsFp = dashboardGoalsFingerprint(goalsResult);
+  if (force || goalsFp !== dashSectionFingerprints.goals) {
+    dashSectionFingerprints.goals = goalsFp;
+    document.getElementById("dashGoalsSlot").replaceChildren(await dashboardGoalsSection(goalsResult));
+  }
+
+  const newSessionFp = dashboardNewSessionFingerprint();
+  if (force || newSessionFp !== dashSectionFingerprints.newSession) {
+    dashSectionFingerprints.newSession = newSessionFp;
+    document.getElementById("dashNewSessionSlot").replaceChildren(await dashboardNewSessionSection());
   }
 }
 
@@ -4222,15 +4283,19 @@ async function renderDashboardPage() {
   topbar.append(heading, topbarActions);
   page.append(topbar);
 
-  const goalsResult = await window.maestro.getJotGoals();
-  const isColdStart = dashboardInMotionRows().length === 0 && (!goalsResult.ok || goalsResult.goals.length === 0);
-  if (isColdStart) {
-    page.append(dashboardOnboardingBlock());
-  }
-
-  page.append(dashboardQueueSection());
-  page.append(await dashboardGoalsSection(goalsResult));
-  page.append(await dashboardNewSessionSection());
+  // Each dynamic section lives in its own stable slot so the refresh tick can
+  // re-render just the section whose data changed (fillDashboardSections),
+  // rather than tearing the whole page down. display:contents on the slot keeps
+  // it transparent to layout, so the sections space exactly as before.
+  const mkSlot = (id) => {
+    const d = document.createElement("div");
+    d.id = id;
+    d.className = "dash-section-slot";
+    return d;
+  };
+  page.append(mkSlot("dashOnboardingSlot"), mkSlot("dashQueueSlot"), mkSlot("dashGoalsSlot"), mkSlot("dashNewSessionSlot"));
+  dashSectionFingerprints = { onboarding: null, queue: null, goals: null, newSession: null };
+  await fillDashboardSections({ force: true });
 }
 
 // First-run orientation. Shown only in the cold/low-data state (no active or
@@ -4382,7 +4447,6 @@ function dashboardProposalSessions() {
       !s.isArchived &&
       (s.status === "idle" || classifierSaysDone(s)) &&
       !hasOpenJotWork(s) &&
-      !isOrchestratorSession(s) &&
       !isDismissed(s)
   );
   return sortByAttention(proposalSessions);
