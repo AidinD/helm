@@ -6813,6 +6813,27 @@ function renderSettingsPage() {
     )
   );
 
+  // Liveness readout for the background sweep (runOrchestratorSweep in
+  // main.js) driving the two toggles above and auto-compact below — its only
+  // visible symptom if it silently stalls would otherwise be "sessions
+  // stopped getting tagged", easy to miss. Read once here, no live polling.
+  const sweepStatusEl = document.createElement("div");
+  sweepStatusEl.className = "settings-toggle-desc settings-sweep-status";
+  sweepStatusEl.textContent = "Background sweep: checking…";
+  passiveGroup.append(sweepStatusEl);
+  window.maestro.getSweepStatus().then((status) => {
+    if (!status || !status.lastRunAt) {
+      sweepStatusEl.textContent = "Background sweep: never run yet";
+      return;
+    }
+    if (status.ok === false) {
+      sweepStatusEl.textContent = `Background sweep: last run errored (${relTime(status.lastRunAt)})`;
+      return;
+    }
+    const countNote = status.classifiedCount ? `, classified ${status.classifiedCount}` : "";
+    sweepStatusEl.textContent = `Background sweep: last ran ${relTime(status.lastRunAt)}${countNote}`;
+  });
+
   passiveGroup.append(
     settingsToggleRow(
       "Proactively check suggestion accuracy",
