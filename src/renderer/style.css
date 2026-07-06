@@ -1477,10 +1477,18 @@ body.advanced .row-jot {
   }
 }
 
+/* A full-width divider splits the typing area (textarea + attachments) from
+   the tools zone (controls + meta) - so "where you write" reads as a distinct
+   field from "the tools", like the desktop app, without breaking the unified
+   pill. Negative margins equal to .composer-shell's horizontal padding (12px)
+   let the rule span edge to edge. */
 .composer-controls {
   display: flex;
   align-items: center;
   gap: 6px;
+  margin: 4px -12px 0;
+  padding: 10px 12px 0;
+  border-top: 1px solid var(--border);
 }
 
 .composer-attachments {
