@@ -209,6 +209,33 @@ ipcMain.handle("config:set", (_event, patch) => {
   return next;
 });
 
+// --- Away-from-desk attention delivery: an OS notification (only while the
+// window isn't focused, so it doesn't nag while the captain is already looking at
+// it) plus a best-effort taskbar badge count. Renderer always calls; this is
+// where the focus/config gate actually lives. ---
+ipcMain.handle("attention:notify", (_event, { title, body } = {}) => {
+  const notifyConfig = loadConfig().notifyAttention;
+  if (notifyConfig === false) {
+    return;
+  }
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.isFocused()) {
+    return;
+  }
+  if (Notification.isSupported()) {
+    new Notification({ title, body, silent: false }).show();
+  }
+});
+
+ipcMain.handle("attention:setCount", (_event, n) => {
+  // app.setBadgeCount has partial platform support (Windows in particular);
+  // never let a badge-count failure take down the app.
+  try {
+    app.setBadgeCount(Number(n) || 0);
+  } catch {
+    // best-effort only
+  }
+});
+
 // --- Model/effort suggestion for a given prompt ---
 ipcMain.handle("suggest:modelEffort", (_event, prompt) => suggestModelEffort(prompt));
 

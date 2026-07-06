@@ -3903,9 +3903,19 @@ let lastSidebarFingerprint = null;
 
 async function refresh() {
   const data = await window.maestro.getSessions();
+  // Detect sessions newly transitioning INTO "waiting" (not already waiting
+  // before this poll) for away-from-desk attention delivery - fire once per
+  // transition, not on every poll tick a session happens to still be waiting.
+  const previouslyWaiting = new Set(state.sessions.filter((s) => s.status === "waiting").map((s) => s.sessionId));
+  for (const session of data.sessions) {
+    if (session.status === "waiting" && !previouslyWaiting.has(session.sessionId)) {
+      window.maestro.notifyAttention({ title: "Maestro - session needs input", body: session.title });
+    }
+  }
   state.sessions = data.sessions;
   state.config = data.config;
   state.quota = data.quota;
+  updateAttentionTaskbarCount();
   applyViewMode();
   applySidebarMode();
   // Don't rebuild the sidebar out from under an in-progress category drag —
@@ -5886,6 +5896,7 @@ window.maestro.onGoalEvent((evt) => {
     unseenGoalAttention.add(run.goalRunId);
     showToast(`Goal run "${run.goal}" failed: ${run.error}`);
     updateGoalAttentionBadge();
+    window.maestro.notifyAttention({ title: "Maestro - a goal run failed", body: run.goal });
   } else if (evt.kind === "escalation") {
     // Point 12 Phase-0 escalation (opt-in) - arrives BEFORE "done" (see
     // main.js's goal:run handler), so the escalation card can show up the
@@ -5895,6 +5906,7 @@ window.maestro.onGoalEvent((evt) => {
     unseenGoalAttention.add(run.goalRunId);
     showToast(`Goal run "${run.goal}" paused - needs you`);
     updateGoalAttentionBadge();
+    window.maestro.notifyAttention({ title: "Maestro - a run needs you", body: run.goal });
   }
   // Only re-render if the Goal/Agents page is actually visible, to avoid
   // clobbering another page the user may have switched to mid-run.
@@ -5914,12 +5926,20 @@ window.maestro.onGoalEvent((evt) => {
 // "needs you" states.
 function updateGoalAttentionBadge() {
   const badge = document.getElementById("dashboardAttentionBadge");
-  if (!badge) {
-    return;
+  if (badge) {
+    const count = unseenGoalAttention.size;
+    badge.textContent = count > 9 ? "9+" : String(count);
+    badge.classList.toggle("hidden", count === 0);
   }
-  const count = unseenGoalAttention.size;
-  badge.textContent = count > 9 ? "9+" : String(count);
-  badge.classList.toggle("hidden", count === 0);
+  updateAttentionTaskbarCount();
+}
+
+// Away-from-desk attention delivery: keeps the OS taskbar badge in sync with
+// the same "needs you" total the Dashboard attention spotlight uses - an
+// unseen goal-run error/escalation, or a session sitting in "waiting".
+function updateAttentionTaskbarCount() {
+  const waitingSessions = state.sessions.filter((s) => !s.isArchived && s.status === "waiting").length;
+  window.maestro.setAttentionCount(unseenGoalAttention.size + waitingSessions);
 }
 
 // ============================== Lavish (interactive plan) ==============================
@@ -7002,6 +7022,17 @@ function renderSettingsPage() {
       state.config.notifyOnComplete !== false,
       async (checked) => {
         state.config = await window.maestro.setConfig({ notifyOnComplete: checked });
+      }
+    )
+  );
+
+  passiveGroup.append(
+    settingsToggleRow(
+      "Notify when something needs you",
+      "Fires an OS notification (and taskbar badge) when a run fails/pauses or a session needs input, only while Maestro isn't the focused window - so you can step away.",
+      state.config.notifyAttention !== false,
+      async (checked) => {
+        state.config = await window.maestro.setConfig({ notifyAttention: checked });
       }
     )
   );
