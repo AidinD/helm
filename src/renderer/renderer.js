@@ -6010,6 +6010,10 @@ async function openMockupInPlan(html) {
   lavishState.domSnapshot = "";
   lavishState.annotateMode = true;
   lavishState.loadError = "";
+  // Mirror the loaded mockup's HTML back into the textarea - whether it came
+  // from a paste, a file, or a Recent click - so it's visible and editable for
+  // a tweak-and-reload, not just rendered in the iframe below.
+  lavishState.pastedHtml = html;
   // navigateToPage("lavish") re-renders the Plan page itself, so the mockup
   // shows even if the caller was on another view (the IPC hook below).
   navigateToPage("lavish");
