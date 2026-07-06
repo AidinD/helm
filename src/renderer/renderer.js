@@ -3900,6 +3900,12 @@ function computeSidebarFingerprint(sessions, config) {
   return sessionsPart + "##" + configPart;
 }
 let lastSidebarFingerprint = null;
+// Same idea as lastSidebarFingerprint but for the dashboard: renderDashboardPage
+// tears the whole page down (innerHTML="") and rebuilds it, so the 30s poll tick
+// must not call it unless something it shows actually changed - otherwise the
+// page visibly flickers while idle. The dashboard derives from the same
+// session+config slice as the sidebar, so it reuses the same fingerprint.
+let lastDashboardFingerprint = null;
 
 async function refresh() {
   const data = await window.maestro.getSessions();
@@ -3939,7 +3945,15 @@ async function refresh() {
   pruneStaleLaunchHistory();
   pruneStaleBackgroundTasks();
   renderBackgroundTasksBadge();
-  refreshDashboardIfVisible();
+  // Only rebuild the dashboard when something it shows changed - otherwise the
+  // 30s poll tick calls renderDashboardPage (innerHTML="" + full rebuild + Jot
+  // goals refetch) every time and the page visibly flickers while idle.
+  // Navigation still renders it directly and unconditionally (navigateToPage);
+  // this guard only applies to the unattended timer tick.
+  if (fingerprint !== lastDashboardFingerprint) {
+    lastDashboardFingerprint = fingerprint;
+    refreshDashboardIfVisible();
+  }
 }
 
 // First-load: land on the Dashboard, not on any specific chat. PLAN.md's
