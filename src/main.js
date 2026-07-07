@@ -22,6 +22,16 @@ import { runGoal } from "./lib/goalOrchestrator.js";
 import { loadGoalRunHistory, upsertGoalRunRecord, removeGoalRunRecord } from "./lib/goalRunHistory.js";
 import { removeWorktree } from "./lib/worktree.js";
 import { loadDomains, registerDomain, removeDomain } from "./lib/domains.js";
+import { resolveMate } from "./lib/mates.js";
+import {
+  ensureDispatchDirs,
+  requestsDir,
+  readRequests,
+  removeRequest,
+  writeAck,
+  writeReport,
+} from "./lib/dispatchQueue.js";
+import { widthCapExceeded, depthCapExceeded } from "./lib/dispatchCaps.js";
 import { listScheduledTasks } from "./lib/routines.js";
 import { buildArtifactSrcdoc, formatAnnotationsAsPrompt } from "./lib/lavishSdk.js";
 import { isAvailable as whisperStreamAvailable, startStream as startWhisperStream, stopStream as stopWhisperStream } from "./lib/whisperStream.js";
@@ -58,6 +68,15 @@ const liveChildren = new Map(); // launchId -> child process, for the Stop butto
 // inherently tied to the app being open, and a run's real durable output is
 // the worktree/branch/commits it leaves on disk, not this transient handle.
 const liveGoalRuns = new Map();
+// First-mate tier caps (docs/first-mate-tier-design.md sections 3 + 5),
+// enforced at the app - the single dispatch authority - never trusting the
+// caller. WIDTH: at most this many CONCURRENT dispatched runs per mate (design
+// decision 3 = 3). DEPTH: 2 - a dispatched run (non-null dispatchedBy) may not
+// itself dispatch, so the chain is mate -> second-mate run and no deeper. The
+// depth cap is ALSO structural (only first mates get the dispatch MCP tools),
+// this is the belt-and-suspenders app-side check.
+const DISPATCH_WIDTH_CAP = 3;
+const DISPATCH_DEPTH_CAP = 2;
 // Fas 3 orchestrator-helper classifier results, sessionId -> { statusTag,
 // reason, classifiedAtActivity }. In-memory only (lost on restart — a fresh
 // sweep re-populates it soon after; not worth persisting for a v1 ambient
@@ -534,26 +553,139 @@ ipcMain.handle("app:version", () => computeVersionString());
 // so it tracks wherever the canonical rules live; falls back to the home dir if
 // that can't be resolved. instructionsPath is absolute so the session reads the
 // manual regardless. Read-only, no session-of-its-own state.
-ipcMain.handle("orchestrator:info", () => {
-  let cwd = os.homedir();
+// Resolves the Claude "meta home" - the dir holding the canonical CLAUDE.md
+// (and the auto-memory), derived from the ~/.claude/CLAUDE.md @import line, or
+// the home dir if that can't be resolved. This is BOTH the cwd a fresh
+// orchestrator (first-mate) session is rooted in AND the root under which the
+// first-mate dispatch queue (.maestro-dispatch/) lives. Extracted so
+// orchestrator:info and the first-mate launch detection / dispatch watcher all
+// agree on the exact same path (a first mate is, by definition, a session
+// rooted here).
+function resolveMetaHome() {
   try {
     const stub = fs.readFileSync(path.join(os.homedir(), ".claude", "CLAUDE.md"), "utf8");
     const importMatch = stub.match(/^@(.+?CLAUDE\.md)\s*$/m);
     if (importMatch) {
       const metaHome = path.dirname(importMatch[1].trim());
       if (fs.existsSync(metaHome)) {
-        cwd = metaHome;
+        return metaHome;
       }
     }
   } catch {
-    // fall back to the home dir set above
+    // fall through to the home dir
   }
+  return os.homedir();
+}
+
+// True when a session cwd is the meta home, i.e. this launch is a FIRST MATE
+// (the one launch that gets the dispatch MCP tools; a dispatched second-mate
+// run is rooted in a project worktree, not here, so it never matches - the
+// structural depth cap, design section 5). Path compare is normalized the same
+// way isOwnWorktreeRoot / mates.js do (resolve, strip trailing sep, lowercase
+// for Windows case-insensitivity).
+function isMetaHomeRoot(cwd) {
+  if (!cwd) {
+    return false;
+  }
+  const norm = (p) => path.resolve(p).replace(/[\\/]+$/, "").toLowerCase();
+  return norm(cwd) === norm(resolveMetaHome());
+}
+
+ipcMain.handle("orchestrator:info", () => {
   return {
     ok: true,
-    cwd,
+    cwd: resolveMetaHome(),
     instructionsPath: path.join(__dirname, "lib", "orchestrator-instructions.md"),
   };
 });
+
+// First-mate tier: the validated project enum a mate may dispatch to (design
+// decision 5). Seeded from the registered life-domain folders PLUS the distinct
+// git-repo cwds seen across recent sessions - the projects Aidin actually works
+// in. A mate may also dispatch to an explicit absolute repo path (the escape
+// hatch), validated at accept time in the dispatch watcher, not listed here.
+function knownProjects() {
+  const byPath = new Map();
+  for (const d of loadDomains()) {
+    if (d?.path) {
+      byPath.set(path.resolve(d.path).toLowerCase(), { name: d.name || path.basename(d.path), path: path.resolve(d.path) });
+    }
+  }
+  try {
+    const config = loadConfig();
+    const attentionWindowMs = (config.attentionWindowHours || 24) * 60 * 60 * 1000;
+    const { sessions } = readAllSessions({ attentionWindowMs });
+    for (const s of sessions || []) {
+      if (!s.cwd) {
+        continue;
+      }
+      const key = path.resolve(s.cwd).toLowerCase();
+      if (!byPath.has(key)) {
+        byPath.set(key, { name: path.basename(s.cwd), path: path.resolve(s.cwd) });
+      }
+    }
+  } catch {
+    // sessions read is best-effort - domains alone still make a usable enum
+  }
+  return [...byPath.values()];
+}
+
+// Resolves a dispatch request's `project` (a known-project NAME or an explicit
+// absolute PATH) to an absolute projectPath, or null if it neither matches a
+// known project nor is an explicit existing absolute path. Name match is
+// case-insensitive; the escape hatch requires an absolute path that exists on
+// disk (runGoal itself then enforces it is a git work tree).
+function resolveDispatchProject(project) {
+  if (!project) {
+    return null;
+  }
+  const projects = knownProjects();
+  const byName = projects.find((p) => p.name.toLowerCase() === project.toLowerCase());
+  if (byName) {
+    return byName.path;
+  }
+  const byPath = projects.find((p) => p.path.toLowerCase() === path.resolve(project).toLowerCase());
+  if (byPath) {
+    return byPath.path;
+  }
+  // Escape hatch: an explicit absolute path that exists.
+  if (path.isAbsolute(project) && fs.existsSync(project)) {
+    return path.resolve(project);
+  }
+  return null;
+}
+
+// Builds the inline --mcp-config JSON string for a FIRST-MATE launch: names the
+// stdio dispatch server (src/mcp/maestroDispatchServer.js) and injects the
+// meta home, the resolved mateId, the known-project enum, and the width cap via
+// env. Generated per-launch (not a static maestro-mcp.json on disk) precisely
+// because these values are launch-specific - the design allows "or generate at
+// launch". Returned as a string passed straight to startSession's mcpConfig,
+// exactly the inline-JSON form judge.js already uses for --mcp-config.
+function buildFirstMateMcpConfig(metaHome) {
+  const mate = resolveMate(metaHome, path.basename(metaHome));
+  const serverPath = path.join(__dirname, "mcp", "maestroDispatchServer.js");
+  const config = {
+    mcpServers: {
+      "maestro-dispatch": {
+        command: process.execPath,
+        args: [serverPath],
+        env: {
+          // Electron's own binary is process.execPath; ELECTRON_RUN_AS_NODE=1
+          // makes it behave as a plain Node runtime for the spawned MCP server
+          // (no BrowserWindow, no app bootstrap) so we don't depend on a
+          // separate `node` being on PATH.
+          ELECTRON_RUN_AS_NODE: "1",
+          MAESTRO_META_HOME: metaHome,
+          MAESTRO_MATE_ID: mate.mateId,
+          MAESTRO_PROJECTS: JSON.stringify(knownProjects()),
+          MAESTRO_WIDTH_CAP: String(DISPATCH_WIDTH_CAP),
+        },
+      },
+    },
+  };
+  return JSON.stringify(config);
+}
 
 // --- Stale-build indicator: hands back the running build's own identity plus
 // the most recent periodic staleness check (see runStaleBuildCheck below).
@@ -704,6 +836,21 @@ ipcMain.handle(
       }
     };
     const meta = { toolsUsed: [], costUsd: 0, numTurns: 0, durationMs: null, totalTokens: null, actualModel: model || null, lastAssistantText: "", contextWindows: {} };
+    // First-mate tier (design section 5): attach the dispatch MCP tools ONLY
+    // when this launch is a first mate (rooted in the meta home). A dispatched
+    // second-mate run is a runGoal (never routed through here) rooted in a
+    // project worktree, so it structurally never gets these tools. Best-effort:
+    // a failure to build the config must not break launching a normal session.
+    let mcpConfig;
+    try {
+      if (isMetaHomeRoot(cwd)) {
+        const metaHome = resolveMetaHome();
+        ensureDispatchDirs(metaHome);
+        mcpConfig = buildFirstMateMcpConfig(metaHome);
+      }
+    } catch (err) {
+      console.error("[maestro] failed to build first-mate mcp-config (launching without dispatch tools):", err);
+    }
     const { child, done } = startSession({
       cwd,
       prompt,
@@ -711,6 +858,7 @@ ipcMain.handle(
       effort,
       permissionMode,
       resumeSessionId,
+      mcpConfig,
       onEvent: (evt) => {
         if (evt.kind === "quota" && evt.quota) {
           latestQuota = evt.quota;
@@ -913,124 +1061,174 @@ ipcMain.handle("goal:suggestVerifyCommand", async (_event, { projectPath }) => {
 // "session:event"), so goal progress never collides with normal session
 // streaming. Every payload carries the goalRunId so the renderer can ignore
 // events from a stale/previous run.
+// Shared body of a goal run, extracted from the "goal:run" IPC handler so both
+// that handler AND the first-mate dispatch watcher (see the dispatch queue
+// wiring below) launch runs through the exact same path - iteration clamp,
+// liveGoalRuns tracking, "running" record, goal:event streaming, terminal
+// record upsert. `dispatch` (optional) carries first-mate-tier metadata
+// (docs/first-mate-tier-design.md section 3): { dispatchedBy, dispatchId, tier }
+// stamped onto the persisted record, plus an optional `onComplete(result,
+// { status, error })` hook the watcher uses to write the compact report back
+// to the mate. Returns the goalRunId (the run streams/persists on its own).
+function startGoalRun({
+  projectPath,
+  goal,
+  maxIterations,
+  model,
+  effort,
+  verifyCommand,
+  escalationConfig,
+  dispatch,
+}) {
+  // Hard-clamp iterations at the trust boundary, not just the UI. This spawns
+  // real autonomous claude subprocesses that make real commits and spend real
+  // tokens; the renderer's input max="20" is only an HTML hint (a user typing
+  // 500, or any future non-UI caller, would otherwise get 500 real
+  // iterations). Floor 1, ceiling 20 (review finding).
+  const GOAL_ITERATION_CEILING = 20;
+  const requestedMax = parseInt(maxIterations, 10);
+  const clampedMax = Number.isFinite(requestedMax)
+    ? Math.min(Math.max(1, requestedMax), GOAL_ITERATION_CEILING)
+    : undefined; // undefined -> runGoal's own default
+  const goalRunId = crypto.randomUUID();
+  const cancelToken = { cancelled: false };
+  const runEntry = { cancelToken, currentChild: null, dispatchedBy: dispatch?.dispatchedBy || null };
+  liveGoalRuns.set(goalRunId, runEntry);
+
+  const send = (payload) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("goal:event", { goalRunId, ...payload });
+    }
+  };
+
+  send({ kind: "started", goal, maxIterations: clampedMax || null });
+
+  // Persist a compact "running" record now, before the run does anything —
+  // if Maestro is killed/restarted mid-run, rehydration on the next load
+  // sees a stale "running" record with no live process behind it and can
+  // reclassify it as interrupted, instead of the run vanishing entirely.
+  // dispatchedBy/dispatchId/tier (first-mate tier, design section 3) are
+  // additive: a direct/captain-initiated run leaves them null.
+  upsertGoalRunRecord({
+    goalRunId,
+    goal,
+    projectPath,
+    status: "running",
+    worktreePath: null,
+    branchName: null,
+    commitCount: null,
+    stoppedReason: null,
+    escalation: null,
+    error: null,
+    dispatchedBy: dispatch?.dispatchedBy || null,
+    dispatchId: dispatch?.dispatchId || null,
+    tier: dispatch?.tier || null,
+    startedAt: Date.now(),
+    updatedAt: Date.now(),
+  });
+
+  // Fire-and-return: the caller gets the goalRunId immediately (so the renderer
+  // can wire up its Cancel button, or the dispatch watcher can ack), while the
+  // run itself proceeds and streams progress over goal:event. Errors are
+  // reported over the same channel, never left to reject.
+  runGoal({
+    projectPath,
+    goal,
+    maxIterations: clampedMax,
+    model: model || undefined,
+    effort: effort || undefined,
+    // Optional independent build/test verification gate (Point 11
+    // hardening) - a plain shell command string, e.g. "npm test". Passed
+    // straight through; runGoal treats an empty/missing value as "no gate"
+    // (unchanged pre-existing behavior).
+    verifyCommand: verifyCommand || undefined,
+    // Point 12 Phase-0 escalation - opt-in, mirrors verifyCommand's own
+    // opt-in shape. The renderer only ever sends a plain object (possibly
+    // empty, `{}`, for "enable with defaults") when the user checked
+    // "Escalate on trouble"; an unchecked box sends `undefined`, which
+    // keeps runGoal's pre-existing behavior (no escalation) unchanged.
+    escalationConfig: escalationConfig || undefined,
+    cancelToken,
+    // Track each freshly-spawned iteration/verify child so before-quit can
+    // sweep its tree (L1) and goal:cancel can kill the in-flight one
+    // immediately (L2). Iterations/verify never overlap within a run, so a
+    // single currentChild slot always holding the latest is sufficient.
+    onChild: (child) => {
+      runEntry.currentChild = child;
+    },
+    onIteration: (record) => send({ kind: "iteration", record }),
+    // Forwarded to the renderer as its own "escalation" goal:event kind, on
+    // the same channel as "iteration"/"done"/"error", so the Goal page can
+    // show a human-gated card the moment the run actually pauses, rather
+    // than waiting for the "done" event that follows shortly after (runGoal
+    // still resolves normally on an escalated stop, carrying the same
+    // escalation object in its own `result.escalation`).
+    onEscalation: (escalation) => send({ kind: "escalation", escalation }),
+  })
+    .then((result) => {
+      send({ kind: "done", result });
+      // status stays "done" even for an escalated stop, mirroring the live
+      // renderer's own model (goalRunDetailEl reads run.status === "done"
+      // plus a separate `escalation` field, never a distinct "escalated"
+      // status) - keeps rehydrated and live runs rendering through the
+      // exact same branches.
+      upsertGoalRunRecord({
+        goalRunId,
+        status: "done",
+        worktreePath: result?.worktreePath || null,
+        branchName: result?.branchName || null,
+        commitCount: typeof result?.commitCount === "number" ? result.commitCount : null,
+        stoppedReason: result?.stoppedReason || null,
+        escalation: result?.escalation || null,
+        updatedAt: Date.now(),
+      });
+      if (dispatch?.onComplete) {
+        try {
+          dispatch.onComplete(result, { status: "done" });
+        } catch (err) {
+          console.error("[maestro] dispatch onComplete (done) failed:", err);
+        }
+      }
+    })
+    .catch((err) => {
+      const errorMessage = err?.message || String(err);
+      send({ kind: "error", error: errorMessage });
+      upsertGoalRunRecord({
+        goalRunId,
+        status: "error",
+        error: errorMessage,
+        updatedAt: Date.now(),
+      });
+      if (dispatch?.onComplete) {
+        try {
+          dispatch.onComplete(null, { status: "error", error: errorMessage });
+        } catch (hookErr) {
+          console.error("[maestro] dispatch onComplete (error) failed:", hookErr);
+        }
+      }
+    })
+    .finally(() => {
+      liveGoalRuns.delete(goalRunId);
+    });
+
+  return { goalRunId };
+}
+
 ipcMain.handle(
   "goal:run",
   async (_event, { projectPath, goal, maxIterations, model, effort, verifyCommand, escalationConfig }) => {
     if (!projectPath || !goal) {
       return { ok: false, error: "projectPath and goal are required" };
     }
-    // Hard-clamp iterations at the trust boundary, not just the UI. This spawns
-    // real autonomous claude subprocesses that make real commits and spend real
-    // tokens; the renderer's input max="20" is only an HTML hint (a user typing
-    // 500, or any future non-UI caller, would otherwise get 500 real
-    // iterations). Floor 1, ceiling 20 (review finding).
-    const GOAL_ITERATION_CEILING = 20;
-    const requestedMax = parseInt(maxIterations, 10);
-    const clampedMax = Number.isFinite(requestedMax)
-      ? Math.min(Math.max(1, requestedMax), GOAL_ITERATION_CEILING)
-      : undefined; // undefined -> runGoal's own default
-    const goalRunId = crypto.randomUUID();
-    const cancelToken = { cancelled: false };
-    const runEntry = { cancelToken, currentChild: null };
-    liveGoalRuns.set(goalRunId, runEntry);
-
-    const send = (payload) => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send("goal:event", { goalRunId, ...payload });
-      }
-    };
-
-    send({ kind: "started", goal, maxIterations: clampedMax || null });
-
-    // Persist a compact "running" record now, before the run does anything —
-    // if Maestro is killed/restarted mid-run, rehydration on the next load
-    // sees a stale "running" record with no live process behind it and can
-    // reclassify it as interrupted, instead of the run vanishing entirely.
-    upsertGoalRunRecord({
-      goalRunId,
-      goal,
+    const { goalRunId } = startGoalRun({
       projectPath,
-      status: "running",
-      worktreePath: null,
-      branchName: null,
-      commitCount: null,
-      stoppedReason: null,
-      escalation: null,
-      error: null,
-      startedAt: Date.now(),
-      updatedAt: Date.now(),
+      goal,
+      maxIterations,
+      model,
+      effort,
+      verifyCommand,
+      escalationConfig,
     });
-
-    // Fire-and-return: the handler resolves immediately with the goalRunId so
-    // the renderer can wire up its Cancel button, while the run itself proceeds
-    // and streams progress over goal:event. Errors are reported over the same
-    // channel, never left to reject an already-resolved invoke.
-    runGoal({
-      projectPath,
-      goal,
-      maxIterations: clampedMax,
-      model: model || undefined,
-      effort: effort || undefined,
-      // Optional independent build/test verification gate (Point 11
-      // hardening) - a plain shell command string, e.g. "npm test". Passed
-      // straight through; runGoal treats an empty/missing value as "no gate"
-      // (unchanged pre-existing behavior).
-      verifyCommand: verifyCommand || undefined,
-      // Point 12 Phase-0 escalation - opt-in, mirrors verifyCommand's own
-      // opt-in shape. The renderer only ever sends a plain object (possibly
-      // empty, `{}`, for "enable with defaults") when the user checked
-      // "Escalate on trouble"; an unchecked box sends `undefined`, which
-      // keeps runGoal's pre-existing behavior (no escalation) unchanged.
-      escalationConfig: escalationConfig || undefined,
-      cancelToken,
-      // Track each freshly-spawned iteration/verify child so before-quit can
-      // sweep its tree (L1) and goal:cancel can kill the in-flight one
-      // immediately (L2). Iterations/verify never overlap within a run, so a
-      // single currentChild slot always holding the latest is sufficient.
-      onChild: (child) => {
-        runEntry.currentChild = child;
-      },
-      onIteration: (record) => send({ kind: "iteration", record }),
-      // Forwarded to the renderer as its own "escalation" goal:event kind, on
-      // the same channel as "iteration"/"done"/"error", so the Goal page can
-      // show a human-gated card the moment the run actually pauses, rather
-      // than waiting for the "done" event that follows shortly after (runGoal
-      // still resolves normally on an escalated stop, carrying the same
-      // escalation object in its own `result.escalation`).
-      onEscalation: (escalation) => send({ kind: "escalation", escalation }),
-    })
-      .then((result) => {
-        send({ kind: "done", result });
-        // status stays "done" even for an escalated stop, mirroring the live
-        // renderer's own model (goalRunDetailEl reads run.status === "done"
-        // plus a separate `escalation` field, never a distinct "escalated"
-        // status) - keeps rehydrated and live runs rendering through the
-        // exact same branches.
-        upsertGoalRunRecord({
-          goalRunId,
-          status: "done",
-          worktreePath: result?.worktreePath || null,
-          branchName: result?.branchName || null,
-          commitCount: typeof result?.commitCount === "number" ? result.commitCount : null,
-          stoppedReason: result?.stoppedReason || null,
-          escalation: result?.escalation || null,
-          updatedAt: Date.now(),
-        });
-      })
-      .catch((err) => {
-        const errorMessage = err?.message || String(err);
-        send({ kind: "error", error: errorMessage });
-        upsertGoalRunRecord({
-          goalRunId,
-          status: "error",
-          error: errorMessage,
-          updatedAt: Date.now(),
-        });
-      })
-      .finally(() => {
-        liveGoalRuns.delete(goalRunId);
-      });
-
     return { ok: true, goalRunId };
   }
 );
@@ -1407,11 +1605,194 @@ function runStaleBuildCheck() {
   }
 }
 
+// --- First-mate tier: the dispatch request watcher (design section 1 "A1" +
+// section 4). The app is the single dispatch authority: it watches the
+// meta-home request inbox, and for each new request validates it, enforces the
+// width + depth caps, acks accept/reject back to the mate (so the
+// maestro_dispatch tool can return promptly), launches the run via the SAME
+// startGoalRun the Goal-page IPC uses (stamped with dispatch metadata), and on
+// completion writes the compact report to the report inbox for the mate to pull
+// with maestro_collect_reports.
+//
+// fs.watch is coalescing/duplicative and platform-inconsistent, so it only ever
+// TRIGGERS a full re-scan of the inbox (processDispatchRequests) rather than
+// being trusted to name each file exactly once; a slow poll backstops it in
+// case a watch event is missed entirely. Each request is deleted (removeRequest)
+// the moment it is picked up, so a re-scan never double-launches it.
+let dispatchWatcher = null;
+let dispatchScanInFlight = false;
+
+// The width + depth cap predicates are pure functions in lib/dispatchCaps.js
+// (single definition, unit-testable without Electron). main.js is the sole
+// authority that calls them, feeding a plain snapshot of the live dispatched
+// runs from liveGoalRuns.
+function liveRunSnapshot() {
+  return [...liveGoalRuns.entries()].map(([goalRunId, run]) => ({
+    goalRunId,
+    dispatchedBy: run.dispatchedBy || null,
+  }));
+}
+
+function processDispatchRequests(metaHome) {
+  if (dispatchScanInFlight) {
+    return;
+  }
+  dispatchScanInFlight = true;
+  try {
+    for (const request of readRequests(metaHome)) {
+      const dispatchId = request.dispatchId;
+      if (!dispatchId) {
+        continue;
+      }
+      // Consume the request file up front so a concurrent re-scan (fs.watch +
+      // poll both firing) never picks it up twice.
+      removeRequest(metaHome, dispatchId);
+
+      const reject = (reason) => {
+        writeAck(metaHome, dispatchId, { status: "rejected", reason });
+      };
+
+      // Validate the project (known enum or explicit absolute path escape
+      // hatch, design decision 5).
+      const projectPath = resolveDispatchProject(request.project);
+      if (!projectPath) {
+        reject(`Unknown project "${request.project}". Call maestro_list_projects, or pass an explicit absolute repo path.`);
+        continue;
+      }
+      // Depth cap (belt-and-suspenders; structurally a dispatched run never
+      // gets the dispatch tools).
+      const snapshot = liveRunSnapshot();
+      if (depthCapExceeded(snapshot, request)) {
+        reject(`Dispatch refused: a dispatched run may not dispatch (depth cap ${DISPATCH_DEPTH_CAP}).`);
+        continue;
+      }
+      // Width cap: at most DISPATCH_WIDTH_CAP concurrent dispatched runs per mate.
+      const mateId = request.dispatchedBy || null;
+      if (widthCapExceeded(snapshot, mateId, DISPATCH_WIDTH_CAP)) {
+        reject(
+          `Dispatch refused: width cap of ${DISPATCH_WIDTH_CAP} concurrent runs reached. Wait for a report before dispatching more.`
+        );
+        continue;
+      }
+
+      // Accept: launch through the shared startGoalRun, stamped with dispatch
+      // metadata, and wire the report-back on completion.
+      let goalRunId = null;
+      try {
+        const started = startGoalRun({
+          projectPath,
+          goal: request.goal,
+          maxIterations: request.maxIterations || undefined,
+          // Model-per-tier: the dispatch tool already defaults model to opus;
+          // honor whatever the request carries.
+          model: request.model || undefined,
+          effort: request.effort || undefined,
+          verifyCommand: request.verifyCommand || undefined,
+          dispatch: {
+            dispatchedBy: mateId,
+            dispatchId,
+            tier: request.tier || "second-mate",
+            onComplete: (result, meta) => {
+              writeReport(metaHome, buildDispatchReport({ dispatchId, mateId, request, result, meta }));
+            },
+          },
+        });
+        goalRunId = started.goalRunId;
+      } catch (err) {
+        reject(`Failed to start the dispatched run: ${err?.message || String(err)}`);
+        continue;
+      }
+      writeAck(metaHome, dispatchId, { status: "accepted", goalRunId });
+    }
+  } catch (err) {
+    console.error("[maestro] dispatch request scan failed:", err);
+  } finally {
+    dispatchScanInFlight = false;
+  }
+}
+
+// Builds the compact report (design section 2) from a finished dispatched run's
+// runGoal result - NOT the transcript; it points to the worktree. needsCaptain
+// is the load-bearing field: the escalation detail when escalated, a soft
+// "review N commits" nudge when commits are ready, else null.
+function buildDispatchReport({ dispatchId, mateId, request, result, meta }) {
+  if (meta.status === "error" || !result) {
+    return {
+      dispatchId,
+      dispatchedBy: mateId,
+      project: request.project,
+      goal: request.goal,
+      tier: request.tier || "second-mate",
+      status: "error",
+      summary: meta.error || "The dispatched run errored.",
+      needsCaptain: meta.error || "The dispatched run errored; inspect and re-dispatch.",
+    };
+  }
+  const escalated = result.stoppedReason === "escalated";
+  const commitCount = typeof result.commitCount === "number" ? result.commitCount : 0;
+  const lastImplement = [...(result.iterations || [])]
+    .reverse()
+    .find((r) => r.ok && r.result && r.phase === "implement");
+  const summary = escalated
+    ? result.escalation?.detail || "Run paused for a human decision."
+    : lastImplement?.result?.summary || `Run stopped: ${result.stoppedReason}.`;
+  let needsCaptain = null;
+  if (escalated) {
+    needsCaptain = result.escalation?.detail || "Run paused - needs a human decision.";
+  } else if (commitCount > 0) {
+    needsCaptain = `${commitCount} commit(s) ready for review in ${result.branchName}.`;
+  }
+  const totalCost = (result.iterations || []).reduce((sum, r) => sum + (typeof r.costUsd === "number" ? r.costUsd : 0), 0);
+  return {
+    dispatchId,
+    dispatchedBy: mateId,
+    project: request.project,
+    goal: request.goal,
+    tier: request.tier || "second-mate",
+    status: escalated ? "escalated" : "done",
+    summary,
+    changed: {
+      commitCount,
+      branchName: result.branchName || null,
+      worktreePath: result.worktreePath || null,
+    },
+    needsCaptain,
+    stoppedReason: result.stoppedReason || null,
+    costUsd: Number(totalCost.toFixed(4)),
+    iterations: (result.iterations || []).length,
+  };
+}
+
+const DISPATCH_POLL_INTERVAL_MS = 5000;
+
+function startDispatchWatcher() {
+  const metaHome = resolveMetaHome();
+  try {
+    ensureDispatchDirs(metaHome);
+  } catch (err) {
+    console.error("[maestro] could not create the dispatch inbox dirs:", err);
+    return;
+  }
+  // Sweep once at startup so a request written while the app was down (or an
+  // ack that never got picked up) is handled promptly.
+  processDispatchRequests(metaHome);
+  try {
+    dispatchWatcher = fs.watch(requestsDir(metaHome), { persistent: false }, () => {
+      processDispatchRequests(metaHome);
+    });
+  } catch (err) {
+    // fs.watch can fail on some filesystems - the poll below still covers it.
+    console.error("[maestro] fs.watch on the dispatch inbox failed (falling back to poll only):", err);
+  }
+  setInterval(() => processDispatchRequests(metaHome), DISPATCH_POLL_INTERVAL_MS);
+}
+
 app.whenReady().then(() => {
   prunePastedImages();
   createWindow();
   setInterval(runOrchestratorSweep, ORCHESTRATOR_SWEEP_INTERVAL_MS);
   setInterval(runStaleBuildCheck, STALE_BUILD_CHECK_INTERVAL_MS);
+  startDispatchWatcher();
 });
 
 // Without this, quitting Maestro while any prompt is still running leaves

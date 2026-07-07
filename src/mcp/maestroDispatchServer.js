@@ -1,0 +1,279 @@
+// Maestro dispatch MCP server (docs/first-mate-tier-design.md sections 1 + 4).
+//
+// A stdio MCP server that a FIRST-MATE claude session launches via the
+// `--mcp-config` entry main.js appends to first-mate launches only (structural
+// depth cap: a dispatched second-mate run never gets this config, so it has no
+// dispatch tools - see the design's section 5). It exposes three tools:
+//   - maestro_dispatch       : launch one project-scoped autonomous run
+//   - maestro_collect_reports: pull compact reports for this mate's dispatches
+//   - maestro_list_projects  : the validated project enum a mate may dispatch to
+//
+// TRANSPORT / ARCHITECTURE: it does NOT talk to the Electron app over a socket.
+// It reaches the app through the SAME on-disk request/report queue main.js
+// watches (src/lib/dispatchQueue.js) - the "A1" verdict in the design: the app
+// stays the single dispatch authority, there is no listening socket or port to
+// babysit (the whisper-server lesson, DECISIONS.md 2026-07-05).
+//
+// MCP-SDK NOTE: @modelcontextprotocol/sdk is NOT a Maestro dependency (checked
+// package.json - only electron + @huggingface/transformers). Per the build
+// brief's explicit instruction, rather than silently `npm install`-ing the SDK,
+// this implements a MINIMAL stdio JSON-RPC MCP server in plain Node: it handles
+// `initialize`, `tools/list`, `tools/call`, and the `notifications/initialized`
+// notification - the subset the Claude Code MCP client actually drives for a
+// tools-only server. If the SDK is later added, this file can be reimplemented
+// on top of it without changing the on-disk queue contract or the tool schemas.
+//
+// CONFIG (from env, injected by main.js in the mcp-config payload):
+//   MAESTRO_META_HOME  - the first mate's root (where .maestro-dispatch/ lives)
+//   MAESTRO_MATE_ID    - the dispatching mate's id (stamped on requests)
+//   MAESTRO_PROJECTS   - JSON array of { name, path } known-project entries
+//   MAESTRO_WIDTH_CAP  - max concurrent dispatched runs (default 3)
+
+import process from "node:process";
+import {
+  ensureDispatchDirs,
+  writeRequest,
+  readAck,
+  readReports,
+} from "../lib/dispatchQueue.js";
+
+const META_HOME = process.env.MAESTRO_META_HOME || "";
+const MATE_ID = process.env.MAESTRO_MATE_ID || null;
+const WIDTH_CAP = Number(process.env.MAESTRO_WIDTH_CAP) || 3;
+
+function loadProjects() {
+  try {
+    const parsed = JSON.parse(process.env.MAESTRO_PROJECTS || "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+const PROTOCOL_VERSION = "2024-11-05";
+const SERVER_INFO = { name: "maestro-dispatch", version: "0.1.0" };
+
+const TOOLS = [
+  {
+    name: "maestro_dispatch",
+    description:
+      "Dispatch ONE project-scoped autonomous Maestro run (a 'second mate') and return immediately with its dispatchId + goalRunId. The run executes as a normal Maestro Autopilot goal in an isolated git worktree (fresh-context iterations, one commit per success, never pushes/merges). Poll maestro_collect_reports later for its compact result. Bounded: at most " +
+      WIDTH_CAP +
+      " concurrent dispatched runs per mate; a dispatched run cannot itself dispatch (depth capped at 2). " +
+      "CAVEAT for dispatching work on Maestro itself: a run whose verify step restarts Maestro would kill its own parent process; each iteration is git-committed so at most the in-flight iteration is lost, but avoid a restart-style verifyCommand for the Maestro project until detached runs land.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project: {
+          type: "string",
+          description:
+            "Which project to dispatch to. A known project NAME (see maestro_list_projects), or an explicit absolute git-repo PATH as an escape hatch.",
+        },
+        goal: { type: "string", description: "The goal for the dispatched run, in one clear brief." },
+        tier: { type: "string", description: "Tier label for the run. Defaults to 'second-mate'." },
+        model: {
+          type: "string",
+          description: "Model for the dispatched run. Defaults to Opus (the second-mate default) when omitted.",
+        },
+        effort: { type: "string", description: "Optional effort level passed to the run." },
+        maxIterations: { type: "number", description: "Optional iteration cap (app clamps to 1..20)." },
+        verifyCommand: {
+          type: "string",
+          description: "Optional independent verify gate, e.g. 'npm test'. See the Maestro-self caveat above.",
+        },
+      },
+      required: ["project", "goal"],
+    },
+  },
+  {
+    name: "maestro_collect_reports",
+    description:
+      "Pull compact reports for this mate's dispatched runs (status, one-line summary, what changed, what needs the captain, worktree pointer). Not the transcript. Call at a bookend or when the captain asks 'what came back?'.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        since: { type: "number", description: "Only reports finished after this ms-epoch timestamp." },
+        dispatchIds: {
+          type: "array",
+          items: { type: "string" },
+          description: "Only reports for these specific dispatch ids.",
+        },
+      },
+    },
+  },
+  {
+    name: "maestro_list_projects",
+    description:
+      "List the known projects this mate may dispatch to (the validated enum for maestro_dispatch's `project`). An explicit absolute repo path is also accepted as an escape hatch.",
+    inputSchema: { type: "object", properties: {} },
+  },
+];
+
+// --- Tool implementations ---------------------------------------------------
+
+/** Waits for the app to write an accept/reject ack for a dispatchId. */
+async function waitForAck(dispatchId, { timeoutMs = 15000, pollMs = 150 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const ack = readAck(META_HOME, dispatchId);
+    if (ack) {
+      return ack;
+    }
+    if (Date.now() >= deadline) {
+      return null;
+    }
+    await new Promise((r) => setTimeout(r, pollMs));
+  }
+}
+
+async function toolDispatch(args) {
+  if (!META_HOME) {
+    return { error: "MAESTRO_META_HOME not configured; cannot reach the dispatch queue." };
+  }
+  const project = (args?.project || "").trim();
+  const goal = (args?.goal || "").trim();
+  if (!project || !goal) {
+    return { error: "Both `project` and `goal` are required." };
+  }
+  ensureDispatchDirs(META_HOME);
+  // Model-per-tier (design decision 6): default the dispatched run to Opus (the
+  // second-mate default) unless the mate overrides it.
+  const request = {
+    project,
+    goal,
+    tier: args.tier || "second-mate",
+    model: args.model || "opus",
+    effort: args.effort || null,
+    maxIterations: typeof args.maxIterations === "number" ? args.maxIterations : null,
+    verifyCommand: args.verifyCommand || null,
+    dispatchedBy: MATE_ID,
+  };
+  const dispatchId = writeRequest(META_HOME, request);
+  const ack = await waitForAck(dispatchId);
+  if (!ack) {
+    return {
+      dispatchId,
+      status: "pending",
+      note: "Request queued; the app has not acknowledged it yet. It may still start - poll maestro_collect_reports.",
+    };
+  }
+  if (ack.status === "rejected") {
+    return { dispatchId, status: "rejected", reason: ack.reason || "rejected by Maestro" };
+  }
+  return { dispatchId, goalRunId: ack.goalRunId || null, status: "started" };
+}
+
+function toolCollectReports(args) {
+  if (!META_HOME) {
+    return { error: "MAESTRO_META_HOME not configured; cannot reach the report inbox." };
+  }
+  const reports = readReports(META_HOME, {
+    since: typeof args?.since === "number" ? args.since : undefined,
+    dispatchIds: Array.isArray(args?.dispatchIds) ? args.dispatchIds : undefined,
+  });
+  // A mate only sees its own dispatches' reports (defense in depth; the report
+  // carries dispatchedBy).
+  const mine = MATE_ID ? reports.filter((r) => !r.dispatchedBy || r.dispatchedBy === MATE_ID) : reports;
+  return { reports: mine };
+}
+
+function toolListProjects() {
+  return { projects: loadProjects().map((p) => ({ name: p.name, path: p.path })) };
+}
+
+function callTool(name, args) {
+  switch (name) {
+    case "maestro_dispatch":
+      return toolDispatch(args || {});
+    case "maestro_collect_reports":
+      return toolCollectReports(args || {});
+    case "maestro_list_projects":
+      return toolListProjects();
+    default:
+      return { error: `Unknown tool: ${name}` };
+  }
+}
+
+// --- Minimal stdio JSON-RPC MCP loop ---------------------------------------
+
+function send(message) {
+  process.stdout.write(JSON.stringify(message) + "\n");
+}
+
+function sendResult(id, result) {
+  send({ jsonrpc: "2.0", id, result });
+}
+
+function sendError(id, code, message) {
+  send({ jsonrpc: "2.0", id, error: { code, message } });
+}
+
+/** Wraps a tool result as an MCP tools/call content payload (JSON as text). */
+function toolContent(payload) {
+  return { content: [{ type: "text", text: JSON.stringify(payload) }] };
+}
+
+async function handleMessage(msg) {
+  if (!msg || msg.jsonrpc !== "2.0") {
+    return;
+  }
+  const { id, method, params } = msg;
+  // Notifications (no id) - acknowledge the ones we expect, ignore the rest.
+  if (id === undefined || id === null) {
+    return;
+  }
+  try {
+    if (method === "initialize") {
+      sendResult(id, {
+        protocolVersion: PROTOCOL_VERSION,
+        capabilities: { tools: {} },
+        serverInfo: SERVER_INFO,
+      });
+      return;
+    }
+    if (method === "tools/list") {
+      sendResult(id, { tools: TOOLS });
+      return;
+    }
+    if (method === "tools/call") {
+      const name = params?.name;
+      const args = params?.arguments || {};
+      const payload = await callTool(name, args);
+      sendResult(id, toolContent(payload));
+      return;
+    }
+    if (method === "ping") {
+      sendResult(id, {});
+      return;
+    }
+    sendError(id, -32601, `Method not found: ${method}`);
+  } catch (err) {
+    sendError(id, -32603, `Internal error: ${err?.message || String(err)}`);
+  }
+}
+
+function main() {
+  let buffer = "";
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (chunk) => {
+    buffer += chunk;
+    let nl;
+    while ((nl = buffer.indexOf("\n")) !== -1) {
+      const line = buffer.slice(0, nl).trim();
+      buffer = buffer.slice(nl + 1);
+      if (!line) {
+        continue;
+      }
+      let msg;
+      try {
+        msg = JSON.parse(line);
+      } catch {
+        continue; // ignore non-JSON lines
+      }
+      handleMessage(msg);
+    }
+  });
+  process.stdin.on("end", () => process.exit(0));
+}
+
+main();
