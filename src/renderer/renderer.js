@@ -4257,7 +4257,15 @@ let dashSectionFingerprints = { onboarding: null, queue: null, fleet: null, goal
 
 function dashboardQueueFingerprint(inMotion) {
   const rows = (inMotion || dashboardInMotionRows())
-    .map((r) => (r.kind === "goalRun" ? `g:${r.run?.goalRunId}:${r.run?.status}` : `s:${r.session.sessionId}:${r.session.status}:${r.session.title}:${r.session.lastActivityAt}`))
+    // Include iteration count + error for a goal run: its status stays "running"
+    // for its whole life, so without these the row's "Iteration N (phase)" text
+    // freezes as iterations advance (review: agent 1). Mirrors runsFp in the
+    // fleet fingerprint, which already tracks iteration count for the same run.
+    .map((r) =>
+      r.kind === "goalRun"
+        ? `g:${r.run?.goalRunId}:${r.run?.status}:${r.run?.iterations?.length || 0}:${r.run?.error ? 1 : 0}`
+        : `s:${r.session.sessionId}:${r.session.status}:${r.session.title}:${r.session.lastActivityAt}`
+    )
     .join("|");
   const proposals = dashboardProposalSessions()
     .map((s) => `${s.sessionId}:${s.lastActivityAt}`)
@@ -4279,7 +4287,15 @@ function dashboardFleetFingerprint(mates = [], secondMates = [], boardSummary = 
   const runsFp = [...goalRuns.values()]
     .map((r) => `${r.goalRunId}:${r.dispatchedBy || "-"}:${r.status}:${r.iterations?.length || 0}:${r.escalation ? 1 : 0}`)
     .join("|");
-  const matesFp = mates.map((m) => `${m.mateId}:${m.name}:${m.sessionId || "-"}`).join(",");
+  // Include each mate's open-session context tokens so the gauge + the "ctx"
+  // retire nudge repaint as context climbs (review: agent 2 - otherwise the
+  // gauge only updates when something unrelated forces a refresh).
+  const matesFp = mates
+    .map((m) => {
+      const p = panes.find((pane) => pane && pane.cliSessionId && pane.cliSessionId === m.sessionId);
+      return `${m.mateId}:${m.name}:${m.sessionId || "-"}:${p?.contextTokens || 0}`;
+    })
+    .join(",");
   const smFp = secondMates.map((s) => `${s.secondMateId}:${s.name}:${s.sessionId || "-"}:${s.crew.length}`).join(",");
   const boardFp = Object.entries(boardSummary)
     .map(([p, b]) => `${p}:${b.open}:${b.inProgress}:${b.minActivePriority}`)
@@ -4342,7 +4358,18 @@ function customConfirm(message, confirmLabel, onConfirm) {
   const ok = document.createElement("button");
   ok.className = "confirm-ok";
   ok.textContent = confirmLabel;
-  const close = () => overlay.remove();
+  // close() unconditionally removes the keydown listener, so dismissing via
+  // Cancel/OK/backdrop doesn't leak an esc listener on document (review: both
+  // agents) - same shape as showImageLightbox.
+  const onKey = (ev) => {
+    if (ev.key === "Escape") {
+      close();
+    }
+  };
+  const close = () => {
+    overlay.remove();
+    document.removeEventListener("keydown", onKey);
+  };
   cancel.addEventListener("click", (e) => {
     e.stopPropagation();
     close();
@@ -4357,12 +4384,7 @@ function customConfirm(message, confirmLabel, onConfirm) {
       close();
     }
   });
-  document.addEventListener("keydown", function esc(ev) {
-    if (ev.key === "Escape") {
-      close();
-      document.removeEventListener("keydown", esc);
-    }
-  });
+  document.addEventListener("keydown", onKey);
   row.append(cancel, ok);
   box.append(msg, row);
   overlay.append(box);
@@ -4382,7 +4404,7 @@ function augmentSecondMatesWithSessions(secondMates) {
   const list = [...secondMates];
   const boundIds = new Set(list.map((s) => s.sessionId).filter(Boolean));
   const sessions = state.sessions
-    .filter((s) => s.cwd && s.status !== "archived")
+    .filter((s) => s.cwd && !s.isArchived)
     .sort((a, b) => (b.lastActivityAt || 0) - (a.lastActivityAt || 0));
   for (const sess of sessions) {
     const sid = sess.cliSessionId || sess.sessionId;
@@ -4456,7 +4478,7 @@ function fleetMateCardEl(mate, sms, boardSummary = {}) {
   const idBox = document.createElement("div");
   idBox.className = "fleet-mate-idbox";
   const name = document.createElement("div");
-  name.className = "fleet-mate-name2";
+  name.className = "fleet-mate-name";
   name.textContent = mate.name;
   const kind = document.createElement("span");
   kind.className = "fleet-kind session";
@@ -4614,7 +4636,10 @@ function fleetNudgeEl(mate, kind, opts = {}) {
     btn.textContent = "Retire & respawn";
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
-      window.maestro.retireMate(mate.mateId).then(() => fillDashboardSections({ force: true }));
+      // Same guarded path as the header retire icon - was firing with no confirm.
+      customConfirm(`Retire ${mate.name} and spin up a fresh mate in its place?`, "Retire", () => {
+        window.maestro.retireMate(mate.mateId).then(() => fillDashboardSections({ force: true }));
+      });
     });
     nudge.append(btn);
   }
@@ -4641,7 +4666,13 @@ function fleetSecondMateEl(sm) {
   });
   const body = document.createElement("div");
   body.className = "fleet-branch-body";
-  body.addEventListener("click", () => jumpIntoSecondMate(sm));
+  body.addEventListener("click", (e) => {
+    // Stop the click bubbling to the enclosing first-mate card's handler, which
+    // would then run jumpIntoFirstMate and overwrite pane 0 - so a second-mate
+    // click used to land on the FIRST mate. (Review: both agents, HIGH.)
+    e.stopPropagation();
+    jumpIntoSecondMate(sm);
+  });
 
   // The session behind this node (Direct session nodes + bound second mates).
   const sess = sm.sessionId ? state.sessions.find((s) => (s.cliSessionId || s.sessionId) === sm.sessionId) : null;
@@ -4716,7 +4747,7 @@ function fleetSecondMateEl(sm) {
       // excludes it, drop the node, and fire the archive without a forced refetch.
       const s = state.sessions.find((x) => x.sessionId === backingSession.sessionId);
       if (s) {
-        s.status = "archived";
+        s.isArchived = true; // the app's real archived flag (not status)
       }
       branch.remove();
       window.maestro.archiveSession(backingSession.sessionId, true);
@@ -4745,11 +4776,11 @@ function fleetCrewItemEl(run) {
   const label = document.createElement("span");
   label.className = "fleet-crew-label";
   label.textContent = "autopilot · " + (run.goal.length > 40 ? run.goal.slice(0, 40) + "…" : run.goal);
-  const state = document.createElement("span");
-  state.className = "fleet-crew-state";
+  const stateEl = document.createElement("span"); // NOT `state` - that's the app-wide global (review: shadowing footgun)
+  stateEl.className = "fleet-crew-state";
   const n = run.iterations?.length || 0;
   const commits = crewCommitCount(run);
-  state.textContent = run.escalation ? "paused" : running ? `iter ${n}` : run.status === "done" && commits ? `${commits} commit${commits === 1 ? "" : "s"}` : run.status;
+  stateEl.textContent = run.escalation ? "paused" : running ? `iter ${n}` : run.status === "done" && commits ? `${commits} commit${commits === 1 ? "" : "s"}` : run.status;
   const follow = document.createElement("button");
   follow.className = "fleet-follow";
   follow.textContent = running ? "Follow" : "View";
@@ -4757,7 +4788,7 @@ function fleetCrewItemEl(run) {
     e.stopPropagation();
     navigateToPage("goal");
   });
-  item.append(g, label, state, follow);
+  item.append(g, label, stateEl, follow);
   return item;
 }
 
@@ -4774,7 +4805,7 @@ function fleetDirectCardEl(sms) {
   const idBox = document.createElement("div");
   idBox.className = "fleet-mate-idbox";
   const name = document.createElement("div");
-  name.className = "fleet-mate-name2";
+  name.className = "fleet-mate-name";
   name.textContent = "Captain";
   const role = document.createElement("div");
   role.className = "fleet-mate-role";
@@ -4839,7 +4870,7 @@ function mostRecentSessionForCwd(cwd) {
   }
   return (
     state.sessions
-      .filter((s) => s.status !== "archived" && samePath(s.cwd, cwd))
+      .filter((s) => !s.isArchived && samePath(s.cwd, cwd))
       .sort((a, b) => (b.lastActivityAt || 0) - (a.lastActivityAt || 0))[0] || null
   );
 }
