@@ -1108,7 +1108,18 @@ function startGoalRun({
     }
   };
 
-  send({ kind: "started", goal, maxIterations: clampedMax || null });
+  // Carry the dispatch metadata + project on "started" so the renderer can
+  // CREATE an entry for a dispatched run it never launched itself (a run
+  // started by the dispatch watcher, not the Goal page) - needed for the
+  // running indicator and the fleet/tree view to see dispatched runs.
+  send({
+    kind: "started",
+    goal,
+    maxIterations: clampedMax || null,
+    projectPath,
+    dispatchedBy: dispatch?.dispatchedBy || null,
+    tier: dispatch?.tier || null,
+  });
 
   // Persist a compact "running" record now, before the run does anything —
   // if Maestro is killed/restarted mid-run, rehydration on the next load
