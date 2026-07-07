@@ -34,8 +34,10 @@ import {
   writeAck,
   writeReport,
   readReports,
+  writeFleetState,
 } from "./lib/dispatchQueue.js";
 import { recordsNeedingReport, buildReportFromRecord } from "./lib/dispatchReconcile.js";
+import { assembleFleetState } from "./lib/fleetState.js";
 import { widthCapExceeded, depthCapExceeded } from "./lib/dispatchCaps.js";
 import { listScheduledTasks } from "./lib/routines.js";
 import { buildArtifactSrcdoc, formatAnnotationsAsPrompt } from "./lib/lavishSdk.js";
@@ -690,7 +692,7 @@ function resolveDispatchProject(project) {
 // it has no live channel to answer a permission prompt (verified: without this,
 // a real first-mate session replies "TOOL-BLOCKED" and never dispatches - review M3).
 const FIRST_MATE_MCP_SERVER = "maestro-dispatch";
-const FIRST_MATE_ALLOWED_TOOLS = ["maestro_dispatch", "maestro_collect_reports", "maestro_list_projects"].map(
+const FIRST_MATE_ALLOWED_TOOLS = ["maestro_dispatch", "maestro_collect_reports", "maestro_list_projects", "maestro_fleet_state"].map(
   (t) => `mcp__${FIRST_MATE_MCP_SERVER}__${t}`
 );
 
@@ -1868,6 +1870,7 @@ function processDispatchRequests(metaHome) {
             tier: request.tier || "crew",
             onComplete: (result, meta) => {
               writeReport(metaHome, buildDispatchReport({ dispatchId, mateId, request, result, meta }));
+              writeFleetStateSnapshot(metaHome); // a run finished - refresh the cross-mate view
             },
           },
         });
@@ -1971,6 +1974,11 @@ function startDispatchWatcher() {
   } catch (err) {
     console.error("[maestro] dispatch report reconciliation failed:", err);
   }
+  // Fleet-state snapshot for the fleet-aware focus survey (e07a2c5d): refresh at
+  // startup + on each poll so a surveying first mate reads a reasonably fresh
+  // cross-mate view. Also refreshed right after a report is written (state
+  // changed) - see writeReport call in processDispatchRequests' onComplete.
+  writeFleetStateSnapshot(metaHome);
   // Sweep once at startup so a request written while the app was down (or an
   // ack that never got picked up) is handled promptly.
   processDispatchRequests(metaHome);
@@ -1982,7 +1990,20 @@ function startDispatchWatcher() {
     // fs.watch can fail on some filesystems - the poll below still covers it.
     console.error("[maestro] fs.watch on the dispatch inbox failed (falling back to poll only):", err);
   }
-  setInterval(() => processDispatchRequests(metaHome), DISPATCH_POLL_INTERVAL_MS);
+  setInterval(() => {
+    processDispatchRequests(metaHome);
+    writeFleetStateSnapshot(metaHome);
+  }, DISPATCH_POLL_INTERVAL_MS);
+}
+
+// Assembles + writes the compact cross-mate fleet-state snapshot the
+// maestro_fleet_state tool serves. Best-effort - never throws into a caller.
+function writeFleetStateSnapshot(metaHome) {
+  try {
+    writeFleetState(metaHome, assembleFleetState(activeMates(), loadGoalRunHistory(), Date.now()));
+  } catch (err) {
+    console.error("[maestro] could not write fleet-state snapshot:", err);
+  }
 }
 
 app.whenReady().then(() => {

@@ -33,6 +33,13 @@ growing context window.
   current state of active projects (their CLAUDE.md, DECISIONS.md, recent
   activity) to build today's picture. Never assume you remember it from a
   prior turn - re-read.
+- **Survey the whole fleet before choosing focus.** Call `maestro_fleet_state`
+  first: it shows the OTHER first mate and every mate's dispatched work in
+  flight (yours and theirs - `maestro_collect_reports` only shows your own).
+  You are one of two independent mates with no shared context, so without this
+  you'd happily propose focus the other mate is already driving. Use it to
+  avoid overlap and propose COMPLEMENTARY focus - e.g. "the other mate already
+  has crewline + reinmaker in flight, so today I'll take the Meta deadline."
 - **Decide cross-project priority.** "What matters today" across the whole
   domain: what's blocked, what's overdue, what one project's state implies
   for another, what the captain should know before anything else. This is
