@@ -4309,6 +4309,55 @@ function crewRunning(r) {
   return r.status === "running" && !r.escalation;
 }
 
+// Second mates are DERIVED from run history (main.js), which only surfaces
+// projects a run touched - not the captain's actual open sessions. So a Direct
+// node could point at a past run with no live session behind it, and jumping in
+// dead-ended into a fresh chat. Augment the derived list with the captain's real
+// project sessions: attach a session to a matching derived node (so it resumes),
+// or add a fresh Direct node for a project session that has no run yet. This is
+// what makes "jump in" land on an existing session.
+function augmentSecondMatesWithSessions(secondMates) {
+  const list = [...secondMates];
+  const normCwd = (p) => (p || "").replace(/[\\/]+/g, "/").replace(/\/+$/, "").toLowerCase();
+  const boundIds = new Set(list.map((s) => s.sessionId).filter(Boolean));
+  // Most-recent-first so the first session seen per cwd is the one we attach.
+  const projectSessions = state.sessions
+    .filter((s) => s.cwd && s.status !== "archived" && !samePath(s.cwd, state.orchestratorHome))
+    .sort((a, b) => (b.lastActivityAt || 0) - (a.lastActivityAt || 0));
+  const byCwd = new Map();
+  for (const sm of list) {
+    if (!byCwd.has(normCwd(sm.projectPath))) {
+      byCwd.set(normCwd(sm.projectPath), sm);
+    }
+  }
+  for (const sess of projectSessions) {
+    const sid = sess.cliSessionId || sess.sessionId;
+    if (boundIds.has(sid)) {
+      continue; // already the session behind some second mate
+    }
+    const existing = byCwd.get(normCwd(sess.cwd));
+    if (existing) {
+      if (!existing.sessionId) {
+        existing.sessionId = sid; // attach a live session to a run-derived node
+        boundIds.add(sid);
+      }
+    } else {
+      const sm = {
+        secondMateId: "sess_" + sid,
+        firstMateId: "direct",
+        projectPath: sess.cwd,
+        name: sess.cwd.split(/[\\/]/).filter(Boolean).pop() || sess.cwd,
+        sessionId: sid,
+        crew: [],
+      };
+      list.push(sm);
+      byCwd.set(normCwd(sess.cwd), sm);
+      boundIds.add(sid);
+    }
+  }
+  return list;
+}
+
 function dashboardFleetSection(mates = [], secondMates = [], boardSummary = {}) {
   const section = document.createElement("section");
   section.className = "dash-board dash-fleet";
@@ -4369,26 +4418,70 @@ function fleetMateCardEl(mate, sms, boardSummary = {}) {
   idBox.append(name, role);
   const actions = document.createElement("div");
   actions.className = "fleet-mate-actions";
+  // Rename = inline edit (window.prompt is disabled in Electron + the captain never
+  // wants native dialogs). Clicking ✎ swaps the name for an input.
   const renameBtn = document.createElement("button");
   renameBtn.className = "fleet-icon-btn";
   renameBtn.title = "Rename this mate";
   renameBtn.textContent = "✎";
   renameBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    const next = window.prompt(`Rename ${mate.name} to:`, mate.name);
-    if (next && next.trim()) {
-      window.maestro.renameMate(mate.mateId, next.trim()).then(() => fillDashboardSections({ force: true }));
-    }
+    const input = document.createElement("input");
+    input.className = "fleet-rename-input";
+    input.value = mate.name;
+    input.addEventListener("click", (ev) => ev.stopPropagation());
+    let done = false;
+    const commit = (save) => {
+      if (done) {
+        return;
+      }
+      done = true;
+      const v = input.value.trim();
+      if (save && v && v !== mate.name) {
+        window.maestro.renameMate(mate.mateId, v).then(() => fillDashboardSections({ force: true }));
+      } else {
+        fillDashboardSections({ force: true }); // restore the label
+      }
+    };
+    input.addEventListener("keydown", (ev) => {
+      ev.stopPropagation();
+      if (ev.key === "Enter") {
+        commit(true);
+      } else if (ev.key === "Escape") {
+        commit(false);
+      }
+    });
+    input.addEventListener("blur", () => commit(true));
+    name.replaceChildren(input);
+    input.focus();
+    input.select();
   });
+  // Retire = custom inline confirm (no native window.confirm).
   const retireBtn = document.createElement("button");
   retireBtn.className = "fleet-icon-btn";
   retireBtn.title = "Retire this mate & respawn a fresh one";
   retireBtn.textContent = "↻";
   retireBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    if (window.confirm(`Retire ${mate.name} and spin up a fresh mate in its place?`)) {
-      window.maestro.retireMate(mate.mateId).then(() => fillDashboardSections({ force: true }));
+    if (card.querySelector(".fleet-confirm")) {
+      return;
     }
+    const confirm = document.createElement("div");
+    confirm.className = "fleet-confirm";
+    confirm.addEventListener("click", (ev) => ev.stopPropagation());
+    const q = document.createElement("span");
+    q.className = "fleet-confirm-q";
+    q.textContent = `Retire ${mate.name} & respawn a fresh mate?`;
+    const yes = document.createElement("button");
+    yes.className = "fleet-retire-btn";
+    yes.textContent = "Retire";
+    yes.addEventListener("click", () => window.maestro.retireMate(mate.mateId).then(() => fillDashboardSections({ force: true })));
+    const no = document.createElement("button");
+    no.className = "fleet-confirm-no";
+    no.textContent = "Cancel";
+    no.addEventListener("click", () => confirm.remove());
+    confirm.append(q, yes, no);
+    top.after(confirm);
   });
   actions.append(renameBtn, retireBtn);
   top.append(anchor, idBox, actions);
@@ -4715,7 +4808,7 @@ async function fillDashboardSections({ force = false } = {}) {
 
   const [matesResult, secondMatesResult] = await Promise.all([window.maestro.listMates(), window.maestro.listSecondMates()]);
   const activeMatesList = matesResult?.ok ? matesResult.active : [];
-  const secondMatesList = secondMatesResult?.ok ? secondMatesResult.secondMates : [];
+  const secondMatesList = augmentSecondMatesWithSessions(secondMatesResult?.ok ? secondMatesResult.secondMates : []);
   // Trigger layer 3: the Jot board state of the projects the mates work, so the
   // retire nudge can strengthen (boards clear) or dampen (urgent task queued).
   const projectPaths = [...new Set(secondMatesList.map((s) => s.projectPath).filter(Boolean))];

@@ -126,6 +126,31 @@ try {
   assert(mru.hit === "S2", "jump-in resolves the most recent NON-archived session for a project cwd (got " + JSON.stringify(mru) + ")");
   assert(mru.none === null, "an unknown cwd resolves to null (would then open fresh)");
 
+  // A real project session becomes a resumable Direct second mate (the jump-in
+  // fix: derived nodes alone dead-ended into fresh chats).
+  const aug = await app.eval(`(() => {
+    const saved = state.sessions;
+    state.sessions = [{ sessionId:"PS1", cliSessionId:"PS1", cwd:"D:/Repo/some-proj", status:"idle", lastActivityAt:500 }];
+    const r = augmentSecondMatesWithSessions([]);
+    state.sessions = saved;
+    const d = r.find((s) => s.firstMateId === "direct" && s.projectPath === "D:/Repo/some-proj");
+    return { hasDirect: !!d, sid: d && d.sessionId, name: d && d.name };
+  })()`);
+  assert(aug.hasDirect && aug.sid === "PS1", "a real project session becomes a resumable Direct second mate (got " + JSON.stringify(aug) + ")");
+  assert(aug.name === "some-proj", "the derived Direct node is named by the project folder");
+
+  // Rename is inline (native window.prompt is disabled in Electron + unwanted):
+  // clicking the rename icon shows an input, not a dialog.
+  await app.eval(`document.querySelector("#dashFleetSlot .fleet-mate-card:not(.direct) .fleet-icon-btn").click(); true`);
+  await wait(120);
+  assert((await count("#dashFleetSlot .fleet-rename-input")) === 1, "rename opens an inline input (not a native prompt)");
+
+  // Retire is a custom inline confirm (not window.confirm): 2nd icon = retire.
+  await app.eval(`document.querySelectorAll("#dashFleetSlot .fleet-mate-card:not(.direct) .fleet-icon-btn")[1].click(); true`);
+  await wait(120);
+  assert((await count("#dashFleetSlot .fleet-confirm")) >= 1, "retire shows a custom inline confirm (not window.confirm)");
+  assert((await count("#dashFleetSlot .fleet-confirm .fleet-confirm-no")) >= 1, "the inline confirm has a Cancel button");
+
   const errors = app.getConsoleErrors();
   assert(errors.length === 0, `no console errors (got ${errors.length})`);
   for (const e of errors) {
