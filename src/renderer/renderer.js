@@ -7911,6 +7911,8 @@ function cmdkClose() {
   cmdkSelectedIndex = 0;
 }
 
+document.getElementById("cmdkHint")?.addEventListener("click", () => cmdkOpen());
+
 function cmdkRun(i) {
   const cmd = cmdkCommands[i];
   cmdkClose();

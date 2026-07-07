@@ -95,6 +95,24 @@ h1 {
   border-color: var(--text-dim);
 }
 
+/* Keyboard hint for the command palette shortcut - a quiet "keycap" next to
+   the brand, discoverable but not shouting for attention. Same muted-border
+   language as .stale-build-pill; no --accent (reserved for active states). */
+.cmdk-hint {
+  font-size: 10.5px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  color: var(--text-faint);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.cmdk-hint:hover {
+  color: var(--text-dim);
+  border-color: var(--text-dim);
+}
+
 .header-controls {
   display: flex;
   align-items: center;
