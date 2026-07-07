@@ -1,6 +1,9 @@
-// E2E: the Dashboard fleet/tree view renders the orchestration hierarchy -
-// runs grouped by the mate that dispatched them (mate -> runs -> crew), with
-// needsCaptain surfaced. Real launched Maestro.
+// E2E: the Dashboard Fleet renders the corrected orchestration hierarchy as
+// three columns - two named first mates (sessions) + Direct; second mates
+// (project sessions) branch under a first mate; crew (autonomous runs) sit under
+// a second mate; a dual-trigger retire nudge appears when a mate's work is
+// wrapped. Drives dashboardFleetSection directly with controlled data (second
+// mates are otherwise derived from persisted run history). Real launched Maestro.
 //
 // Run:  node scripts/e2e/test-fleet-view.mjs
 import { launch } from "./harness.mjs";
@@ -29,48 +32,70 @@ try {
     await wait(100);
   }
 
-  // Inject a fleet: two runs under a first mate (one running, one done w/ commits)
-  // and one direct/escalated run.
-  await app.eval(`(() => {
-    goalRuns.clear();
-    const mk = (id, extra) => goalRuns.set(id, { goalRunId: id, ordinal: ++goalRunSeq, goal: "goal " + id, projectPath: "P", status: "running", iterations: [{iteration:1},{iteration:2}], result: null, error: null, escalation: null, latestPlan: null, dispatchedBy: null, tier: null, ...extra });
-    mk("fr1", { dispatchedBy: "mate-work", status: "running" });
-    mk("fr2", { dispatchedBy: "mate-work", status: "done", result: { commitCount: 3 }, iterations: [{iteration:1},{iteration:2},{iteration:3}] });
-    mk("fr3", { dispatchedBy: null, status: "running", escalation: { detail: "needs a decision" } });
-    return true;
-  })()`);
-
+  // Land on the dashboard and let its async fill (IPC fetch of mates +
+  // secondMates) settle FIRST - otherwise it lands ~300ms later and replaces
+  // our controlled injection with the real derived fleet (a real race the first
+  // run of this test caught).
   await app.eval(`(() => { navigateToPage("dashboard"); return true; })()`);
   await app.waitForSelector("#dashFleetSlot", 8000);
-  await wait(900); // force-fill (incl. goals fetch) settles
+  await wait(1200);
 
-  assert((await count("#dashFleetSlot .dash-fleet")) === 1, "the fleet section renders");
-  assert((await count("#dashFleetSlot .fleet-mate")) === 2, "two mate groups (a first mate + Direct)");
-  const mateNames = await app.eval(`[...document.querySelectorAll("#dashFleetSlot .fleet-mate-name")].map(e => e.textContent)`);
-  assert(mateNames.some((n) => /mate-work/.test(n)), "a first-mate group is labeled by its mate id (got: " + JSON.stringify(mateNames) + ")");
-  assert(mateNames.some((n) => /Direct/.test(n)), "the direct/captain group is present");
+  // Render the fleet with controlled mates + second mates + crew:
+  //  - Nemo (slot 0): one BUSY second mate (live crew) -> no retire nudge.
+  //  - Barbossa (slot 1): one second mate whose crew is done with no commits and
+  //    nothing awaiting the captain -> WORK WRAPPED -> a 'done' retire nudge.
+  //  - Direct: one project session, no crew.
+  await app.eval(`(() => {
+    goalRuns.clear();
+    const mates = [
+      { mateId: "m0", slot: 0, name: "Captain Nemo", sessionId: null },
+      { mateId: "m1", slot: 1, name: "Hector Barbossa", sessionId: null },
+    ];
+    const secondMates = [
+      { secondMateId: "s1", firstMateId: "m0", name: "tgs-reinmaker", sessionId: null, crew: [
+        { goalRunId: "c1", goal: "Antigravity auth spike", status: "running", iterations: [{},{}] } ] },
+      { secondMateId: "s2", firstMateId: "m1", name: "jot", sessionId: null, crew: [
+        { goalRunId: "c2", goal: "double-encoding self-heal", status: "done", commitCount: 0, iterations: [{},{}] } ] },
+      { secondMateId: "s3", firstMateId: "direct", name: "maestro", sessionId: null, crew: [] },
+    ];
+    document.getElementById("dashFleetSlot").replaceChildren(dashboardFleetSection(mates, secondMates));
+    return true;
+  })()`);
+  await wait(250);
 
-  assert((await count("#dashFleetSlot .fleet-run")) === 3, "all three runs render as tree nodes");
-  assert((await count("#dashFleetSlot .fleet-run-dot.st-running")) >= 1, "a running run shows the running status dot");
-  assert((await count("#dashFleetSlot .fleet-run-dot.st-done")) === 1, "the done run shows the done status dot");
-  assert((await count("#dashFleetSlot .fleet-run-dot.st-escalated")) === 1, "the escalated run shows the escalated status dot");
+  assert((await count("#dashFleetSlot .fleet-cols")) === 1, "the fleet renders as a column grid");
+  assert((await count("#dashFleetSlot .fleet-col")) === 3, "three columns (two first mates + Direct)");
+  assert((await count("#dashFleetSlot .fleet-mate-card")) === 3, "three mate cards total");
+  assert((await count("#dashFleetSlot .fleet-mate-card.direct")) === 1, "one of them is the Direct card");
 
-  // Assign-back: escalated -> "needs you", done-with-commits -> "review".
-  const needsTags = await app.eval(`[...document.querySelectorAll("#dashFleetSlot .fleet-run-needs")].map(e => e.textContent)`);
-  assert(needsTags.includes("needs you"), "the escalated run surfaces a 'needs you' tag (assign-back)");
-  assert(needsTags.includes("review"), "the done-with-commits run surfaces a 'review' tag");
+  const names = await app.eval(`[...document.querySelectorAll("#dashFleetSlot .fleet-mate-name2")].map(e => e.textContent)`);
+  assert(names.includes("Captain Nemo") && names.includes("Hector Barbossa"), "both first mates render by name (got: " + JSON.stringify(names) + ")");
+  assert(names.includes("Captain"), "the Direct card is titled Captain");
 
-  // Empty fleet -> no section.
-  await app.eval(`goalRuns.clear(); renderDashboardPage(); true`);
-  await wait(700);
-  assert((await count("#dashFleetSlot .dash-fleet")) === 0, "no fleet section when there are no runs");
+  // Second mates branch under their first mate.
+  const projs = await app.eval(`[...document.querySelectorAll("#dashFleetSlot .fleet-branch-proj")].map(e => e.textContent)`);
+  assert(projs.includes("tgs-reinmaker") && projs.includes("jot") && projs.includes("maestro"), "second mates render under their columns (got: " + JSON.stringify(projs) + ")");
+
+  // Crew under a second mate (rendered even while collapsed).
+  assert((await count("#dashFleetSlot .fleet-crew-item")) === 2, "crew items render under their second mates");
+  assert((await count("#dashFleetSlot .fleet-badge.run")) >= 1, "a second mate with live crew shows a 'busy' badge");
+  assert((await count("#dashFleetSlot .fleet-spin")) >= 1, "live crew shows the working spinner");
+
+  // Dual-trigger nudge: Barbossa's crew is wrapped (done, no commits, nothing
+  // awaiting) -> a 'work wrapped' retire nudge with a retire button.
+  assert((await count("#dashFleetSlot .fleet-nudge.done")) === 1, "a work-wrapped mate shows the 'work wrapped' retire nudge");
+  assert((await count("#dashFleetSlot .fleet-nudge.ctx")) === 0, "no context nudge when no session is open/saturated");
+  assert((await count("#dashFleetSlot .fleet-retire-btn")) === 1, "the nudge carries a Retire & respawn button");
+
+  // Jump-in handlers exist (clicking a mate card / second mate opens a session).
+  assert(await app.eval(`typeof jumpIntoFirstMate === "function" && typeof jumpIntoSecondMate === "function"`), "jump-in handlers are wired");
 
   const errors = app.getConsoleErrors();
   assert(errors.length === 0, `no console errors (got ${errors.length})`);
   for (const e of errors) {
     log("  console error:", e.text);
   }
-  log(exitCode === 0 ? "VERIFY OK: fleet tree renders the mate -> runs -> crew hierarchy." : "VERIFY FAILED.");
+  log(exitCode === 0 ? "VERIFY OK: three-column fleet, second mates under first mates, crew, work-wrapped nudge." : "VERIFY FAILED.");
 } catch (err) {
   exitCode = 1;
   log("ERROR:", err.message);

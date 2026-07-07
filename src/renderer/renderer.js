@@ -3749,6 +3749,9 @@ async function sendFromPane(index, els) {
     resumeSessionId: pane.cliSessionId,
     suggestedModel: suggestion.model,
     suggestedEffort: suggestion.effort,
+    // Named mates: a first-mate pane carries its mateId so session:start attaches
+    // the dispatch mcp-config bound to THAT mate (not just "the meta-home mate").
+    mateId: pane.mateId,
   });
   if (!res.ok) {
     if (panes[index] === pane) {
@@ -4272,103 +4275,345 @@ function dashboardNewSessionFingerprint() {
   return [cwds, dashboardSelectedChip, dashboardFocusMode].join("##");
 }
 
-function dashboardFleetFingerprint() {
-  return [...goalRuns.values()]
+function dashboardFleetFingerprint(mates = [], secondMates = []) {
+  const runsFp = [...goalRuns.values()]
     .map((r) => `${r.goalRunId}:${r.dispatchedBy || "-"}:${r.status}:${r.iterations?.length || 0}:${r.escalation ? 1 : 0}`)
     .join("|");
+  const matesFp = mates.map((m) => `${m.mateId}:${m.name}:${m.sessionId || "-"}`).join(",");
+  const smFp = secondMates.map((s) => `${s.secondMateId}:${s.name}:${s.sessionId || "-"}:${s.crew.length}`).join(",");
+  return [runsFp, matesFp, smFp].join("##");
 }
 
-// The fleet/tree view: the orchestration model made visible. Groups runs by the
-// first mate that dispatched them (dispatchedBy) into mate -> runs (second
-// mates) -> crew (a run's iterations), so you can see what each mate has in
-// flight - the captain/first-mate/second-mate/crew hierarchy from
-// docs/orchestration-model.md. Runs launched directly from the Goal page (no
-// dispatchedBy) group under "Direct". Returns null (no section) when there are
-// no runs at all, so it stays out of the way until there's a fleet to show.
-function dashboardFleetSection() {
-  const runs = [...goalRuns.values()];
-  if (runs.length === 0) {
-    return null;
-  }
-  // Group by mate. null dispatchedBy = launched directly by the captain.
-  const groups = new Map();
-  for (const run of runs) {
-    const key = run.dispatchedBy || "__direct__";
-    if (!groups.has(key)) {
-      groups.set(key, []);
-    }
-    groups.get(key).push(run);
-  }
+// The Fleet: the orchestration model made visible as three columns (the locked
+// mock). Two NAMED first mates (sessions you jump into) + Direct. Under each
+// first mate, its second mates (per-project SESSIONS, also jumpable); under each
+// second mate, its crew (the autonomous Autopilot runs, expandable + followable).
+// first mate / second mate = sessions (💬, jump in); crew = background tasks
+// (⚙, follow). Always shown - the two mates always exist (ensureMates).
 
+// Merge a crew run's persisted history record with its live in-memory run (if
+// still running) so status/commits reflect reality.
+function crewLiveRun(rec) {
+  return goalRuns.get(rec.goalRunId) || rec;
+}
+function crewCommitCount(r) {
+  return (typeof r.result?.commitCount === "number" ? r.result.commitCount : r.commitCount) || 0;
+}
+function crewNeedsCaptain(r) {
+  return !!r.escalation || r.status === "error" || (r.status === "done" && crewCommitCount(r) > 0);
+}
+function crewRunning(r) {
+  return r.status === "running" && !r.escalation;
+}
+
+function dashboardFleetSection(mates = [], secondMates = []) {
   const section = document.createElement("section");
   section.className = "dash-board dash-fleet";
-  section.append(dashBoardHead("Fleet", runs.length, "Runs by the mate that dispatched them - the hierarchy in motion"));
-  const body = document.createElement("div");
-  body.className = "dash-board-body";
+  const liveCount = [...goalRuns.values()].filter((r) => crewRunning(r)).length;
+  section.append(dashBoardHead("Fleet", liveCount, "First mates → second mates (project sessions) → crew"));
 
-  // Direct group last (mates first - they're the model's point).
-  const orderedKeys = [...groups.keys()].sort((a, b) => (a === "__direct__" ? 1 : b === "__direct__" ? -1 : 0));
-  for (const key of orderedKeys) {
-    const mateRuns = groups.get(key);
-    const mate = document.createElement("div");
-    mate.className = "fleet-mate";
+  const cols = document.createElement("div");
+  cols.className = "fleet-cols";
 
-    const head = document.createElement("div");
-    head.className = "fleet-mate-head";
-    const name = document.createElement("span");
-    name.className = "fleet-mate-name";
-    name.textContent = key === "__direct__" ? "Direct (captain)" : `First mate: ${key}`;
-    const count = document.createElement("span");
-    count.className = "fleet-mate-count";
-    count.textContent = String(mateRuns.length);
-    head.append(name, count);
-    mate.append(head);
-
-    for (const run of mateRuns) {
-      mate.append(fleetRunNodeEl(run));
-    }
-    body.append(mate);
+  // One column per active first mate (ordered by slot), then Direct.
+  for (const mate of mates) {
+    const sms = secondMates.filter((s) => s.firstMateId === mate.mateId);
+    cols.append(fleetColumnEl(`First mate · slot ${(mate.slot ?? 0) + 1}`, fleetMateCardEl(mate, sms), false));
   }
-  section.append(body);
+  const directSms = secondMates.filter((s) => s.firstMateId === "direct");
+  cols.append(fleetColumnEl("Direct · your own work", fleetDirectCardEl(directSms), true));
+
+  section.append(cols);
   return section;
 }
 
-// One run (a second mate) in the fleet tree: a status dot, the goal, the crew
-// size (iterations), and - when the run needs the captain (escalated, or done
-// with commits to review) - a "needs you" tag (the assign-back signal). Click
-// jumps to the Autopilot page.
-function fleetRunNodeEl(run) {
-  const node = document.createElement("div");
-  node.className = "fleet-run";
-  node.addEventListener("click", () => navigateToPage("goal"));
-
+function fleetColumnEl(label, cardEl, isDirect) {
+  const col = document.createElement("div");
+  col.className = "fleet-col";
+  const lab = document.createElement("div");
+  lab.className = "fleet-col-label" + (isDirect ? " direct" : "");
   const dot = document.createElement("span");
-  dot.className = "fleet-run-dot " + (run.escalation ? "st-escalated" : `st-${run.status}`);
-  node.append(dot);
+  dot.className = "fleet-col-dot";
+  lab.append(dot, document.createTextNode(label));
+  col.append(lab, cardEl);
+  return col;
+}
 
-  const body = document.createElement("div");
-  body.className = "fleet-run-body";
-  const goal = document.createElement("span");
-  goal.className = "fleet-run-goal";
-  goal.textContent = run.goal.length > 64 ? run.goal.slice(0, 64) + "…" : run.goal;
-  const meta = document.createElement("span");
-  meta.className = "fleet-run-meta";
-  const n = run.iterations?.length || 0;
-  const statusLabel = run.escalation ? "paused" : run.status === "running" ? "working" : run.status;
-  meta.textContent = `${statusLabel} · ${n} crew iteration${n === 1 ? "" : "s"}`;
-  body.append(goal, meta);
-  node.append(body);
+// A first-mate card: anchor + name (+ rename/retire), context gauge if its
+// session is open, a dual-trigger retire nudge (saturated OR work wrapped), and
+// its second mates.
+function fleetMateCardEl(mate, sms) {
+  const card = document.createElement("div");
+  card.className = "fleet-mate-card";
+  card.addEventListener("click", () => jumpIntoFirstMate(mate));
 
-  // Assign-back: surface needsCaptain (escalation, or a finished run with
-  // commits worth reviewing) as a tag pulling the captain's eye.
-  const needs = run.escalation || (run.status === "error") || (run.status === "done" && (run.result?.commitCount > 0));
-  if (needs) {
-    const tag = document.createElement("span");
-    tag.className = "fleet-run-needs";
-    tag.textContent = run.escalation ? "needs you" : run.status === "error" ? "failed" : "review";
-    node.append(tag);
+  const top = document.createElement("div");
+  top.className = "fleet-mate-top";
+  const anchor = document.createElement("span");
+  anchor.className = "fleet-anchor";
+  anchor.textContent = "⚓";
+  const idBox = document.createElement("div");
+  idBox.className = "fleet-mate-idbox";
+  const name = document.createElement("div");
+  name.className = "fleet-mate-name2";
+  name.textContent = mate.name;
+  const kind = document.createElement("span");
+  kind.className = "fleet-kind session";
+  kind.textContent = "💬 session";
+  const role = document.createElement("div");
+  role.className = "fleet-mate-role";
+  role.append(kind, document.createTextNode(sms.length ? ` ${sms.length} second mate${sms.length === 1 ? "" : "s"}` : " idle"));
+  idBox.append(name, role);
+  const actions = document.createElement("div");
+  actions.className = "fleet-mate-actions";
+  const renameBtn = document.createElement("button");
+  renameBtn.className = "fleet-icon-btn";
+  renameBtn.title = "Rename this mate";
+  renameBtn.textContent = "✎";
+  renameBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const next = window.prompt(`Rename ${mate.name} to:`, mate.name);
+    if (next && next.trim()) {
+      window.maestro.renameMate(mate.mateId, next.trim()).then(() => fillDashboardSections({ force: true }));
+    }
+  });
+  actions.append(renameBtn);
+  top.append(anchor, idBox, actions);
+  card.append(top);
+
+  // Context gauge - only when this mate's session is open in a pane (that's the
+  // only place we know its context usage).
+  const pane = panes.find((p) => p && p.cliSessionId && p.cliSessionId === mate.sessionId && typeof p.contextTokens === "number");
+  let pct = null;
+  if (pane) {
+    pct = Math.min(100, Math.round((pane.contextTokens / contextWindowForPane(pane)) * 100));
+    const gauge = document.createElement("div");
+    gauge.className = "fleet-gauge";
+    const bar = document.createElement("span");
+    bar.className = "fleet-gauge-bar";
+    const fill = document.createElement("span");
+    fill.className = "fleet-gauge-fill" + (pct >= FIRST_MATE_HANDOFF_PCT ? " warn" : "");
+    fill.style.width = `${pct}%`;
+    bar.append(fill);
+    const lbl = document.createElement("span");
+    lbl.className = "fleet-gauge-pct";
+    lbl.textContent = `${pct}%`;
+    gauge.append(bar, lbl);
+    card.append(gauge);
   }
-  return node;
+
+  // Dual-trigger retire nudge: saturated (context) OR work wrapped (dispatched
+  // crew all reported back, nothing live, nothing awaiting the captain).
+  const crew = sms.flatMap((s) => s.crew.map(crewLiveRun));
+  const anyLive = crew.some(crewRunning);
+  const anyNeeds = crew.some(crewNeedsCaptain);
+  const dispatchedEver = crew.length > 0;
+  const saturated = pct != null && pct >= FIRST_MATE_HANDOFF_PCT;
+  const workWrapped = dispatchedEver && !anyLive && !anyNeeds;
+  if (saturated || workWrapped) {
+    card.append(fleetNudgeEl(mate, saturated ? "ctx" : "done", pct));
+  }
+
+  // Second mates.
+  const list = document.createElement("div");
+  list.className = "fleet-branches";
+  if (sms.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "fleet-empty";
+    empty.textContent = "No second mates yet - dispatch work to a project and it appears here.";
+    list.append(empty);
+  } else {
+    for (const sm of sms) {
+      list.append(fleetSecondMateEl(sm));
+    }
+  }
+  card.append(list);
+  return card;
+}
+
+function fleetNudgeEl(mate, kind, pct) {
+  const nudge = document.createElement("div");
+  nudge.className = "fleet-nudge " + kind;
+  nudge.addEventListener("click", (e) => e.stopPropagation());
+  const txt = document.createElement("span");
+  txt.className = "fleet-nudge-txt";
+  const tag = document.createElement("span");
+  tag.className = "fleet-nudge-tag";
+  if (kind === "ctx") {
+    tag.textContent = "Getting full";
+    txt.append(tag, document.createTextNode(` ${mate.name} is ${pct}% full - hand off to a fresh mate.`));
+  } else {
+    tag.textContent = "Work wrapped";
+    txt.append(tag, document.createTextNode(` ${mate.name}'s crew reported back and nothing's in flight - good moment to retire.`));
+  }
+  const btn = document.createElement("button");
+  btn.className = "fleet-retire-btn";
+  btn.textContent = "Retire & respawn";
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    window.maestro.retireMate(mate.mateId).then(() => fillDashboardSections({ force: true }));
+  });
+  nudge.append(txt, btn);
+  return nudge;
+}
+
+// A second mate: a project SESSION (jumpable) with an expandable crew list.
+function fleetSecondMateEl(sm) {
+  const crew = sm.crew.map(crewLiveRun);
+  const anyLive = crew.some(crewRunning);
+  const anyNeeds = crew.some(crewNeedsCaptain);
+  const branch = document.createElement("div");
+  branch.className = "fleet-branch secondmate";
+
+  const head = document.createElement("div");
+  head.className = "fleet-branch-head";
+  const chev = document.createElement("span");
+  chev.className = "fleet-chev";
+  chev.textContent = "▶";
+  chev.style.visibility = crew.length ? "visible" : "hidden";
+  chev.addEventListener("click", (e) => {
+    e.stopPropagation();
+    branch.classList.toggle("open");
+  });
+  const body = document.createElement("div");
+  body.className = "fleet-branch-body";
+  body.addEventListener("click", () => jumpIntoSecondMate(sm));
+
+  const topRow = document.createElement("div");
+  topRow.className = "fleet-branch-top";
+  const badge = document.createElement("span");
+  const badgeKind = anyNeeds ? "need" : anyLive ? "run" : "ok";
+  badge.className = "fleet-badge " + badgeKind;
+  badge.textContent = anyNeeds ? "needs you" : anyLive ? "busy" : "idle";
+  const proj = document.createElement("span");
+  proj.className = "fleet-branch-proj";
+  proj.textContent = sm.name;
+  const mk = document.createElement("span");
+  mk.className = "fleet-mini-kind";
+  mk.textContent = "💬 2nd mate";
+  topRow.append(badge, proj, mk);
+  const now = document.createElement("div");
+  now.className = "fleet-branch-now";
+  const liveN = crew.filter(crewRunning).length;
+  if (liveN > 0) {
+    const spin = document.createElement("span");
+    spin.className = "fleet-spin";
+    now.append(spin, document.createTextNode(`${liveN} crew working · `));
+  } else if (anyNeeds) {
+    const commits = crew.reduce((a, r) => a + crewCommitCount(r), 0);
+    now.append(document.createTextNode(commits > 0 ? `crew left ${commits} commit${commits === 1 ? "" : "s"} to review · ` : "crew needs a decision · "));
+  } else {
+    now.append(document.createTextNode("crew idle · "));
+  }
+  const jump = document.createElement("span");
+  jump.className = "fleet-jumpin";
+  jump.textContent = "jump in →";
+  now.append(jump);
+  body.append(topRow, now);
+  head.append(chev, body);
+  branch.append(head);
+
+  const crewWrap = document.createElement("div");
+  crewWrap.className = "fleet-crew";
+  for (const r of crew) {
+    crewWrap.append(fleetCrewItemEl(r));
+  }
+  branch.append(crewWrap);
+  return branch;
+}
+
+// A crew member: an autonomous run (background task) with a Follow/View action.
+function fleetCrewItemEl(run) {
+  const item = document.createElement("div");
+  item.className = "fleet-crew-item";
+  const g = document.createElement("span");
+  g.className = "fleet-crew-g";
+  const running = crewRunning(run);
+  g.textContent = running ? "⚙" : run.status === "error" ? "✕" : "✓";
+  const label = document.createElement("span");
+  label.className = "fleet-crew-label";
+  label.textContent = "autopilot · " + (run.goal.length > 40 ? run.goal.slice(0, 40) + "…" : run.goal);
+  const state = document.createElement("span");
+  state.className = "fleet-crew-state";
+  const n = run.iterations?.length || 0;
+  const commits = crewCommitCount(run);
+  state.textContent = run.escalation ? "paused" : running ? `iter ${n}` : run.status === "done" && commits ? `${commits} commit${commits === 1 ? "" : "s"}` : run.status;
+  const follow = document.createElement("button");
+  follow.className = "fleet-follow";
+  follow.textContent = running ? "Follow" : "View";
+  follow.addEventListener("click", (e) => {
+    e.stopPropagation();
+    navigateToPage("goal");
+  });
+  item.append(g, label, state, follow);
+  return item;
+}
+
+// Direct column: project sessions the captain started himself (grouped as
+// "direct" second mates). Same shape, minus a first-mate header.
+function fleetDirectCardEl(sms) {
+  const card = document.createElement("div");
+  card.className = "fleet-mate-card direct";
+  const top = document.createElement("div");
+  top.className = "fleet-mate-top";
+  const anchor = document.createElement("span");
+  anchor.className = "fleet-anchor direct";
+  anchor.textContent = "⌨";
+  const idBox = document.createElement("div");
+  idBox.className = "fleet-mate-idbox";
+  const name = document.createElement("div");
+  name.className = "fleet-mate-name2";
+  name.textContent = "Captain";
+  const role = document.createElement("div");
+  role.className = "fleet-mate-role";
+  role.textContent = "work you drive yourself";
+  idBox.append(name, role);
+  top.append(anchor, idBox);
+  card.append(top);
+
+  const list = document.createElement("div");
+  list.className = "fleet-branches";
+  if (sms.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "fleet-empty";
+    empty.textContent = "Project sessions you start yourself land here.";
+    list.append(empty);
+  } else {
+    for (const sm of sms) {
+      list.append(fleetSecondMateEl(sm));
+    }
+  }
+  card.append(list);
+  return card;
+}
+
+// Jump into a first mate: resume its bound session if it has one, else start a
+// fresh orchestrator session (meta-home root, Sonnet, tagged with its mateId so
+// session:start attaches the dispatch tools and the session binds back to it).
+function jumpIntoFirstMate(mate) {
+  const existing = mate.sessionId ? state.sessions.find((s) => (s.cliSessionId || s.sessionId) === mate.sessionId) : null;
+  if (existing) {
+    openSessionInPane(existing, focusedPaneIndex ?? 0);
+  } else {
+    openFreshDraftInPane(state.orchestratorHome, "", {
+      paneOverrides: { isOrchestrator: true, modelDefault: "claude-sonnet-5", mateId: mate.mateId },
+    });
+  }
+  navigateToPage("chat");
+}
+
+// Jump into a second mate: resume its bound project session, else start a fresh
+// one rooted in the project (Opus, tagged with its secondMateId so it binds back).
+function jumpIntoSecondMate(sm) {
+  const existing = sm.sessionId ? state.sessions.find((s) => (s.cliSessionId || s.sessionId) === sm.sessionId) : null;
+  if (existing) {
+    openSessionInPane(existing, focusedPaneIndex ?? 0);
+  } else {
+    openFreshDraftInPane(sm.projectPath, "", {
+      paneOverrides: { modelDefault: "claude-opus-4-8", secondMateId: sm.secondMateId },
+    });
+  }
+  navigateToPage("chat");
 }
 
 // Re-render only the sections whose data changed, into their existing slots.
@@ -4404,10 +4649,13 @@ async function fillDashboardSections({ force = false } = {}) {
     document.getElementById("dashQueueSlot").replaceChildren(dashboardQueueSection());
   }
 
-  const fleetFp = dashboardFleetFingerprint();
+  const [matesResult, secondMatesResult] = await Promise.all([window.maestro.listMates(), window.maestro.listSecondMates()]);
+  const activeMatesList = matesResult?.ok ? matesResult.active : [];
+  const secondMatesList = secondMatesResult?.ok ? secondMatesResult.secondMates : [];
+  const fleetFp = dashboardFleetFingerprint(activeMatesList, secondMatesList);
   if (force || fleetFp !== dashSectionFingerprints.fleet) {
     dashSectionFingerprints.fleet = fleetFp;
-    const fleet = dashboardFleetSection();
+    const fleet = dashboardFleetSection(activeMatesList, secondMatesList);
     document.getElementById("dashFleetSlot").replaceChildren(...(fleet ? [fleet] : []));
   }
 
@@ -7863,6 +8111,14 @@ window.maestro.onSessionEvent((evt) => {
   switch (evt.kind) {
     case "session":
       pane.cliSessionId = evt.sessionId;
+      // Named mates: bind this now-identified session to the mate/second mate it
+      // embodies, so the Fleet's "jump in" resumes it next time.
+      if (pane.mateId) {
+        window.maestro.bindMateSession(pane.mateId, evt.sessionId);
+      }
+      if (pane.secondMateId) {
+        window.maestro.bindSecondMateSession(pane.secondMateId, evt.sessionId);
+      }
       break;
     case "tool_use":
       setPaneBusyUI(index, `Working — ${evt.toolName}`);
