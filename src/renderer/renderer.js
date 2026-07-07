@@ -4649,10 +4649,27 @@ function jumpIntoFirstMate(mate) {
   navigateToPage("chat");
 }
 
-// Jump into a second mate: resume its bound project session, else start a fresh
-// one rooted in the project (Opus, tagged with its secondMateId so it binds back).
+// The most recently active non-archived session rooted at a project path, or
+// null. Used as the jump-in fallback for a second mate with no bound session
+// (e.g. a direct/derived one, or a session that predates the binding).
+function mostRecentSessionForCwd(cwd) {
+  if (!cwd) {
+    return null;
+  }
+  return (
+    state.sessions
+      .filter((s) => s.status !== "archived" && samePath(s.cwd, cwd))
+      .sort((a, b) => (b.lastActivityAt || 0) - (a.lastActivityAt || 0))[0] || null
+  );
+}
+
+// Jump into a second mate: resume its bound project session; else the most
+// recent existing session in that project (the fix for direct/derived second
+// mates, whose sessionId was never bound - they used to always open fresh);
+// else start a fresh one rooted in the project (Opus, tagged so it binds back).
 function jumpIntoSecondMate(sm) {
-  const existing = sm.sessionId ? state.sessions.find((s) => (s.cliSessionId || s.sessionId) === sm.sessionId) : null;
+  const bound = sm.sessionId ? state.sessions.find((s) => (s.cliSessionId || s.sessionId) === sm.sessionId) : null;
+  const existing = bound || mostRecentSessionForCwd(sm.projectPath);
   if (existing) {
     openSessionInPane(existing, focusedPaneIndex ?? 0);
   } else {
