@@ -137,12 +137,13 @@ async function toolDispatch(args) {
   }
   ensureDispatchDirs(META_HOME);
   // Model-per-tier (design decision 6): default the dispatched run to Opus (the
-  // second-mate default) unless the mate overrides it.
+  // second-mate default) unless the mate overrides it. Use the full model id
+  // the rest of the app uses, not the "opus" CLI alias (review finding L7).
   const request = {
     project,
     goal,
     tier: args.tier || "second-mate",
-    model: args.model || "opus",
+    model: args.model || "claude-opus-4-8",
     effort: args.effort || null,
     maxIterations: typeof args.maxIterations === "number" ? args.maxIterations : null,
     verifyCommand: args.verifyCommand || null,

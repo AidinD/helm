@@ -123,12 +123,35 @@ export function readRequests(metaHome) {
   return out;
 }
 
-/** Removes a consumed request file by dispatchId. No-op if already gone. */
-export function removeRequest(metaHome, dispatchId) {
+/**
+ * Atomically CLAIMS a request by renaming it out of the pending `.json` pool,
+ * so when two Maestro instances watch the SAME meta-home only ONE wins and
+ * launches the run: fs.renameSync of a now-missing source throws on the loser
+ * (rename is atomic; unlink-and-hope is not). Returns true iff this process won
+ * the claim. The claimed file is `<id>.json.claimed` (readRequests ignores
+ * non-`.json`), cleaned up by removeRequest. The caller already holds the
+ * request data in memory (from readRequests), so it proceeds from that.
+ */
+export function claimRequest(metaHome, dispatchId) {
+  const src = path.join(requestsDir(metaHome), `${dispatchId}.json`);
+  const claimed = path.join(requestsDir(metaHome), `${dispatchId}.json.claimed`);
   try {
-    fs.unlinkSync(path.join(requestsDir(metaHome), `${dispatchId}.json`));
+    fs.renameSync(src, claimed);
+    return true;
   } catch {
-    // already consumed/removed - fine
+    // Source gone -> another instance (or an earlier re-scan) claimed it.
+    return false;
+  }
+}
+
+/** Removes a consumed request's files by dispatchId (pending + claimed). No-op if gone. */
+export function removeRequest(metaHome, dispatchId) {
+  for (const suffix of [".json", ".json.claimed"]) {
+    try {
+      fs.unlinkSync(path.join(requestsDir(metaHome), `${dispatchId}${suffix}`));
+    } catch {
+      // already consumed/removed - fine
+    }
   }
 }
 
