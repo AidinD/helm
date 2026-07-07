@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld("maestro", {
   suggestModelEffort: (prompt) => ipcRenderer.invoke("suggest:modelEffort", prompt),
   getJotGoals: () => ipcRenderer.invoke("jot:goals"),
   getJotBoardSummary: (projectPaths) => ipcRenderer.invoke("jot:boardSummary", { projectPaths }),
+  // A session's in-flight sub-agents (Task tool), for showing them as crew.
+  getLiveSubAgents: (sessions) => ipcRenderer.invoke("session:liveSubAgents", { sessions }),
   addJotSubtask: (parentId, text) => ipcRenderer.invoke("jot:addSubtask", { parentId, text }),
   getTranscript: (ids) => ipcRenderer.invoke("transcript:get", ids),
   listSkills: (cwd) => ipcRenderer.invoke("skills:list", cwd),
