@@ -3201,9 +3201,12 @@ function paneComposerEl(index) {
 
   // "Auto" lets Maestro pick per-prompt (resolved at send time from the
   // current text); picking a specific value locks it in and stops the
-  // suggestion from silently overriding your choice.
+  // suggestion from silently overriding your choice. A pane may carry a
+  // modelDefault (e.g. a first-mate/orchestrator session defaults to Sonnet -
+  // the delegate/summarize tier per model-per-tier), still fully overridable
+  // here; everything else defaults to "auto".
   const modelDD = dropdownPill(
-    "auto",
+    pane.modelDefault || "auto",
     [
       { value: "auto", label: "Auto" },
       { value: "claude-sonnet-5", label: "Sonnet 5" },
@@ -4499,7 +4502,9 @@ function startOrchestratorSessionBtnEl() {
     }
     navigateToPage("chat");
     const draft = `Read ${info.instructionsPath} and act as an orchestrator for this session. You're rooted in the Claude meta-home (above any one code project), so your CLAUDE.md rules and accumulated memory are in context - survey the current state (your Jot board and the projects you're working on) and tell me what needs attention and what to dispatch. Do coordination and dispatch from here; do hands-on code work in the project it belongs to (a dispatched agent or a project-rooted session), not in this cwd.`;
-    openFreshDraftInPane(info.cwd, draft, { paneOverrides: { isOrchestrator: true } });
+    // Model-per-tier: a first mate delegates + summarizes, so default it to
+    // Sonnet (not the heaviest model). Still overridable via the model pill.
+    openFreshDraftInPane(info.cwd, draft, { paneOverrides: { isOrchestrator: true, modelDefault: "claude-sonnet-5" } });
   });
   return btn;
 }
