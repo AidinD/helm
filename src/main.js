@@ -1161,6 +1161,14 @@ function startGoalRun({
     dispatchedBy: dispatch?.dispatchedBy || null,
     dispatchId: dispatch?.dispatchId || null,
     tier: dispatch?.tier || null,
+    // Which meta-home's dispatch queue this run's report belongs to. The
+    // goal-run history is a single GLOBAL file, but reports are per-meta-home;
+    // stamping this lets startup reconciliation resurrect a missing report only
+    // in the meta-home that actually owns it (else a run dispatched under one
+    // meta-home gets a spurious report written into every other one - harmless
+    // with a single stable meta-home, a real bug once it varies: tests, and
+    // future named mates).
+    dispatchMetaHome: dispatch ? resolveMetaHome() : null,
     startedAt: Date.now(),
     updatedAt: Date.now(),
   });
@@ -1827,7 +1835,7 @@ function startDispatchWatcher() {
     const existingReportIds = new Set(readReports(metaHome).map((r) => r.dispatchId));
     const liveIds = new Set(liveGoalRuns.keys());
     const now = Date.now();
-    for (const rec of recordsNeedingReport(loadGoalRunHistory(), existingReportIds, liveIds)) {
+    for (const rec of recordsNeedingReport(loadGoalRunHistory(), existingReportIds, liveIds, metaHome)) {
       writeReport(metaHome, buildReportFromRecord(rec, now));
     }
   } catch (err) {
