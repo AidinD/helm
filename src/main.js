@@ -562,6 +562,13 @@ ipcMain.handle("app:version", () => computeVersionString());
 // agree on the exact same path (a first mate is, by definition, a session
 // rooted here).
 function resolveMetaHome() {
+  // Test seam: MAESTRO_META_HOME_OVERRIDE lets an E2E point the dispatch queue
+  // (and first-mate detection) at an isolated temp dir, so a test dispatch is
+  // never raced/consumed by a separately-running dev instance watching the real
+  // meta-home. Unset in normal use, so real launches are unaffected.
+  if (process.env.MAESTRO_META_HOME_OVERRIDE) {
+    return process.env.MAESTRO_META_HOME_OVERRIDE;
+  }
   try {
     const stub = fs.readFileSync(path.join(os.homedir(), ".claude", "CLAUDE.md"), "utf8");
     const importMatch = stub.match(/^@(.+?CLAUDE\.md)\s*$/m);
