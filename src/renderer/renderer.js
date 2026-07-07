@@ -4941,7 +4941,7 @@ async function renderDashboardPage() {
   heading.append(h2, sub);
   const topbarActions = document.createElement("div");
   topbarActions.className = "dash-topbar-actions";
-  topbarActions.append(focusModeToggleEl(), startOrchestratorSessionBtnEl());
+  topbarActions.append(focusModeToggleEl());
   topbar.append(heading, topbarActions);
   page.append(topbar);
 
@@ -5031,35 +5031,6 @@ function focusModeToggleEl(rerender = renderDashboardPage) {
   return wrap;
 }
 
-// Replaces the old "open the orchestrator" affordance (which resumed one
-// privileged, ever-growing session) per PLAN.md's orchestrator-lifespan
-// redesign: this always starts a brand-new session, pre-pointed at
-// orchestrator-instructions.md, never resumed history. Rooted in the Claude
-// "meta home" (orchestrator:info's cwd) - the dir with the canonical CLAUDE.md
-// AND the cwd-keyed auto-memory, so the orchestrator actually starts with the
-// accumulated rules/memory in context. It's above every code project (not
-// Maestro, not a work repo), so it dispatches into whatever it names rather
-// than doing hands-on work in its own cwd (see orchestrator-instructions.md).
-function startOrchestratorSessionBtnEl() {
-  const btn = document.createElement("button");
-  btn.className = "text-btn";
-  btn.textContent = "+ New orchestrator session";
-  btn.title = "Starts a fresh session pointed at orchestrator-instructions.md - never resumes a prior one";
-  btn.addEventListener("click", async () => {
-    const info = await window.maestro.getOrchestratorInfo();
-    if (!info.ok) {
-      showToast("Couldn't resolve the orchestrator working dir - see console.");
-      console.error("[maestro] orchestrator:info failed:", info.error);
-      return;
-    }
-    navigateToPage("chat");
-    const draft = `Read ${info.instructionsPath} and act as an orchestrator for this session. You're rooted in the Claude meta-home (above any one code project), so your CLAUDE.md rules and accumulated memory are in context - survey the current state (your Jot board and the projects you're working on) and tell me what needs attention and what to dispatch. Do coordination and dispatch from here; do hands-on code work in the project it belongs to (a dispatched agent or a project-rooted session), not in this cwd.`;
-    // Model-per-tier: a first mate delegates + summarizes, so default it to
-    // Sonnet (not the heaviest model). Still overridable via the model pill.
-    openFreshDraftInPane(info.cwd, draft, { paneOverrides: { isOrchestrator: true, modelDefault: "claude-sonnet-5" } });
-  });
-  return btn;
-}
 
 // --- Needs you & in motion (merged attention queue) ------------------------
 // Variant A's key structural change: ONE prioritized list instead of two
@@ -8553,14 +8524,6 @@ function cmdkBuildCommands() {
       },
     });
   }
-  // "New orchestrator session" reuses the exact dashboard launcher behavior by
-  // building that button and clicking it (it self-navigates to chat + drops
-  // the orchestrator draft) - no duplicated orchestrator:info logic here.
-  cmds.push({
-    label: "New orchestrator session",
-    tag: "Action",
-    run: () => startOrchestratorSessionBtnEl().click(),
-  });
   const splitBtn = document.getElementById("splitToggle");
   if (splitBtn) {
     cmds.push({ label: "Toggle split view", tag: "Action", run: () => splitBtn.click() });
