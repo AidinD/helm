@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld("maestro", {
   setAttentionCount: (n) => ipcRenderer.invoke("attention:setCount", n),
   suggestModelEffort: (prompt) => ipcRenderer.invoke("suggest:modelEffort", prompt),
   getJotGoals: () => ipcRenderer.invoke("jot:goals"),
+  getJotBoardSummary: (projectPaths) => ipcRenderer.invoke("jot:boardSummary", { projectPaths }),
   addJotSubtask: (parentId, text) => ipcRenderer.invoke("jot:addSubtask", { parentId, text }),
   getTranscript: (ids) => ipcRenderer.invoke("transcript:get", ids),
   listSkills: (cwd) => ipcRenderer.invoke("skills:list", cwd),

@@ -90,6 +90,25 @@ try {
   // Jump-in handlers exist (clicking a mate card / second mate opens a session).
   assert(await app.eval(`typeof jumpIntoFirstMate === "function" && typeof jumpIntoSecondMate === "function"`), "jump-in handlers are wired");
 
+  // Header controls + Direct start-session button.
+  assert((await count("#dashFleetSlot .fleet-mate-card:not(.direct) .fleet-icon-btn")) >= 4, "each first mate has rename + retire icons");
+  assert((await count("#dashFleetSlot .fleet-start-btn")) === 1, "the Direct column has a start-session button");
+  assert((await count("#dashFleetSlot .fleet-mate-card .fleet-retire-btn")) === 1, "the work-wrapped mate's nudge offers a retire button");
+
+  // Trigger layer 3: re-render with an URGENT queued task on the work-wrapped
+  // mate's project -> the nudge dampens to 'hold' with no retire button.
+  await app.eval(`(() => {
+    const mates = [ { mateId:"m0", slot:0, name:"Captain Nemo", sessionId:null }, { mateId:"m1", slot:1, name:"Hector Barbossa", sessionId:null } ];
+    const secondMates = [ { secondMateId:"s2", firstMateId:"m1", name:"jot", projectPath:"D:/Repo/jot", sessionId:null, crew:[ { goalRunId:"c2", goal:"self-heal", status:"done", commitCount:0, iterations:[{}] } ] } ];
+    const board = { "D:/Repo/jot": { matched:true, category:"Jot", open:1, inProgress:0, minActivePriority:-3 } };
+    document.getElementById("dashFleetSlot").replaceChildren(dashboardFleetSection(mates, secondMates, board));
+    return true;
+  })()`);
+  await wait(200);
+  assert((await count("#dashFleetSlot .fleet-nudge.hold")) === 1, "an urgent queued task dampens the work-wrapped nudge to 'hold'");
+  assert((await count("#dashFleetSlot .fleet-nudge.hold .fleet-retire-btn")) === 0, "the dampened 'hold' nudge offers no retire button");
+  assert((await count("#dashFleetSlot .fleet-nudge.done")) === 0, "the 'done' nudge is suppressed while urgent work is queued");
+
   const errors = app.getConsoleErrors();
   assert(errors.length === 0, `no console errors (got ${errors.length})`);
   for (const e of errors) {

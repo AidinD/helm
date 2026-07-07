@@ -64,6 +64,10 @@ export function loadJot(jotConfig = {}) {
       review: 0,
       done: 0,
       total: 0,
+      // Lowest priority number among still-active (open/in-progress) work -
+      // LOWER = more urgent in Jot's convention. null when nothing is active.
+      // Drives the Fleet retire nudge's "critical work still queued" dampening.
+      minActivePriority: null,
       // Earliest deadline among this category's still-open work (null if
       // none). Drives deadline-aware attention sorting in sessions.js.
       nearestDeadline: null,
@@ -82,6 +86,12 @@ export function loadJot(jotConfig = {}) {
       entry.open += 1;
     } else if (todo.status === "done") {
       entry.done += 1;
+    }
+    if (todo.status === "open" || todo.status === "in-progress") {
+      const pr = typeof todo.priority === "number" ? todo.priority : 0;
+      if (entry.minActivePriority === null || pr < entry.minActivePriority) {
+        entry.minActivePriority = pr;
+      }
     }
     if (todo.status !== "done") {
       entry.total += 1;
@@ -234,6 +244,27 @@ export function formatJotSummaryForClassifier(sessionJot) {
     sessionJot.open > 0 ? `${sessionJot.open} open` : null,
   ].filter(Boolean);
   return `${sessionJot.category} (${parts.join(", ") || "no open items"})`;
+}
+
+/**
+ * Per-project Jot board summary for the Fleet's retire nudge (trigger layer 3).
+ * Maps each project path to its Jot category (deterministic repoPath match) and
+ * reports the active work there: open/in-progress counts + the lowest active
+ * priority (LOWER = more urgent). The renderer uses this to strengthen the
+ * "work wrapped" nudge when a mate's boards are clear, and to DAMPEN it (not
+ * suggest retiring) when an urgent task is still queued. A path with no matching
+ * category is { matched: false } - neutral, not an error.
+ */
+export function projectBoardSummary(projectPaths, jotConfig = {}) {
+  const idx = loadJot(jotConfig);
+  const out = {};
+  for (const p of projectPaths || []) {
+    const cat = idx.ok ? idx.matchByTitle("", null, p) : null;
+    out[p] = cat
+      ? { matched: true, category: cat.name, open: cat.open, inProgress: cat.inProgress, minActivePriority: cat.minActivePriority }
+      : { matched: false, open: 0, inProgress: 0, minActivePriority: null };
+  }
+  return out;
 }
 
 function normalize(str) {
