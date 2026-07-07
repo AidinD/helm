@@ -1,5 +1,41 @@
 # Decisions
 
+## 2026-07-07 - Named mates, second-mate-as-session, and fleet-aware coordination (the model made concrete)
+
+This day turned the 2026-07-06 tiered model into a built, reviewed Fleet.
+Several decisions refined or corrected that model through live use.
+
+**Named mates, not work/private domains (soft split).**
+The 2026-07-06 model assumed two first mates split by life-domain (work/private).
+In practice the captain works fluidly across topics from one place, so a hard domain firewall was wrong.
+Decision: two FIXED first-mate slots that always exist, each born with a random sea-captain name (film/games/lit) and renameable; the captain jumps into one and declares its focus, soft not firewalled.
+Rejected: deriving a session's domain from its projects, or two separate meta-home roots, or a hard work/private classification - all impose a boundary the captain doesn't want.
+A saturated/drained mate is retired (kept as a `retired` record so its historical runs stay named) and a fresh one respawns in the same slot.
+
+**A second mate is a SESSION, not a background task (corrected a build-time conflation).**
+The first dispatch build labelled the headless Autopilot runs `tier:"second-mate"`.
+But in the agreed model a second mate is a per-project SESSION (the judgment tier the captain can jump into and steer), and the autonomous run is CREW beneath it.
+Decision: a second mate is DERIVED per (firstMate, project) from run history (deterministic id, no parallel store to drift), owns its crew (the dispatched runs), and is jumpable; dispatched runs were relabelled `tier:"crew"`.
+Lesson recorded (Flow): don't let the easiest-to-build implementation silently redefine a term already agreed - flag it.
+
+**Direct lists SESSIONS per session, not per project.**
+The captain's real sessions almost all live at the meta-home (one cwd) across many topics, so grouping the Direct column by project-cwd collapsed them all into nothing and excluded meta-home sessions entirely.
+Decision (his call): Direct lists every non-archived session as its own resumable node, named by title - meta-home sessions included, no cwd grouping.
+
+**First-mate role loaded as system context; the "+ New orchestrator session" button removed.**
+With named mates, the two mates ARE the only orchestrator sessions, so a separate button that spun up a nameless third one was redundant and off-model - removed.
+It was also the only place that injected the orchestrator bootstrap prompt, so a fresh first mate now boots with `first-mate-instructions.md` appended via `--append-system-prompt` (system context, not a visible draft) - the composer stays empty for the captain's first prompt, per spec.
+
+**Fleet-aware focus survey (solves the two-mates coordination gap).**
+The two first mates are independent sessions with no shared context, and `maestro_collect_reports` is scoped to a mate's OWN dispatches - so mate B couldn't see what A had in flight and could propose overlapping focus.
+Decision: a `maestro_fleet_state` MCP tool exposes a compact cross-mate view (both mates + every mate's dispatched work, tagged `yours`), which the app snapshots to disk (staying the single authority); the first-mate instructions tell the mate to survey it and propose COMPLEMENTARY focus.
+Rejected: giving the mates shared context - they're deliberately independent, refreshed-and-discarded sessions.
+
+**Smaller, durable calls.**
+Never use native `window.prompt`/`confirm` (disabled in Electron anyway, and off-theme) - always custom in-app UI.
+An unclassified Jot list belongs to "All" only (dimmed under Work/Private), rather than showing bright in both.
+A session's live Claude Code sub-agents (Task tool with no tool_result yet) are surfaced as crew under the session.
+
 ## 2026-07-05 - Goal runs require a native claude.exe; reject shell-shim installs and fail loud
 
 A same-day spawn-fallback hardening (route the prompt via stdin in shell mode, to keep goal/notes text out of cmd.exe) was itself put through a pre-ship review and then reverted.
