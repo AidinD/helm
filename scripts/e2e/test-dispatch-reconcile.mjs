@@ -31,6 +31,22 @@ assert(!need.some((r) => r.dispatchId === "d3"), "a record that already has a re
 assert(!need.some((r) => r.dispatchId === null), "a direct (non-dispatched) run is skipped");
 assert(!need.some((r) => r.goalRunId === "g5"), "a still-live run is skipped (its own onComplete will report)");
 
+// --- recordsNeedingReport with a meta-home filter -----------------------------
+// The global history holds records dispatched under different meta-homes; only
+// the ones belonging to THIS meta-home should be reconciled here.
+const mhRecords = [
+  { goalRunId: "h1", dispatchId: "e1", status: "done", dispatchMetaHome: "/home/A" }, // mine
+  { goalRunId: "h2", dispatchId: "e2", status: "running", dispatchMetaHome: "/home/B" }, // other meta-home
+  { goalRunId: "h3", dispatchId: "e3", status: "done" }, // legacy record, no meta-home stamp
+];
+const mineOnly = recordsNeedingReport(mhRecords, new Set(), new Set(), "/home/A");
+const mineIds = mineOnly.map((r) => r.dispatchId).sort();
+assert(mineIds.length === 1 && mineIds[0] === "e1", "with a meta-home filter, only records dispatched under it are reconciled (got: " + JSON.stringify(mineIds) + ")");
+assert(!mineOnly.some((r) => r.dispatchMetaHome === "/home/B"), "a record dispatched under another meta-home is skipped");
+assert(!mineOnly.some((r) => r.dispatchId === "e3"), "a legacy record with no meta-home stamp is skipped when a filter is passed (isolated meta-home stays clean)");
+const noFilter = recordsNeedingReport(mhRecords, new Set(), new Set());
+assert(noFilter.length === 3, "with NO meta-home filter, behavior is unchanged - all report-less dispatched records qualify (back-compat)");
+
 // --- buildReportFromRecord ----------------------------------------------------
 const now = 12345;
 

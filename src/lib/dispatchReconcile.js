@@ -15,10 +15,24 @@
  * Records that were dispatched (have a dispatchId) but have no report yet AND
  * are not currently live (a live run's own onComplete will still report). These
  * need a synthesized report on startup.
+ *
+ * The goal-run history is a single GLOBAL file, but reports are per-meta-home.
+ * When `metaHome` is given, only records dispatched under THAT meta-home are
+ * reconciled - so a run dispatched under meta-home A never gets a spurious
+ * report written into meta-home B (harmless with one stable meta-home, a real
+ * bug once it varies: E2E tests use a fresh temp meta-home each run, and named
+ * mates may root elsewhere). Records predating this field (no dispatchMetaHome)
+ * are only reconciled when no metaHome filter is passed, so an isolated
+ * meta-home stays clean.
  */
-export function recordsNeedingReport(records, existingReportIds, liveGoalRunIds) {
+export function recordsNeedingReport(records, existingReportIds, liveGoalRunIds, metaHome) {
   return (records || []).filter(
-    (rec) => rec && rec.dispatchId && !existingReportIds.has(rec.dispatchId) && !liveGoalRunIds.has(rec.goalRunId)
+    (rec) =>
+      rec &&
+      rec.dispatchId &&
+      !existingReportIds.has(rec.dispatchId) &&
+      !liveGoalRunIds.has(rec.goalRunId) &&
+      (metaHome == null || rec.dispatchMetaHome === metaHome)
   );
 }
 

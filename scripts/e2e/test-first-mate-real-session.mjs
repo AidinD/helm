@@ -89,23 +89,26 @@ try {
   log("mate reply (tail):", mateOut.trim().slice(-160).replace(/\s+/g, " "));
   assert(!/TOOL-BLOCKED/.test(mateOut), "the real first-mate session was NOT permission-blocked from calling the dispatch tool");
 
-  // The app watcher should have accepted + launched the dispatched run; poll for
-  // its report to land.
+  // The mate replies with ONLY the dispatchId. Poll for THIS dispatch's report
+  // specifically (reports/<dispatchId>.json), never files[0]: the goal-run
+  // history is a global file, so a prior run's interrupted record could seed an
+  // unrelated reconciled report into any meta-home - reading the first file
+  // would race onto that stale report instead of this run's real one.
+  const dispatchId = (mateOut.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i) || [])[0];
+  assert(!!dispatchId, "the mate replied with a dispatchId (a UUID)");
+  const reportFile = dispatchId ? path.join(reportsDir, `${dispatchId}.json`) : null;
   let report = null;
   const deadline = Date.now() + 240000;
   while (Date.now() < deadline) {
-    if (fs.existsSync(reportsDir)) {
-      const files = fs.readdirSync(reportsDir).filter((f) => f.endsWith(".json"));
-      if (files.length > 0) {
-        report = JSON.parse(fs.readFileSync(path.join(reportsDir, files[0]), "utf8"));
-        break;
-      }
+    if (reportFile && fs.existsSync(reportFile)) {
+      report = JSON.parse(fs.readFileSync(reportFile, "utf8"));
+      break;
     }
     await wait(4000);
   }
   assert(report != null, "the dispatched run (from a REAL first-mate session) reported back");
   if (report) {
-    log("report:", JSON.stringify({ status: report.status, project: report.project, commits: report.changed?.commitCount, needs: report.needsCaptain }));
+    log("report:", JSON.stringify({ status: report.status, dispatchedBy: report.dispatchedBy, reconciled: report.reconciled, project: report.project, commits: report.changed?.commitCount, needs: report.needsCaptain }));
     assert(report.dispatchedBy === "mate-real", "the report is attributed to the real mate");
     assert(["done", "escalated", "error"].includes(report.status), "the dispatched run reached a terminal status");
   }
