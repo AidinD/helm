@@ -17,6 +17,8 @@
   --waiting: #e0b341;
   --active: #4ea1d9;
   --idle: #6a6a6a;
+  --good: #4a9d5b;
+  --good-bright: #6fc07f;
 }
 
 * {
@@ -3258,7 +3260,7 @@ button.primary {
   flex: 1;
   min-width: 0;
 }
-.fleet-mate-name2 {
+.fleet-mate-name {
   font-weight: 600;
   font-size: 14px;
   color: var(--text);
@@ -3348,7 +3350,7 @@ button.primary {
   background: color-mix(in srgb, var(--waiting) 14%, transparent);
 }
 .fleet-nudge.done {
-  background: color-mix(in srgb, #4a9d5b 16%, transparent);
+  background: color-mix(in srgb, var(--good) 16%, transparent);
 }
 .fleet-nudge.hold {
   background: color-mix(in srgb, var(--text-faint) 14%, transparent);
@@ -3432,7 +3434,7 @@ button.primary {
 .confirm-ok {
   border: 1px solid var(--accent);
   background: var(--accent);
-  color: #fff;
+  color: #1a1a1a;
   border-radius: 7px;
   padding: 6px 12px;
   font-size: 12px;
@@ -3473,7 +3475,7 @@ button.primary {
   color: var(--waiting);
 }
 .fleet-nudge.done .fleet-nudge-tag {
-  color: #4a9d5b;
+  color: var(--good);
 }
 .fleet-retire-btn {
   border: 1px solid var(--accent);
@@ -3484,7 +3486,7 @@ button.primary {
   cursor: pointer;
   white-space: nowrap;
   background: var(--accent);
-  color: #fff;
+  color: #1a1a1a;
 }
 .fleet-retire-btn:hover {
   filter: brightness(1.08);
@@ -3553,8 +3555,8 @@ button.primary {
   color: var(--active);
 }
 .fleet-badge.ok {
-  background: color-mix(in srgb, #4a9d5b 20%, transparent);
-  color: #6fc07f;
+  background: color-mix(in srgb, var(--good) 20%, transparent);
+  color: var(--good-bright);
 }
 .fleet-badge.need {
   background: color-mix(in srgb, var(--waiting) 20%, transparent);

@@ -69,7 +69,7 @@ try {
   assert((await count("#dashFleetSlot .fleet-mate-card")) === 3, "three mate cards total");
   assert((await count("#dashFleetSlot .fleet-mate-card.direct")) === 1, "one of them is the Direct card");
 
-  const names = await app.eval(`[...document.querySelectorAll("#dashFleetSlot .fleet-mate-name2")].map(e => e.textContent)`);
+  const names = await app.eval(`[...document.querySelectorAll("#dashFleetSlot .fleet-mate-name")].map(e => e.textContent)`);
   assert(names.includes("Captain Nemo") && names.includes("Hector Barbossa"), "both first mates render by name (got: " + JSON.stringify(names) + ")");
   assert(names.includes("Captain"), "the Direct card is titled Captain");
 
@@ -118,7 +118,7 @@ try {
     state.sessions = [
       { sessionId:"S1", cliSessionId:"S1", cwd:"D:/Repo/jot", status:"idle", lastActivityAt:100 },
       { sessionId:"S2", cliSessionId:"S2", cwd:"D:/Repo/jot", status:"idle", lastActivityAt:200 },
-      { sessionId:"S3", cliSessionId:"S3", cwd:"D:/Repo/jot", status:"archived", lastActivityAt:999 },
+      { sessionId:"S3", cliSessionId:"S3", cwd:"D:/Repo/jot", isArchived:true, lastActivityAt:999 },
     ];
     const hit = mostRecentSessionForCwd("D:/Repo/jot");
     const none = mostRecentSessionForCwd("D:/Repo/does-not-exist");
