@@ -3350,6 +3350,27 @@ button.primary {
 .fleet-nudge.done {
   background: color-mix(in srgb, #4a9d5b 16%, transparent);
 }
+.fleet-nudge.hold {
+  background: color-mix(in srgb, var(--text-faint) 14%, transparent);
+}
+.fleet-nudge.hold .fleet-nudge-tag {
+  color: var(--text-dim);
+}
+.fleet-start-btn {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-dim);
+  border-radius: 7px;
+  padding: 4px 9px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.fleet-start-btn:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
 .fleet-nudge-txt {
   flex: 1;
   color: var(--text);

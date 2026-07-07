@@ -4275,13 +4275,16 @@ function dashboardNewSessionFingerprint() {
   return [cwds, dashboardSelectedChip, dashboardFocusMode].join("##");
 }
 
-function dashboardFleetFingerprint(mates = [], secondMates = []) {
+function dashboardFleetFingerprint(mates = [], secondMates = [], boardSummary = {}) {
   const runsFp = [...goalRuns.values()]
     .map((r) => `${r.goalRunId}:${r.dispatchedBy || "-"}:${r.status}:${r.iterations?.length || 0}:${r.escalation ? 1 : 0}`)
     .join("|");
   const matesFp = mates.map((m) => `${m.mateId}:${m.name}:${m.sessionId || "-"}`).join(",");
   const smFp = secondMates.map((s) => `${s.secondMateId}:${s.name}:${s.sessionId || "-"}:${s.crew.length}`).join(",");
-  return [runsFp, matesFp, smFp].join("##");
+  const boardFp = Object.entries(boardSummary)
+    .map(([p, b]) => `${p}:${b.open}:${b.inProgress}:${b.minActivePriority}`)
+    .join(",");
+  return [runsFp, matesFp, smFp, boardFp].join("##");
 }
 
 // The Fleet: the orchestration model made visible as three columns (the locked
@@ -4306,7 +4309,7 @@ function crewRunning(r) {
   return r.status === "running" && !r.escalation;
 }
 
-function dashboardFleetSection(mates = [], secondMates = []) {
+function dashboardFleetSection(mates = [], secondMates = [], boardSummary = {}) {
   const section = document.createElement("section");
   section.className = "dash-board dash-fleet";
   const liveCount = [...goalRuns.values()].filter((r) => crewRunning(r)).length;
@@ -4318,7 +4321,7 @@ function dashboardFleetSection(mates = [], secondMates = []) {
   // One column per active first mate (ordered by slot), then Direct.
   for (const mate of mates) {
     const sms = secondMates.filter((s) => s.firstMateId === mate.mateId);
-    cols.append(fleetColumnEl(`First mate · slot ${(mate.slot ?? 0) + 1}`, fleetMateCardEl(mate, sms), false));
+    cols.append(fleetColumnEl(`First mate · slot ${(mate.slot ?? 0) + 1}`, fleetMateCardEl(mate, sms, boardSummary), false));
   }
   const directSms = secondMates.filter((s) => s.firstMateId === "direct");
   cols.append(fleetColumnEl("Direct · your own work", fleetDirectCardEl(directSms), true));
@@ -4342,7 +4345,7 @@ function fleetColumnEl(label, cardEl, isDirect) {
 // A first-mate card: anchor + name (+ rename/retire), context gauge if its
 // session is open, a dual-trigger retire nudge (saturated OR work wrapped), and
 // its second mates.
-function fleetMateCardEl(mate, sms) {
+function fleetMateCardEl(mate, sms, boardSummary = {}) {
   const card = document.createElement("div");
   card.className = "fleet-mate-card";
   card.addEventListener("click", () => jumpIntoFirstMate(mate));
@@ -4377,7 +4380,17 @@ function fleetMateCardEl(mate, sms) {
       window.maestro.renameMate(mate.mateId, next.trim()).then(() => fillDashboardSections({ force: true }));
     }
   });
-  actions.append(renameBtn);
+  const retireBtn = document.createElement("button");
+  retireBtn.className = "fleet-icon-btn";
+  retireBtn.title = "Retire this mate & respawn a fresh one";
+  retireBtn.textContent = "↻";
+  retireBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (window.confirm(`Retire ${mate.name} and spin up a fresh mate in its place?`)) {
+      window.maestro.retireMate(mate.mateId).then(() => fillDashboardSections({ force: true }));
+    }
+  });
+  actions.append(renameBtn, retireBtn);
   top.append(anchor, idBox, actions);
   card.append(top);
 
@@ -4402,16 +4415,28 @@ function fleetMateCardEl(mate, sms) {
     card.append(gauge);
   }
 
-  // Dual-trigger retire nudge: saturated (context) OR work wrapped (dispatched
-  // crew all reported back, nothing live, nothing awaiting the captain).
+  // Retire nudge - three triggers, in priority order:
+  //  ctx   : context saturated (the hard reason to hand off) - always wins.
+  //  hold  : work wrapped BUT an urgent task is still queued on a project the
+  //          mate works (Jot minActivePriority < 0) - DAMPEN: advise against
+  //          retiring, don't offer the button.
+  //  done  : work wrapped and nothing urgent - a clean moment to retire,
+  //          strengthened when the boards are entirely clear.
   const crew = sms.flatMap((s) => s.crew.map(crewLiveRun));
   const anyLive = crew.some(crewRunning);
   const anyNeeds = crew.some(crewNeedsCaptain);
   const dispatchedEver = crew.length > 0;
   const saturated = pct != null && pct >= FIRST_MATE_HANDOFF_PCT;
   const workWrapped = dispatchedEver && !anyLive && !anyNeeds;
-  if (saturated || workWrapped) {
-    card.append(fleetNudgeEl(mate, saturated ? "ctx" : "done", pct));
+  const boards = [...new Set(sms.map((s) => s.projectPath).filter(Boolean))].map((p) => boardSummary[p]).filter((b) => b && b.matched);
+  const hasUrgent = boards.some((b) => typeof b.minActivePriority === "number" && b.minActivePriority < 0);
+  const boardsClear = boards.length > 0 && boards.every((b) => b.open + b.inProgress === 0);
+  if (saturated) {
+    card.append(fleetNudgeEl(mate, "ctx", { pct }));
+  } else if (workWrapped && hasUrgent) {
+    card.append(fleetNudgeEl(mate, "hold", { boards }));
+  } else if (workWrapped) {
+    card.append(fleetNudgeEl(mate, "done", { boardsClear }));
   }
 
   // Second mates.
@@ -4431,7 +4456,7 @@ function fleetMateCardEl(mate, sms) {
   return card;
 }
 
-function fleetNudgeEl(mate, kind, pct) {
+function fleetNudgeEl(mate, kind, opts = {}) {
   const nudge = document.createElement("div");
   nudge.className = "fleet-nudge " + kind;
   nudge.addEventListener("click", (e) => e.stopPropagation());
@@ -4439,21 +4464,34 @@ function fleetNudgeEl(mate, kind, pct) {
   txt.className = "fleet-nudge-txt";
   const tag = document.createElement("span");
   tag.className = "fleet-nudge-tag";
+
+  let offerRetire = true;
   if (kind === "ctx") {
     tag.textContent = "Getting full";
-    txt.append(tag, document.createTextNode(` ${mate.name} is ${pct}% full - hand off to a fresh mate.`));
+    txt.append(tag, document.createTextNode(` ${mate.name} is ${opts.pct}% full - hand off to a fresh mate.`));
+  } else if (kind === "hold") {
+    // Dampened: urgent work is still queued - advise against retiring, no button.
+    offerRetire = false;
+    tag.textContent = "Hold off";
+    const proj = opts.boards?.find((b) => typeof b.minActivePriority === "number" && b.minActivePriority < 0);
+    const where = proj ? ` ${proj.category}` : " a project";
+    txt.append(tag, document.createTextNode(` ${mate.name}'s crew is idle, but${where} still has an urgent task open - maybe finish that before retiring.`));
   } else {
     tag.textContent = "Work wrapped";
-    txt.append(tag, document.createTextNode(` ${mate.name}'s crew reported back and nothing's in flight - good moment to retire.`));
+    const clear = opts.boardsClear ? " and its boards are clear" : " and nothing's in flight";
+    txt.append(tag, document.createTextNode(` ${mate.name}'s crew reported back${clear} - good moment to retire.`));
   }
-  const btn = document.createElement("button");
-  btn.className = "fleet-retire-btn";
-  btn.textContent = "Retire & respawn";
-  btn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    window.maestro.retireMate(mate.mateId).then(() => fillDashboardSections({ force: true }));
-  });
-  nudge.append(txt, btn);
+  nudge.append(txt);
+  if (offerRetire) {
+    const btn = document.createElement("button");
+    btn.className = "fleet-retire-btn";
+    btn.textContent = "Retire & respawn";
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      window.maestro.retireMate(mate.mateId).then(() => fillDashboardSections({ force: true }));
+    });
+    nudge.append(btn);
+  }
   return nudge;
 }
 
@@ -4568,7 +4606,16 @@ function fleetDirectCardEl(sms) {
   role.className = "fleet-mate-role";
   role.textContent = "work you drive yourself";
   idBox.append(name, role);
-  top.append(anchor, idBox);
+  const startBtn = document.createElement("button");
+  startBtn.className = "fleet-start-btn";
+  startBtn.textContent = "+ Session";
+  startBtn.title = "Start a fresh session here (you pick the project)";
+  startBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    openFreshDraftInPane("", "");
+    navigateToPage("chat");
+  });
+  top.append(anchor, idBox, startBtn);
   card.append(top);
 
   const list = document.createElement("div");
@@ -4652,10 +4699,15 @@ async function fillDashboardSections({ force = false } = {}) {
   const [matesResult, secondMatesResult] = await Promise.all([window.maestro.listMates(), window.maestro.listSecondMates()]);
   const activeMatesList = matesResult?.ok ? matesResult.active : [];
   const secondMatesList = secondMatesResult?.ok ? secondMatesResult.secondMates : [];
-  const fleetFp = dashboardFleetFingerprint(activeMatesList, secondMatesList);
+  // Trigger layer 3: the Jot board state of the projects the mates work, so the
+  // retire nudge can strengthen (boards clear) or dampen (urgent task queued).
+  const projectPaths = [...new Set(secondMatesList.map((s) => s.projectPath).filter(Boolean))];
+  const boardResult = projectPaths.length ? await window.maestro.getJotBoardSummary(projectPaths) : null;
+  const boardSummary = boardResult?.ok ? boardResult.summary : {};
+  const fleetFp = dashboardFleetFingerprint(activeMatesList, secondMatesList, boardSummary);
   if (force || fleetFp !== dashSectionFingerprints.fleet) {
     dashSectionFingerprints.fleet = fleetFp;
-    const fleet = dashboardFleetSection(activeMatesList, secondMatesList);
+    const fleet = dashboardFleetSection(activeMatesList, secondMatesList, boardSummary);
     document.getElementById("dashFleetSlot").replaceChildren(...(fleet ? [fleet] : []));
   }
 

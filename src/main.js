@@ -6,7 +6,7 @@ import crypto from "node:crypto";
 import { execFile, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { readAllSessions, enrichWithJot, setSessionArchived, forkTranscriptAtUserMessage, switchSessionRootFolder } from "./lib/sessions.js";
-import { loadJot, loadGoals, addSubtask, formatJotSummaryForClassifier } from "./lib/jot.js";
+import { loadJot, loadGoals, addSubtask, formatJotSummaryForClassifier, projectBoardSummary } from "./lib/jot.js";
 import { loadConfig, writeConfig } from "./lib/config.js";
 import { startSession } from "./lib/launcher.js";
 import { suggestModelEffort } from "./lib/suggest.js";
@@ -268,6 +268,14 @@ ipcMain.handle("suggest:modelEffort", (_event, prompt) => suggestModelEffort(pro
 ipcMain.handle("jot:goals", () => {
   const config = loadConfig();
   return loadGoals(config.jot || {});
+});
+
+// --- Fleet retire nudge, trigger layer 3: per-project Jot board summary so a
+// mate's "work wrapped" nudge can strengthen (boards clear) or dampen (an
+// urgent task still queued) based on the projects its second mates work. ---
+ipcMain.handle("jot:boardSummary", (_event, { projectPaths }) => {
+  const config = loadConfig();
+  return { ok: true, summary: projectBoardSummary(projectPaths || [], config.jot || {}) };
 });
 
 // --- Goal breakdown: add a subtask under an existing top-level goal, written
