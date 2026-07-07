@@ -4309,6 +4309,20 @@ function crewRunning(r) {
   return r.status === "running" && !r.escalation;
 }
 
+// Collapse to a single pane (the primary). Fleet actions open there and never
+// split - jumping in / starting a session is "take me to this", not "open
+// beside". Drops any extra pane's DOM so you land in a clean single view.
+function ensureSinglePane() {
+  if (panes.length > 1) {
+    for (let i = 1; i < panes.length; i++) {
+      stopLiveStatsTicker(i);
+    }
+    panes.length = 1;
+    focusedPaneIndex = 0;
+    renderWorkspace();
+  }
+}
+
 // A small themed, centered confirm modal (never the native window.confirm -
 // Aidin's standing rule). Calls onConfirm only if the user confirms; clicking
 // the backdrop or Cancel dismisses. Reusable for any destructive action.
@@ -4629,12 +4643,25 @@ function fleetSecondMateEl(sm) {
   body.className = "fleet-branch-body";
   body.addEventListener("click", () => jumpIntoSecondMate(sm));
 
+  // The session behind this node (Direct session nodes + bound second mates).
+  const sess = sm.sessionId ? state.sessions.find((s) => (s.cliSessionId || s.sessionId) === sm.sessionId) : null;
+
   const topRow = document.createElement("div");
   topRow.className = "fleet-branch-top";
   const badge = document.createElement("span");
-  const badgeKind = anyNeeds ? "need" : anyLive ? "run" : "ok";
+  // A session node reflects the SESSION's own status (matches the "needs you /
+  // in motion" list above); a run-derived node reflects its crew.
+  let badgeKind, badgeText;
+  if (sm.isSessionNode) {
+    const st = sess?.status;
+    badgeKind = st === "waiting" ? "need" : st === "active" ? "run" : "ok";
+    badgeText = st === "waiting" ? "needs you" : st === "active" ? "working" : "idle";
+  } else {
+    badgeKind = anyNeeds ? "need" : anyLive ? "run" : "ok";
+    badgeText = anyNeeds ? "needs you" : anyLive ? "busy" : "idle";
+  }
   badge.className = "fleet-badge " + badgeKind;
-  badge.textContent = anyNeeds ? "needs you" : anyLive ? "busy" : "idle";
+  badge.textContent = badgeText;
   const proj = document.createElement("span");
   proj.className = "fleet-branch-proj";
   proj.textContent = sm.name;
@@ -4645,7 +4672,18 @@ function fleetSecondMateEl(sm) {
   const now = document.createElement("div");
   now.className = "fleet-branch-now";
   const liveN = crew.filter(crewRunning).length;
-  if (liveN > 0) {
+  if (sm.isSessionNode) {
+    const st = sess?.status;
+    if (st === "active") {
+      const spin = document.createElement("span");
+      spin.className = "fleet-spin";
+      now.append(spin, document.createTextNode("working · "));
+    } else if (st === "waiting") {
+      now.append(document.createTextNode("waiting on you · "));
+    } else {
+      now.append(document.createTextNode("idle · "));
+    }
+  } else if (liveN > 0) {
     const spin = document.createElement("span");
     spin.className = "fleet-spin";
     now.append(spin, document.createTextNode(`${liveN} crew working · `));
@@ -4661,9 +4699,8 @@ function fleetSecondMateEl(sm) {
   now.append(jump);
   body.append(topRow, now);
   head.append(chev, body);
-  // Archive: only for a second mate backed by a real session (that's what there
-  // is to archive - a run-derived node with no session has nothing to archive).
-  const backingSession = sm.sessionId ? state.sessions.find((s) => (s.cliSessionId || s.sessionId) === sm.sessionId) : null;
+  // Archive: only for a second mate backed by a real session.
+  const backingSession = sess;
   if (backingSession) {
     const archiveBtn = document.createElement("button");
     archiveBtn.className = "fleet-archive-btn";
@@ -4749,7 +4786,8 @@ function fleetDirectCardEl(sms) {
   startBtn.title = "Start a fresh session here (you pick the project)";
   startBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    openFreshDraftInPane("", "");
+    ensureSinglePane();
+    openFreshDraftInPane("", "", { forceIndex: 0 });
     navigateToPage("chat");
   });
   top.append(anchor, idBox, startBtn);
@@ -4775,6 +4813,7 @@ function fleetDirectCardEl(sms) {
 // fresh orchestrator session (meta-home root, Sonnet, tagged with its mateId so
 // session:start attaches the dispatch tools and the session binds back to it).
 function jumpIntoFirstMate(mate) {
+  ensureSinglePane();
   const existing = mate.sessionId ? state.sessions.find((s) => (s.cliSessionId || s.sessionId) === mate.sessionId) : null;
   if (existing) {
     // Always land in the primary pane (0), overwriting it - never split. Jumping
@@ -4810,6 +4849,7 @@ function mostRecentSessionForCwd(cwd) {
 // mates, whose sessionId was never bound - they used to always open fresh);
 // else start a fresh one rooted in the project (Opus, tagged so it binds back).
 function jumpIntoSecondMate(sm) {
+  ensureSinglePane();
   const bound = sm.sessionId ? state.sessions.find((s) => (s.cliSessionId || s.sessionId) === sm.sessionId) : null;
   const existing = bound || mostRecentSessionForCwd(sm.projectPath);
   if (existing) {
