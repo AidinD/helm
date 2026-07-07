@@ -145,6 +145,22 @@ try {
   assert(aug.hasPS1 && aug.name === "Fix the widget", "each session becomes a resumable Direct node named by its title (got " + JSON.stringify(aug) + ")");
   assert(aug.directCount === 2, "two sessions in the same cwd list as TWO nodes (not collapsed) - 'list sessions, not projects'");
 
+  // A session node reflects the SESSION's status (not "crew idle"), matching the
+  // needs-you list above.
+  const badges = await app.eval(`(() => {
+    const saved = state.sessions;
+    state.sessions = [
+      { sessionId:"W1", cliSessionId:"W1", cwd:"D:/Repo/w", title:"Waiting one", status:"waiting", lastActivityAt:1 },
+      { sessionId:"A1", cliSessionId:"A1", cwd:"D:/Repo/a", title:"Active one", status:"active", lastActivityAt:1 },
+    ];
+    const w = fleetSecondMateEl({ secondMateId:"sw", firstMateId:"direct", projectPath:"D:/Repo/w", name:"Waiting one", sessionId:"W1", crew:[], isSessionNode:true }).querySelector(".fleet-badge").textContent;
+    const a = fleetSecondMateEl({ secondMateId:"sa", firstMateId:"direct", projectPath:"D:/Repo/a", name:"Active one", sessionId:"A1", crew:[], isSessionNode:true }).querySelector(".fleet-badge").textContent;
+    state.sessions = saved;
+    return { w, a };
+  })()`);
+  assert(badges.w === "needs you", "a session node with a waiting session shows 'needs you' (got " + JSON.stringify(badges) + ")");
+  assert(badges.a === "working", "a session node with an active session shows 'working'");
+
   // Rename is inline (native window.prompt is disabled in Electron + unwanted):
   // clicking the rename icon shows an input, not a dialog.
   await app.eval(`document.querySelector("#dashFleetSlot .fleet-mate-card:not(.direct) .fleet-icon-btn").click(); true`);
