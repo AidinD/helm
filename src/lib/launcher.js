@@ -47,7 +47,7 @@ export function resolveClaudeBinary() {
  * Returns { child, done } where `done` resolves with a summary once the process
  * exits. Emits normalized events: { kind, ...fields }.
  */
-export function startSession({ cwd, prompt, model, effort, permissionMode, resumeSessionId, onEvent, mcpConfig, allowedTools }) {
+export function startSession({ cwd, prompt, model, effort, permissionMode, resumeSessionId, onEvent, mcpConfig, allowedTools, appendSystemPrompt }) {
   const args = [
     "-p",
     prompt,
@@ -60,6 +60,14 @@ export function startSession({ cwd, prompt, model, effort, permissionMode, resum
   }
   if (effort) {
     args.push("--effort", effort);
+  }
+  // First-mate tier: main.js passes the first-mate operating manual here on a
+  // FRESH first-mate turn, so the mate boots knowing its role (delegate,
+  // prioritize, stay thin) without a pre-filled visible draft - the composer
+  // stays empty for the captain's first prompt. Loaded as system context, not
+  // a user message.
+  if (appendSystemPrompt) {
+    args.push("--append-system-prompt", appendSystemPrompt);
   }
   // First-mate tier (docs/first-mate-tier-design.md section 5): main.js passes
   // an inline mcp-config JSON string ONLY when this launch is a first mate

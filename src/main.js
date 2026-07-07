@@ -693,6 +693,21 @@ const FIRST_MATE_ALLOWED_TOOLS = ["maestro_dispatch", "maestro_collect_reports",
   (t) => `mcp__${FIRST_MATE_MCP_SERVER}__${t}`
 );
 
+// The first-mate operating manual, attached as system context on a fresh
+// first-mate turn (see session:start). Read once and cached - it's a static doc.
+let _firstMateInstructions = null;
+function firstMateInstructions() {
+  if (_firstMateInstructions === null) {
+    try {
+      _firstMateInstructions = fs.readFileSync(path.join(__dirname, "lib", "first-mate-instructions.md"), "utf8");
+    } catch (err) {
+      console.error("[maestro] could not read first-mate-instructions.md:", err);
+      _firstMateInstructions = "";
+    }
+  }
+  return _firstMateInstructions || undefined;
+}
+
 function buildFirstMateMcpConfig(metaHome, mateId) {
   // Named mates: the session is bound to one of the two fixed mate slots by the
   // mateId the renderer passes. Fall back to the first active mate if none was
@@ -943,6 +958,7 @@ ipcMain.handle(
     // a failure to build the config must not break launching a normal session.
     let mcpConfig;
     let allowedTools;
+    let appendSystemPrompt;
     try {
       if (isMetaHomeRoot(cwd)) {
         const metaHome = resolveMetaHome();
@@ -951,9 +967,16 @@ ipcMain.handle(
         // Pre-approve exactly the dispatch tools so the headless first mate can
         // call them without a permission prompt it can't answer (review M3).
         allowedTools = FIRST_MATE_ALLOWED_TOOLS;
+        // Load the first-mate operating manual as system context on the FRESH
+        // turn only (no resume) so a newly-spun-up mate boots knowing its role,
+        // with the composer left empty for the captain's first prompt. On resume
+        // it's already in the session's context - don't re-append.
+        if (!resumeSessionId) {
+          appendSystemPrompt = firstMateInstructions();
+        }
       }
     } catch (err) {
-      console.error("[maestro] failed to build first-mate mcp-config (launching without dispatch tools):", err);
+      console.error("[maestro] failed to build first-mate launch config:", err);
     }
     const { child, done } = startSession({
       cwd,
@@ -964,6 +987,7 @@ ipcMain.handle(
       resumeSessionId,
       mcpConfig,
       allowedTools,
+      appendSystemPrompt,
       onEvent: (evt) => {
         if (evt.kind === "quota" && evt.quota) {
           latestQuota = evt.quota;
