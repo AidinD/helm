@@ -4769,13 +4769,23 @@ function fleetSecondMateEl(sm) {
 function fleetCrewItemEl(run) {
   const item = document.createElement("div");
   item.className = "fleet-crew-item";
+  // Color-code the state so a problem crew item reads at a glance (review:
+  // was always plain --text-faint). error/escalated -> needs, running -> run.
+  const needs = run.status === "error" || !!run.escalation;
+  if (needs) {
+    item.classList.add("crew-needs");
+  } else if (crewRunning(run)) {
+    item.classList.add("crew-run");
+  }
   const g = document.createElement("span");
   g.className = "fleet-crew-g";
   const running = crewRunning(run);
   g.textContent = running ? "⚙" : run.status === "error" ? "✕" : "✓";
   const label = document.createElement("span");
   label.className = "fleet-crew-label";
-  label.textContent = "autopilot · " + (run.goal.length > 40 ? run.goal.slice(0, 40) + "…" : run.goal);
+  // No JS truncation - .fleet-crew-label already ellipsizes via CSS, which
+  // adapts to the real container width (review).
+  label.textContent = "autopilot · " + run.goal;
   const stateEl = document.createElement("span"); // NOT `state` - that's the app-wide global (review: shadowing footgun)
   stateEl.className = "fleet-crew-state";
   const n = run.iterations?.length || 0;
@@ -5171,12 +5181,9 @@ function dashboardQueueSection() {
   const section = document.createElement("section");
   section.className = "dash-board";
   section.append(
-    dashBoardHeadWithLabel(
-      "Needs you & in motion",
-      countLabel,
-      needsActionCount > 0,
-      "One list, ordered by how much you need to act - nothing here happens without you"
-    )
+    dashBoardHead("Needs you & in motion", countLabel, "One list, ordered by how much you need to act - nothing here happens without you", {
+      urgent: needsActionCount > 0,
+    })
   );
 
   const body = document.createElement("div");
@@ -5262,24 +5269,6 @@ function dashArchiveGroupEl(proposalSessions) {
   }
 
   return wrap;
-}
-
-function dashBoardHeadWithLabel(title, countLabel, urgent, hint) {
-  const head = document.createElement("div");
-  head.className = "dash-board-head";
-  const h3 = document.createElement("h3");
-  h3.textContent = title;
-  if (countLabel) {
-    const c = document.createElement("span");
-    c.className = "dash-count" + (urgent ? " dash-count-urgent" : "");
-    c.textContent = countLabel;
-    h3.append(c);
-  }
-  const hintEl = document.createElement("span");
-  hintEl.className = "dash-hint";
-  hintEl.textContent = hint;
-  head.append(h3, hintEl);
-  return head;
 }
 
 function dashQueueStateIcon(kind, session) {
@@ -5757,15 +5746,19 @@ function dashAutoContextStripEl(selectedCwd, chips) {
 
 // --- Shared small pieces ----------------------------------------------
 
-function dashBoardHead(title, count, hint) {
+// One board-header builder (was two near-identical fns). `count` may be a
+// number (shown always, incl "0") or a string label (shown when truthy);
+// null/undefined hides the pill. opts.urgent tints it.
+function dashBoardHead(title, count, hint, { urgent = false } = {}) {
   const head = document.createElement("div");
   head.className = "dash-board-head";
   const h3 = document.createElement("h3");
   h3.textContent = title;
-  if (typeof count === "number") {
+  const label = typeof count === "number" ? String(count) : count || null;
+  if (label != null) {
     const c = document.createElement("span");
-    c.className = "dash-count";
-    c.textContent = String(count);
+    c.className = "dash-count" + (urgent ? " dash-count-urgent" : "");
+    c.textContent = label;
     h3.append(c);
   }
   const hintEl = document.createElement("span");
@@ -7371,7 +7364,7 @@ async function renderRoutinesPage() {
 
   const board = document.createElement("section");
   board.className = "dash-board";
-  board.append(dashBoardHeadWithLabel("Scheduled tasks", null, false, "Each one is a Claude Code SKILL.md task folder"));
+  board.append(dashBoardHead("Scheduled tasks", null, "Each one is a Claude Code SKILL.md task folder"));
 
   const body = document.createElement("div");
   body.className = "dash-board-body";

@@ -3642,6 +3642,15 @@ button.primary {
   font-size: 10px;
   white-space: nowrap;
 }
+/* Color-code a crew item that needs attention / is running, so the problem one
+   in an expanded list reads at a glance instead of by reading tiny text. */
+.fleet-crew-item.crew-needs .fleet-crew-g,
+.fleet-crew-item.crew-needs .fleet-crew-state {
+  color: var(--waiting);
+}
+.fleet-crew-item.crew-run .fleet-crew-g {
+  color: var(--active);
+}
 .fleet-follow {
   border: 1px solid var(--border);
   background: var(--bg);
@@ -3838,8 +3847,7 @@ button.primary {
 }
 
 /* Distinguishes a repo chip (folder icon) from a non-repo "life-domain"
-   project chip (its own icon, e.g. gym/diabetes/kombucha) - see the approved
-   dashboard mock's .type-ic. */
+   project chip (its own icon, e.g. gym/diabetes/kombucha). */
 .dash-chip-ic {
   font-size: 11.5px;
   opacity: 0.85;
