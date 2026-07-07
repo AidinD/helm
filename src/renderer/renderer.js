@@ -4770,7 +4770,7 @@ function fleetDirectCardEl(sms) {
   top.className = "fleet-mate-top";
   const anchor = document.createElement("span");
   anchor.className = "fleet-anchor direct";
-  anchor.textContent = "⎈"; // ship's wheel / helm - the captain steers
+  anchor.textContent = "🧭"; // compass - the captain sets the course
   const idBox = document.createElement("div");
   idBox.className = "fleet-mate-idbox";
   const name = document.createElement("div");
