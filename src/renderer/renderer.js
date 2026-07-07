@@ -4043,6 +4043,10 @@ async function rehydrateGoalRuns() {
       ordinal: ++goalRunSeq,
       goal: record.goal,
       projectPath: record.projectPath,
+      // Carry the dispatch metadata so a dispatched run keeps its mate grouping
+      // in the Fleet view across restarts (else it falls under "Direct").
+      dispatchedBy: record.dispatchedBy || null,
+      tier: record.tier || null,
       maxIterations: undefined,
       model: undefined,
       effort: undefined,
