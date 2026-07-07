@@ -1,0 +1,128 @@
+// E2E (M3, the crux): a REAL claude first-mate session - launched with the same
+// --mcp-config + --allowedTools the app now attaches to a first mate - actually
+// CALLS maestro_dispatch, and the app's watcher launches the run + writes a
+// report. This is the path the review flagged as unverified (the other loop test
+// drives the MCP server with a hand-rolled client; this uses a real claude
+// session, so it proves the permission gate is actually cleared). Cheap-ish:
+// haiku mate + haiku dispatched run, trivial goal. Real launched Maestro.
+//
+// Run:  node scripts/e2e/test-first-mate-real-session.mjs
+import { launch } from "./harness.mjs";
+import { spawn, execSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+function log(...a) {
+  console.log("[first-mate-real-session-e2e]", ...a);
+}
+let exitCode = 0;
+function assert(cond, msg) {
+  log(`${cond ? "OK  " : "FAIL"} - ${msg}`);
+  if (!cond) {
+    exitCode = 1;
+  }
+}
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+const CLAUDE = "C:/Users/aidin/.local/bin/claude.exe";
+const REPO = "D:/Repo/Tools/maestro";
+const SERVER = path.join(REPO, "src", "mcp", "maestroDispatchServer.js");
+const SERVER_NAME = "maestro-dispatch";
+const ALLOWED = ["maestro_dispatch", "maestro_collect_reports", "maestro_list_projects"].map((t) => `mcp__${SERVER_NAME}__${t}`);
+const stamp = String(Date.now());
+const tmp = path.join(os.tmpdir(), "fm-real-" + stamp);
+const metaHome = path.join(tmp, "meta-home");
+const scratch = path.join(tmp, "scratch");
+const reportsDir = path.join(metaHome, ".maestro-dispatch", "reports");
+
+let app;
+try {
+  fs.mkdirSync(metaHome, { recursive: true });
+  fs.mkdirSync(scratch, { recursive: true });
+  execSync("git init", { cwd: scratch });
+  execSync('git config user.email "e2e@test.local"', { cwd: scratch });
+  execSync('git config user.name "E2E"', { cwd: scratch });
+  fs.writeFileSync(path.join(scratch, "README.md"), "# scratch\n");
+  execSync("git add -A", { cwd: scratch });
+  execSync('git commit -m "init"', { cwd: scratch });
+
+  // App watches the temp meta-home (isolated from any dev instance).
+  process.env.MAESTRO_META_HOME_OVERRIDE = metaHome;
+  app = await launch();
+  await app.waitForSelector("#pageToggle", 30000, { visible: true });
+
+  // The exact mcp-config shape the app builds for a first mate, + the same
+  // allowedTools it now attaches.
+  const mcpConfig = JSON.stringify({
+    mcpServers: {
+      [SERVER_NAME]: {
+        command: "node",
+        args: [SERVER],
+        env: {
+          MAESTRO_META_HOME: metaHome,
+          MAESTRO_MATE_ID: "mate-real",
+          MAESTRO_PROJECTS: JSON.stringify([{ name: "scratch", path: scratch }]),
+          MAESTRO_WIDTH_CAP: "3",
+        },
+      },
+    },
+  });
+
+  // A REAL claude first-mate session. It must clear the permission gate to call
+  // the tool (without --allowedTools this returns TOOL-BLOCKED, verified).
+  const prompt =
+    `Use the maestro_dispatch tool to dispatch ONE run with these exact arguments: ` +
+    `project="${scratch}", goal="Create a file named HELLO.txt containing exactly the word hello", model="haiku", maxIterations=3. ` +
+    `After the tool returns, reply with ONLY the dispatchId. If you cannot call the tool, reply exactly: TOOL-BLOCKED.`;
+
+  const args = ["-p", prompt, "--model", "claude-haiku-4-5-20251001", "--mcp-config", mcpConfig, "--allowedTools", ...ALLOWED];
+  const mate = spawn(CLAUDE, args, { cwd: metaHome, stdio: ["ignore", "pipe", "pipe"], env: process.env });
+  let mateOut = "";
+  mate.stdout.on("data", (c) => (mateOut += c.toString("utf8")));
+  mate.stderr.on("data", (c) => (mateOut += c.toString("utf8")));
+  const mateDone = new Promise((r) => {
+    const to = setTimeout(() => { mate.kill(); r(); }, 120000);
+    mate.on("exit", () => { clearTimeout(to); r(); });
+  });
+  await mateDone;
+  log("mate reply (tail):", mateOut.trim().slice(-160).replace(/\s+/g, " "));
+  assert(!/TOOL-BLOCKED/.test(mateOut), "the real first-mate session was NOT permission-blocked from calling the dispatch tool");
+
+  // The app watcher should have accepted + launched the dispatched run; poll for
+  // its report to land.
+  let report = null;
+  const deadline = Date.now() + 240000;
+  while (Date.now() < deadline) {
+    if (fs.existsSync(reportsDir)) {
+      const files = fs.readdirSync(reportsDir).filter((f) => f.endsWith(".json"));
+      if (files.length > 0) {
+        report = JSON.parse(fs.readFileSync(path.join(reportsDir, files[0]), "utf8"));
+        break;
+      }
+    }
+    await wait(4000);
+  }
+  assert(report != null, "the dispatched run (from a REAL first-mate session) reported back");
+  if (report) {
+    log("report:", JSON.stringify({ status: report.status, project: report.project, commits: report.changed?.commitCount, needs: report.needsCaptain }));
+    assert(report.dispatchedBy === "mate-real", "the report is attributed to the real mate");
+    assert(["done", "escalated", "error"].includes(report.status), "the dispatched run reached a terminal status");
+  }
+
+  const errors = app.getConsoleErrors();
+  assert(errors.length === 0, `no console errors (got ${errors.length})`);
+  log(exitCode === 0 ? "VERIFY OK: a real first-mate session dispatches through the permission gate, run reports back." : "VERIFY FAILED.");
+} catch (err) {
+  exitCode = 1;
+  log("ERROR:", err.message);
+} finally {
+  if (app) {
+    const k = await app.close();
+    log("cleanup app:", k || "(nothing)");
+  }
+  try { execSync("git worktree prune", { cwd: scratch }); } catch {}
+  try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}
+  delete process.env.MAESTRO_META_HOME_OVERRIDE;
+}
+process.exit(exitCode);

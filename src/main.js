@@ -671,12 +671,23 @@ function resolveDispatchProject(project) {
 // because these values are launch-specific - the design allows "or generate at
 // launch". Returned as a string passed straight to startSession's mcpConfig,
 // exactly the inline-JSON form judge.js already uses for --mcp-config.
+// The MCP server name + the three dispatch tools, as one source of truth so
+// the mcp-config key and the --allowedTools list can't drift. Claude Code names
+// an MCP tool `mcp__<server>__<tool>`. A headless first-mate `-p` session is
+// PRE-APPROVED for exactly these first-party tools via --allowedTools, because
+// it has no live channel to answer a permission prompt (verified: without this,
+// a real first-mate session replies "TOOL-BLOCKED" and never dispatches - review M3).
+const FIRST_MATE_MCP_SERVER = "maestro-dispatch";
+const FIRST_MATE_ALLOWED_TOOLS = ["maestro_dispatch", "maestro_collect_reports", "maestro_list_projects"].map(
+  (t) => `mcp__${FIRST_MATE_MCP_SERVER}__${t}`
+);
+
 function buildFirstMateMcpConfig(metaHome) {
   const mate = resolveMate(metaHome, path.basename(metaHome));
   const serverPath = path.join(__dirname, "mcp", "maestroDispatchServer.js");
   const config = {
     mcpServers: {
-      "maestro-dispatch": {
+      [FIRST_MATE_MCP_SERVER]: {
         command: process.execPath,
         args: [serverPath],
         env: {
@@ -851,11 +862,15 @@ ipcMain.handle(
     // project worktree, so it structurally never gets these tools. Best-effort:
     // a failure to build the config must not break launching a normal session.
     let mcpConfig;
+    let allowedTools;
     try {
       if (isMetaHomeRoot(cwd)) {
         const metaHome = resolveMetaHome();
         ensureDispatchDirs(metaHome);
         mcpConfig = buildFirstMateMcpConfig(metaHome);
+        // Pre-approve exactly the dispatch tools so the headless first mate can
+        // call them without a permission prompt it can't answer (review M3).
+        allowedTools = FIRST_MATE_ALLOWED_TOOLS;
       }
     } catch (err) {
       console.error("[maestro] failed to build first-mate mcp-config (launching without dispatch tools):", err);
@@ -868,6 +883,7 @@ ipcMain.handle(
       permissionMode,
       resumeSessionId,
       mcpConfig,
+      allowedTools,
       onEvent: (evt) => {
         if (evt.kind === "quota" && evt.quota) {
           latestQuota = evt.quota;
