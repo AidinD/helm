@@ -5062,8 +5062,10 @@ function dashboardOnboardingBlock() {
 // whose domain doesn't match. The domain itself comes straight from Jot's
 // Category.domain field (set via Jot's own W/P chip, 1.5.14+) and is threaded
 // through loadGoals in src/lib/jot.js onto each goal - no heuristic here.
-// A goal whose category has no domain set is neutral: it matches BOTH Focus
-// modes and is never dimmed, same as before a domain is ever assigned.
+// A goal whose category has no domain set (null) belongs to "All" only: it does
+// NOT match a specific Work/Private focus (so it's dimmed on the dashboard /
+// narrowed out on the Focus page), rather than appearing in both. Classify the
+// list via Jot's W/P chip to surface it in a focused view.
 function domainForGoal(goal) {
   return goal.domain === "work" || goal.domain === "private" ? goal.domain : null;
 }
@@ -5481,8 +5483,8 @@ function dashGoalRunRowEl(run) {
 // --- Goals -----------------------------------------------------------------
 // Real data: the same jot:goals IPC / loadGoals() as the Focus page. Cards
 // dim when their domain doesn't match the Focus toggle's mode, per
-// domainForGoal (see comment above the toggle). A neutral goal (no domain set
-// on its Jot category) is shown in both modes and never dimmed.
+// domainForGoal (see comment above the toggle). An unclassified goal (no domain
+// on its Jot category) belongs to "All" only - dimmed under Work/Private.
 async function dashboardGoalsSection(preloadedResult) {
   const result = preloadedResult ?? (await window.maestro.getJotGoals());
 
@@ -5499,14 +5501,12 @@ async function dashboardGoalsSection(preloadedResult) {
   } else {
     const grid = document.createElement("div");
     grid.className = "dash-goals-grid";
-    // When a Work/Private focus is active, float the matching (+ neutral) goals
-    // to the top and let the dimmed non-matching ones sink below - dimming alone
-    // wasn't enough to get an overview with ~29 goals (Aidin note 2026-07-05).
-    // Stable sort keeps each group's original order. "All" leaves order intact.
-    const isDimmed = (g) => {
-      const d = domainForGoal(g);
-      return dashboardFocusMode !== "all" && d !== null && d !== dashboardFocusMode;
-    };
+    // When a Work/Private focus is active, only goals matching THAT domain stay
+    // bright and float up; everything else (opposite domain AND unclassified)
+    // dims and sinks below. Unclassified lists belong to "All" only - they used
+    // to show bright in BOTH Work and Private, which read as "on both lists,
+    // unsorted" (Aidin, p0 fix). Stable sort keeps each group's original order.
+    const isDimmed = (g) => dashboardFocusMode !== "all" && domainForGoal(g) !== dashboardFocusMode;
     const ordered =
       dashboardFocusMode === "all"
         ? result.goals
@@ -5522,8 +5522,7 @@ function dashGoalCardEl(goal) {
   const domain = domainForGoal(goal);
   const card = document.createElement("div");
   card.className =
-    "dash-goal-card" +
-    (dashboardFocusMode !== "all" && domain !== null && domain !== dashboardFocusMode ? " dash-dimmed" : "");
+    "dash-goal-card" + (dashboardFocusMode !== "all" && domain !== dashboardFocusMode ? " dash-dimmed" : "");
 
   const head = document.createElement("div");
   head.className = "dash-goal-head";
@@ -5821,19 +5820,16 @@ async function renderFocusPage() {
 
   // Focus filter (All / Work / Private). Unlike the dashboard toggle (which
   // dims non-matching cards), on the Focus page it actually NARROWS the list so
-  // you don't see everything. Neutral goals (no domain set) always show.
+  // you don't see everything. Only the matching domain shows; unclassified lists
+  // belong to "All" only (they used to show in both Work and Private - the p0
+  // fix). Classify a list (Jot's W/P chip) to have it appear in a focused view.
   page.append(focusModeToggleEl(renderFocusPage));
   const goals =
-    dashboardFocusMode === "all"
-      ? result.goals
-      : result.goals.filter((g) => {
-          const d = domainForGoal(g);
-          return d === null || d === dashboardFocusMode;
-        });
+    dashboardFocusMode === "all" ? result.goals : result.goals.filter((g) => domainForGoal(g) === dashboardFocusMode);
 
   const intro = document.createElement("div");
   intro.className = "analysis-totals";
-  const filterNote = dashboardFocusMode === "all" ? "" : ` (${dashboardFocusMode} + unset)`;
+  const filterNote = dashboardFocusMode === "all" ? "" : ` (${dashboardFocusMode})`;
   intro.textContent =
     `${goals.length} active goal${goals.length === 1 ? "" : "s"}${filterNote} (open or in progress), ranked by what deserves your focus now. Backed by Jot.`;
   page.append(intro);
