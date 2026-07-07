@@ -130,14 +130,18 @@ try {
   // fix: derived nodes alone dead-ended into fresh chats).
   const aug = await app.eval(`(() => {
     const saved = state.sessions;
-    state.sessions = [{ sessionId:"PS1", cliSessionId:"PS1", cwd:"D:/Repo/some-proj", status:"idle", lastActivityAt:500 }];
+    state.sessions = [
+      { sessionId:"PS1", cliSessionId:"PS1", cwd:"D:/Repo/some-proj", title:"Fix the widget", status:"idle", lastActivityAt:500 },
+      { sessionId:"PS2", cliSessionId:"PS2", cwd:"D:/Repo/some-proj", title:"Another topic", status:"idle", lastActivityAt:400 },
+    ];
     const r = augmentSecondMatesWithSessions([]);
     state.sessions = saved;
-    const d = r.find((s) => s.firstMateId === "direct" && s.projectPath === "D:/Repo/some-proj");
-    return { hasDirect: !!d, sid: d && d.sessionId, name: d && d.name };
+    const directs = r.filter((s) => s.firstMateId === "direct");
+    const d = directs.find((s) => s.sessionId === "PS1");
+    return { directCount: directs.length, hasPS1: !!d, name: d && d.name };
   })()`);
-  assert(aug.hasDirect && aug.sid === "PS1", "a real project session becomes a resumable Direct second mate (got " + JSON.stringify(aug) + ")");
-  assert(aug.name === "some-proj", "the derived Direct node is named by the project folder");
+  assert(aug.hasPS1 && aug.name === "Fix the widget", "each session becomes a resumable Direct node named by its title (got " + JSON.stringify(aug) + ")");
+  assert(aug.directCount === 2, "two sessions in the same cwd list as TWO nodes (not collapsed) - 'list sessions, not projects'");
 
   // Rename is inline (native window.prompt is disabled in Electron + unwanted):
   // clicking the rename icon shows an input, not a dialog.

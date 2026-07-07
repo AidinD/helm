@@ -4310,50 +4310,34 @@ function crewRunning(r) {
 }
 
 // Second mates are DERIVED from run history (main.js), which only surfaces
-// projects a run touched - not the captain's actual open sessions. So a Direct
-// node could point at a past run with no live session behind it, and jumping in
-// dead-ended into a fresh chat. Augment the derived list with the captain's real
-// project sessions: attach a session to a matching derived node (so it resumes),
-// or add a fresh Direct node for a project session that has no run yet. This is
-// what makes "jump in" land on an existing session.
+// projects a run touched. But the captain works from ONE cwd (the meta-home) across
+// many topics, so grouping by project-cwd collapsed all his real sessions into
+// nothing. Per his choice ("list sessions, not projects"): every non-archived
+// session becomes its OWN resumable Direct node, named by its title - meta-home
+// sessions included. Sessions already bound to a first mate's second mate are
+// skipped (they show under that mate). The run-derived Direct nodes (autonomous
+// runs with commits to review) are kept as-is alongside.
 function augmentSecondMatesWithSessions(secondMates) {
   const list = [...secondMates];
-  const normCwd = (p) => (p || "").replace(/[\\/]+/g, "/").replace(/\/+$/, "").toLowerCase();
   const boundIds = new Set(list.map((s) => s.sessionId).filter(Boolean));
-  // Most-recent-first so the first session seen per cwd is the one we attach.
-  const projectSessions = state.sessions
-    .filter((s) => s.cwd && s.status !== "archived" && !samePath(s.cwd, state.orchestratorHome))
+  const sessions = state.sessions
+    .filter((s) => s.cwd && s.status !== "archived")
     .sort((a, b) => (b.lastActivityAt || 0) - (a.lastActivityAt || 0));
-  const byCwd = new Map();
-  for (const sm of list) {
-    if (!byCwd.has(normCwd(sm.projectPath))) {
-      byCwd.set(normCwd(sm.projectPath), sm);
-    }
-  }
-  for (const sess of projectSessions) {
+  for (const sess of sessions) {
     const sid = sess.cliSessionId || sess.sessionId;
     if (boundIds.has(sid)) {
-      continue; // already the session behind some second mate
+      continue; // already the session behind a first mate's second mate
     }
-    const existing = byCwd.get(normCwd(sess.cwd));
-    if (existing) {
-      if (!existing.sessionId) {
-        existing.sessionId = sid; // attach a live session to a run-derived node
-        boundIds.add(sid);
-      }
-    } else {
-      const sm = {
-        secondMateId: "sess_" + sid,
-        firstMateId: "direct",
-        projectPath: sess.cwd,
-        name: sess.cwd.split(/[\\/]/).filter(Boolean).pop() || sess.cwd,
-        sessionId: sid,
-        crew: [],
-      };
-      list.push(sm);
-      byCwd.set(normCwd(sess.cwd), sm);
-      boundIds.add(sid);
-    }
+    list.push({
+      secondMateId: "sess_" + sid,
+      firstMateId: "direct",
+      projectPath: sess.cwd,
+      name: sess.title || sess.cwd.split(/[\\/]/).filter(Boolean).pop() || sess.cwd,
+      sessionId: sid,
+      crew: [],
+      isSessionNode: true,
+    });
+    boundIds.add(sid);
   }
   return list;
 }
