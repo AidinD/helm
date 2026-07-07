@@ -4647,11 +4647,14 @@ function fleetSecondMateEl(sm) {
   const backingSession = sm.sessionId ? state.sessions.find((s) => (s.cliSessionId || s.sessionId) === sm.sessionId) : null;
   if (backingSession) {
     const archiveBtn = document.createElement("button");
-    archiveBtn.className = "fleet-icon-btn fleet-branch-archive";
+    archiveBtn.className = "fleet-archive-btn";
     archiveBtn.title = "Archive this session";
-    archiveBtn.textContent = "⌫";
+    archiveBtn.textContent = "Archive";
     archiveBtn.addEventListener("click", (e) => {
       e.stopPropagation();
+      // Optimistic: drop the node immediately (archiveSession + a full dashboard
+      // refetch takes a beat), then reconcile in the background.
+      branch.remove();
       window.maestro.archiveSession(backingSession.sessionId, true).then(() => fillDashboardSections({ force: true }));
     });
     head.append(archiveBtn);
@@ -4703,7 +4706,7 @@ function fleetDirectCardEl(sms) {
   top.className = "fleet-mate-top";
   const anchor = document.createElement("span");
   anchor.className = "fleet-anchor direct";
-  anchor.textContent = "⌨";
+  anchor.textContent = "🧢";
   const idBox = document.createElement("div");
   idBox.className = "fleet-mate-idbox";
   const name = document.createElement("div");
@@ -4753,7 +4756,9 @@ function jumpIntoFirstMate(mate) {
   } else {
     openFreshDraftInPane(state.orchestratorHome, "", {
       forceIndex: 0,
-      paneOverrides: { isOrchestrator: true, modelDefault: "claude-sonnet-5", mateId: mate.mateId },
+      // Title the fresh chat after the mate, so opening Hector Barbossa reads as
+      // "Hector Barbossa", not a nameless new chat.
+      paneOverrides: { isOrchestrator: true, modelDefault: "claude-sonnet-5", mateId: mate.mateId, title: mate.name },
     });
   }
   navigateToPage("chat");
@@ -4785,7 +4790,7 @@ function jumpIntoSecondMate(sm) {
   } else {
     openFreshDraftInPane(sm.projectPath, "", {
       forceIndex: 0,
-      paneOverrides: { modelDefault: "claude-opus-4-8", secondMateId: sm.secondMateId },
+      paneOverrides: { modelDefault: "claude-opus-4-8", secondMateId: sm.secondMateId, title: sm.name },
     });
   }
   navigateToPage("chat");
