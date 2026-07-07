@@ -85,14 +85,17 @@ function writeState(state) {
   fs.writeFileSync(matesPath, JSON.stringify(state, null, 2) + "\n", "utf8");
 }
 
-/** Picks a pool name not held by any of `taken` (active) names; falls back to a numbered name if the pool is exhausted. */
-function pickName(taken) {
+/**
+ * Picks a pool name not in `taken`, rotated by `seed` so successive picks
+ * differ. `seed` must ADVANCE across calls (callers pass the ever-growing total
+ * mate count) - otherwise a retire whose active set is unchanged would keep
+ * choosing the same index and respawn the SAME name, making retire look broken.
+ */
+function pickName(taken, seed = 0) {
   const used = new Set(taken);
   const free = NAME_POOL.filter((n) => !used.has(n));
   if (free.length > 0) {
-    // Deterministic-enough without Math.random (unavailable in some contexts):
-    // rotate by how many are already taken, so two fresh picks differ.
-    return free[used.size % free.length];
+    return free[((seed % free.length) + free.length) % free.length];
   }
   return `Mate ${used.size + 1}`;
 }
@@ -130,7 +133,9 @@ export function ensureMates(root) {
       state.mates.push({
         mateId: `mate_${crypto.randomUUID()}`,
         slot,
-        name: pickName(takenNames),
+        // Seed by the ever-growing total so the two initial slots (and any later
+        // respawn) get distinct, advancing names.
+        name: pickName(takenNames, state.mates.length),
         root: resolvedRoot,
         status: "active",
         createdAt: Date.now(),
@@ -208,11 +213,13 @@ export function retireAndRespawn(mateId) {
     outgoing.retiredAt = Date.now();
   }
   const targetSlot = slot != null ? slot : firstFreeSlot(state.mates);
-  const takenNames = activeMatesFrom(state.mates).map((m) => m.name);
+  // Exclude the outgoing name too, and seed by the (now larger) total so the
+  // respawn never lands on the same name - otherwise retire looks like a no-op.
+  const takenNames = [...activeMatesFrom(state.mates).map((m) => m.name), outgoing?.name].filter(Boolean);
   const fresh = {
     mateId: `mate_${crypto.randomUUID()}`,
     slot: targetSlot,
-    name: pickName(takenNames),
+    name: pickName(takenNames, state.mates.length),
     root: root ? path.resolve(root) : null,
     status: "active",
     createdAt: Date.now(),

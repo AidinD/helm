@@ -4642,6 +4642,20 @@ function fleetSecondMateEl(sm) {
   now.append(jump);
   body.append(topRow, now);
   head.append(chev, body);
+  // Archive: only for a second mate backed by a real session (that's what there
+  // is to archive - a run-derived node with no session has nothing to archive).
+  const backingSession = sm.sessionId ? state.sessions.find((s) => (s.cliSessionId || s.sessionId) === sm.sessionId) : null;
+  if (backingSession) {
+    const archiveBtn = document.createElement("button");
+    archiveBtn.className = "fleet-icon-btn fleet-branch-archive";
+    archiveBtn.title = "Archive this session";
+    archiveBtn.textContent = "⌫";
+    archiveBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      window.maestro.archiveSession(backingSession.sessionId, true).then(() => fillDashboardSections({ force: true }));
+    });
+    head.append(archiveBtn);
+  }
   branch.append(head);
 
   const crewWrap = document.createElement("div");
@@ -4733,9 +4747,12 @@ function fleetDirectCardEl(sms) {
 function jumpIntoFirstMate(mate) {
   const existing = mate.sessionId ? state.sessions.find((s) => (s.cliSessionId || s.sessionId) === mate.sessionId) : null;
   if (existing) {
-    openSessionInPane(existing, focusedPaneIndex ?? 0);
+    // Always land in the primary pane (0), overwriting it - never split. Jumping
+    // in from the Fleet is "take me to this mate", not "open beside".
+    openSessionInPane(existing, 0);
   } else {
     openFreshDraftInPane(state.orchestratorHome, "", {
+      forceIndex: 0,
       paneOverrides: { isOrchestrator: true, modelDefault: "claude-sonnet-5", mateId: mate.mateId },
     });
   }
@@ -4764,9 +4781,10 @@ function jumpIntoSecondMate(sm) {
   const bound = sm.sessionId ? state.sessions.find((s) => (s.cliSessionId || s.sessionId) === sm.sessionId) : null;
   const existing = bound || mostRecentSessionForCwd(sm.projectPath);
   if (existing) {
-    openSessionInPane(existing, focusedPaneIndex ?? 0);
+    openSessionInPane(existing, 0);
   } else {
     openFreshDraftInPane(sm.projectPath, "", {
+      forceIndex: 0,
       paneOverrides: { modelDefault: "claude-opus-4-8", secondMateId: sm.secondMateId },
     });
   }
