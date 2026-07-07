@@ -3962,6 +3962,7 @@ async function startup() {
   }
   await rehydrateGoalRuns();
   await refresh();
+  updateRunningIndicator();
   navigateToPage("dashboard");
 }
 
@@ -4462,6 +4463,13 @@ function dashboardGoalAttentionRuns() {
   return [...goalRuns.values()].filter((r) => r.status === "error" || r.escalation);
 }
 
+// Runs actively working right now (not the attention ones above). Previously
+// these had NO Dashboard presence - a run was invisible until it errored or
+// escalated - so there was no "it's running" signal (the captain's task 2dd992c8).
+function dashboardRunningRuns() {
+  return [...goalRuns.values()].filter((r) => r.status === "running" && !r.escalation);
+}
+
 function dashboardInMotionRows() {
   const inMotionSessions = state.sessions.filter((s) => !s.isArchived && (s.status === "active" || s.status === "waiting"));
   const sessionRows = sortByAttention(inMotionSessions).map((s) => ({
@@ -4469,15 +4477,15 @@ function dashboardInMotionRows() {
     session: s,
     needsAction: s.status === "waiting",
   }));
-  // Goal-run rows always read as top-priority needs-you (same as a "waiting"
-  // session), so they lead the list rather than being sorted in by a made-up
-  // attention score.
-  const goalRunRows = dashboardGoalAttentionRuns().map((run) => ({
-    kind: "goalRun",
-    run,
-    needsAction: true,
-  }));
-  return [...goalRunRows, ...sessionRows];
+  // Attention goal runs (errored/escalated) need a click; running ones are
+  // just visibility ("it's working").
+  const attentionRunRows = dashboardGoalAttentionRuns().map((run) => ({ kind: "goalRun", run, needsAction: true }));
+  const runningRunRows = dashboardRunningRuns().map((run) => ({ kind: "goalRun", run, needsAction: false }));
+  // Needs-you first (attention runs + waiting sessions), then working
+  // (running runs + active sessions) - same ordering rule the rest of the
+  // queue uses, just now including live runs so they're actually visible.
+  const all = [...attentionRunRows, ...runningRunRows, ...sessionRows];
+  return [...all.filter((r) => r.needsAction), ...all.filter((r) => !r.needsAction)];
 }
 
 function dashboardQueueSection() {
@@ -4617,8 +4625,17 @@ function dashQueueStateIcon(kind, session) {
     return ic;
   }
   if (kind === "goalRun") {
+    // For goalRun the `session` param carries the run. A running run gets the
+    // working pulse dot; an errored/escalated one gets the needs-you warning.
+    if (session && session.status === "running" && !session.escalation) {
+      ic.className = "dash-state-ic dash-state-working";
+      const dot = document.createElement("span");
+      dot.className = "dash-pulse-dot";
+      ic.append(dot);
+      return ic;
+    }
     ic.className = "dash-state-ic dash-state-needs";
-    ic.textContent = "⚠"; // warning - same as a waiting session, goal run needs you too
+    ic.textContent = "⚠"; // warning - errored/escalated goal run needs you
     return ic;
   }
   if (session.status === "waiting") {
@@ -4742,7 +4759,9 @@ function dashGoalRunRowEl(run) {
   const row = document.createElement("div");
   row.className = "dash-queue-row";
   row.addEventListener("click", () => navigateToPage("goal"));
-  row.append(dashQueueStateIcon("goalRun", null));
+  row.append(dashQueueStateIcon("goalRun", run));
+
+  const isRunning = run.status === "running" && !run.escalation;
 
   const qbody = document.createElement("div");
   qbody.className = "dash-q-body";
@@ -4751,19 +4770,29 @@ function dashGoalRunRowEl(run) {
   const goalSnippet = run.goal.length > 60 ? run.goal.slice(0, 60) + "…" : run.goal;
   const title = document.createElement("span");
   title.className = "dash-q-title";
-  title.textContent = run.status === "error" ? `Goal run "${goalSnippet}" — failed` : `Goal run "${goalSnippet}" — paused, needs you`;
+  title.textContent = isRunning
+    ? `Autopilot: "${goalSnippet}" — working`
+    : run.status === "error"
+      ? `Goal run "${goalSnippet}" — failed`
+      : `Goal run "${goalSnippet}" — paused, needs you`;
   top.append(title);
   qbody.append(top);
 
   const why = document.createElement("div");
   why.className = "dash-q-why";
-  why.textContent = run.status === "error" ? run.error || "Run ended with an error." : "Escalated - waiting on your input.";
+  if (isRunning) {
+    const n = run.iterations?.length || 0;
+    const phase = n > 0 ? run.iterations[n - 1]?.phase : null;
+    why.textContent = n > 0 ? `Iteration ${n}${phase ? ` (${phase})` : ""} - running in an isolated worktree.` : "Starting - running in an isolated worktree.";
+  } else {
+    why.textContent = run.status === "error" ? run.error || "Run ended with an error." : "Escalated - waiting on your input.";
+  }
   qbody.append(why);
   row.append(qbody);
 
   const meta = document.createElement("div");
   meta.className = "dash-q-meta";
-  meta.textContent = "needs input";
+  meta.textContent = isRunning ? "running" : "needs input";
   row.append(meta);
 
   return row;
@@ -5537,6 +5566,7 @@ function renderGoalPage() {
     // Clear only the goal field so the launcher is ready for the next run;
     // folder / verify / model picks usually carry over between runs.
     goalInput.value = "";
+    updateRunningIndicator();
     renderGoalPage();
   });
   actionRow.append(startBtn);
@@ -6067,11 +6097,18 @@ window.maestro.onGoalEvent((evt) => {
     updateGoalAttentionBadge();
     window.maestro.notifyAttention({ title: "Maestro - a run needs you", body: run.goal });
   }
+  // Ambient running indicator is app-wide, so update it on every event
+  // regardless of which page is visible.
+  updateRunningIndicator();
   // Only re-render if the Goal page is actually visible, to avoid
   // clobbering another page the user may have switched to mid-run.
   if (!document.getElementById("goalPage").classList.contains("hidden")) {
     renderGoalPage();
   }
+  // Keep the Dashboard in-motion list live when a run starts/finishes/changes
+  // while the Dashboard is the visible page (section-scoped - only the queue
+  // section repaints, and only if its fingerprint actually changed).
+  refreshDashboardIfVisible();
 });
 
 // Reflects unseenGoalAttention.size as a small dot + count on the primary
@@ -6096,6 +6133,31 @@ function updateGoalAttentionBadge() {
 function updateAttentionTaskbarCount() {
   const waitingSessions = state.sessions.filter((s) => !s.isArchived && s.status === "waiting").length;
   window.maestro.setAttentionCount(unseenGoalAttention.size + waitingSessions);
+}
+
+// Ambient "N Autopilot runs in progress" indicator on the Dashboard tab -
+// visible from ANY page, so you can tell something is running without being on
+// the Autopilot page (the model is dispatch-and-step-away). Distinct from the
+// amber attention badge: a calm pulsing --active dot + count. Called on every
+// goal event, on launch, on rehydrate, and at startup - anywhere goalRuns
+// gains or changes a "running" entry.
+function updateRunningIndicator() {
+  const el = document.getElementById("dashboardRunningIndicator");
+  if (!el) {
+    return;
+  }
+  const n = [...goalRuns.values()].filter((r) => r.status === "running" && !r.escalation).length;
+  el.classList.toggle("hidden", n === 0);
+  el.innerHTML = "";
+  if (n > 0) {
+    const dot = document.createElement("span");
+    dot.className = "run-dot";
+    const count = document.createElement("span");
+    count.className = "run-count";
+    count.textContent = String(n);
+    el.append(dot, count);
+    el.title = `${n} Autopilot run${n > 1 ? "s" : ""} in progress`;
+  }
 }
 
 // ============================== Lavish (interactive plan) ==============================

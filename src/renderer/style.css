@@ -682,6 +682,51 @@ body.advanced .row-jot {
   text-align: center;
 }
 
+/* Ambient "N Autopilot runs in progress" signal on the Dashboard tab, visible
+   from any page (the model is dispatch-and-step-away, so knowing something is
+   running matters most when you're NOT on the Autopilot page). Distinct from
+   the amber attention-badge (which is "needs you"): this uses --active (the
+   same "working" tone as the dashboard pulse dot) and a calm pulse, never
+   --waiting. */
+.run-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.run-indicator .run-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--active);
+  box-shadow: 0 0 5px var(--active);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .run-indicator .run-dot {
+    animation: run-pulse 1.6s ease-in-out infinite;
+  }
+}
+
+@keyframes run-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.run-indicator .run-count {
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--active);
+  line-height: 1;
+}
+
 .toast {
   position: fixed;
   bottom: 20px;
