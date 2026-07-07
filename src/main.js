@@ -23,6 +23,7 @@ import { loadGoalRunHistory, upsertGoalRunRecord, removeGoalRunRecord } from "./
 import { removeWorktree } from "./lib/worktree.js";
 import { loadDomains, registerDomain, removeDomain } from "./lib/domains.js";
 import { ensureMates, activeMates, findMateById, loadMates, renameMate, retireAndRespawn, bindMateSession } from "./lib/mates.js";
+import { deriveSecondMates, bindSecondMateSession, renameSecondMate } from "./lib/secondMates.js";
 import {
   ensureDispatchDirs,
   requestsDir,
@@ -876,6 +877,32 @@ ipcMain.handle("mates:bindSession", (_event, { mateId, sessionId }) => {
   try {
     const mate = bindMateSession(mateId, sessionId);
     return mate ? { ok: true, mate } : { ok: false, error: "unknown mateId" };
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err) };
+  }
+});
+
+// --- Second mates: per-project sessions (the judgment tier) derived from the
+// dispatched-run history - one per (first mate, project). Each owns its crew
+// (the dispatched Autopilot runs). list derives them; bindSession/rename persist
+// the small per-second-mate overrides. ---
+ipcMain.handle("secondMates:list", () => {
+  try {
+    return { ok: true, secondMates: deriveSecondMates(loadGoalRunHistory()) };
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err), secondMates: [] };
+  }
+});
+ipcMain.handle("secondMates:bindSession", (_event, { secondMateId, sessionId }) => {
+  try {
+    return { ok: true, binding: bindSecondMateSession(secondMateId, sessionId) };
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err) };
+  }
+});
+ipcMain.handle("secondMates:rename", (_event, { secondMateId, name }) => {
+  try {
+    return { ok: true, binding: renameSecondMate(secondMateId, name) };
   } catch (err) {
     return { ok: false, error: err?.message || String(err) };
   }
@@ -1786,7 +1813,7 @@ function processDispatchRequests(metaHome) {
           dispatch: {
             dispatchedBy: mateId,
             dispatchId,
-            tier: request.tier || "second-mate",
+            tier: request.tier || "crew",
             onComplete: (result, meta) => {
               writeReport(metaHome, buildDispatchReport({ dispatchId, mateId, request, result, meta }));
             },
@@ -1817,7 +1844,7 @@ function buildDispatchReport({ dispatchId, mateId, request, result, meta }) {
       dispatchedBy: mateId,
       project: request.project,
       goal: request.goal,
-      tier: request.tier || "second-mate",
+      tier: request.tier || "crew",
       status: "error",
       summary: meta.error || "The dispatched run errored.",
       needsCaptain: meta.error || "The dispatched run errored; inspect and re-dispatch.",

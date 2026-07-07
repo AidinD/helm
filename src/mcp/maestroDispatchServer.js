@@ -57,7 +57,7 @@ const TOOLS = [
   {
     name: "maestro_dispatch",
     description:
-      "Dispatch ONE project-scoped autonomous Maestro run (a 'second mate') and return immediately with its dispatchId + goalRunId. The run executes as a normal Maestro Autopilot goal in an isolated git worktree (fresh-context iterations, one commit per success, never pushes/merges). Poll maestro_collect_reports later for its compact result. Bounded: at most " +
+      "Dispatch ONE project-scoped autonomous Maestro run (a CREW member - the autonomous work a second-mate project session owns) and return immediately with its dispatchId + goalRunId. The run executes as a normal Maestro Autopilot goal in an isolated git worktree (fresh-context iterations, one commit per success, never pushes/merges). Poll maestro_collect_reports later for its compact result. Bounded: at most " +
       WIDTH_CAP +
       " concurrent dispatched runs per mate; a dispatched run cannot itself dispatch (depth capped at 2). " +
       "CAVEAT for dispatching work on Maestro itself: a run whose verify step restarts Maestro would kill its own parent process; each iteration is git-committed so at most the in-flight iteration is lost, but avoid a restart-style verifyCommand for the Maestro project until detached runs land.",
@@ -142,7 +142,7 @@ async function toolDispatch(args) {
   const request = {
     project,
     goal,
-    tier: args.tier || "second-mate",
+    tier: args.tier || "crew",
     model: args.model || "claude-opus-4-8",
     effort: args.effort || null,
     maxIterations: typeof args.maxIterations === "number" ? args.maxIterations : null,
