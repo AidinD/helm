@@ -11,6 +11,7 @@ import { loadConfig, writeConfig } from "./lib/config.js";
 import { startSession } from "./lib/launcher.js";
 import { suggestModelEffort } from "./lib/suggest.js";
 import { readTranscript } from "./lib/transcript.js";
+import { liveSubAgents } from "./lib/subAgents.js";
 import { findTranscriptPath } from "./lib/paths.js";
 import { listSkills, skillMdPath } from "./lib/skills.js";
 import { appendUsageLog, readUsageSummary, computeSuggestionAccuracyVerdict } from "./lib/usage.js";
@@ -760,6 +761,25 @@ ipcMain.handle("transcript:get", (_event, { cliSessionId, sessionId }) => {
   // One extra tail read, only on transcript load — not per poll.
   result.contextTokens = estimateSessionContextTokens(cliSessionId, sessionId);
   return result;
+});
+
+// A session's live sub-agents (Claude Code Task tool calls not yet finished),
+// so the Fleet can show them as crew under the session. Batched; the renderer
+// only asks for sessions that are actively working (an idle session has none),
+// so this stays cheap even though each call tail-reads a transcript.
+ipcMain.handle("session:liveSubAgents", (_event, { sessions }) => {
+  const out = {};
+  for (const s of sessions || []) {
+    try {
+      const live = liveSubAgents(findTranscriptPath([s.cliSessionId, s.sessionId]));
+      if (live.length) {
+        out[s.sessionId] = live;
+      }
+    } catch {
+      // tolerant - a missing/unreadable transcript just means no sub-agents
+    }
+  }
+  return { ok: true, subAgents: out };
 });
 
 // --- Pick a repo folder to root a new session in ---

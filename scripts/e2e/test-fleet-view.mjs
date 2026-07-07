@@ -198,6 +198,17 @@ try {
   })()`);
   assert(title === "Captain Nemo", "jumping into a first mate titles the fresh chat after the mate (got " + JSON.stringify(title) + ")");
 
+  // A session's live sub-agent renders as an "agent ·" crew item (no Follow -
+  // the session node itself is the way in).
+  const sub = await app.eval(`(() => {
+    const el = fleetSecondMateEl({ secondMateId:"ss", firstMateId:"direct", projectPath:"D:/Repo/x", name:"x", sessionId:null, isSessionNode:true, crew:[{ isSubAgent:true, id:"a1", goal:"review dashboard", status:"running" }] });
+    const it = el.querySelector(".fleet-crew-item");
+    return { count: el.querySelectorAll(".fleet-crew-item").length, label: it?.querySelector(".fleet-crew-label")?.textContent, hasFollow: !!it?.querySelector(".fleet-follow"), run: it?.classList.contains("crew-run") };
+  })()`);
+  assert(sub.count === 1 && /^agent · review dashboard/.test(sub.label || ""), "a live sub-agent renders as an 'agent ·' crew item (got " + JSON.stringify(sub) + ")");
+  assert(!sub.hasFollow, "a sub-agent crew item has no Follow button (the session node is the way in)");
+  assert(sub.run === true, "a running sub-agent crew item is color-coded as running");
+
   const errors = app.getConsoleErrors();
   assert(errors.length === 0, `no console errors (got ${errors.length})`);
   for (const e of errors) {

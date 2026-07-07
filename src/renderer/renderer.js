@@ -4783,22 +4783,34 @@ function fleetCrewItemEl(run) {
   g.textContent = running ? "⚙" : run.status === "error" ? "✕" : "✓";
   const label = document.createElement("span");
   label.className = "fleet-crew-label";
-  // No JS truncation - .fleet-crew-label already ellipsizes via CSS, which
-  // adapts to the real container width (review).
-  label.textContent = "autopilot · " + run.goal;
+  // No JS truncation - .fleet-crew-label already ellipsizes via CSS.
+  label.textContent = (run.isSubAgent ? "agent · " : "autopilot · ") + run.goal;
   const stateEl = document.createElement("span"); // NOT `state` - that's the app-wide global (review: shadowing footgun)
   stateEl.className = "fleet-crew-state";
   const n = run.iterations?.length || 0;
   const commits = crewCommitCount(run);
-  stateEl.textContent = run.escalation ? "paused" : running ? `iter ${n}` : run.status === "done" && commits ? `${commits} commit${commits === 1 ? "" : "s"}` : run.status;
-  const follow = document.createElement("button");
-  follow.className = "fleet-follow";
-  follow.textContent = running ? "Follow" : "View";
-  follow.addEventListener("click", (e) => {
-    e.stopPropagation();
-    navigateToPage("goal");
-  });
-  item.append(g, label, stateEl, follow);
+  stateEl.textContent = run.isSubAgent
+    ? "running"
+    : run.escalation
+      ? "paused"
+      : running
+        ? `iter ${n}`
+        : run.status === "done" && commits
+          ? `${commits} commit${commits === 1 ? "" : "s"}`
+          : run.status;
+  item.append(g, label, stateEl);
+  // A dispatched run has its own worktree/Goal page to follow; a session's
+  // sub-agent doesn't - the session node itself is the way in, so no button.
+  if (!run.isSubAgent) {
+    const follow = document.createElement("button");
+    follow.className = "fleet-follow";
+    follow.textContent = running ? "Follow" : "View";
+    follow.addEventListener("click", (e) => {
+      e.stopPropagation();
+      navigateToPage("goal");
+    });
+    item.append(follow);
+  }
   return item;
 }
 
@@ -4945,6 +4957,20 @@ async function fillDashboardSections({ force = false } = {}) {
   const projectPaths = [...new Set(secondMatesList.map((s) => s.projectPath).filter(Boolean))];
   const boardResult = projectPaths.length ? await window.maestro.getJotBoardSummary(projectPaths) : null;
   const boardSummary = boardResult?.ok ? boardResult.summary : {};
+  // Live sub-agents as crew: only for session nodes whose session is actively
+  // working (an idle session has none), so we tail-read only a couple of
+  // transcripts, not all ~15.
+  const activeSessionNodes = secondMatesList
+    .filter((sm) => sm.isSessionNode && sm.sessionId)
+    .map((sm) => ({ sm, sess: state.sessions.find((s) => (s.cliSessionId || s.sessionId) === sm.sessionId) }))
+    .filter((x) => x.sess && x.sess.status === "active");
+  if (activeSessionNodes.length) {
+    const saRes = await window.maestro.getLiveSubAgents(activeSessionNodes.map((x) => ({ cliSessionId: x.sess.cliSessionId, sessionId: x.sess.sessionId })));
+    const saMap = saRes?.ok ? saRes.subAgents : {};
+    for (const { sm, sess } of activeSessionNodes) {
+      sm.crew = (saMap[sess.sessionId] || []).map((a) => ({ isSubAgent: true, id: a.id, goal: a.description, status: "running" }));
+    }
+  }
   const fleetFp = dashboardFleetFingerprint(activeMatesList, secondMatesList, boardSummary);
   if (force || fleetFp !== dashSectionFingerprints.fleet) {
     dashSectionFingerprints.fleet = fleetFp;
