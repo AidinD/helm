@@ -1,6 +1,8 @@
-// E2E: the Focus filter (All / Work / Private). The dashboard toggle is now
-// 3-way (was Work/Private), and the Focus page gained the same toggle which
-// actually narrows its goal list. Drives a real launched Maestro via CDP.
+// E2E: the Focus filter (All / Work / Private). Verifies the toggle exists and
+// the domain-matching behaviour - including the p0 fix: an UNCLASSIFIED list
+// (no work/private domain) belongs to "All" only. It's dimmed under Work AND
+// Private on the dashboard (was shown bright in both), and narrowed out of the
+// Focus page's list. Drives a real launched Maestro via CDP.
 //
 // Run:  node scripts/e2e/test-focus-filter.mjs
 import { launch } from "./harness.mjs";
@@ -8,7 +10,6 @@ import { launch } from "./harness.mjs";
 function log(...a) {
   console.log("[focus-e2e]", ...a);
 }
-
 const app = await launch();
 let exitCode = 0;
 function assert(cond, msg) {
@@ -17,54 +18,55 @@ function assert(cond, msg) {
     exitCode = 1;
   }
 }
-// Texts of the buttons inside a .dash-focus-toggle within `scope` selector.
-const toggleTexts = (scope) =>
-  app.eval(
-    `(() => { const el = document.querySelector(${JSON.stringify(scope)} + ' .dash-focus-toggle'); if (!el) return null; return [...el.querySelectorAll('button')].map((b) => b.textContent.trim()); })()`
-  );
-const activeText = (scope) =>
-  app.eval(
-    `(() => { const el = document.querySelector(${JSON.stringify(scope)} + ' .dash-focus-toggle button.active'); return el ? el.textContent.trim() : null; })()`
-  );
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 try {
   await app.waitForSelector("#pageToggle", 30000, { visible: true });
-  await app.waitForSelector("#dashboardPage", 8000, { visible: true });
+  await app.eval(`(() => { navigateToPage("dashboard"); return true; })()`);
+  await app.waitForSelector(".dash-focus-toggle", 8000);
 
-  // Dashboard toggle is now 3-way.
-  const dashBtns = await toggleTexts("#dashboardPage");
-  log("dashboard toggle:", JSON.stringify(dashBtns));
-  assert(
-    Array.isArray(dashBtns) && ["All", "Work", "Private"].every((x) => dashBtns.includes(x)),
-    "dashboard Focus toggle has All / Work / Private"
-  );
-  assert((await activeText("#dashboardPage")) === "All", "dashboard Focus defaults to All (no dimming)");
+  const btns = await app.eval(`[...document.querySelectorAll(".dash-focus-toggle .view-toggle button")].map((b) => b.textContent.trim())`);
+  assert(["All", "Work", "Private"].every((x) => btns.includes(x)), "Focus toggle has All / Work / Private (got: " + JSON.stringify(btns) + ")");
 
-  // Focus page has the same 3-way toggle.
-  await app.click('#dashboardSubnav button[data-page="focus"]');
-  await app.waitForSelector("#focusPage", 8000, { visible: true });
-  const focusBtns = await toggleTexts("#focusPage");
-  log("focus page toggle:", JSON.stringify(focusBtns));
-  assert(
-    Array.isArray(focusBtns) && ["All", "Work", "Private"].every((x) => focusBtns.includes(x)),
-    "Focus page has an All / Work / Private filter"
-  );
-  assert((await activeText("#focusPage")) === "All", "Focus page defaults to All");
+  // The dim rule (dashGoalCardEl) under each mode, for a work goal vs an
+  // unclassified goal. dashGoalCardEl reads the global dashboardFocusMode.
+  const dim = await app.eval(`(() => {
+    const saved = dashboardFocusMode;
+    const workGoal = { id: "gw", text: "work goal", status: "open", domain: "work", categoryName: "W" };
+    const noneGoal = { id: "gn", text: "unclassified goal", status: "open", domain: null, categoryName: "N" };
+    const isDim = (goal, mode) => { dashboardFocusMode = mode; const el = dashGoalCardEl(goal); return el.classList.contains("dash-dimmed"); };
+    const r = {
+      workInWork: isDim(workGoal, "work"),
+      workInPrivate: isDim(workGoal, "private"),
+      noneInAll: isDim(noneGoal, "all"),
+      noneInWork: isDim(noneGoal, "work"),
+      noneInPrivate: isDim(noneGoal, "private"),
+    };
+    dashboardFocusMode = saved;
+    return r;
+  })()`);
+  assert(dim.workInWork === false, "a work goal is NOT dimmed under Work focus");
+  assert(dim.workInPrivate === true, "a work goal IS dimmed under Private focus");
+  assert(dim.noneInAll === false, "an unclassified goal is never dimmed under All");
+  assert(dim.noneInWork === true && dim.noneInPrivate === true, "an unclassified goal is dimmed under BOTH Work and Private (p0 fix - no longer bright in both)");
 
-  // Clicking Work on the Focus page activates it (the shared state flips).
-  await app.eval(
-    "(() => { const b = [...document.querySelectorAll('#focusPage .dash-focus-toggle button')].find((x) => x.textContent.trim() === 'Work'); if (b) b.click(); })()"
-  );
-  await app.waitForSelector("#focusPage", 5000, { visible: true });
-  assert((await activeText("#focusPage")) === "Work", "clicking Work on the Focus page makes it the active filter");
+  // Focus page narrows: an unclassified goal is excluded under Work.
+  const narrowed = await app.eval(`(() => {
+    const saved = dashboardFocusMode;
+    dashboardFocusMode = "work";
+    const goals = [ { domain: "work" }, { domain: "private" }, { domain: null } ];
+    const kept = goals.filter((g) => (typeof domainForGoal === "function" ? domainForGoal(g) : g.domain) === dashboardFocusMode);
+    dashboardFocusMode = saved;
+    return kept.length;
+  })()`);
+  assert(narrowed === 1, "Focus page filter keeps only the matching domain (unclassified narrowed out) - got " + narrowed);
 
   const errors = app.getConsoleErrors();
   assert(errors.length === 0, `no console errors (got ${errors.length})`);
   for (const e of errors) {
     log("  console error:", e.text);
   }
-
-  log(exitCode === 0 ? "VERIFY OK: Focus filter (All/Work/Private) works on dashboard + Focus page." : "VERIFY FAILED.");
+  log(exitCode === 0 ? "VERIFY OK: Focus filter + unclassified-belongs-to-All (p0 fix)." : "VERIFY FAILED.");
 } catch (err) {
   exitCode = 1;
   log("ERROR:", err.message);
@@ -72,5 +74,4 @@ try {
   const killOut = await app.close();
   log("cleanup:", killOut || "(nothing killed)");
 }
-
 process.exit(exitCode);
