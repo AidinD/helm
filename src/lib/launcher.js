@@ -47,7 +47,7 @@ export function resolveClaudeBinary() {
  * Returns { child, done } where `done` resolves with a summary once the process
  * exits. Emits normalized events: { kind, ...fields }.
  */
-export function startSession({ cwd, prompt, model, effort, permissionMode, resumeSessionId, onEvent, mcpConfig }) {
+export function startSession({ cwd, prompt, model, effort, permissionMode, resumeSessionId, onEvent, mcpConfig, allowedTools }) {
   const args = [
     "-p",
     prompt,
@@ -70,6 +70,13 @@ export function startSession({ cwd, prompt, model, effort, permissionMode, resum
   // pass --mcp-config to a spawned claude (an inline JSON string argv element).
   if (mcpConfig) {
     args.push("--mcp-config", mcpConfig);
+  }
+  // Pre-approve specific tools (first-mate dispatch tools) so a headless -p
+  // session can call them without an unanswerable permission prompt. Passed as
+  // SEPARATE argv values after the flag (`--allowedTools t1 t2 t3`) - a single
+  // space-joined value is NOT split by the CLI and matches nothing (verified).
+  if (allowedTools && allowedTools.length) {
+    args.push("--allowedTools", ...allowedTools);
   }
   // User-confirmed default is "auto" (matches what the captain already runs daily
   // in the desktop app); UI exposes the full mode list from the composer.
