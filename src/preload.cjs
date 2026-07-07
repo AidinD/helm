@@ -83,6 +83,8 @@ contextBridge.exposeInMainWorld("maestro", {
   listMates: () => ipcRenderer.invoke("mates:list"),
   renameMate: (mateId, name) => ipcRenderer.invoke("mates:rename", { mateId, name }),
   retireMate: (mateId) => ipcRenderer.invoke("mates:retire", { mateId }),
+  // Links the CLI session currently embodying a mate, so "jump in" resumes it.
+  bindMateSession: (mateId, sessionId) => ipcRenderer.invoke("mates:bindSession", { mateId, sessionId }),
   onSessionEvent: (handler) => {
     const listener = (_event, payload) => handler(payload);
     ipcRenderer.on("session:event", listener);
