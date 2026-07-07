@@ -3,89 +3,208 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 
-// First-mate identity (docs/first-mate-tier-design.md section 3, "Mate identity
-// (new, tiny)"). A first mate is an orchestrator session rooted in a meta-home
-// (the dir holding the canonical CLAUDE.md + auto-memory; see main.js's
-// orchestrator:info). We key dispatched runs and their reports by a stable
-// `mateId` derived from that root, so the Dashboard can later group a mate's
-// runs under it (the mate -> second-mate edge).
+// First-mate identity (docs/first-mate-tier-design.md section 3 + the "named
+// mates" refinement). A first mate is a NAMED coordination context the captain
+// jumps into - not a hard work/private domain, a soft split he chooses. Two
+// mates always exist (two fixed slots shown in the Fleet tree); each gets a
+// random sea-captain name at birth (renameable), and when one saturates OR its
+// dispatched work has all drained back, the captain retires it and a fresh one
+// respawns in the same slot with a new name.
+//
+// A dispatched run + its report are keyed by the dispatching mate's `mateId`
+// (stable across restarts, and preserved as a `retired` record after respawn so
+// the Fleet can still name a retired mate's historical runs). Multiple mates can
+// share the same root (the meta-home) - identity is the mateId, not the path,
+// which is why this no longer keys mates by root.
 //
 // Persisted next to config.json / domains.json / goal-run-history.json - the
 // same "plain JSON file beside the app, machine-specific, gitignored" data
-// convention every other Maestro store uses (domains.js's doc comment spells
-// this out). Deliberately tiny: one entry per first-mate root, nothing more
-// than the model needs to correlate a run to the mate that dispatched it.
+// convention every other Maestro store uses.
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const matesPath = path.join(__dirname, "..", "..", "mates.json");
+// MAESTRO_MATES_PATH is a test-only seam (E2E/unit tests point it at a temp
+// file so they never touch the real store); production leaves it unset and uses
+// the plain JSON file beside the app, like every other Maestro store.
+const matesPath = process.env.MAESTRO_MATES_PATH || path.join(__dirname, "..", "..", "mates.json");
+
+// Exactly two first-mate slots always exist.
+export const MATE_SLOT_COUNT = 2;
+
+// Sea-captain / pirate names from film, games, and literature - fitting for a
+// "first mate". A newborn mate takes one not currently held by a live mate.
+const NAME_POOL = [
+  "Jack Sparrow",
+  "Hector Barbossa",
+  "Davy Jones",
+  "Captain Nemo",
+  "Captain Ahab",
+  "Long John Silver",
+  "Captain Flint",
+  "Captain Hook",
+  "Blackbeard",
+  "Guybrush Threepwood", // Monkey Island
+  "LeChuck", // Monkey Island
+  "Edward Kenway", // Assassin's Creed: Black Flag
+  "Adewale", // Assassin's Creed: Black Flag
+  "Han Solo",
+  "Jean-Luc Picard",
+  "James Kirk",
+  "Corto Maltese",
+  "Sinbad",
+  "Captain Haddock", // Tintin
+  "Calico Jack",
+];
 
 export function matesFilePath() {
   return matesPath;
 }
 
-function readAll() {
+// State shape: { mates: [ { mateId, slot, name, root, status, createdAt,
+// retiredAt } ] }. Tolerant of the legacy flat-array shape (mates keyed by
+// root): those become `retired` records with no slot, so historical run
+// grouping keeps their names while the new two-slot active set is established.
+function readState() {
   if (!fs.existsSync(matesPath)) {
-    return [];
+    return { mates: [] };
   }
   try {
     const parsed = JSON.parse(fs.readFileSync(matesPath, "utf8"));
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function writeAll(mates) {
-  fs.writeFileSync(matesPath, JSON.stringify(mates, null, 2) + "\n", "utf8");
-}
-
-/**
- * Normalizes a root path for identity comparison: absolute, no trailing
- * separator, lowercased (Windows paths are case-insensitive - matches
- * isOwnWorktreeRoot's own normalization in goalOrchestrator.js).
- */
-function normRoot(root) {
-  return path.resolve(root).replace(/[\\/]+$/, "").toLowerCase();
-}
-
-/** Returns all persisted mates. */
-export function loadMates() {
-  return readAll();
-}
-
-/**
- * Resolves the `mateId` for a first-mate root, creating and persisting a new
- * mate record on first sight. Idempotent: the same root always maps to the same
- * mateId across restarts. `name` is a human label (defaults to the root's
- * basename, e.g. "Claude" for the meta-home) and is refreshed if a caller
- * passes a better one later.
- */
-export function resolveMate(root, name) {
-  if (!root) {
-    throw new Error("resolveMate requires a root path");
-  }
-  const key = normRoot(root);
-  const mates = readAll();
-  const existing = mates.find((m) => normRoot(m.root) === key);
-  if (existing) {
-    if (name && name !== existing.name) {
-      existing.name = name;
-      writeAll(mates);
+    if (Array.isArray(parsed)) {
+      return { mates: parsed.map((m) => ({ ...m, slot: null, status: "retired" })) };
     }
-    return existing;
+    if (parsed && Array.isArray(parsed.mates)) {
+      return { mates: parsed.mates };
+    }
+  } catch {
+    // fall through to empty
   }
-  const mate = {
-    mateId: `mate_${crypto.randomUUID()}`,
-    root: path.resolve(root),
-    name: name || path.basename(path.resolve(root)) || "mate",
-    createdAt: Date.now(),
-  };
-  mates.push(mate);
-  writeAll(mates);
+  return { mates: [] };
+}
+
+function writeState(state) {
+  fs.writeFileSync(matesPath, JSON.stringify(state, null, 2) + "\n", "utf8");
+}
+
+/** Picks a pool name not held by any of `taken` (active) names; falls back to a numbered name if the pool is exhausted. */
+function pickName(taken) {
+  const used = new Set(taken);
+  const free = NAME_POOL.filter((n) => !used.has(n));
+  if (free.length > 0) {
+    // Deterministic-enough without Math.random (unavailable in some contexts):
+    // rotate by how many are already taken, so two fresh picks differ.
+    return free[used.size % free.length];
+  }
+  return `Mate ${used.size + 1}`;
+}
+
+function activeMatesFrom(mates) {
+  return mates.filter((m) => m.status === "active");
+}
+
+/** Returns all persisted mates (active + retired). */
+export function loadMates() {
+  return readState().mates;
+}
+
+/** The (up to two) currently active mates, ordered by slot. */
+export function activeMates() {
+  return activeMatesFrom(readState().mates).sort((a, b) => (a.slot ?? 0) - (b.slot ?? 0));
+}
+
+/**
+ * Guarantees exactly two active mates rooted at `root`, creating any missing
+ * slot's mate with a fresh random name. Idempotent - safe to call on every
+ * startup / Fleet render. Returns the two active mates ordered by slot.
+ */
+export function ensureMates(root) {
+  if (!root) {
+    throw new Error("ensureMates requires a root path");
+  }
+  const resolvedRoot = path.resolve(root);
+  const state = readState();
+  let changed = false;
+  for (let slot = 0; slot < MATE_SLOT_COUNT; slot++) {
+    const held = state.mates.find((m) => m.status === "active" && m.slot === slot);
+    if (!held) {
+      const takenNames = activeMatesFrom(state.mates).map((m) => m.name);
+      state.mates.push({
+        mateId: `mate_${crypto.randomUUID()}`,
+        slot,
+        name: pickName(takenNames),
+        root: resolvedRoot,
+        status: "active",
+        createdAt: Date.now(),
+        retiredAt: null,
+      });
+      changed = true;
+    }
+  }
+  if (changed) {
+    writeState(state);
+  }
+  return activeMatesFrom(state.mates).sort((a, b) => (a.slot ?? 0) - (b.slot ?? 0));
+}
+
+/** Looks up a mate by id (active OR retired, so historical runs stay named), or null. */
+export function findMateById(mateId) {
+  return readState().mates.find((m) => m.mateId === mateId) || null;
+}
+
+/** Renames an active mate. Returns the updated mate, or null if not found. */
+export function renameMate(mateId, name) {
+  const trimmed = (name || "").trim();
+  if (!trimmed) {
+    throw new Error("renameMate requires a non-empty name");
+  }
+  const state = readState();
+  const mate = state.mates.find((m) => m.mateId === mateId);
+  if (!mate) {
+    return null;
+  }
+  mate.name = trimmed;
+  writeState(state);
   return mate;
 }
 
-/** Looks up a mate by id, or null. */
-export function findMateById(mateId) {
-  return readAll().find((m) => m.mateId === mateId) || null;
+/**
+ * Retires a mate and spins up a fresh one in the SAME slot with a new random
+ * name. The retired record is kept (status "retired", slot cleared) so the
+ * Fleet can still name that mate's historical dispatched runs. Returns the new
+ * active mate. No-op-safe: if the id is unknown or already retired, still
+ * guarantees the slot is filled.
+ */
+export function retireAndRespawn(mateId) {
+  const state = readState();
+  const outgoing = state.mates.find((m) => m.mateId === mateId);
+  const slot = outgoing && typeof outgoing.slot === "number" ? outgoing.slot : null;
+  const root = outgoing?.root;
+  if (outgoing && outgoing.status === "active") {
+    outgoing.status = "retired";
+    outgoing.slot = null;
+    outgoing.retiredAt = Date.now();
+  }
+  const targetSlot = slot != null ? slot : firstFreeSlot(state.mates);
+  const takenNames = activeMatesFrom(state.mates).map((m) => m.name);
+  const fresh = {
+    mateId: `mate_${crypto.randomUUID()}`,
+    slot: targetSlot,
+    name: pickName(takenNames),
+    root: root ? path.resolve(root) : null,
+    status: "active",
+    createdAt: Date.now(),
+    retiredAt: null,
+  };
+  state.mates.push(fresh);
+  writeState(state);
+  return fresh;
+}
+
+/** Lowest slot index [0, MATE_SLOT_COUNT) not currently held by an active mate. */
+function firstFreeSlot(mates) {
+  for (let slot = 0; slot < MATE_SLOT_COUNT; slot++) {
+    if (!mates.some((m) => m.status === "active" && m.slot === slot)) {
+      return slot;
+    }
+  }
+  return 0;
 }
