@@ -27,6 +27,7 @@ import {
   ensureDispatchDirs,
   requestsDir,
   readRequests,
+  claimRequest,
   removeRequest,
   writeAck,
   writeReport,
@@ -565,8 +566,9 @@ function resolveMetaHome() {
   // Test seam: MAESTRO_META_HOME_OVERRIDE lets an E2E point the dispatch queue
   // (and first-mate detection) at an isolated temp dir, so a test dispatch is
   // never raced/consumed by a separately-running dev instance watching the real
-  // meta-home. Unset in normal use, so real launches are unaffected.
-  if (process.env.MAESTRO_META_HOME_OVERRIDE) {
+  // meta-home. Honored ONLY in dev (never a packaged build), so a stray env var
+  // can't silently relocate the queue in production (review finding L5).
+  if (process.env.MAESTRO_META_HOME_OVERRIDE && !app.isPackaged) {
     return process.env.MAESTRO_META_HOME_OVERRIDE;
   }
   try {
@@ -1662,8 +1664,14 @@ function processDispatchRequests(metaHome) {
       if (!dispatchId) {
         continue;
       }
-      // Consume the request file up front so a concurrent re-scan (fs.watch +
-      // poll both firing) never picks it up twice.
+      // Atomically CLAIM the request before doing anything with it. This closes
+      // both the in-process double-scan (fs.watch + poll) AND the cross-process
+      // race where two Maestro instances watch the same meta-home (review H1):
+      // renameSync has exactly one winner, so only one instance launches the
+      // run. We already hold the data in `request`; drop the claimed file.
+      if (!claimRequest(metaHome, dispatchId)) {
+        continue; // another instance / an earlier scan claimed it first
+      }
       removeRequest(metaHome, dispatchId);
 
       const reject = (reason) => {

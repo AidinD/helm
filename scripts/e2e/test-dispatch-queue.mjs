@@ -12,6 +12,7 @@ import {
   ensureDispatchDirs,
   writeRequest,
   readRequests,
+  claimRequest,
   removeRequest,
   writeAck,
   readAck,
@@ -68,6 +69,13 @@ try {
   const ack = readAck(metaHome, dispatchId);
   assert(ack && ack.status === "accepted" && ack.goalRunId === "grun_1", "ack accept round-trips with goalRunId");
   assert(readAck(metaHome, "no-such-id") === null, "readAck returns null for an unknown dispatchId");
+
+  // Atomic claim (H1): exactly one winner; a claimed request leaves the pool.
+  const claimId = writeRequest(metaHome, { project: "p", goal: "claim-me" });
+  assert(claimRequest(metaHome, claimId) === true, "claimRequest wins on first claim");
+  assert(claimRequest(metaHome, claimId) === false, "a second claim of the same request loses (atomic single-winner)");
+  assert(!readRequests(metaHome).some((r) => r.dispatchId === claimId), "a claimed request leaves the pending pool");
+  removeRequest(metaHome, claimId);
 
   // Consume the request.
   removeRequest(metaHome, dispatchId);

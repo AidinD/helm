@@ -6225,8 +6225,11 @@ window.maestro.onGoalEvent((evt) => {
     // A DISPATCHED run (launched by the app's dispatch watcher, not the Goal
     // page) - the renderer never called goalRuns.set for it. Create the entry
     // on its "started" event so it shows in the running indicator + fleet/tree
-    // view; ignore later events for a run we somehow still don't know.
-    if (evt.kind === "started") {
+    // view; ignore later events for a run we somehow still don't know. Gated to
+    // dispatched runs (evt.dispatchedBy): a Goal-page run creates its OWN entry
+    // via goalRuns.set, so creating one here too would race + overwrite it
+    // (review finding M4).
+    if (evt.kind === "started" && evt.dispatchedBy) {
       run = {
         goalRunId: evt.goalRunId,
         ordinal: ++goalRunSeq,
