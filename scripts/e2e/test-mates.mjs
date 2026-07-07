@@ -11,9 +11,8 @@ const tmp = path.join(os.tmpdir(), "mates-test-" + Date.now());
 fs.mkdirSync(tmp, { recursive: true });
 process.env.MAESTRO_MATES_PATH = path.join(tmp, "mates.json");
 
-const { ensureMates, activeMates, findMateById, renameMate, retireAndRespawn, loadMates, MATE_SLOT_COUNT } = await import(
-  "../../src/lib/mates.js"
-);
+const { ensureMates, activeMates, findMateById, renameMate, retireAndRespawn, bindMateSession, loadMates, MATE_SLOT_COUNT } =
+  await import("../../src/lib/mates.js");
 
 function log(...a) {
   console.log("[mates-test]", ...a);
@@ -63,6 +62,21 @@ assert(loadMates().length === 3, "loadMates returns all records incl. the retire
 
 // fresh name differs from the surviving active mate's name
 assert(fresh.name !== active.find((m) => m.slot === 1).name, "the respawned name differs from the other active mate");
+
+// --- bindMateSession: durable mate <-> its current session ------------------
+const [a, b] = activeMates();
+bindMateSession(a.mateId, "sess-1");
+assert(findMateById(a.mateId).sessionId === "sess-1", "bindMateSession links a session to a mate");
+// re-binding the SAME session to the other mate moves it (a session has one mate)
+bindMateSession(b.mateId, "sess-1");
+assert(findMateById(b.mateId).sessionId === "sess-1", "binding a session to another mate moves it there");
+assert(findMateById(a.mateId).sessionId === null, "the session is cleared from the mate that no longer holds it");
+// retiring a mate freezes its sessionId on the retired record; the fresh one has none
+bindMateSession(b.mateId, "sess-2");
+const bId = b.mateId;
+const respawned = retireAndRespawn(bId);
+assert(findMateById(bId).sessionId === "sess-2", "a retired mate keeps its sessionId (frozen with its history)");
+assert(!respawned.sessionId, "the freshly respawned mate starts with no session");
 
 // --- legacy migration: a flat-array file becomes retired records ------------
 fs.writeFileSync(process.env.MAESTRO_MATES_PATH, JSON.stringify([{ mateId: "mate_legacy", root: ROOT, name: "Old Salt", createdAt: 1 }]), "utf8");

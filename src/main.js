@@ -22,7 +22,7 @@ import { runGoal } from "./lib/goalOrchestrator.js";
 import { loadGoalRunHistory, upsertGoalRunRecord, removeGoalRunRecord } from "./lib/goalRunHistory.js";
 import { removeWorktree } from "./lib/worktree.js";
 import { loadDomains, registerDomain, removeDomain } from "./lib/domains.js";
-import { ensureMates, activeMates, findMateById, loadMates, renameMate, retireAndRespawn } from "./lib/mates.js";
+import { ensureMates, activeMates, findMateById, loadMates, renameMate, retireAndRespawn, bindMateSession } from "./lib/mates.js";
 import {
   ensureDispatchDirs,
   requestsDir,
@@ -868,6 +868,14 @@ ipcMain.handle("mates:retire", (_event, { mateId }) => {
   try {
     const mate = retireAndRespawn(mateId);
     return { ok: true, mate };
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err) };
+  }
+});
+ipcMain.handle("mates:bindSession", (_event, { mateId, sessionId }) => {
+  try {
+    const mate = bindMateSession(mateId, sessionId);
+    return mate ? { ok: true, mate } : { ok: false, error: "unknown mateId" };
   } catch (err) {
     return { ok: false, error: err?.message || String(err) };
   }

@@ -150,6 +150,30 @@ export function findMateById(mateId) {
   return readState().mates.find((m) => m.mateId === mateId) || null;
 }
 
+/**
+ * Binds the CLI session that currently embodies a mate (the durable mate ->
+ * ephemeral session link the Fleet uses to "jump in": resume mate.sessionId, or
+ * start fresh if null). A session belongs to at most one mate, so this clears
+ * the id from any other mate first. Returns the updated mate, or null.
+ */
+export function bindMateSession(mateId, sessionId) {
+  const state = readState();
+  const mate = state.mates.find((m) => m.mateId === mateId);
+  if (!mate) {
+    return null;
+  }
+  if (sessionId) {
+    for (const other of state.mates) {
+      if (other.mateId !== mateId && other.sessionId === sessionId) {
+        other.sessionId = null;
+      }
+    }
+  }
+  mate.sessionId = sessionId || null;
+  writeState(state);
+  return mate;
+}
+
 /** Renames an active mate. Returns the updated mate, or null if not found. */
 export function renameMate(mateId, name) {
   const trimmed = (name || "").trim();
