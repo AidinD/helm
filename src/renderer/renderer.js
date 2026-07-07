@@ -4195,7 +4195,7 @@ function refreshDashboardIfVisible() {
 
 // Per-section fingerprints so fillDashboardSections can skip sections whose
 // source data is unchanged. Reset on each full renderDashboardPage.
-let dashSectionFingerprints = { onboarding: null, queue: null, goals: null, newSession: null };
+let dashSectionFingerprints = { onboarding: null, queue: null, fleet: null, goals: null, newSession: null };
 
 function dashboardQueueFingerprint(inMotion) {
   const rows = (inMotion || dashboardInMotionRows())
@@ -4215,6 +4215,105 @@ function dashboardGoalsFingerprint(goalsResult) {
 function dashboardNewSessionFingerprint() {
   const cwds = [...new Set(state.sessions.filter((s) => s.cwd).map((s) => s.cwd))].sort().join("|");
   return [cwds, dashboardSelectedChip, dashboardFocusMode].join("##");
+}
+
+function dashboardFleetFingerprint() {
+  return [...goalRuns.values()]
+    .map((r) => `${r.goalRunId}:${r.dispatchedBy || "-"}:${r.status}:${r.iterations?.length || 0}:${r.escalation ? 1 : 0}`)
+    .join("|");
+}
+
+// The fleet/tree view: the orchestration model made visible. Groups runs by the
+// first mate that dispatched them (dispatchedBy) into mate -> runs (second
+// mates) -> crew (a run's iterations), so you can see what each mate has in
+// flight - the captain/first-mate/second-mate/crew hierarchy from
+// docs/orchestration-model.md. Runs launched directly from the Goal page (no
+// dispatchedBy) group under "Direct". Returns null (no section) when there are
+// no runs at all, so it stays out of the way until there's a fleet to show.
+function dashboardFleetSection() {
+  const runs = [...goalRuns.values()];
+  if (runs.length === 0) {
+    return null;
+  }
+  // Group by mate. null dispatchedBy = launched directly by the captain.
+  const groups = new Map();
+  for (const run of runs) {
+    const key = run.dispatchedBy || "__direct__";
+    if (!groups.has(key)) {
+      groups.set(key, []);
+    }
+    groups.get(key).push(run);
+  }
+
+  const section = document.createElement("section");
+  section.className = "dash-board dash-fleet";
+  section.append(dashBoardHead("Fleet", runs.length, "Runs by the mate that dispatched them - the hierarchy in motion"));
+  const body = document.createElement("div");
+  body.className = "dash-board-body";
+
+  // Direct group last (mates first - they're the model's point).
+  const orderedKeys = [...groups.keys()].sort((a, b) => (a === "__direct__" ? 1 : b === "__direct__" ? -1 : 0));
+  for (const key of orderedKeys) {
+    const mateRuns = groups.get(key);
+    const mate = document.createElement("div");
+    mate.className = "fleet-mate";
+
+    const head = document.createElement("div");
+    head.className = "fleet-mate-head";
+    const name = document.createElement("span");
+    name.className = "fleet-mate-name";
+    name.textContent = key === "__direct__" ? "Direct (captain)" : `First mate: ${key}`;
+    const count = document.createElement("span");
+    count.className = "fleet-mate-count";
+    count.textContent = String(mateRuns.length);
+    head.append(name, count);
+    mate.append(head);
+
+    for (const run of mateRuns) {
+      mate.append(fleetRunNodeEl(run));
+    }
+    body.append(mate);
+  }
+  section.append(body);
+  return section;
+}
+
+// One run (a second mate) in the fleet tree: a status dot, the goal, the crew
+// size (iterations), and - when the run needs the captain (escalated, or done
+// with commits to review) - a "needs you" tag (the assign-back signal). Click
+// jumps to the Autopilot page.
+function fleetRunNodeEl(run) {
+  const node = document.createElement("div");
+  node.className = "fleet-run";
+  node.addEventListener("click", () => navigateToPage("goal"));
+
+  const dot = document.createElement("span");
+  dot.className = "fleet-run-dot " + (run.escalation ? "st-escalated" : `st-${run.status}`);
+  node.append(dot);
+
+  const body = document.createElement("div");
+  body.className = "fleet-run-body";
+  const goal = document.createElement("span");
+  goal.className = "fleet-run-goal";
+  goal.textContent = run.goal.length > 64 ? run.goal.slice(0, 64) + "…" : run.goal;
+  const meta = document.createElement("span");
+  meta.className = "fleet-run-meta";
+  const n = run.iterations?.length || 0;
+  const statusLabel = run.escalation ? "paused" : run.status === "running" ? "working" : run.status;
+  meta.textContent = `${statusLabel} · ${n} crew iteration${n === 1 ? "" : "s"}`;
+  body.append(goal, meta);
+  node.append(body);
+
+  // Assign-back: surface needsCaptain (escalation, or a finished run with
+  // commits worth reviewing) as a tag pulling the captain's eye.
+  const needs = run.escalation || (run.status === "error") || (run.status === "done" && (run.result?.commitCount > 0));
+  if (needs) {
+    const tag = document.createElement("span");
+    tag.className = "fleet-run-needs";
+    tag.textContent = run.escalation ? "needs you" : run.status === "error" ? "failed" : "review";
+    node.append(tag);
+  }
+  return node;
 }
 
 // Re-render only the sections whose data changed, into their existing slots.
@@ -4248,6 +4347,13 @@ async function fillDashboardSections({ force = false } = {}) {
   if (force || queueFp !== dashSectionFingerprints.queue) {
     dashSectionFingerprints.queue = queueFp;
     document.getElementById("dashQueueSlot").replaceChildren(dashboardQueueSection());
+  }
+
+  const fleetFp = dashboardFleetFingerprint();
+  if (force || fleetFp !== dashSectionFingerprints.fleet) {
+    dashSectionFingerprints.fleet = fleetFp;
+    const fleet = dashboardFleetSection();
+    document.getElementById("dashFleetSlot").replaceChildren(...(fleet ? [fleet] : []));
   }
 
   const goalsFp = dashboardGoalsFingerprint(goalsResult);
@@ -4294,8 +4400,8 @@ async function renderDashboardPage() {
     d.className = "dash-section-slot";
     return d;
   };
-  page.append(mkSlot("dashOnboardingSlot"), mkSlot("dashQueueSlot"), mkSlot("dashGoalsSlot"), mkSlot("dashNewSessionSlot"));
-  dashSectionFingerprints = { onboarding: null, queue: null, goals: null, newSession: null };
+  page.append(mkSlot("dashOnboardingSlot"), mkSlot("dashQueueSlot"), mkSlot("dashFleetSlot"), mkSlot("dashGoalsSlot"), mkSlot("dashNewSessionSlot"));
+  dashSectionFingerprints = { onboarding: null, queue: null, fleet: null, goals: null, newSession: null };
   await fillDashboardSections({ force: true });
 }
 
@@ -6061,9 +6167,31 @@ function goalEscalationCard(escalation) {
 // carries goalRunId; events from a stale run (a previous run, or after a new
 // one started) are ignored so late events can't clobber current state.
 window.maestro.onGoalEvent((evt) => {
-  const run = goalRuns.get(evt.goalRunId);
+  let run = goalRuns.get(evt.goalRunId);
   if (!run) {
-    return;
+    // A DISPATCHED run (launched by the app's dispatch watcher, not the Goal
+    // page) - the renderer never called goalRuns.set for it. Create the entry
+    // on its "started" event so it shows in the running indicator + fleet/tree
+    // view; ignore later events for a run we somehow still don't know.
+    if (evt.kind === "started") {
+      run = {
+        goalRunId: evt.goalRunId,
+        ordinal: ++goalRunSeq,
+        goal: evt.goal || "(dispatched run)",
+        projectPath: evt.projectPath || null,
+        dispatchedBy: evt.dispatchedBy || null,
+        tier: evt.tier || null,
+        status: "running",
+        iterations: [],
+        result: null,
+        error: null,
+        escalation: null,
+        latestPlan: null,
+      };
+      goalRuns.set(evt.goalRunId, run);
+    } else {
+      return;
+    }
   }
   if (evt.kind === "iteration") {
     run.iterations.push(evt.record);
