@@ -45,7 +45,7 @@ try {
   const dispatchId = writeRequest(metaHome, {
     project: "skiff",
     goal: "Do the thing",
-    tier: "second-mate",
+    tier: "crew",
     model: "opus",
     dispatchedBy: "mate_abc",
   });

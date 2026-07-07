@@ -49,7 +49,9 @@ export function loadGoalRunHistory() {
  *   - dispatchedBy: the mateId that dispatched this run (the mate -> second-mate
  *     edge the Dashboard tree draws from)
  *   - dispatchId: correlates the dispatch request, the run, and the report
- *   - tier: "second-mate" for a dispatched run
+ *   - tier: "crew" for a dispatched run (the run IS crew - the autonomous work
+ *     a second-mate project session owns; the second mate itself is a derived
+ *     per-(firstMate,project) session, see secondMates.js)
  * Because this is a `{...records[idx], ...record}` spread upsert, the fields are
  * purely additive - old records simply have them undefined, and no read path
  * needs to change.

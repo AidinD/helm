@@ -72,7 +72,7 @@ export function buildReportFromRecord(rec, now) {
     dispatchedBy: rec.dispatchedBy || null,
     project: rec.projectPath,
     goal: rec.goal,
-    tier: rec.tier || "second-mate",
+    tier: rec.tier || "crew",
     status,
     summary,
     changed: { commitCount, branchName: rec.branchName || null, worktreePath: rec.worktreePath || null },
