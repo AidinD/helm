@@ -1,6 +1,19 @@
 # First-mate tier: implementation design (DRAFT)
 
-Status: DRAFT for review with the captain before any build.
+Status: DECIDED 2026-07-07 (the captain signed off on all 6 forks - the agent's leans). Building the first slice.
+
+## Decided (2026-07-07) - the 6 forks
+
+1. Report-back: **pull** for the first slice (`maestro_collect_reports`, invoked at the bookend). Push deferred.
+2. MCP transport: **A1 - stdio MCP server over an on-disk request/report queue** (no listening socket, per the whisper-server lesson).
+3. Width cap: **3** concurrent dispatched runs per first mate (tunable).
+4. Self-hosting dispatch: **(b) accept-with-checkpoint** + a loud caveat in the tool description for the Maestro project; full detached-process fix deferred per PLAN.md.
+5. `project`: **validated enum** (seeded from known projects) + an escape hatch for an explicit path.
+6. Model-per-tier wired into the mechanism: `maestro_dispatch` defaults the dispatched run to **Opus** (second-mate default) unless overridden; the first-mate **session** is launched as **Sonnet**.
+
+---
+
+Original DRAFT below (the analysis behind the decisions).
 Grounds in `docs/orchestration-model.md` (the model + capability gap + phased plan), `DECISIONS.md` (2026-07-06), `docs/research-orchestration-2026-07-06.md` (the evidence constraints), and the current code (`goalOrchestrator.js`, `launcher.js`, `main.js`, `preload.cjs`, `renderer.js`).
 
 This designs the one capability gap from `orchestration-model.md`: a running orchestrator session (a first mate) telling Maestro to *launch a project-scoped run and stream its report back* - "session/run-spawns-run + structured report-back". It is a design to react to, not code.
