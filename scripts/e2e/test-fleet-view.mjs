@@ -109,6 +109,23 @@ try {
   assert((await count("#dashFleetSlot .fleet-nudge.hold .fleet-retire-btn")) === 0, "the dampened 'hold' nudge offers no retire button");
   assert((await count("#dashFleetSlot .fleet-nudge.done")) === 0, "the 'done' nudge is suppressed while urgent work is queued");
 
+  // Jump-in bug fix: a second mate with no bound session resumes the most recent
+  // EXISTING session in its project (not a fresh one). Verify the resolver.
+  const mru = await app.eval(`(() => {
+    const saved = state.sessions;
+    state.sessions = [
+      { sessionId:"S1", cliSessionId:"S1", cwd:"D:/Repo/jot", status:"idle", lastActivityAt:100 },
+      { sessionId:"S2", cliSessionId:"S2", cwd:"D:/Repo/jot", status:"idle", lastActivityAt:200 },
+      { sessionId:"S3", cliSessionId:"S3", cwd:"D:/Repo/jot", status:"archived", lastActivityAt:999 },
+    ];
+    const hit = mostRecentSessionForCwd("D:/Repo/jot");
+    const none = mostRecentSessionForCwd("D:/Repo/does-not-exist");
+    state.sessions = saved;
+    return { hit: hit && hit.sessionId, none };
+  })()`);
+  assert(mru.hit === "S2", "jump-in resolves the most recent NON-archived session for a project cwd (got " + JSON.stringify(mru) + ")");
+  assert(mru.none === null, "an unknown cwd resolves to null (would then open fresh)");
+
   const errors = app.getConsoleErrors();
   assert(errors.length === 0, `no console errors (got ${errors.length})`);
   for (const e of errors) {
