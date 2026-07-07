@@ -35,6 +35,7 @@ import {
   writeRequest,
   readAck,
   readReports,
+  readFleetState,
 } from "../lib/dispatchQueue.js";
 
 const META_HOME = process.env.MAESTRO_META_HOME || "";
@@ -105,6 +106,12 @@ const TOOLS = [
     name: "maestro_list_projects",
     description:
       "List the known projects this mate may dispatch to (the validated enum for maestro_dispatch's `project`). An explicit absolute repo path is also accepted as an escape hatch.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "maestro_fleet_state",
+    description:
+      "Survey the WHOLE fleet before deciding today's focus: the active first mates and every mate's recent dispatched work (project, status, whether it awaits the captain), plus live/needs-captain rollups by project. Your maestro_collect_reports only shows YOUR OWN dispatches - this shows the OTHER mate's too, so you can avoid overlap and propose COMPLEMENTARY focus (e.g. 'the other mate already has skiff + halyard in flight, so I'll take X'). Each dispatched entry is tagged `yours: true/false` relative to you.",
     inputSchema: { type: "object", properties: {} },
   },
 ];
@@ -182,6 +189,24 @@ function toolListProjects() {
   return { projects: loadProjects().map((p) => ({ name: p.name, path: p.path })) };
 }
 
+// The cross-mate fleet view (e07a2c5d) the app snapshots to disk. Tags each
+// dispatched entry `yours` relative to THIS mate so the surveying mate can tell
+// its own work from the other mate's at a glance.
+function toolFleetState() {
+  if (!META_HOME) {
+    return { error: "MAESTRO_META_HOME not configured; cannot read the fleet state." };
+  }
+  const state = readFleetState(META_HOME);
+  if (!state) {
+    return { updatedAt: null, mates: [], dispatched: [], note: "No fleet-state snapshot yet." };
+  }
+  return {
+    ...state,
+    youAre: MATE_ID,
+    dispatched: (state.dispatched || []).map((d) => ({ ...d, yours: MATE_ID ? d.mate === MATE_ID : false })),
+  };
+}
+
 function callTool(name, args) {
   switch (name) {
     case "maestro_dispatch":
@@ -190,6 +215,8 @@ function callTool(name, args) {
       return toolCollectReports(args || {});
     case "maestro_list_projects":
       return toolListProjects();
+    case "maestro_fleet_state":
+      return toolFleetState();
     default:
       return { error: `Unknown tool: ${name}` };
   }

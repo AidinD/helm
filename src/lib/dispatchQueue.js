@@ -50,6 +50,19 @@ export function acksDir(metaHome) {
   return path.join(dispatchRoot(metaHome), ACKS_SUBDIR);
 }
 
+// Fleet-state snapshot (e07a2c5d): the app writes a compact cross-mate view here
+// (single authority), and the maestro_fleet_state MCP tool reads it so a
+// surveying first mate can see what's already in flight across the fleet.
+export function fleetStatePath(metaHome) {
+  return path.join(dispatchRoot(metaHome), "fleet-state.json");
+}
+export function writeFleetState(metaHome, state) {
+  writeJsonAtomic(fleetStatePath(metaHome), state);
+}
+export function readFleetState(metaHome) {
+  return readJsonTolerant(fleetStatePath(metaHome));
+}
+
 /** Ensures all inbox dirs exist. Safe to call repeatedly (recursive mkdir). */
 export function ensureDispatchDirs(metaHome) {
   fs.mkdirSync(requestsDir(metaHome), { recursive: true });
