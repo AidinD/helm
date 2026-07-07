@@ -48,6 +48,13 @@ let categoryDropTarget = null;
 // than freezing the sidebar forever — dragend clears it in every normal case.
 let categoryDragStartedAt = null;
 const CATEGORY_DRAG_STALE_MS = 30000;
+// First-mate refresh pipe (docs/orchestration-model.md phase 5): when a
+// first-mate session's context gauge crosses this %, nudge to hand off to a
+// fresh one (a first mate stays thin - continuity is in files, not a bloating
+// window). firstMateHandoffNotified keeps the away-from-desk notification
+// one-per-session so it doesn't fire on every gauge tick.
+const FIRST_MATE_HANDOFF_PCT = 70;
+const firstMateHandoffNotified = new Set();
 
 function categoryDragInProgress() {
   return categoryDragStartedAt !== null && Date.now() - categoryDragStartedAt < CATEGORY_DRAG_STALE_MS;
@@ -1586,7 +1593,11 @@ async function summarizeAndCarryOver(session) {
     return;
   }
   const draft = `Continuing from "${session.title}". Summary of prior context:\n\n${result.text.trim()}\n\nPlease continue from here.`;
-  openFreshDraftInPane(session.cwd, draft);
+  // A first-mate handoff should produce a fresh FIRST MATE (same meta-home root
+  // = orchestrator by cwd anyway, but carry the isOrchestrator flag + Sonnet
+  // default so it behaves as one from turn one), not a plain chat.
+  const carryOpts = isOrchestratorSession(session) ? { paneOverrides: { isOrchestrator: true, modelDefault: "claude-sonnet-5" } } : {};
+  openFreshDraftInPane(session.cwd, draft, carryOpts);
 }
 
 // Sets just the status text on whichever pane is currently focused, without
@@ -3358,9 +3369,15 @@ function paneComposerEl(index) {
   const contextGauge = document.createElement("button");
   contextGauge.type = "button";
   contextGauge.className = "composer-context";
+  // First-mate refresh nudge, shown next to the gauge when a first mate is
+  // getting full and is NOT mid-task (so the handoff lands at a sensible
+  // moment). Updated in lockstep with the gauge.
+  const handoffEl = document.createElement("div");
+  handoffEl.className = "first-mate-handoff hidden";
   const renderContextGauge = () => {
     if (typeof pane.contextTokens !== "number") {
       contextGauge.style.display = "none";
+      handoffEl.classList.add("hidden");
       return;
     }
     contextGauge.style.display = "";
@@ -3378,6 +3395,36 @@ function paneComposerEl(index) {
     label.textContent = `${pct}%`;
     contextGauge.append(bar, label);
     contextGauge.title = "Context in use for this session — click for detail + quota";
+
+    // First-mate refresh pipe: a first mate stays thin. When this IS a first
+    // mate, it's saturating, and it's idle (not mid-task), surface a one-click
+    // handoff + fire a one-time attention notification so the captain is pulled
+    // back even if on another page.
+    const showHandoff = pane.isOrchestrator && !!pane.sessionId && !pane.busy && pct >= FIRST_MATE_HANDOFF_PCT;
+    handoffEl.classList.toggle("hidden", !showHandoff);
+    if (showHandoff) {
+      handoffEl.innerHTML = "";
+      const msg = document.createElement("span");
+      msg.className = "first-mate-handoff-msg";
+      msg.textContent = `First mate ${pct}% full — `;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "text-btn";
+      btn.textContent = "hand off to a fresh one";
+      btn.title = "Summarize this first mate to a fresh session (continuity via files)";
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const s = sessionById(pane.sessionId);
+        if (s) {
+          summarizeAndCarryOver(s);
+        }
+      });
+      handoffEl.append(msg, btn);
+      if (!firstMateHandoffNotified.has(pane.sessionId)) {
+        firstMateHandoffNotified.add(pane.sessionId);
+        window.maestro.notifyAttention({ title: "Maestro — your first mate is filling up", body: "Hand off to a fresh first mate to keep it sharp." });
+      }
+    }
   };
   renderContextGauge();
   contextGauge.addEventListener("click", (e) => {
@@ -3397,6 +3444,7 @@ function paneComposerEl(index) {
   metaRow.className = "composer-meta-row";
   metaRow.append(suggestHint, contextGauge);
   shell.append(metaRow);
+  shell.append(handoffEl);
   wrap.append(shell);
 
   // Model-fit judge verdict lives here, under the composer — not in the chat
@@ -7661,7 +7709,13 @@ function getOrCreateBackgroundTask(taskId) {
 }
 
 function renderBackgroundTasksBadge() {
+  // #backgroundTasksBtn is relocated between pane headers (see the chat-toolbar
+  // note in index.html), so it can be momentarily absent from the DOM (e.g. a
+  // refresh tick landing mid pane-rebuild). Guard rather than throw.
   const btn = document.getElementById("backgroundTasksBtn");
+  if (!btn) {
+    return;
+  }
   const running = [...backgroundTasks.values()].filter((t) => t.status === "running").length;
   btn.textContent = running > 0 ? `Background tasks (${running})` : "Background tasks";
   btn.classList.toggle("has-running", running > 0);

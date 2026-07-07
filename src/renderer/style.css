@@ -823,6 +823,25 @@ body.advanced .row-jot {
   font-size: 11px;
 }
 
+/* First-mate refresh nudge: shown under the composer when a first mate is
+   getting full and idle - a quiet amber prompt to hand off to a fresh one. */
+.first-mate-handoff {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--waiting);
+  border-radius: 8px;
+  font-size: 11px;
+  color: var(--waiting);
+}
+
+.first-mate-handoff .text-btn {
+  color: var(--waiting);
+  text-decoration: underline;
+}
+
 /* Context gauge under the composer's model/effort row (the captain's placement),
    right-aligned. A clickable bar + % that opens the context/quota popover. */
 .composer-context {
