@@ -31,7 +31,9 @@ import {
   removeRequest,
   writeAck,
   writeReport,
+  readReports,
 } from "./lib/dispatchQueue.js";
+import { recordsNeedingReport, buildReportFromRecord } from "./lib/dispatchReconcile.js";
 import { widthCapExceeded, depthCapExceeded } from "./lib/dispatchCaps.js";
 import { listScheduledTasks } from "./lib/routines.js";
 import { buildArtifactSrcdoc, formatAnnotationsAsPrompt } from "./lib/lavishSdk.js";
@@ -1814,6 +1816,22 @@ function startDispatchWatcher() {
   } catch (err) {
     console.error("[maestro] could not create the dispatch inbox dirs:", err);
     return;
+  }
+  // Report-back reconciliation (review M2): a dispatched run that finished or
+  // was interrupted while the app was down never fired its in-memory report
+  // closure. Synthesize the missing report from the persisted history so the
+  // mate's maestro_collect_reports still hears back. liveGoalRuns is empty at
+  // startup, so every terminal/interrupted dispatched record with no report is
+  // covered; a still-live run is skipped (its own onComplete will report).
+  try {
+    const existingReportIds = new Set(readReports(metaHome).map((r) => r.dispatchId));
+    const liveIds = new Set(liveGoalRuns.keys());
+    const now = Date.now();
+    for (const rec of recordsNeedingReport(loadGoalRunHistory(), existingReportIds, liveIds)) {
+      writeReport(metaHome, buildReportFromRecord(rec, now));
+    }
+  } catch (err) {
+    console.error("[maestro] dispatch report reconciliation failed:", err);
   }
   // Sweep once at startup so a request written while the app was down (or an
   // ack that never got picked up) is handled promptly.
