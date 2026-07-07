@@ -151,6 +151,18 @@ try {
   assert((await count("#dashFleetSlot .fleet-confirm")) >= 1, "retire shows a custom inline confirm (not window.confirm)");
   assert((await count("#dashFleetSlot .fleet-confirm .fleet-confirm-no")) >= 1, "the inline confirm has a Cancel button");
 
+  // A session-backed second mate offers an archive button (archive from Direct).
+  const arch = await app.eval(`(() => {
+    const saved = state.sessions;
+    state.sessions = [{ sessionId:"AS1", cliSessionId:"AS1", cwd:"D:/Repo/x", status:"idle", lastActivityAt:1 }];
+    const withSession = fleetSecondMateEl({ secondMateId:"sm_x", firstMateId:"direct", projectPath:"D:/Repo/x", name:"x", sessionId:"AS1", crew:[] }).querySelectorAll(".fleet-branch-archive").length;
+    const noSession = fleetSecondMateEl({ secondMateId:"sm_y", firstMateId:"direct", projectPath:"D:/Repo/y", name:"y", sessionId:null, crew:[] }).querySelectorAll(".fleet-branch-archive").length;
+    state.sessions = saved;
+    return { withSession, noSession };
+  })()`);
+  assert(arch.withSession === 1, "a session-backed second mate shows an archive button");
+  assert(arch.noSession === 0, "a run-only second mate (no session) shows no archive button");
+
   const errors = app.getConsoleErrors();
   assert(errors.length === 0, `no console errors (got ${errors.length})`);
   for (const e of errors) {
