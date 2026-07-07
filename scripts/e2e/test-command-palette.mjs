@@ -34,6 +34,7 @@ try {
 
   // Starts hidden.
   assert(await isHidden("#commandPalette"), "palette starts hidden");
+  assert((await count("#cmdkHint")) === 1, "the keyboard hint renders in the header");
 
   // Ctrl+K opens it (via the real global keydown handler).
   await app.eval(`document.dispatchEvent(new KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true }))`);
