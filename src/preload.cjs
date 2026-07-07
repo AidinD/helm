@@ -78,6 +78,11 @@ contextBridge.exposeInMainWorld("maestro", {
   },
   startSession: (opts) => ipcRenderer.invoke("session:start", opts),
   stopSession: (launchId) => ipcRenderer.invoke("session:stop", { launchId }),
+  // Named mates: the two fixed first-mate slots. listMates -> { active, all };
+  // renameMate/retireMate mutate (retire discards + respawns a fresh one).
+  listMates: () => ipcRenderer.invoke("mates:list"),
+  renameMate: (mateId, name) => ipcRenderer.invoke("mates:rename", { mateId, name }),
+  retireMate: (mateId) => ipcRenderer.invoke("mates:retire", { mateId }),
   onSessionEvent: (handler) => {
     const listener = (_event, payload) => handler(payload);
     ipcRenderer.on("session:event", listener);

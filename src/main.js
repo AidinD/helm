@@ -22,7 +22,7 @@ import { runGoal } from "./lib/goalOrchestrator.js";
 import { loadGoalRunHistory, upsertGoalRunRecord, removeGoalRunRecord } from "./lib/goalRunHistory.js";
 import { removeWorktree } from "./lib/worktree.js";
 import { loadDomains, registerDomain, removeDomain } from "./lib/domains.js";
-import { resolveMate } from "./lib/mates.js";
+import { ensureMates, activeMates, findMateById, loadMates, renameMate, retireAndRespawn } from "./lib/mates.js";
 import {
   ensureDispatchDirs,
   requestsDir,
@@ -684,8 +684,13 @@ const FIRST_MATE_ALLOWED_TOOLS = ["maestro_dispatch", "maestro_collect_reports",
   (t) => `mcp__${FIRST_MATE_MCP_SERVER}__${t}`
 );
 
-function buildFirstMateMcpConfig(metaHome) {
-  const mate = resolveMate(metaHome, path.basename(metaHome));
+function buildFirstMateMcpConfig(metaHome, mateId) {
+  // Named mates: the session is bound to one of the two fixed mate slots by the
+  // mateId the renderer passes. Fall back to the first active mate if none was
+  // given (a direct meta-home launch that didn't pick a slot) so a first mate
+  // always has a stable identity. ensureMates guarantees the two slots exist.
+  const active = ensureMates(metaHome);
+  const mate = (mateId && findMateById(mateId)) || active[0];
   const serverPath = path.join(__dirname, "mcp", "maestroDispatchServer.js");
   const config = {
     mcpServers: {
@@ -838,10 +843,40 @@ ipcMain.handle("lavish:formatPrompt", (_event, { annotations, domSnapshot }) => 
   return { ok: true, text: formatAnnotationsAsPrompt(annotations, domSnapshot) };
 });
 
+// --- Named mates: the two fixed first-mate slots the Fleet shows and the
+// captain jumps into. `list` returns the active pair (ordered by slot) plus all
+// records (incl. retired, so a retired mate's historical runs stay named).
+// `rename`/`retire` mutate; retire discards the mate and respawns a fresh one in
+// the same slot with a new name. ---
+ipcMain.handle("mates:list", () => {
+  try {
+    const metaHome = resolveMetaHome();
+    return { ok: true, active: ensureMates(metaHome), all: loadMates() };
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err), active: [], all: [] };
+  }
+});
+ipcMain.handle("mates:rename", (_event, { mateId, name }) => {
+  try {
+    const mate = renameMate(mateId, name);
+    return mate ? { ok: true, mate } : { ok: false, error: "unknown mateId" };
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err) };
+  }
+});
+ipcMain.handle("mates:retire", (_event, { mateId }) => {
+  try {
+    const mate = retireAndRespawn(mateId);
+    return { ok: true, mate };
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err) };
+  }
+});
+
 // --- Start (or resume) a rooted session; stream events to the renderer ---
 ipcMain.handle(
   "session:start",
-  (_event, { cwd, prompt, model, effort, permissionMode, resumeSessionId, suggestedModel, suggestedEffort, internal }) => {
+  (_event, { cwd, prompt, model, effort, permissionMode, resumeSessionId, suggestedModel, suggestedEffort, internal, mateId }) => {
     if (!cwd || !prompt) {
       return { ok: false, error: "cwd and prompt are required" };
     }
@@ -869,7 +904,7 @@ ipcMain.handle(
       if (isMetaHomeRoot(cwd)) {
         const metaHome = resolveMetaHome();
         ensureDispatchDirs(metaHome);
-        mcpConfig = buildFirstMateMcpConfig(metaHome);
+        mcpConfig = buildFirstMateMcpConfig(metaHome, mateId);
         // Pre-approve exactly the dispatch tools so the headless first mate can
         // call them without a permission prompt it can't answer (review M3).
         allowedTools = FIRST_MATE_ALLOWED_TOOLS;
@@ -1824,6 +1859,14 @@ function startDispatchWatcher() {
   } catch (err) {
     console.error("[maestro] could not create the dispatch inbox dirs:", err);
     return;
+  }
+  // Named mates: guarantee the two fixed first-mate slots exist (each with a
+  // random sea-captain name) so the Fleet tree always has its two roots to show,
+  // even before the captain has jumped into either.
+  try {
+    ensureMates(metaHome);
+  } catch (err) {
+    console.error("[maestro] could not ensure the two first mates:", err);
   }
   // Report-back reconciliation (review M2): a dispatched run that finished or
   // was interrupted while the app was down never fired its in-memory report
