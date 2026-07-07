@@ -3391,11 +3391,27 @@ button.primary {
   align-items: center;
   gap: 8px;
   margin: 0 11px 10px;
-  padding: 8px 10px;
+  padding: 9px 11px;
   border-radius: 8px;
-  background: var(--bg);
-  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg));
+  border: 1px solid var(--accent);
   font-size: 12px;
+}
+.fleet-archive-btn {
+  align-self: flex-start;
+  margin-top: 1px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-dim);
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 10.5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.fleet-archive-btn:hover {
+  border-color: var(--accent);
+  color: var(--text);
 }
 .fleet-confirm-q {
   flex: 1;
@@ -3444,10 +3460,6 @@ button.primary {
 }
 .fleet-retire-btn:hover {
   filter: brightness(1.08);
-}
-.fleet-branch-archive {
-  align-self: flex-start;
-  margin-top: 1px;
 }
 
 .fleet-branches {

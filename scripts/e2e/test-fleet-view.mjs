@@ -155,13 +155,22 @@ try {
   const arch = await app.eval(`(() => {
     const saved = state.sessions;
     state.sessions = [{ sessionId:"AS1", cliSessionId:"AS1", cwd:"D:/Repo/x", status:"idle", lastActivityAt:1 }];
-    const withSession = fleetSecondMateEl({ secondMateId:"sm_x", firstMateId:"direct", projectPath:"D:/Repo/x", name:"x", sessionId:"AS1", crew:[] }).querySelectorAll(".fleet-branch-archive").length;
-    const noSession = fleetSecondMateEl({ secondMateId:"sm_y", firstMateId:"direct", projectPath:"D:/Repo/y", name:"y", sessionId:null, crew:[] }).querySelectorAll(".fleet-branch-archive").length;
+    const withSession = fleetSecondMateEl({ secondMateId:"sm_x", firstMateId:"direct", projectPath:"D:/Repo/x", name:"x", sessionId:"AS1", crew:[] }).querySelectorAll(".fleet-archive-btn").length;
+    const noSession = fleetSecondMateEl({ secondMateId:"sm_y", firstMateId:"direct", projectPath:"D:/Repo/y", name:"y", sessionId:null, crew:[] }).querySelectorAll(".fleet-archive-btn").length;
     state.sessions = saved;
     return { withSession, noSession };
   })()`);
   assert(arch.withSession === 1, "a session-backed second mate shows an archive button");
   assert(arch.noSession === 0, "a run-only second mate (no session) shows no archive button");
+
+  // Jumping into a first mate with no session titles the fresh chat after it.
+  const title = await app.eval(`(() => {
+    jumpIntoFirstMate({ mateId:"tm", name:"Captain Nemo", sessionId:null });
+    const t = panes[0] && panes[0].title;
+    navigateToPage("dashboard");
+    return t;
+  })()`);
+  assert(title === "Captain Nemo", "jumping into a first mate titles the fresh chat after the mate (got " + JSON.stringify(title) + ")");
 
   const errors = app.getConsoleErrors();
   assert(errors.length === 0, `no console errors (got ${errors.length})`);
