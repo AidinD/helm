@@ -42,6 +42,17 @@ export function loadGoalRunHistory() {
  * each terminal event ("done"/"error"), so an interrupted run (app killed
  * mid-run) is left on disk as "running" rather than silently missing —
  * rehydration on the next load is what turns that into "interrupted".
+ *
+ * First-mate tier (docs/first-mate-tier-design.md section 3) adds three
+ * ADDITIVE fields, written by startGoalRun in main.js when a run was dispatched
+ * by a first mate (all null for a direct/captain-initiated Goal-page run):
+ *   - dispatchedBy: the mateId that dispatched this run (the mate -> second-mate
+ *     edge the Dashboard tree draws from)
+ *   - dispatchId: correlates the dispatch request, the run, and the report
+ *   - tier: "second-mate" for a dispatched run
+ * Because this is a `{...records[idx], ...record}` spread upsert, the fields are
+ * purely additive - old records simply have them undefined, and no read path
+ * needs to change.
  */
 export function upsertGoalRunRecord(record) {
   const records = readAll();

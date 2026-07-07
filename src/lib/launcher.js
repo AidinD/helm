@@ -47,7 +47,7 @@ export function resolveClaudeBinary() {
  * Returns { child, done } where `done` resolves with a summary once the process
  * exits. Emits normalized events: { kind, ...fields }.
  */
-export function startSession({ cwd, prompt, model, effort, permissionMode, resumeSessionId, onEvent }) {
+export function startSession({ cwd, prompt, model, effort, permissionMode, resumeSessionId, onEvent, mcpConfig }) {
   const args = [
     "-p",
     prompt,
@@ -60,6 +60,16 @@ export function startSession({ cwd, prompt, model, effort, permissionMode, resum
   }
   if (effort) {
     args.push("--effort", effort);
+  }
+  // First-mate tier (docs/first-mate-tier-design.md section 5): main.js passes
+  // an inline mcp-config JSON string ONLY when this launch is a first mate
+  // (session rooted in the meta home), so ONLY first mates get the maestro_*
+  // dispatch tools. A dispatched second-mate run (a runGoal iteration, which
+  // does not go through startSession at all) never gets them - the structural
+  // depth cap. Passed exactly the way judge.js/orchestratorHelper.js already
+  // pass --mcp-config to a spawned claude (an inline JSON string argv element).
+  if (mcpConfig) {
+    args.push("--mcp-config", mcpConfig);
   }
   // User-confirmed default is "auto" (matches what the captain already runs daily
   // in the desktop app); UI exposes the full mode list from the composer.
