@@ -4309,6 +4309,53 @@ function crewRunning(r) {
   return r.status === "running" && !r.escalation;
 }
 
+// A small themed, centered confirm modal (never the native window.confirm -
+// the captain's standing rule). Calls onConfirm only if the user confirms; clicking
+// the backdrop or Cancel dismisses. Reusable for any destructive action.
+function customConfirm(message, confirmLabel, onConfirm) {
+  const overlay = document.createElement("div");
+  overlay.className = "confirm-overlay";
+  const box = document.createElement("div");
+  box.className = "confirm-box";
+  const msg = document.createElement("div");
+  msg.className = "confirm-msg";
+  msg.textContent = message;
+  const row = document.createElement("div");
+  row.className = "confirm-row";
+  const cancel = document.createElement("button");
+  cancel.className = "confirm-cancel";
+  cancel.textContent = "Cancel";
+  const ok = document.createElement("button");
+  ok.className = "confirm-ok";
+  ok.textContent = confirmLabel;
+  const close = () => overlay.remove();
+  cancel.addEventListener("click", (e) => {
+    e.stopPropagation();
+    close();
+  });
+  ok.addEventListener("click", (e) => {
+    e.stopPropagation();
+    close();
+    onConfirm();
+  });
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) {
+      close();
+    }
+  });
+  document.addEventListener("keydown", function esc(ev) {
+    if (ev.key === "Escape") {
+      close();
+      document.removeEventListener("keydown", esc);
+    }
+  });
+  row.append(cancel, ok);
+  box.append(msg, row);
+  overlay.append(box);
+  document.body.append(overlay);
+  ok.focus();
+}
+
 // Second mates are DERIVED from run history (main.js), which only surfaces
 // projects a run touched. But the captain works from ONE cwd (the meta-home) across
 // many topics, so grouping by project-cwd collapsed all his real sessions into
@@ -4356,7 +4403,11 @@ function dashboardFleetSection(mates = [], secondMates = [], boardSummary = {}) 
     const sms = secondMates.filter((s) => s.firstMateId === mate.mateId);
     cols.append(fleetColumnEl(`First mate · slot ${(mate.slot ?? 0) + 1}`, fleetMateCardEl(mate, sms, boardSummary), false));
   }
-  const directSms = secondMates.filter((s) => s.firstMateId === "direct");
+  // Direct lists your SESSIONS only (the captain's choice). A run-derived direct node
+  // (an autonomous run with no session) would otherwise show as a confusing
+  // duplicate that jumps somewhere different than the same-named session - those
+  // live on the Autopilot page instead.
+  const directSms = secondMates.filter((s) => s.firstMateId === "direct" && s.isSessionNode);
   cols.append(fleetColumnEl("Direct · your own work", fleetDirectCardEl(directSms), true));
 
   section.append(cols);
@@ -4447,25 +4498,9 @@ function fleetMateCardEl(mate, sms, boardSummary = {}) {
   retireBtn.textContent = "↻";
   retireBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    if (card.querySelector(".fleet-confirm")) {
-      return;
-    }
-    const confirm = document.createElement("div");
-    confirm.className = "fleet-confirm";
-    confirm.addEventListener("click", (ev) => ev.stopPropagation());
-    const q = document.createElement("span");
-    q.className = "fleet-confirm-q";
-    q.textContent = `Retire ${mate.name} & respawn a fresh mate?`;
-    const yes = document.createElement("button");
-    yes.className = "fleet-retire-btn";
-    yes.textContent = "Retire";
-    yes.addEventListener("click", () => window.maestro.retireMate(mate.mateId).then(() => fillDashboardSections({ force: true })));
-    const no = document.createElement("button");
-    no.className = "fleet-confirm-no";
-    no.textContent = "Cancel";
-    no.addEventListener("click", () => confirm.remove());
-    confirm.append(q, yes, no);
-    top.after(confirm);
+    customConfirm(`Retire ${mate.name} and spin up a fresh mate in its place?`, "Retire", () => {
+      window.maestro.retireMate(mate.mateId).then(() => fillDashboardSections({ force: true }));
+    });
   });
   actions.append(renameBtn, retireBtn);
   top.append(anchor, idBox, actions);
@@ -4636,10 +4671,18 @@ function fleetSecondMateEl(sm) {
     archiveBtn.textContent = "Archive";
     archiveBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      // Optimistic: drop the node immediately (archiveSession + a full dashboard
-      // refetch takes a beat), then reconcile in the background.
+      // Optimistic + no forced re-render. The flicker before was: remove the
+      // node, then fillDashboardSections re-derived Direct from state.sessions -
+      // which STILL had the session (the archive hadn't propagated back yet) - so
+      // the node reappeared until a later refresh finally dropped it. Fix: mark
+      // the session archived in local state right away so any re-render already
+      // excludes it, drop the node, and fire the archive without a forced refetch.
+      const s = state.sessions.find((x) => x.sessionId === backingSession.sessionId);
+      if (s) {
+        s.status = "archived";
+      }
       branch.remove();
-      window.maestro.archiveSession(backingSession.sessionId, true).then(() => fillDashboardSections({ force: true }));
+      window.maestro.archiveSession(backingSession.sessionId, true);
     });
     head.append(archiveBtn);
   }
@@ -4690,7 +4733,7 @@ function fleetDirectCardEl(sms) {
   top.className = "fleet-mate-top";
   const anchor = document.createElement("span");
   anchor.className = "fleet-anchor direct";
-  anchor.textContent = "🧢";
+  anchor.textContent = "⎈"; // ship's wheel / helm - the captain steers
   const idBox = document.createElement("div");
   idBox.className = "fleet-mate-idbox";
   const name = document.createElement("div");

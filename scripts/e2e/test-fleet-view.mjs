@@ -56,7 +56,8 @@ try {
         { goalRunId: "c1", goal: "Antigravity auth spike", status: "running", iterations: [{},{}] } ] },
       { secondMateId: "s2", firstMateId: "m1", name: "jot", sessionId: null, crew: [
         { goalRunId: "c2", goal: "double-encoding self-heal", status: "done", commitCount: 0, iterations: [{},{}] } ] },
-      { secondMateId: "s3", firstMateId: "direct", name: "maestro", sessionId: null, crew: [] },
+      { secondMateId: "s3", firstMateId: "direct", name: "maestro", sessionId: "ds3", crew: [], isSessionNode: true },
+      { secondMateId: "s4", firstMateId: "direct", name: "old-run", sessionId: null, crew: [] },
     ];
     document.getElementById("dashFleetSlot").replaceChildren(dashboardFleetSection(mates, secondMates));
     return true;
@@ -74,7 +75,8 @@ try {
 
   // Second mates branch under their first mate.
   const projs = await app.eval(`[...document.querySelectorAll("#dashFleetSlot .fleet-branch-proj")].map(e => e.textContent)`);
-  assert(projs.includes("nw-halyard") && projs.includes("jot") && projs.includes("maestro"), "second mates render under their columns (got: " + JSON.stringify(projs) + ")");
+  assert(projs.includes("nw-halyard") && projs.includes("jot") && projs.includes("maestro"), "second mates + Direct session nodes render (got: " + JSON.stringify(projs) + ")");
+  assert(!projs.includes("old-run"), "a run-only Direct node (no session) is NOT shown - Direct lists sessions only, no confusing duplicates");
 
   // Crew under a second mate (rendered even while collapsed).
   assert((await count("#dashFleetSlot .fleet-crew-item")) === 2, "crew items render under their second mates");
@@ -149,11 +151,15 @@ try {
   await wait(120);
   assert((await count("#dashFleetSlot .fleet-rename-input")) === 1, "rename opens an inline input (not a native prompt)");
 
-  // Retire is a custom inline confirm (not window.confirm): 2nd icon = retire.
+  // Retire shows a custom confirm MODAL (not window.confirm): 2nd icon = retire.
   await app.eval(`document.querySelectorAll("#dashFleetSlot .fleet-mate-card:not(.direct) .fleet-icon-btn")[1].click(); true`);
   await wait(120);
-  assert((await count("#dashFleetSlot .fleet-confirm")) >= 1, "retire shows a custom inline confirm (not window.confirm)");
-  assert((await count("#dashFleetSlot .fleet-confirm .fleet-confirm-no")) >= 1, "the inline confirm has a Cancel button");
+  assert((await count(".confirm-overlay")) === 1, "retire opens a custom confirm modal (not window.confirm)");
+  assert((await count(".confirm-overlay .confirm-ok")) === 1 && (await count(".confirm-overlay .confirm-cancel")) === 1, "the confirm modal has Retire + Cancel buttons");
+  // Cancel dismisses it (and doesn't retire).
+  await app.eval(`document.querySelector(".confirm-overlay .confirm-cancel").click(); true`);
+  await wait(80);
+  assert((await count(".confirm-overlay")) === 0, "Cancel dismisses the confirm modal");
 
   // A session-backed second mate offers an archive button (archive from Direct).
   const arch = await app.eval(`(() => {
