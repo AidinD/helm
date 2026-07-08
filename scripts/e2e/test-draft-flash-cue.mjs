@@ -1,7 +1,9 @@
 // E2E: a programmatically-inserted draft (openFreshDraftInPane) gives a visible
 // cue - the composer shell flashes and the textarea is focused with the cursor
 // at the end - so a silently-populated composer doesn't read as "nothing
-// happened". Empty drafts get no flash. Real launched Helm via CDP.
+// happened". Empty drafts (e.g. a fresh session from the Dashboard) get the
+// same flash + a "New session started" toast, not silence. Real launched
+// Helm via CDP.
 //
 // Run:  node scripts/e2e/test-draft-flash-cue.mjs
 import { launch } from "./harness.mjs";
@@ -43,16 +45,21 @@ try {
   log("toast:", JSON.stringify(toastText));
   assert(/Draft loaded/.test(toastText), "a 'Draft loaded' toast appears on draft insert");
 
-  // Empty draft: no flash cue (nothing to draw attention to).
+  // Empty draft (e.g. a fresh session from the Dashboard): still flashes,
+  // and gets its own toast wording instead of the empty-composer silence
+  // that used to read as "the button did nothing".
   await app.eval(`(() => { const s = document.querySelector('.pane[data-pane="0"] .composer-shell'); if (s) s.classList.remove("composer-shell-draft-flash"); openFreshDraftInPane(null, ""); return true; })()`);
-  assert(!(await hasFlash()), "empty draft does NOT trigger the flash cue");
+  assert(await hasFlash(), "empty draft still triggers the flash cue");
+  const emptyToastText = await app.eval(`[...document.querySelectorAll(".toast")].map(t => t.textContent).join(" | ")`);
+  log("toast:", JSON.stringify(emptyToastText));
+  assert(/New session started/.test(emptyToastText), "a 'New session started' toast appears on empty-draft insert");
 
   const errors = app.getConsoleErrors();
   assert(errors.length === 0, `no console errors (got ${errors.length})`);
   for (const e of errors) {
     log("  console error:", e.text);
   }
-  log(exitCode === 0 ? "VERIFY OK: draft-insert cue (flash + focus + cursor), skipped for empty drafts." : "VERIFY FAILED.");
+  log(exitCode === 0 ? "VERIFY OK: draft-insert cue (flash + focus + cursor), including empty drafts." : "VERIFY FAILED.");
 } catch (err) {
   exitCode = 1;
   log("ERROR:", err.message);
