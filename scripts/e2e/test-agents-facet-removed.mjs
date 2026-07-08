@@ -1,7 +1,7 @@
 // E2E: the redundant "Agents" facet is gone; Autopilot is the single home for
 // autonomous runs. Sub-nav is Overview / Autopilot / Routines; each still
 // renders clean; Autopilot still lists runs (drill-down intact); no dangling
-// agentsPage reference crashes anything. Real launched Maestro via CDP.
+// agentsPage reference crashes anything. Real launched Helm via CDP.
 //
 // Run:  node scripts/e2e/test-agents-facet-removed.mjs
 import { launch } from "./harness.mjs";

@@ -1,6 +1,6 @@
 // E2E: verify the six [safe] design-review wins render clean across the pages
 // they touch (Dashboard, Routines, Agents, Plan, Settings). Real launched
-// Maestro via CDP; asserts the specific text/label changes + zero console
+// Helm via CDP; asserts the specific text/label changes + zero console
 // errors after visiting each affected view.
 //
 // Run:  node scripts/e2e/test-design-safe-wins.mjs

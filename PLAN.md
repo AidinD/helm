@@ -1,4 +1,4 @@
-# Maestro — Build Plan
+# Helm — Build Plan
 
 A personal wrapper around the real Claude Code CLI that adds overview, rooting,
 context flow, and (later) orchestration — without removing any Claude feature.
@@ -89,18 +89,18 @@ weighs it.
 
 **Target UI vision:** the interactive mock at
 https://claude.ai/code/artifact/9bded7e6-64b8-409b-9b01-e6b896e34676 is the
-shape Maestro is being rebuilt toward — lands on a dashboard (not a
+shape Helm is being rebuilt toward — lands on a dashboard (not a
 privileged orchestrator session), organized around GOALS not a durable
 session list, with "In motion" (ephemeral running work), "Orchestrator
 proposes" (human-gated cards), and "New session" (fresh context loaded from
 files). Aidin confirmed it gave him a much clearer picture and wants
 mock-first used more often (now a global CLAUDE.md rule). The rebuild toward
-this is a GATED epic in Jot ("bygg om Maestro..."), gated on the practitioner
+this is a GATED epic in Jot ("bygg om Helm..."), gated on the practitioner
 research below, which is now done.
 
 **Practitioner research (2026-07-04):** surveyed 8 agentic-engineering
 practitioners + Anthropic's orchestrator-worker doc (full findings + sources
-in DECISIONS.md). Headline: Maestro's primitives (ephemeral sessions,
+in DECISIONS.md). Headline: Helm's primitives (ephemeral sessions,
 files-as-memory, orchestrator dispatching workers into isolated worktrees,
 token-efficiency) are the consensus these practitioners independently
 converged on — the direction is validated; the value is in their specific
@@ -147,7 +147,7 @@ Prove the foundation with a throwaway script, no Electron yet:
   spawned subprocess (the one unconfirmed cost item), else wire
   `claude setup-token`.
 - Test **resuming an existing session** by id (its transcript is in
-  `~/.claude/projects`) — confirms whether Maestro can pick up desktop-app
+  `~/.claude/projects`) — confirms whether Helm can pick up desktop-app
   threads.
 - Confirm a skill (e.g. `/kickoff`) is invokable in headless mode.
 
@@ -203,7 +203,7 @@ chat isn't the wrong idea — doing it in the SAME session every time is.
 **Redesign:**
 1. **Remove "assign a session to the orchestrator."** There is no privileged
    session that *is* the orchestrator. The orchestrator's real work (the
-   sensor/sweep, and eventually dispatch) already runs in Maestro's main
+   sensor/sweep, and eventually dispatch) already runs in Helm's main
    process, headless — not in a chat pane.
 2. **App lands on an overview/dashboard, not a specific chat** — which is
    already Phase 1's original vision (session list + status + attention
@@ -244,7 +244,7 @@ should map back to:
 5. **Quality control** — output gets checked by something other than the
    thing that produced it (the adversarial-review pattern used all through
    tonight's fix-the-review-findings arc is the template — Fas 3 should make
-   this an on-demand Maestro action, not just something I do ad hoc in chat).
+   this an on-demand Helm action, not just something I do ad hoc in chat).
 6. **Continuity across boundaries** — Fas 2's summarize-and-carry-over already
    covers session-to-session; Fas 3 extends this to goal-to-goal (a whole
    piece of work spanning several sessions/days).
@@ -291,7 +291,7 @@ diagnosis was Opus-shaped, the localized fixes were Sonnet-shaped).
     judge's already-proven, already-cost-optimized recipe (`--allowed-tools
     ""` + empty `--strict-mcp-config`, ~$0.015/call), just applied per
     session on a timer instead of per completed prompt.
-  - **No Claude Code hooks needed.** Maestro's main process already has
+  - **No Claude Code hooks needed.** Helm's main process already has
     direct file-system visibility into every session's transcript (the same
     access `sessions.js`'s status derivation already uses) — this extends
     the existing `refresh()` poll loop, it doesn't need a new triggering
@@ -342,7 +342,7 @@ diagnosis was Opus-shaped, the localized fixes were Sonnet-shaped).
 ### Skills investigation (Aidin's ask: do we need new skills for this, not just app features?)
 
 Some of Fas 3's job is better solved as a **skill** (runs inside a normal
-Claude Code session, reusable outside Maestro too) than as Maestro app code.
+Claude Code session, reusable outside Helm too) than as Helm app code.
 Candidates to properly scope when Fas 3 starts, not built yet:
 
 - **`/triage`** — already identified as a real gap in an earlier usage-
@@ -355,7 +355,7 @@ Candidates to properly scope when Fas 3 starts, not built yet:
   invokable skill, so "review this session's recent changes" doesn't require
   hand-building a review prompt each time.
 - **A handoff skill** — lift Fas 2's summarize-and-carry-over out of
-  Maestro-only UI into something a session can trigger on itself (e.g. when
+  Helm-only UI into something a session can trigger on itself (e.g. when
   it notices its own context getting long), not just something Aidin
   triggers from the sidebar.
 - **A coach/report skill** — pattern after the existing `health-coach` skill
@@ -365,11 +365,11 @@ Candidates to properly scope when Fas 3 starts, not built yet:
   orchestrator-helper's sensing.
 - **`kickoff` may need to evolve, not stay separate.** It currently hands off
   via `spawn_task` (forces a git worktree) specifically because no better
-  rooting mechanism existed. Once Maestro is Aidin's primary way of starting
-  sessions, `kickoff` routing through Maestro (root on main, no worktree,
+  rooting mechanism existed. Once Helm is Aidin's primary way of starting
+  sessions, `kickoff` routing through Helm (root on main, no worktree,
   same brief/model/effort logic) removes its main caveat — worth revisiting
-  whether it becomes a Maestro action instead of a standalone skill, or stays
-  a skill that CALLS Maestro.
+  whether it becomes a Helm action instead of a standalone skill, or stays
+  a skill that CALLS Helm.
 
 None of the above is committed to build yet — this is the scoping Aidin
 asked for when Fas 3 actually starts, not a build queue.
@@ -378,24 +378,24 @@ asked for when Fas 3 actually starts, not a build queue.
 
 Source: Kun Chen's (ex-Meta L8) "Agentic Engineering Workflow" video +
 his open-source tools (github.com/kunchenguid). Aidin flagged 8 items to
-work into Maestro. NONE committed yet — this is the analyzed candidate pool.
-They sort into three kinds: (A) validates/extends existing Maestro direction,
-(B) concrete new features Maestro lacks, (C) principles to apply, not build.
+work into Helm. NONE committed yet — this is the analyzed candidate pool.
+They sort into three kinds: (A) validates/extends existing Helm direction,
+(B) concrete new features Helm lacks, (C) principles to apply, not build.
 
-**The one strategic question that gates the rest: what is Maestro's
+**The one strategic question that gates the rest: what is Helm's
 relationship to `firstmate`?** Firstmate ("Talk to one agent. Ship with a
-crew.") is a CLI/tmux tool that does *substantially what Maestro's Fas 3
+crew.") is a CLI/tmux tool that does *substantially what Helm's Fas 3
 Point 11 wants to become* — a lead agent that dispatches a crew of
 sub-agents, each in an isolated git worktree, with event-driven zero-token
 supervision (sleeps until something needs attention, then wakes the lead),
 ship-vs-scout task typing, escalate-only-real-decisions, `/afk` away-mode,
 restart-proof on-disk state. Notably it went the *persistent-orchestrator-
 agent* route Aidin originally proposed for the helper — the opposite of the
-stateless batch-classifier Maestro chose (see 2026-07-02). Those aren't in
-conflict: firstmate is about DISPATCHING work; Maestro's classifier is about
-SENSING status — a Maestro-with-firstmate-inside is coherent. The real fork
-is: does Maestro (a) take inspiration and build its own GUI-native dispatch,
-(b) wrap/embed firstmate as its dispatch engine while Maestro owns the GUI +
+stateless batch-classifier Helm chose (see 2026-07-02). Those aren't in
+conflict: firstmate is about DISPATCHING work; Helm's classifier is about
+SENSING status — a Helm-with-firstmate-inside is coherent. The real fork
+is: does Helm (a) take inspiration and build its own GUI-native dispatch,
+(b) wrap/embed firstmate as its dispatch engine while Helm owns the GUI +
 sensing/coaching, or (c) treat firstmate as a separate tool and NOT
 reinvent it? This is a decision for Aidin, not something to presume.
 
@@ -430,14 +430,14 @@ incident notes and per-repo file citations):**
 - gnhf's "fresh context per step" is real for its CLI-subprocess agent
   family (Claude, Codex, Copilot, Rovodev, Pi) — confirmed: each iteration
   is a brand-new `claude -p --output-format stream-json` subprocess (the
-  SAME mechanism Maestro's own `launcher.js` already uses), with only a
+  SAME mechanism Helm's own `launcher.js` already uses), with only a
   `notes.md` file carried forward. **Exception: its ACP agent family (e.g.
   Gemini) explicitly keeps a persistent session across iterations** —
   contradicts the tool's own headline claim for that one agent type.
 - gnhf has **zero exported library API** (no `main`/`exports`/`.d.ts` in
   `package.json`) despite an internally clean, decoupled `Orchestrator`
   EventEmitter class — "embed" in practice means vendoring the relevant
-  `src/core/*.ts` files into Maestro's own codebase (unversioned, no
+  `src/core/*.ts` files into Helm's own codebase (unversioned, no
   upstream contract), not adding a dependency. Its worktree support is also
   thinner than assumed: worktrees are opt-in (default mode runs on a branch
   in the main repo), one worktree per run with no pooling, and **no
@@ -457,7 +457,7 @@ a) — there was never really a wrap/embed option on the table given the OS
 incompatibility and the total absence of a program boundary; take the
 bash-triage-before-LLM-call idea, the wake-classification-regex approach,
 and the stow-before-reset ritual, not the code. gnhf → vendor/adapt its
-`Orchestrator` source directly into Maestro's own codebase rather than
+`Orchestrator` source directly into Helm's own codebase rather than
 treat it as a live dependency (no package boundary exists to depend on
 cleanly, and the project is stalled anyway) — go in aware of the ACP
 persistent-session exception, the worktree/env-install gap, and the weak
@@ -465,10 +465,10 @@ agent-self-report-only failure detection. treehouse → build/adopt
 regardless, confirmed as its own prerequisite even inside firstmate. "Reuse
 the code" for firstmate specifically means reuse it AS REFERENCE (we now
 have source-level knowledge of exactly how it solved wake-classification,
-escalation, and worktree hand-off, so Maestro's own Windows/Electron-native
+escalation, and worktree hand-off, so Helm's own Windows/Electron-native
 version doesn't have to guess) — not literally running or porting its bash.
 
-**Worktree note (resolves a question Aidin raised: does Maestro's own
+**Worktree note (resolves a question Aidin raised: does Helm's own
 orchestrator need to be "rooted" in a project to create a worktree for
 it?):** No — that constraint only applies to Claude Code's own Agent-tool
 worktree-isolation convenience feature (which infers the target repo from
@@ -476,7 +476,7 @@ the calling session's own cwd), not to how git worktrees work in general.
 Confirmed directly in both repos' source: neither firstmate nor gnhf relies
 on their own cwd — `treehouse get` takes an explicit project reference,
 and gnhf's `createWorktree` (`git.ts`) takes an explicit repo/path
-argument. Maestro's own future orchestrator already knows which project
+argument. Helm's own future orchestrator already knows which project
 each session belongs to (`session.cwd` is tracked per session today), so it
 can issue `git -C <projectPath> worktree add <worktreePath> -b <branch>`
 directly against the right repo regardless of where the orchestrator
@@ -484,15 +484,15 @@ process itself runs from — it doesn't need to be rooted anywhere.
 
 **Self-hosting hazard (Aidin raised this, worth designing around before
 dispatch is built, not after): a dispatched worker must not be a child
-process of Maestro's own Electron main process.** Today every `claude`
-session Maestro launches IS a direct child of the Electron main process
+process of Helm's own Electron main process.** Today every `claude`
+session Helm launches IS a direct child of the Electron main process
 (the same architecture behind the earlier "quit sweep kills children"
 fix). That's fine for tonight's actual dev workflow — agents developing
-Maestro run as ordinary Claude Code CLI processes, completely independent
-of the Maestro-app-under-test's own process tree, so restarting that app
-under test never touches the process doing the work. But once Maestro's
-own first-mate-style dispatch exists and gets used to develop Maestro
-itself, a dispatched worker that restarts Maestro (as part of its own
+Helm run as ordinary Claude Code CLI processes, completely independent
+of the Helm-app-under-test's own process tree, so restarting that app
+under test never touches the process doing the work. But once Helm's
+own first-mate-style dispatch exists and gets used to develop Helm
+itself, a dispatched worker that restarts Helm (as part of its own
 boot-test workflow) would kill its own parent process — and therefore
 itself — mid-task. Same self-referential category as the earlier
 auto-mode-classifier block on switching this very session's own root
@@ -508,7 +508,7 @@ firstmate's tmux-pane independence) is the fuller fix but meaningfully
 more work — worth deferring until a lost iteration actually proves costly
 in practice, not building preemptively.
 
-### (A) Validates / extends existing Maestro direction
+### (A) Validates / extends existing Helm direction
 - **firstmate** — the reference architecture for Point 11 (which PLAN
   currently marks "needs rethinking" after the no-live-approval spike).
   Firstmate's answer to that same constraint: don't try to answer a live
@@ -519,10 +519,10 @@ in practice, not building preemptively.
   actual implementation is a bash/tmux daemon, not something to embed
   directly, but the escalation design is sound and worth reproducing.
 
-### (B) Concrete new features Maestro lacks
+### (B) Concrete new features Helm lacks
 - **treehouse** (worktree pool automation) — "manage worktrees without
   managing worktrees": drop into a ready worktree, deps installed, build
-  cache warm, env files synced. Maestro has ZERO worktree support today.
+  cache warm, env files synced. Helm has ZERO worktree support today.
   This is arguably the PREREQUISITE for safe parallel dispatch (can't run N
   agents on one repo without it) — so it likely comes before any
   firstmate/gnhf-style work regardless of the strategic answer.
@@ -536,7 +536,7 @@ in practice, not building preemptively.
   2026-07-04 — see DECISIONS.md): `runGoal({ projectPath, goal,
   maxIterations, ... })` runs fresh `claude -p` subprocess iterations (no
   `--resume`, matching gnhf's actual verified architecture) in an isolated
-  worktree, with continuity via a `.maestro-goal/notes.md` file the
+  worktree, with continuity via a `.helm-goal/notes.md` file the
   orchestrator itself writes/reads (gnhf's real mechanism, not an invention),
   structured JSON output per iteration, one orchestrator-authored commit per
   success, and a `reset --hard`/`clean -fd` rollback per failure — verified
@@ -572,7 +572,7 @@ in practice, not building preemptively.
 - **Lavish** (lavish-axi) — interactive HTML plans instead of markdown: the
   agent renders a UI mockup in the project's own visual style, you click an
   element and type feedback ON it ("make this a floating overlay") instead
-  of describing it in prose. Maestro shows plans as plain text today. Distinct
+  of describing it in prose. Helm shows plans as plain text today. Distinct
   planning-phase UX feature.
   **A FIRST-PASS v1 loop now exists** (2026-07-04 — see DECISIONS.md): a new
   "Plan" page (`renderLavishPage` in `renderer.js`) renders an HTML mockup
@@ -601,13 +601,13 @@ in practice, not building preemptively.
 - **AXI (Agent eXperience Interface)** — design agent-facing tools as
   deliberately as human UIs: token-budget as a first-class constraint,
   compact output, composable, chainable, higher accuracy + lower cost than
-  MCP or plain CLI. A LENS, not a build item — relevant if/when Maestro ever
+  MCP or plain CLI. A LENS, not a build item — relevant if/when Helm ever
   exposes its own tools to agents (and worth remembering the cheap-utility-
   call recipe already used by the judge/classifier is the same instinct).
 - **CLAUDE.md trim → skills** — keep CLAUDE.md lean; move situational/rarely-
   needed instructions into skills (loaded on demand, shareable across
   agents). Actionable as a one-off housekeeping audit of Aidin's global +
-  project CLAUDE.md files, NOT a Maestro feature.
+  project CLAUDE.md files, NOT a Helm feature.
 
 **Rough sequencing (pending Aidin's questions + the firstmate decision):**
 1. Voice input (independent, quick, high daily value).

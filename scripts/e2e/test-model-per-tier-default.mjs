@@ -1,6 +1,6 @@
 // E2E: model-per-tier default - a first-mate/orchestrator session defaults its
 // model pill to Sonnet (delegate/summarize tier), while a normal session stays
-// "auto". Still user-overridable. Real launched Maestro.
+// "auto". Still user-overridable. Real launched Helm.
 //
 // Run:  node scripts/e2e/test-model-per-tier-default.mjs
 import { launch } from "./harness.mjs";
@@ -29,13 +29,13 @@ try {
   }
 
   // A first-mate/orchestrator draft defaults the model pill to Sonnet.
-  await app.eval(`(() => { openFreshDraftInPane("D:/Repo/Tools/maestro", "test", { paneOverrides: { isOrchestrator: true, modelDefault: "claude-sonnet-5" } }); return true; })()`);
+  await app.eval(`(() => { openFreshDraftInPane("D:/Repo/Tools/helm", "test", { paneOverrides: { isOrchestrator: true, modelDefault: "claude-sonnet-5" } }); return true; })()`);
   await wait(400);
   const orchModel = await app.eval(`(panes.find(p => p && p.isOrchestrator)?.els?.modelDD?.value) || null`);
   assert(orchModel === "claude-sonnet-5", "orchestrator/first-mate session defaults model to Sonnet (got: " + JSON.stringify(orchModel) + ")");
 
   // A plain fresh draft (no override) stays "auto".
-  await app.eval(`(() => { openFreshDraftInPane("D:/Repo/Tools/maestro", "test2", {}); return true; })()`);
+  await app.eval(`(() => { openFreshDraftInPane("D:/Repo/Tools/helm", "test2", {}); return true; })()`);
   await wait(400);
   const plainModel = await app.eval(`(() => { const p = panes.find(p => p && !p.isOrchestrator && p.els); return p?.els?.modelDD?.value || null; })()`);
   assert(plainModel === "auto", "a normal session stays on 'auto' (got: " + JSON.stringify(plainModel) + ")");

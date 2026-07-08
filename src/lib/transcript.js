@@ -78,13 +78,13 @@ export function readTranscript(transcriptPath, { maxTurns = 4000 } = {}) {
       pushAssistantTurns(turns, entry);
     } else if (entry.type === "system" && entry.subtype === "compact_boundary") {
       // A context compaction happened here — from the CLI's own auto-compact
-      // when the window fills (trigger "auto"), or Maestro's Fas 3
+      // when the window fills (trigger "auto"), or Helm's Fas 3
       // auto-compact / a manual /compact (trigger "manual"). Surfaced as a
       // marker turn so the chat shows WHERE the conversation was summarized,
       // the same way the desktop app does — uniform across all triggers.
       //
       // The two transcript formats name this differently: headless
-      // stream-json (Maestro-launched sessions) uses `compact_metadata` with
+      // stream-json (Helm-launched sessions) uses `compact_metadata` with
       // snake_case pre_tokens/post_tokens; the interactive desktop format
       // uses `compactMetadata` with camelCase preTokens (and no postTokens).
       // Accept either so the pill works for both.

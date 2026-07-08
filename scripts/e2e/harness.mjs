@@ -1,6 +1,6 @@
 // Reusable Electron E2E harness driven by the Chrome DevTools Protocol (CDP).
 //
-// Maestro is a native Electron app with no browser-servable dev server, so the
+// Helm is a native Electron app with no browser-servable dev server, so the
 // standard preview_* / browser tooling can't drive it. This harness launches an
 // Electron app with `--remote-debugging-port`, connects to its renderer target
 // over CDP, and exposes a tiny, obvious automation API (eval/click/type/getText/
@@ -14,13 +14,13 @@
 //
 // Cleanup contract: this harness terminates ONLY the app instance it launched,
 // matched by its command line containing the repo/app directory (the same
-// approach as scripts/kill-maestro.ps1). It NEVER kills electron.exe machine-
-// wide — that would take down Reinmaker or the user's own Maestro. A stray
+// approach as scripts/kill-helm.ps1). It NEVER kills electron.exe machine-
+// wide — that would take down Reinmaker or the user's own Helm. A stray
 // instance left running is a real failure.
 //
 // Usage (see demo.mjs for a full example):
 //   import { launch } from "./harness.mjs";
-//   const app = await launch();              // launches THIS Maestro repo
+//   const app = await launch();              // launches THIS Helm repo
 //   await app.waitForSelector("#pageToggle");
 //   await app.screenshot("out.png");
 //   await app.close();
@@ -41,7 +41,7 @@ const REPO_ROOT = path.resolve(__dirname, "..", "..");
  * @param {string} [opts.appDir]   Directory of the Electron app to launch. The
  *   cleanup match is derived from this path, so pointing it at another app dir
  *   (jot/loom) is all that's needed to reuse the harness there. Default: this
- *   Maestro repo.
+ *   Helm repo.
  * @param {string} [opts.command]  Executable to spawn. Default: "npm".
  * @param {string[]} [opts.args]   Base args for the command. The
  *   --remote-debugging-port flag is appended (after "--" for npm so it reaches
@@ -374,8 +374,8 @@ class Harness {
    *
    * Scope discriminator = the unique `--remote-debugging-port=<port>` flag we
    * launched with. Only THIS instance's main process carries it — the user's
-   * own running Maestro (which spawns several electron.exe of its own) does
-   * not, so matching on the app-directory basename alone (as kill-maestro.ps1
+   * own running Helm (which spawns several electron.exe of its own) does
+   * not, so matching on the app-directory basename alone (as kill-helm.ps1
    * does for boot-testing) would wrongly kill their live session too. We find
    * the one main process by port, then kill its whole process tree so its GPU/
    * renderer/utility children go with it and nothing else is touched.

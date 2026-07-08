@@ -1,6 +1,6 @@
 // E2E: the Plan "Artifact HTML" textarea keeps its pasted content after you
 // click Load mockup (it used to clear on the load re-render, losing your input).
-// Real launched Maestro via CDP.
+// Real launched Helm via CDP.
 //
 // Run:  node scripts/e2e/test-lavish-input-persist.mjs
 import { launch } from "./harness.mjs";
@@ -53,7 +53,7 @@ try {
   exitCode = 1;
   log("ERROR:", err.message);
 } finally {
-  await app.eval(`localStorage.removeItem("maestro.lavish.recentMockups")`).catch(() => {});
+  await app.eval(`localStorage.removeItem("helm.lavish.recentMockups")`).catch(() => {});
   const killOut = await app.close();
   log("cleanup:", killOut || "(nothing killed)");
 }

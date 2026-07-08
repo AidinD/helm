@@ -10,7 +10,7 @@
 //   - Mermaid pan/zoom, layout-overflow auditing, text-range selection.
 // In lavish-axi the artifact is a cross-origin sandboxed iframe with no app
 // context, so it round-trips annotations to a local Express server via
-// postMessage + HTTP long-poll. In Maestro the iframe lives in the same
+// postMessage + HTTP long-poll. In Helm the iframe lives in the same
 // renderer process, so we collapse all of that: the injected SDK posts each
 // annotation record to `window.parent` (the only channel that crosses the
 // sandbox boundary), the renderer host collects it, and — when the user asks —

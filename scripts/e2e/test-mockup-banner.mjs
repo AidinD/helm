@@ -1,6 +1,6 @@
 // E2E: option A - when a session writes a mockup HTML file, the pane shows an
 // "Open in Plan" banner that opens the mockup in the annotator. Real launched
-// Maestro via CDP. Tests the mockup-path heuristic, the banner render, and the
+// Helm via CDP. Tests the mockup-path heuristic, the banner render, and the
 // click-through to Plan. (The tool_use -> showMockupBanner wiring is a one-line
 // gate on isMockupPath; here we drive showMockupBanner directly with a real
 // file, since simulating a full session launch isn't worth it.)

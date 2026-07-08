@@ -1,7 +1,7 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 // Minimal, explicit API surface exposed to the renderer. No Node access leaks.
-contextBridge.exposeInMainWorld("maestro", {
+contextBridge.exposeInMainWorld("helm", {
   getSessions: () => ipcRenderer.invoke("sessions:get"),
   setConfig: (patch) => ipcRenderer.invoke("config:set", patch),
   // Away-from-desk attention delivery: notifyAttention fires an OS
@@ -123,6 +123,6 @@ contextBridge.exposeInMainWorld("maestro", {
     return () => ipcRenderer.removeListener("goal:event", listener);
   },
   // Routines page (read-only) - lists Claude Code's own scheduled tasks from
-  // ~/.claude/scheduled-tasks/. No scheduler lives in Maestro; this just reads.
+  // ~/.claude/scheduled-tasks/. No scheduler lives in Helm; this just reads.
   listRoutines: () => ipcRenderer.invoke("routines:list"),
 });

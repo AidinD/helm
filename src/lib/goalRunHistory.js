@@ -3,12 +3,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Persistent index of goal-orchestrator runs (Fas 3 Point 11), so the Goal
-// page still shows what happened after a restart — Maestro is restarted
+// page still shows what happened after a restart — Helm is restarted
 // often, and until now `goalRuns` lived only in the renderer's in-memory Map
 // (reset on every reload), even though the real artifacts (worktree, branch,
 // commits) survive on disk. This stores a COMPACT record per run only —
 // never the full iteration transcript, which stays recoverable from the
-// worktree's own .maestro-goal/notes.md — mirroring config.js's plain
+// worktree's own .helm-goal/notes.md — mirroring config.js's plain
 // JSON-file-next-to-config.json pattern rather than inventing a new storage
 // location (e.g. Electron's userData dir, which nothing else here uses).
 const __dirname = path.dirname(fileURLToPath(import.meta.url));

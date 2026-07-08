@@ -41,8 +41,8 @@ With named mates, the two mates ARE the only orchestrator sessions, so a separat
 It was also the only place that injected the orchestrator bootstrap prompt, so a fresh first mate now boots with `first-mate-instructions.md` appended via `--append-system-prompt` (system context, not a visible draft) - the composer stays empty for the captain's first prompt, per spec.
 
 **Fleet-aware focus survey (solves the two-mates coordination gap).**
-The two first mates are independent sessions with no shared context, and `maestro_collect_reports` is scoped to a mate's OWN dispatches - so mate B couldn't see what A had in flight and could propose overlapping focus.
-Decision: a `maestro_fleet_state` MCP tool exposes a compact cross-mate view (both mates + every mate's dispatched work, tagged `yours`), which the app snapshots to disk (staying the single authority); the first-mate instructions tell the mate to survey it and propose COMPLEMENTARY focus.
+The two first mates are independent sessions with no shared context, and `helm_collect_reports` is scoped to a mate's OWN dispatches - so mate B couldn't see what A had in flight and could propose overlapping focus.
+Decision: a `helm_fleet_state` MCP tool exposes a compact cross-mate view (both mates + every mate's dispatched work, tagged `yours`), which the app snapshots to disk (staying the single authority); the first-mate instructions tell the mate to survey it and propose COMPLEMENTARY focus.
 Rejected: giving the mates shared context - they're deliberately independent, refreshed-and-discarded sessions.
 
 **Smaller, durable calls.**
@@ -86,10 +86,10 @@ So `committed` could not distinguish "the agent changed real code" from "the orc
 Consequence: an agent that repeatedly reports `success:true` while doing nothing burned every remaining iteration and its tokens undetected (`consecutiveFailures` resets on any "success", so the two-failures stop never caught it either).
 A live E2E run demonstrated the failure mode for real: an implement iteration reported "Created hello.txt" with `success:true` but never wrote the file - and the new signal caught it (`producedChanges:false`).
 
-Decision - the honest work signal is "did files change OUTSIDE `.maestro-goal/`", measured BEFORE the notes append:
-- Added `producedRealChanges(worktreePath)` (parses `git status --porcelain`, ignores `.maestro-goal/`), recorded as `record.producedChanges` each iteration; fails open (returns true) on any git error so a hiccup never wrongly flags a stall.
+Decision - the honest work signal is "did files change OUTSIDE `.helm-goal/`", measured BEFORE the notes append:
+- Added `producedRealChanges(worktreePath)` (parses `git status --porcelain`, ignores `.helm-goal/`), recorded as `record.producedChanges` each iteration; fails open (returns true) on any git error so a hiccup never wrongly flags a stall.
 - Kept the atomic notes+code commit as-is (that ordering is deliberate - the commit is meant to capture notes.md too); the fix is the SIGNAL, not the commit behavior.
-- Re-keyed `detectNoNetProgress` off `producedChanges`, and restricted it to implement-phase iterations (research/plan legitimately produce no code outside `.maestro-goal/`, so counting them would false-positive). This let the now-redundant `commitCountByIteration` map + its per-iteration `countCommitsOnBranch` call be removed entirely.
+- Re-keyed `detectNoNetProgress` off `producedChanges`, and restricted it to implement-phase iterations (research/plan legitimately produce no code outside `.helm-goal/`, so counting them would false-positive). This let the now-redundant `commitCountByIteration` map + its per-iteration `countCommitsOnBranch` call be removed entirely.
 - Added a DEFAULT-ON stop: `NO_OP_CONVERGENCE_STREAK` (2) consecutive no-op implement successes -> new `stoppedReason: "no_op_convergence"`. Chosen as a clean STOP, not a failure: a no-op implement success is ambiguous (agent stuck, or goal already satisfied) - either way, stop wasting iterations and let the human review the kept worktree, rather than mislabel it an error. Fires independently of the opt-in escalation feature so the token-waste is bounded by default.
 
 Also in the same pass (smaller, from the same review):
@@ -112,20 +112,20 @@ Why not the mechanism:
 2. It accelerates context-rot. Reprinting full orchestrator state every turn bloats the window and pushes it into the ~40% "dumb zone" (Horthy) where recall degrades - the opposite of the claimed anti-drift benefit, and directly against the ephemeral-sessions + files-as-memory model this system is built on (see the 2026-07-03 strategic-reorientation and practitioner-research entries).
 3. It is the durable megasession we explicitly rejected, dressed up: one long-lived session holding everything, no parallelism, no isolation.
 
-What the blueprint gets right (and we already do): decomposition beats "be smart" (orchestrator-instructions.md), a visible backlog fights drift (but Jot/PLAN.md do it durably, not by reprinting in-context), self-critique matters (but via fresh-context agents), and the human should operate at the macro level (the orchestrator/Maestro vision).
+What the blueprint gets right (and we already do): decomposition beats "be smart" (orchestrator-instructions.md), a visible backlog fights drift (but Jot/PLAN.md do it durably, not by reprinting in-context), self-critique matters (but via fresh-context agents), and the human should operate at the macro level (the orchestrator/Helm vision).
 Minsky's "Society of Mind" is actually served BETTER by many real isolated agents than by three personas in one window.
 
 What we adopted: a lightweight convention in orchestrator-instructions.md - make the plan/backlog and the delegate-vs-do-it-yourself split visible each orchestration turn - explicitly backed by real dispatched agents (own fresh context) and durable files, NOT by simulated roles. The essay itself was partly AI-generated marketing prose (overclaims like "quality increases exponentially"); took the real ideas (Minsky, Anthropic's orchestrator-worker), left the hype.
 
 ## 2026-07-05 - TOON encoding for the Lavish annotation-list prompt
 
-Board task: apply the AXI/TOON token-efficiency principle (deferred 2026-07-04, "fold TOON in with structured-injection features as they mature") to prompts Maestro builds for its own sub-agent calls.
+Board task: apply the AXI/TOON token-efficiency principle (deferred 2026-07-04, "fold TOON in with structured-injection features as they mature") to prompts Helm builds for its own sub-agent calls.
 Audited the four candidate call sites named in the task - the status classifier and judge (`orchestratorHelper.js`, `judge.js`), the goal orchestrator (`goalOrchestrator.js`), and the model/effort suggester (`suggest.js`, which turned out to be a pure regex heuristic with no LLM call at all).
 **Finding: none of them embed an array of objects today.** Each already sends a short hand-built text summary (one session's recent turns, one run's tool list, one goal's notes.md), matching the 2026-07-04 finding that these surfaces were already compact.
-The one genuine array-of-uniform-objects going into any Claude-facing prompt in the whole codebase is the Lavish annotation list (`formatAnnotationsAsPrompt` in `src/lib/lavishSdk.js`) - though it feeds the primary rooted session's composer, not one of Maestro's own internal sub-agent calls.
+The one genuine array-of-uniform-objects going into any Claude-facing prompt in the whole codebase is the Lavish annotation list (`formatAnnotationsAsPrompt` in `src/lib/lavishSdk.js`) - though it feeds the primary rooted session's composer, not one of Helm's own internal sub-agent calls.
 This is exactly the "structured-injection feature... as it matures" case the prior decision flagged as the right moment to fold TOON in, so applied it there instead of forcing a conversion onto surfaces that don't have the shape TOON targets.
 
-**Built `src/lib/toon.js`:** a small, dependency-free `encodeToon(value)` covering only the shapes Maestro actually needs - an array of uniform objects becomes a `N{col1,col2,...}:` header plus one delimited row per item, a plain object becomes indented `key: value` lines (recursing for nested objects/arrays), and values containing the delimiter/newline/quote get JSON-style quoted+escaped.
+**Built `src/lib/toon.js`:** a small, dependency-free `encodeToon(value)` covering only the shapes Helm actually needs - an array of uniform objects becomes a `N{col1,col2,...}:` header plus one delimited row per item, a plain object becomes indented `key: value` lines (recursing for nested objects/arrays), and values containing the delimiter/newline/quote get JSON-style quoted+escaped.
 Not a full TOON spec implementation by design - correctness and readability for these shapes over spec completeness.
 
 **Changed `formatAnnotationsAsPrompt`:** the annotation list is now projected to `{anchor, text, feedback}` per row (anchor already resolves lavishId-vs-selector, so the TOON table has one clear "where" column) and encoded with `encodeToon` instead of a hand-built numbered list, with a one-line format hint ("Data is in TOON: a header row of column names in {}, then one row per item") so the receiving agent knows how to read it.
@@ -218,10 +218,10 @@ This proves the dtype string is valid for this repo and the pipeline loads/runs;
 
 ## 2026-07-04 — Practitioner research validates the direction; 5 mechanisms to adopt, 4 traps to avoid
 
-**Decision:** Before committing to the Maestro rebuild (Aidin: "before we
+**Decision:** Before committing to the Helm rebuild (Aidin: "before we
 build anything, research 5-10 AI pioneers like Kun Chen"), surveyed 8
 agentic-engineering practitioners + Anthropic's orchestrator-worker doc.
-Headline: Maestro's core primitives (ephemeral per-feature sessions,
+Headline: Helm's core primitives (ephemeral per-feature sessions,
 files-as-durable-memory, an orchestrator dispatching workers into isolated
 git worktrees, token-efficiency first) are the SAME primitives these people
 independently converged on — the direction is validated, and the value is in
@@ -236,7 +236,7 @@ People + their most-relevant idea:
   Research->Plan->(Worktree)->Implement phasing, <40 instructions per phase;
   don't use prompts for control flow. (github.com/humanlayer/12-factor-agents)
 - **Steve Yegge** — trajectory: coding agents -> agent clusters -> fleets;
-  Maestro is the "cluster" tool (one human orchestrating parallel workers).
+  Helm is the "cluster" tool (one human orchestrating parallel workers).
 - **Armin Ronacher** — "second checkout = shared state is just the fs" (endorses
   worktree isolation); dumbest-thing-that-works code for reviewability;
   log to files so the agent self-debugs; healthy skepticism of full loops.
@@ -266,7 +266,7 @@ fan-out width from day one). Full report + all source URLs captured in the
 research task output; the adopt/avoid summary is mirrored in PLAN.md's
 "Target UI + practitioner research" section.
 
-This UNBLOCKS the "bygg om Maestro" rebuild epic — but the rebuild plan should
+This UNBLOCKS the "bygg om Helm" rebuild epic — but the rebuild plan should
 be shaped WITH Aidin (the mock is the UI target; these mechanisms are the
 orchestration substrate), not started unilaterally.
 
@@ -298,11 +298,11 @@ merge (so the orchestrator writes shared files AFTER merge). Tonight I
 hand-orchestrated raw Agent calls on ONE shared working tree, which is why I
 serialized on shared files (renderer.js) instead of parallelizing — the
 Agent-tool worktree isolation was unavailable from this session's root, and
-Maestro's own worktree-based dispatch isn't built. Building it (treehouse
+Helm's own worktree-based dispatch isn't built. Building it (treehouse
 automation + dispatch) is what turns "serialize on shared files" into real
 conflict-free parallelism.
 
-**Operating context:** we currently work IN Claude Desktop; Maestro is the
+**Operating context:** we currently work IN Claude Desktop; Helm is the
 tool being built, not the runtime. Assume Claude Desktop until Aidin says
 migrated. So today CLAUDE is the hand-orchestrator; the self-hosting hazard
 doesn't bite yet.
@@ -332,7 +332,7 @@ serially, committing per-feature. Verdicts + fixes:
   commit count (was miscounting on non-main repos), server-side maxIterations
   clamp. Re-ran the spike: real iteration now completes.
 - **Focus page:** write path CONFIRMED atomic + BOM-free + shape-correct. One
-  MED lost-update race (Maestro vs. the Jot app both doing whole-file writes)
+  MED lost-update race (Helm vs. the Jot app both doing whole-file writes)
   — fixed with a stat compare-before-swap + retry so a concurrent Jot write
   is detected and retried, never clobbered.
 
@@ -342,12 +342,12 @@ didn't work.
 
 ## 2026-07-04 — Reusable Electron E2E harness over CDP (scripts/e2e/)
 
-**Built** a standing Electron E2E harness so testing Maestro's UI (and later jot/loom) is repeatable, and so an agent or a human can SCREENSHOT and inspect the running app.
-Context: Maestro is a native Electron app with no browser-servable dev server, so the standard preview_* / browser tools don't apply.
+**Built** a standing Electron E2E harness so testing Helm's UI (and later jot/loom) is repeatable, and so an agent or a human can SCREENSHOT and inspect the running app.
+Context: Helm is a native Electron app with no browser-servable dev server, so the standard preview_* / browser tools don't apply.
 The same ad-hoc CDP dance (launch electron with `--remote-debugging-port`, find the renderer target, drive it) had been hand-rolled repeatedly; this turns it into a small reusable module.
 
-**Files:** `scripts/e2e/harness.mjs` (the module) and `scripts/e2e/demo.mjs` (a verification script that drives Maestro end to end).
-Put under `scripts/` alongside the existing `scripts/kill-maestro.ps1` / `restart-dev.sh` rather than a new `test/` tree, matching where the repo already keeps its dev tooling.
+**Files:** `scripts/e2e/harness.mjs` (the module) and `scripts/e2e/demo.mjs` (a verification script that drives Helm end to end).
+Put under `scripts/` alongside the existing `scripts/kill-helm.ps1` / `restart-dev.sh` rather than a new `test/` tree, matching where the repo already keeps its dev tooling.
 This is a NEW standalone tool that only DRIVES the app from outside; it does not touch `src/` (main.js, renderer.js, preload.cjs).
 
 **CDP transport: raw WebSocket + the `/json/list` HTTP endpoint, ZERO npm dependencies.**
@@ -357,18 +357,18 @@ Electron 31 is Chromium ~126, so full modern CDP is available.
 The API is intentionally small and obvious: `launch()`, then `eval`, `click`, `type`, `getText`, `waitForSelector`, `screenshot`, `getConsole`/`getConsoleErrors`, `close`.
 
 **Cleanup scope: match on the unique `--remote-debugging-port=<port>` flag, NOT the app-directory basename.**
-This is the load-bearing decision and a deliberate divergence from `kill-maestro.ps1`.
-`kill-maestro.ps1` matches electron processes by command line containing `*Tools\maestro*`, which is correct for boot-testing (nothing else is running Maestro then).
-But the E2E harness is expected to run WHILE the user's own Maestro is live - and a single Electron app spawns several `electron.exe` (main + GPU + renderer + utility).
-Verified at run time: 4 `electron.exe` already matched `*maestro*` before launch (the user's session).
+This is the load-bearing decision and a deliberate divergence from `kill-helm.ps1`.
+`kill-helm.ps1` matches electron processes by command line containing `*Tools\helm*`, which is correct for boot-testing (nothing else is running Helm then).
+But the E2E harness is expected to run WHILE the user's own Helm is live - and a single Electron app spawns several `electron.exe` (main + GPU + renderer + utility).
+Verified at run time: 4 `electron.exe` already matched `*helm*` before launch (the user's session).
 Matching on the app-directory basename would have killed that live session too - exactly the class of mistake CLAUDE.md warns about.
 The `--remote-debugging-port=<port>` flag is a per-launch unique token that appears only on the main process we spawned, so a `-like` match on it can never hit an unrelated Electron app.
 `close()` resolves the matching main PID(s) and `taskkill /PID <pid> /T /F` each, taking the whole child tree (GPU/renderer/utility) with it and nothing else.
 Guarded against an invalid/low port to refuse a broadening match.
 
-**Verified end to end** (`node scripts/e2e/demo.mjs`): launched Maestro on port 9333, waited for `#pageToggle`, screenshotted the chat dashboard, clicked the Focus tab, waited for `#focusPage` visible, screenshotted again, read console (0 messages, 0 errors), then clean shutdown.
+**Verified end to end** (`node scripts/e2e/demo.mjs`): launched Helm on port 9333, waited for `#pageToggle`, screenshotted the chat dashboard, clicked the Focus tab, waited for `#focusPage` visible, screenshotted again, read console (0 messages, 0 errors), then clean shutdown.
 Two real PNGs produced (1184x755, 137 KB + 66 KB, confirmed PNG signatures).
-Process check before vs after: 4 Maestro `electron.exe` at start, 4 after, 0 strays on port 9333 - the user's session untouched, the launched instance fully gone.
+Process check before vs after: 4 Helm `electron.exe` at start, 4 after, 0 strays on port 9333 - the user's session untouched, the launched instance fully gone.
 
 **Pointing it at another Electron app later (jot/loom):** pass `launch({ appDir, command, args, port })`.
 `appDir` is the cwd to launch from; `command`/`args` default to `npm`/`["start"]` (the harness inserts `-- --remote-debugging-port=<port>` so the flag reaches electron through npm).
@@ -393,7 +393,7 @@ level (read-only, via gh api). Findings:
   Windows badge; `axi-sdk-js` has explicit Windows shim-parsing). The
   earlier "lavish server is Unix-only" concern was only its port-recovery
   path (lsof/ps); the core is plain Node HTTP - moot for us anyway since
-  Maestro's Lavish uses IPC, no server.
+  Helm's Lavish uses IPC, no server.
 
 **Decided (Aidin: "kör på din rekommendation"):**
 - **gh-axi: ADOPTED.** Verified it installs+runs on Windows (`npx -y gh-axi
@@ -401,9 +401,9 @@ level (read-only, via gh api). Findings:
   proportionate rule to the global personal CLAUDE.md: prefer `gh-axi` for
   non-trivial GitHub API work, plain git for local ops.
 - **TOON: adopt as a PRINCIPLE, standalone build queued but reconsidered.**
-  On reflection, Maestro's current agent-facing surfaces are already
+  On reflection, Helm's current agent-facing surfaces are already
   compact (the classifier/judge send short text, not verbose JSON), so a
-  standalone "convert Maestro's output to TOON" build has thin surface
+  standalone "convert Helm's output to TOON" build has thin surface
   *today*. The real value is prospective - as the structured-injection
   features (`/triage` feeding the board, Focus feeding goals, goal-
   orchestrator notes) mature, encode THOSE as TOON. So: fold TOON in with
@@ -411,12 +411,12 @@ level (read-only, via gh api). Findings:
   Tracked as a Jot task; not built.
 - **Also tracked:** stop reading the whole `todos.json` into context when
   only a category/few fields are needed (the AXI minimal-schema lens applied
-  to how Jot data is consumed, both by Maestro-to-agent injection and by
+  to how Jot data is consumed, both by Helm-to-agent injection and by
   Claude reading it directly) - a small recurring token win.
 - **Skipped:** terminal-axi (empty repo, LICENSE only), agent-browser-axi
   (redundant with chrome-devtools-axi), rough-cut-axi (niche, no license),
   tasks-axi (redundant with Jot), mcp-compressor (wrong direction).
-  chrome-devtools-axi is a later "if/when Maestro agents do browser work"
+  chrome-devtools-axi is a later "if/when Helm agents do browser work"
   adopt-candidate (57% fewer tokens vs chrome MCP).
 
 ## 2026-07-04 — Fas 4 Lavish: a FIRST-PASS interactive-plan annotate loop (draft, not final UX)
@@ -437,7 +437,7 @@ No server, no long-poll, no persisted state.
 
 **The one non-obvious problem, and its fix: CSP.**
 First attempt loaded the mockup via the iframe's `srcdoc` attribute.
-A `srcdoc` document INHERITS the embedder's Content-Security-Policy, and Maestro's page CSP is `default-src 'self'` - which blocks the inline SDK script (a srcdoc document can only make the inherited policy STRICTER, never looser).
+A `srcdoc` document INHERITS the embedder's Content-Security-Policy, and Helm's page CSP is `default-src 'self'` - which blocks the inline SDK script (a srcdoc document can only make the inherited policy STRICTER, never looser).
 Confirmed live: the SDK `<script>` was present in the frame DOM but never executed, with a `Refused to execute inline script ... default-src 'self'` console violation.
 Switched to loading the mockup as a `data:text/html` URL (a separate browsing context) AND pinned the SDK's exact sha256 in the parent CSP's `script-src`.
 A framed `data:` document still has the embedder's CSP applied on top of its own, so the parent MUST whitelist the SDK by hash for it to run - the rest of the app stays inline-script-free (no blanket `'unsafe-inline'`).
@@ -508,8 +508,8 @@ The handler resolves immediately with `{ ok, goalRunId }` (fire-and-return) so t
 **Verified the WIRING without a full real autonomous run** (per the task's explicit instruction not to spend tokens/spawn real claude just to test UI):
 - `node --check` on all changed JS (`main.js`, `preload.cjs`, `renderer.js`, `goalOrchestrator.js`) - all pass; CSS brace-balance 325/325.
 - Full boot-test via `scripts/restart-dev.sh` (never a bare taskkill, per CLAUDE.md) - clean boot, no errors.
-- Live CDP verification against the real running renderer (the same `--remote-debugging-port` technique the token-ticker investigation established): clicking the Goal tab renders the page with all form fields, Cancel correctly disabled while idle; all three bridge methods (`runGoal`/`cancelGoal`/`onGoalEvent`) present on `window.maestro`; and the real render functions `goalIterationCard`/`goalSummaryCard` produce correct DOM (iteration card shows number + "committed" badge + summary + key-changes with the `goal-iter-ok` accent class; summary card shows commits/branch/worktree/stopped-reason plus the "did NOT push or merge" note).
-- The complete IPC round-trip was proven incidentally-but-strongly: a Start click against a deliberately non-existent folder drove the REAL path (renderer -> `goal:run` IPC -> `runGoal` -> `createWorktree` throws "Project path does not exist" BEFORE any iteration -> real `goal:event` `{kind:"error"}` -> `onGoalEvent` -> `goalRunState.status="error"` -> re-render). This confirms the end-to-end channel AND that a bad path fails fast with ZERO claude subprocesses spawned and zero tokens spent. Confirmed afterward: no stray worktree (`git worktree list`), no `maestro/goal-*` branch, maestro's own working tree clean apart from the intended edits.
+- Live CDP verification against the real running renderer (the same `--remote-debugging-port` technique the token-ticker investigation established): clicking the Goal tab renders the page with all form fields, Cancel correctly disabled while idle; all three bridge methods (`runGoal`/`cancelGoal`/`onGoalEvent`) present on `window.helm`; and the real render functions `goalIterationCard`/`goalSummaryCard` produce correct DOM (iteration card shows number + "committed" badge + summary + key-changes with the `goal-iter-ok` accent class; summary card shows commits/branch/worktree/stopped-reason plus the "did NOT push or merge" note).
+- The complete IPC round-trip was proven incidentally-but-strongly: a Start click against a deliberately non-existent folder drove the REAL path (renderer -> `goal:run` IPC -> `runGoal` -> `createWorktree` throws "Project path does not exist" BEFORE any iteration -> real `goal:event` `{kind:"error"}` -> `onGoalEvent` -> `goalRunState.status="error"` -> re-render). This confirms the end-to-end channel AND that a bad path fails fast with ZERO claude subprocesses spawned and zero tokens spent. Confirmed afterward: no stray worktree (`git worktree list`), no `helm/goal-*` branch, helm's own working tree clean apart from the intended edits.
 - NOT exercised live (would need a real autonomous run): a successful `iteration`/`done` event mutating state through to the summary card. That path is the same handler/switch already proven for the `error` kind, and both render funcs are proven to render correctly - but the genuinely-successful end-to-end run is left for Aidin's own test, as instructed.
 
 **This is a first-pass DRAFT needing Aidin's review.** The UX is genuinely open (a dedicated page was one of several equally-valid choices); no coach/escalation layer (Point 12); single concurrent run; no re-run-from-summary, no worktree-open-in-explorer shortcut, no per-model/effort selection in the form (the backend accepts them; the form omits them for v1 simplicity). Point 11 remains IN PROGRESS, not done.
@@ -546,7 +546,7 @@ blob only at stop.
 A `setInterval(rollingTick, VOICE_ROLLING_INTERVAL_MS)` (new named tunable
 constant, 2000ms) drives the live updates: each tick concatenates the
 chunks-so-far, reuses the EXACT existing path - `decodeToMono16k` +
-`window.maestro.transcribeVoice(samples, language)` -> the same
+`window.helm.transcribeVoice(samples, language)` -> the same
 `voice:transcribe` IPC -> the same `transcribeAudio` in `voice.js` - and shows
 the result as the live partial.
 No second transcription path was built; `voice.js` is UNCHANGED (the same
@@ -609,8 +609,8 @@ copy), 10 assertions, all pass - empty composer, partial growing in place,
 partial shrinking, preceding user text with/without trailing whitespace, newline
 separators, final-empty-removes-stray, and the after-span edge case.
 Full boot-test via `scripts/restart-dev.sh` (never a bare taskkill, per
-CLAUDE.md): clean boot, killed exactly Maestro's own 4 PIDs, no errors in the
-boot log, exactly 4 Maestro PIDs running afterward (no stray duplicate
+CLAUDE.md): clean boot, killed exactly Helm's own 4 PIDs, no errors in the
+boot log, exactly 4 Helm PIDs running afterward (no stray duplicate
 instances).
 **What this could NOT verify** (no microphone on this machine, same limitation
 as every prior voice-input entry): the actual live experience - partials
@@ -663,7 +663,7 @@ Added `voiceLanguage: "swedish"` to `DEFAULT_CONFIG` (`config.js`) - a top-level
 primitive, so the existing shallow `{ ...current, ...patch }` merge in the
 `config:set` handler (`main.js:168`) persists it correctly with no
 nested-object protection needed (unlike `jot`/`autoCompact`/etc.).
-The dropdown's `onSelect` calls `window.maestro.setConfig({ voiceLanguage })`
+The dropdown's `onSelect` calls `window.helm.setConfig({ voiceLanguage })`
 and stores the returned config back into `state.config`, the same one-liner
 every other setting toggle in the renderer uses.
 The dropdown's initial value is read back from `state.config?.voiceLanguage`
@@ -672,7 +672,7 @@ Deliberately a single global setting, not per-pane state (overkill for v1, per
 the ask).
 
 **Plumbed the language through to `transcribeAudio`.**
-The path is renderer's `startVoiceRecording` -> `window.maestro.transcribeVoice`
+The path is renderer's `startVoiceRecording` -> `window.helm.transcribeVoice`
 (preload.cjs) -> IPC `voice:transcribe` (main.js) -> `transcribeAudio` (voice.js).
 Each hop now carries the language: `startVoiceRecording` reads
 `state.config?.voiceLanguage || "swedish"` fresh at transcribe time (so a change
@@ -706,7 +706,7 @@ crash; the no-arg default correctly ran in Swedish mode (produced Swedish
 output off the silence, confirming the "swedish" fallback passes a real
 language); an empty string behaved as auto-detect (same omitted-language log).
 Full boot-test via `scripts/restart-dev.sh` (never a bare taskkill, per
-CLAUDE.md) - clean boot, no errors, killed exactly Maestro's own 4 PIDs.
+CLAUDE.md) - clean boot, no errors, killed exactly Helm's own 4 PIDs.
 **What this could NOT verify** (no microphone and no Swedish voice on this
 machine, same limitation as every prior voice-input entry): real transcription
 QUALITY in any language, and the dropdown actually rendering/selecting/
@@ -727,7 +727,7 @@ the real running app before touching any code — "I read the code and it
 looks right" was explicitly not an acceptable standard here, since that is
 exactly what shipped the bug in the first place.
 
-**How it was actually driven live:** Maestro is a native Electron app with no
+**How it was actually driven live:** Helm is a native Electron app with no
 browser-servable dev server, so the standard preview tools don't attach to
 it. Launched the real `electron.exe` (found in `node_modules/electron/dist/`)
 directly with `--remote-debugging-port=9333`, which exposes a Chrome DevTools
@@ -754,7 +754,7 @@ showed the exact same correct chain, every time:
   2026-07-03 commit) fires correctly off real `evt.message.usage`, deduped by
   `message.id` as designed — confirmed via raw trace output, not inference.
 - Every `{kind: "usage", totalTokens}` event reaches
-  `window.maestro.onSessionEvent` in the renderer and finds its
+  `window.helm.onSessionEvent` in the renderer and finds its
   `launchPaneHistory` entry (`entryFound=true` on the very first event of a
   fresh run, checked explicitly).
 - `pane.liveTokens` increments correctly and cumulatively (watched it climb
@@ -769,7 +769,7 @@ showed the exact same correct chain, every time:
 
 One earlier test run did show 4 "usage" emissions from `launcher.js` with no
 matching renderer-side receipt — the initial signal that looked like a real
-race (an `await window.maestro.suggestModelEffort(...)` / `startSession(...)`
+race (an `await window.helm.suggestModelEffort(...)` / `startSession(...)`
 gap between a send starting and `launchPaneHistory.set()` actually running,
 which could in principle let very early stream events arrive before the map
 entry exists). This did NOT reproduce on a clean, isolated retest with full
@@ -782,13 +782,13 @@ defect in the shipped code.
 
 **Conclusion: no reproducible defect found in the current, committed ticker
 code.** The most plausible real explanation for Aidin's report is that his
-live Maestro window was still running the pre-fix build — this repo has no
+live Helm window was still running the pre-fix build — this repo has no
 hot-reload (confirmed: no file-watcher, no `webContents.reload` call
 anywhere in `main.js`), so any code change only takes effect after a full
 restart via `scripts/restart-dev.sh`, and 10 further commits shipped after
 the ticker commit before this report came in. Filed here rather than
 silently closed out, since it's a real user report and the fix (if the
-stale-window theory is right) is simply "restart Maestro" — flagging in case
+stale-window theory is right) is simply "restart Helm" — flagging in case
 it recurs after a confirmed-fresh restart, which would mean this
 investigation missed something and needs to resume with a different angle
 (e.g. a specific model/effort combination, or a much longer real session,
@@ -852,7 +852,7 @@ live dependency — there's no package boundary to depend on cleanly anyway):
    space-truncation-bug avoidance already proven there) rather than
    reinventing subprocess plumbing. Capped at `maxIterations` (default 5) —
    v1 is deliberately small-scale.
-3. **Continuity via `.maestro-goal/notes.md` in the worktree, not
+3. **Continuity via `.helm-goal/notes.md` in the worktree, not
    conversation memory** — `readOrCreateNotes` reads (creating if absent)
    before each iteration and folds the content into that iteration's prompt;
    `appendNotes` appends a structured summary after. This is gnhf's actual
@@ -908,12 +908,12 @@ clean working tree post-run, not just "a commit happened somewhere."
 proposition is real autonomous iteration, so per Aidin's own instruction it
 had to be proven against a live invocation. Goal: "create hello.txt
 containing the word hello, then stop" against a scratch git repo under the
-OS temp dir (never Maestro's own working tree). Real run: 3 iterations (the
+OS temp dir (never Helm's own working tree). Real run: 3 iterations (the
 capped max), first one created and committed `hello.txt`, the next two
 correctly recognized the goal was already complete and made no further
 changes (still committed, since `success:true` — a genuinely idempotent
 "nothing more to do" report, not a bug). 24 real assertions, all passed:
-worktree created on disk, checked out on the right `maestro/goal-*` branch,
+worktree created on disk, checked out on the right `helm/goal-*` branch,
 3 real commits independently visible via `git log main..branch` (not just
 this module's own count), `hello.txt` content verified byte-exact both in
 the worktree AND inside the actual commit via `git show branch:hello.txt`
@@ -939,7 +939,7 @@ first. Fixed by adding the same proper teardown call before the raw
 directory delete; re-ran clean immediately after.
 
 **Explicitly deferred to a future pass** (v1 scope, not gaps to silently
-paper over): a dispatch UI (start/monitor/cancel a goal run from Maestro's
+paper over): a dispatch UI (start/monitor/cancel a goal run from Helm's
 own interface — `onIteration`/`cancelToken` are the hooks a future caller
 would use, nothing consumes them yet); the coach/escalation layer (PLAN.md's
 Point 12 framing — this module has no judgment about WHEN to escalate to
@@ -970,8 +970,8 @@ backend library with no `main.js`/renderer wiring, per the task's own scope.
 
 Aidin's feedback on the hold-to-record mic button (previous entry, same day):
 "kan du också fixa mikrofon ikonen till att använda något mer stilrent. Gör
-det till en vana i maestro" (fix the mic icon to something more sleek/
-polished, and make this a habit in Maestro).
+det till en vana i helm" (fix the mic icon to something more sleek/
+polished, and make this a habit in Helm).
 
 - `src/renderer/renderer.js`: the mic button's two raw-emoji states
   (`micBtn.textContent = "🎤"` idle, `"⏹"` recording) replaced with two small
@@ -1096,7 +1096,7 @@ alongside the old now-unused `whisper-tiny.en` cache, both gitignored), (b)
 transcription still works correctly end-to-end against English speech — a
 real regression check, not an assumption that multilingual models stay
 English-compatible — producing "Hello, Vice-Draud. Please switch to hold to
-record as supports Swedish." against the spoken "Hello Maestro, please switch
+record as supports Swedish." against the spoken "Hello Helm, please switch
 to hold to record and support Swedish." (a couple of words mangled, expected
 given robotic SAPI TTS input — the original English-only spike had similar
 roughness), and (c) the console log line `"No language specified - defaulting
@@ -1109,7 +1109,7 @@ real input is Swedish.
 (`src/lib/voice.js`, `src/renderer/renderer.js`); the standalone
 `transcribeAudio` exercise above against a real SAPI-generated WAV; a full
 boot-test via `scripts/restart-dev.sh` (clean boot, no errors) with
-`Get-CimInstance` confirming only Maestro's own 4 processes were running
+`Get-CimInstance` confirming only Helm's own 4 processes were running
 afterward (no stray prior instances, no Reinmaker collision). **What this
 could NOT verify** (no live microphone on this machine, same limitation as
 every prior voice-input entry): the hold-to-record interaction actually
@@ -1242,7 +1242,7 @@ work/goals, which already live in Jot), this reads the SAME
 Reused the existing `src/lib/jot.js` read layer rather than writing a second
 parser — extended it, didn't fork it.
 
-**Bug found and fixed while reusing the read layer: Maestro's Jot integration
+**Bug found and fixed while reusing the read layer: Helm's Jot integration
 was silently disabled.** The real todos.json carries a UTF-8 BOM (EF BB BF —
 left by an editor or a legacy external write; Jot's own app writes without
 one). `loadJot`'s `JSON.parse(fs.readFileSync(...,"utf8"))` throws on a
@@ -1283,7 +1283,7 @@ minimal targeted change, never a blind whole-file overwrite of remembered
 state), and writes via temp-file + `fs.renameSync` (atomic on-volume) so an
 interrupted write can't leave todos.json torn — the same discipline as
 sessions.js's `patchSessionMeta`. Output is UTF-8 no-BOM, 2-space JSON: the
-file Maestro leaves behind is byte-shape-identical to one Jot's own app
+file Helm leaves behind is byte-shape-identical to one Jot's own app
 wrote. The new subtask inherits the parent's `categoryId` (verified data-model
 behavior), gets `status:"open"`, `priority:0`, a fresh UUID. Guards refuse:
 empty text, a missing parent, or a parent that is itself a subtask (Jot nests
@@ -1314,7 +1314,7 @@ don't exist in this repo).
 
 **Wiring:** `main.js` — two IPC handlers (`jot:goals` read-only, and
 `jot:addSubtask` for the write, both loading `config.jot`); `preload.cjs` —
-`getJotGoals`/`addJotSubtask` on the `window.maestro` surface, one line each,
+`getJotGoals`/`addJotSubtask` on the `window.helm` surface, one line each,
 same pattern as every other channel.
 
 **Verification:** `node --check` on all four changed JS files
@@ -1323,7 +1323,7 @@ same pattern as every other channel.
 and `addSubtask` against a scratch copy (see above); and a full boot-test via
 `scripts/restart-dev.sh` (clean boot, no app-level errors — the GPU disk-cache
 warnings in the log are benign Electron cache noise, not app errors; confirmed
-via `Get-CimInstance` that only Maestro's own 4 PIDs recycled and Reinmaker's
+via `Get-CimInstance` that only Helm's own 4 PIDs recycled and Reinmaker's
 4 PIDs — 20556/4560/25124/6292 — were untouched, consistent with the
 documented safe-restart behavior). **What this could NOT verify** (native
 Electron app, no browser-servable preview — same limitation noted on every
@@ -1353,7 +1353,7 @@ long everything-session we're moving away from.
 
 Not ripped out today (current default still works); it's the confirmed
 direction for new orchestrator UI work. Aidin explicitly delegated steering
-Maestro's direction along this philosophy to me from here, being newer to it
+Helm's direction along this philosophy to me from here, being newer to it
 himself — so this and future direction calls are made on that standing
 authority, still surfaced here for his review, not presumed silently.
 
@@ -1392,14 +1392,14 @@ we review it together").
    ask.
 
 **Chosen: `@huggingface/transformers` running `Xenova/whisper-tiny.en`,
-inference in Maestro's own Electron MAIN process (Node), not the renderer.**
+inference in Helm's own Electron MAIN process (Node), not the renderer.**
 Verified live end-to-end via a real spoken WAV (Windows SAPI
 `System.Speech.Synthesis` TTS used to generate a genuine speech waveform for
 the spike, since no live mic input is available to me): first call
 auto-downloaded the model (~151MB fp32 ONNX, two files — encoder + merged
 decoder — into `node_modules/@huggingface/transformers/.cache`, a one-time
 background download, not a blocking manual step) and transcribed correctly
-("Hello Maestro. Please open the project folder and start a new session.")
+("Hello Helm. Please open the project folder and start a new session.")
 in ~13s total (mostly the download); a second run with the model already
 cached loaded in ~1.4s and transcribed a short clip in ~1-2s. Picked
 `whisper-tiny.en` (smallest usable size, English-only) to match the
@@ -1428,7 +1428,7 @@ no language selection, no continuous dictation):**
   boundary carries a plain array more reliably across Electron versions than
   a typed array) and calls `transcribeAudio`.
 - `src/preload.cjs` — `transcribeVoice(samples)` added to the exposed
-  `window.maestro` surface, same one-line-per-channel pattern as every other
+  `window.helm` surface, same one-line-per-channel pattern as every other
   entry.
 - `src/renderer/renderer.js` — a microphone icon-button (`.icon-btn`, same
   class/size as the existing pick-folder/attach buttons) added to
@@ -1439,7 +1439,7 @@ no language selection, no continuous dictation):**
   16kHz) to get the exact mono/16kHz `Float32Array` Whisper's feature
   extractor expects — resampling falls out of the same decode step for free,
   no separate resampling library needed — sends it to
-  `window.maestro.transcribeVoice`, and **appends** the returned text into
+  `window.helm.transcribeVoice`, and **appends** the returned text into
   the composer's textarea (a trailing space/newline is added first only if
   the existing text doesn't already end in one). Chose append over replace:
   voice is meant as an alternative way to ADD to what you're composing, not a
@@ -1457,7 +1457,7 @@ no language selection, no continuous dictation):**
 
 **Verification:** `node --check` on all four edited/new JS files, a CSS
 brace-balance check, and a full boot-test via `scripts/restart-dev.sh` twice
-(clean both times; confirmed via `Get-CimInstance` that only Maestro's own 4
+(clean both times; confirmed via `Get-CimInstance` that only Helm's own 4
 PIDs recycled and Reinmaker's 4 PIDs were untouched throughout). Separately
 verified the actual shipped `src/lib/voice.js` module end-to-end against a
 real speech WAV via a standalone script importing it directly — confirmed
@@ -1681,7 +1681,7 @@ existing `execFileSync("git", [...])` pattern from `version.js` rather than
 inventing a new way to shell out. Worktree location mirrors gnhf's own
 sibling-directory convention: `worktreesRootFor(projectPath)` resolves
 `<repo>-worktrees/` next to the repo itself (e.g.
-`D:\Repo\Tools\maestro-worktrees\<id>`), not nested inside the repo, so
+`D:\Repo\Tools\helm-worktrees\<id>`), not nested inside the repo, so
 worktrees never show up as clutter in the very repo they're isolating work
 from. `createWorktree` runs `git worktree add <worktreePath> -b
 <branchName>` and returns `{ worktreePath, branchName, envFilesCopied }`.
@@ -1712,7 +1712,7 @@ happened.
 
 **Verified with a real spike, not just "no error thrown":**
 `spike/test-worktree-lifecycle.mjs` creates a throwaway git repo under the
-OS temp dir (never Maestro's own working tree), then exercises the full
+OS temp dir (never Helm's own working tree), then exercises the full
 lifecycle against it: create -> confirm the worktree directory exists on
 disk, the tracked file is present, `.env` was copied byte-for-byte, and
 `git worktree list --porcelain` independently agrees a new worktree exists
@@ -1724,7 +1724,7 @@ git no longer lists it; a second removal attempt on the now-gone worktree
 -> confirms a clear error rather than a silent no-op. All 20 assertions
 passed on a real run; the scratch repo and its worktrees directory are
 deleted at the end (via a `finally` block, so cleanup runs even on
-failure), and `git status`/`git branch --show-current` on Maestro's own
+failure), and `git status`/`git branch --show-current` on Helm's own
 repo were checked before and after — completely unaffected throughout.
 
 **Verification commands run:** `node --check` on both new files;
@@ -1779,7 +1779,7 @@ a standalone ESM import test that exercises the exact `readFileSync` path
 resolution at module-load time (confirms `classifySessionStatus` still
 exports correctly and the file loads without throwing), and a full boot-test
 via `scripts/restart-dev.sh` (clean log, no errors; confirmed via
-`Get-CimInstance` that Maestro's own 4 processes recycled correctly and
+`Get-CimInstance` that Helm's own 4 processes recycled correctly and
 Reinmaker's 4 processes were untouched, consistent with the documented safe-
 restart behavior).
 
@@ -1788,12 +1788,12 @@ restart behavior).
 **Decision:** Aidin confirmed the recommendation from the deep source read
 (see the entry below): firstmate → reference only, not code (impossible to
 run on Windows regardless, tmux/POSIX-locked); gnhf → vendor/adapt its
-`Orchestrator` source into Maestro's own codebase; treehouse → build first,
+`Orchestrator` source into Helm's own codebase; treehouse → build first,
 independent of the rest. "Reuse the code" for firstmate specifically means
 reuse the SOURCE-LEVEL KNOWLEDGE of how it solved wake-classification,
 escalation, and worktree hand-off — not running its bash.
 
-**Also resolved a real technical question Aidin raised:** if Maestro's own
+**Also resolved a real technical question Aidin raised:** if Helm's own
 future orchestrator dispatches work across many different projects, it
 can't itself be "rooted" in all of them at once — so how would it create a
 worktree for a project it isn't rooted in? Answer: it doesn't need to be.
@@ -1803,7 +1803,7 @@ specific to that one convenience feature in Claude Code's own tooling, not
 a property of git worktrees in general. Confirmed directly in both repos'
 source: `treehouse get` takes an explicit project reference regardless of
 firstmate's own cwd, and gnhf's `createWorktree` (`git.ts`) takes an
-explicit repo/path argument. Maestro already tracks `session.cwd` per
+explicit repo/path argument. Helm already tracks `session.cwd` per
 project, so its own orchestrator can run `git -C <projectPath> worktree add
 <worktreePath> -b <branch>` directly against the right repo from wherever
 the orchestrator process itself happens to run — no rooting requirement.
@@ -1855,7 +1855,7 @@ completed" is no longer the last one).
 
 **Verification:** `node --check` on all three edited JS files, a CSS
 brace-balance check, and a full boot-test via `scripts/restart-dev.sh` (clean
-log, confirmed via `Get-Process` that only Maestro's own PIDs were recycled —
+log, confirmed via `Get-Process` that only Helm's own PIDs were recycled —
 the pre-existing Reinmaker instance's PIDs were untouched, consistent with
 the documented safe-restart behavior). No live click-through was possible
 beyond that — this is a native Electron app, not a browser-servable dev
@@ -1878,7 +1878,7 @@ which just does `loadTranscriptInto(index).then(refresh)` — doesn't need to:
 success branch's reload happens. No remaining gap; nothing changed here.
 
 **Context:** Aidin asked me to act as orchestrator and dispatch agents
-against the open Maestro backlog rather than build everything inline in
+against the open Helm backlog rather than build everything inline in
 this one long session. Triaged the open Jot items first (see the entry
 below) into safe-to-dispatch vs. stale vs. gated-on-a-decision, then
 launched two agents: a background research agent to study firstmate +
@@ -1926,7 +1926,7 @@ single agent's work.
 ## 2026-07-03 — Jot triage before dispatch: most of the open backlog wasn't
 ## actually ready for blind agent fan-out
 
-**Decision:** Before dispatching any agents against the ~20 open Maestro
+**Decision:** Before dispatching any agents against the ~20 open Helm
 Jot items, read each one against DECISIONS.md's own history rather than
 assume "open in Jot" means "ready to build." Found four real buckets:
 already-resolved-but-not-closed (2 items — a duplicate of an already-
@@ -1997,7 +1997,7 @@ firstmate has no session list at all, just a crew + disposable worktrees,
 oriented around dispatch and goals. Both threads point the same direction.
 
 This session (this very transcript) is itself the illustrating example: a
-single "Maestro project" megasession spanning the classifier, auto-compact,
+single "Helm project" megasession spanning the classifier, auto-compact,
 context gauge, root-folder-switch debugging, CLAUDE.md consolidation, and
 this Phase 4 planning — already auto-compacted multiple times, expensive per
 turn. Split into per-feature sessions, each would have been sharp, cheap,
@@ -2018,7 +2018,7 @@ composer's cwd field on open) — comes from `buildSession`'s `cwd: meta.cwd`,
 where `meta` is the DESKTOP APP'S OWN `local_<uuid>.json` sidecar metadata
 file. `switchSessionRootFolder` only ever copied the `.jsonl` transcript; it
 never touched that sidecar. So the switch worked for exactly one immediate
-`--resume`, but the moment the session was reopened, Maestro re-read the
+`--resume`, but the moment the session was reopened, Helm re-read the
 still-stale old `cwd` from the sidecar and the switch silently evaporated —
 regardless of how many real turns had run from the new folder.
 
@@ -2058,13 +2058,13 @@ changes: typing in the cwd input, picking a folder via "…", and
 
 **Separately surfaced while diagnosing this**: Aidin's actual "switch root
 folder" confusion (a session's root flip-flopping between two folders across
-messages) turned out to be unrelated to Maestro at all — both turns carried
+messages) turned out to be unrelated to Helm at all — both turns carried
 `"entrypoint":"claude-desktop"`, meaning he was sending via the real Claude
-Desktop app on the same session, not Maestro's own composer. Desktop has its
-own, separate session-resume resolution that Maestro's switch/mtime-based
-`findTranscriptPath` fix has no influence over — using Desktop and Maestro
+Desktop app on the same session, not Helm's own composer. Desktop has its
+own, separate session-resume resolution that Helm's switch/mtime-based
+`findTranscriptPath` fix has no influence over — using Desktop and Helm
 interchangeably on the same session can pick either transcript copy
-unpredictably. Not a Maestro bug; a real limitation of mixing the two front
+unpredictably. Not a Helm bug; a real limitation of mixing the two front
 ends on one session, worth remembering if it comes up again.
 
 ## 2026-07-03 — "Switch root folder" + stop silently dropping CLI failures
@@ -2074,7 +2074,7 @@ on an already-resumed session, and asked what it actually does there ("kan
 en session byta root folder? diskussion"). Investigated rather than
 guessing: `claude --resume` scopes its own session lookup by cwd — spiked
 resuming from a different folder and got "No conversation found with
-session ID" outright. Worse: Maestro had NO handling anywhere for CLI
+session ID" outright. Worse: Helm had NO handling anywhere for CLI
 stderr — the error vanished completely (no case in the renderer's event
 switch), so picking a new folder on an existing session and sending
 silently ate the message with the pane just going back to idle. Chose to
@@ -2112,10 +2112,10 @@ than just closing the trap.
   instead of dropping that message for a generic "exit code -1" text.
 
 **Where a session's context/CLAUDE.md/settings get enforced after a
-switch**: same as any Maestro-launched session — resolved per-invocation
+switch**: same as any Helm-launched session — resolved per-invocation
 from the CLI process's cwd, not baked in at session creation. So yes,
 switching folders and sending genuinely changes which project's CLAUDE.md,
-settings, and skills apply going forward — not something Maestro implements
+settings, and skills apply going forward — not something Helm implements
 itself, just a consequence of how `-p` already works for every session.
 
 ## 2026-07-03 — Merge suggest-hint and context gauge onto one row
@@ -2135,7 +2135,7 @@ with nothing to space between.
 informationen?" Yes. The CLI's `result` event reports each model's real
 context window at `evt.modelUsage[model].contextWindow` (verified live:
 claude-haiku-4-5 → 200000). So instead of the hardcoded 1M guess for the
-gauge's %, Maestro now LEARNS the true window per model: the launcher
+gauge's %, Helm now LEARNS the true window per model: the launcher
 extracts `contextWindows` from every result event, and the launch's done
 handler merges any new model→window into `config.modelContextWindows`
 (persisted; a no-op write once steady). Done even for internal launches
@@ -2143,9 +2143,9 @@ handler merges any new model→window into `config.modelContextWindows`
 learned window for the session's model and falls back to
 `config.contextWindowTokens` only for a model not yet seen.
 
-Self-correcting and authoritative: as Aidin runs each model through Maestro
+Self-correcting and authoritative: as Aidin runs each model through Helm
 once, its window becomes exact. The 1M fallback just covers the gap until
-then (and for sessions only ever run outside Maestro, whose interactive
+then (and for sessions only ever run outside Helm, whose interactive
 transcripts carry no contextWindow field).
 
 ## 2026-07-03 — Context gauge → bar+% with a click-to-open context+quota popover
@@ -2210,13 +2210,13 @@ live "how full right now" readout.
 
 **Review was fully clean** on all six probes; applied its two minor notes:
 compaction is now restricted to `idle` sessions only (not `waiting` — the
-one status that could be a session streaming a turn OUTSIDE Maestro; also
+one status that could be a session streaming a turn OUTSIDE Helm; also
 matches Aidin's "aktiv men idle" framing), and `enrichWithJot` now runs only
 in the classify branch (the compaction pass never reads Jot).
 
-**Q: does the CLI's own auto-compact-when-full still work in Maestro
+**Q: does the CLI's own auto-compact-when-full still work in Helm
 sessions?** Yes — verified this session's transcript carries 2
-`trigger:"auto"` compact_boundary events. Maestro never touches context
+`trigger:"auto"` compact_boundary events. Helm never touches context
 management, so the built-in fires normally near the limit; Fas 3
 auto-compact is a separate, earlier proactive trigger (`trigger:"manual"`,
 150k, idle). They coexist.
@@ -2228,7 +2228,7 @@ centered divider pill "⊟ Context compacted (auto/manual · X→Y tokens)".
 Works for ALL triggers uniformly (CLI built-in, Fas 3 auto, manual). Handles
 BOTH transcript formats — headless stream-json (`compact_metadata`,
 snake_case) and interactive desktop (`compactMetadata`, camelCase) — since
-Maestro reads sessions from both. Verified parsing against a real transcript
+Helm reads sessions from both. Verified parsing against a real transcript
 (trigger:"auto", pre 917979 → post 53922).
 
 ## 2026-07-03 — Spike: headless /compact works (auto-compact is buildable)
@@ -2303,22 +2303,22 @@ the IPC handler's separate `readAllSessions()` calls) came back clean.
 
 ## 2026-07-03 — restart-dev.sh's kill step was silently a no-op all session — rewritten in PowerShell
 
-**Bug:** Aidin noticed a new Maestro window opening without the old one
+**Bug:** Aidin noticed a new Helm window opening without the old one
 closing. Investigated instead of guessing: `restart-dev.sh`'s kill step
 (`wmic ... | grep -i "$REPO_PATH_WIN"`, built earlier today specifically to
 stop boot-tests from killing Reinmaker) had a real bug — `grep`'s regex mode
 interprets a literal Windows path's backslashes as escape sequences (`\R`,
-`\T`, `\m`...), so matching `D:\Repo\Tools\maestro` against wmic's CSV output
+`\T`, `\m`...), so matching `D:\Repo\Tools\helm` against wmic's CSV output
 silently failed on EVERY invocation, and `|| true` swallowed the failure
 with zero visible error. Every restart-dev.sh call this session launched a
-NEW Maestro instance on top of whatever was already running instead of
-replacing it — confirmed live: found 3 stray Maestro instances (12 stray
+NEW Helm instance on top of whatever was already running instead of
+replacing it — confirmed live: found 3 stray Helm instances (12 stray
 electron.exe processes) piled up by the time Aidin caught it.
 
 `grep -F` (fixed-string) was tried next and still failed/crashed against the
 real wmic output in this environment (a `grep` abort, not investigated
 further — not worth chasing when a cleaner tool was available). Rewrote the
-kill step in PowerShell (`scripts/kill-maestro.ps1`, invoked via
+kill step in PowerShell (`scripts/kill-helm.ps1`, invoked via
 `-File` — nesting the PS one-liner inside a bash single-quoted `-Command`
 argument mis-parsed `-Filter` on the first attempt, a second quoting layer
 not worth fighting): `Get-CimInstance Win32_Process` + a plain `-like`
@@ -2352,7 +2352,7 @@ a spike before deciding whether the architecture change is worth it
    (while it was still actively generating) was NOT folded into that
    turn's output — the CLI ran the first turn to full completion, THEN
    processed the second message as an entirely separate next turn. This is
-   functionally identical to Maestro's existing "queue next prompt"
+   functionally identical to Helm's existing "queue next prompt"
    (already built via a fresh process per turn) — a persistent process adds
    no new capability here.
 
@@ -2433,25 +2433,25 @@ position stays fixed whether or not Copy is currently visible.
 
 ## 2026-07-02 — Boot-test restarts were silently killing Reinmaker
 
-**Bug (mine):** every boot-test in this repo restarted Maestro via
+**Bug (mine):** every boot-test in this repo restarted Helm via
 `taskkill /F /IM electron.exe` — matches by image name only, machine-wide.
 Aidin reported "Appen stängdes, jag tror du och reinmaker slåss om samma
-port." Investigated instead of guessing: no port conflict — Maestro's source
+port." Investigated instead of guessing: no port conflict — Helm's source
 has zero `listen()`/`createServer()` calls anywhere. The real cause: Reinmaker
 (tgs-reinmaker) runs unpackaged in dev mode via `electron .`, so its process
 also shows up as bare `electron.exe` in Task Manager, indistinguishable by
-name from Maestro's own dev process. Every blind image-name kill this
+name from Helm's own dev process. Every blind image-name kill this
 session silently closed Aidin's live Reinmaker session too — confirmed live:
 found 4 running `electron.exe` PIDs, all four traced via `wmic ... get
 CommandLine` to `tgs-reinmaker\node_modules\electron\dist\electron.exe`, none
-to Maestro.
+to Helm.
 
 **Fix:** `scripts/restart-dev.sh` — resolves the repo's own path, queries
 `wmic process where "name='electron.exe'"` for CommandLine, and only kills
 PIDs whose command line actually points at THIS repo before restarting.
-Verified live: ran it while Reinmaker's 4 processes were up — Maestro
+Verified live: ran it while Reinmaker's 4 processes were up — Helm
 restarted cleanly and all 4 Reinmaker PIDs were untouched afterward. This is
-now the only sanctioned way to restart Maestro during dev work; a bare
+now the only sanctioned way to restart Helm during dev work; a bare
 `taskkill /IM electron.exe` must not be used again in this repo.
 
 ## 2026-07-02 — Done button: check icon beside Copy, hover-only, persists as a checkmark once clicked
@@ -2480,7 +2480,7 @@ svaret." Redesigned:
 ## 2026-07-02 — Performance + token usage audit; one real fix applied
 
 **Decision:** Aidin's Jot task "performance + token usage granskning av
-appen" — ran an audit (two agents, renderer perf + Maestro's own internal
+appen" — ran an audit (two agents, renderer perf + Helm's own internal
 LLM-call costs) rather than guessing. Verdict: the app is already well-
 optimized at its actual single-user scale (~9 groups, ~35 grouped + ~100
 total sessions). Token/cost axis fully clean — the model-fit judge (Haiku,
@@ -2783,7 +2783,7 @@ boot-tested and independently reviewed:
    (major.minor hand-bumped in `package.json`, a trailing number that's
    actually a commit count since that bump so it resets to 0 on every bump
    instead of growing forever). Crewline computes this at Vite build time;
-   Maestro has no bundler, so it runs once at app startup via `git log -1
+   Helm has no bundler, so it runs once at app startup via `git log -1
    -S... -- package.json` + `git rev-list --count`. Verified end-to-end
    against the real repo (`v0.1.32`) before wiring into the UI. Review
    caught the pickaxe search string being too loose (`"0.1` would also
@@ -2893,7 +2893,7 @@ issues the isolated reviews structurally couldn't see:
    the interaction of a feature from one era with a pipeline from another.
    Fixed with an `internal: true` flag threaded startSession -> IPC ->
    main.js that suppresses the usage log, the completion notification, and
-   the judge for Maestro's own internal launches (the renderer still gets its
+   the judge for Helm's own internal launches (the renderer still gets its
    `done` event, which the summarize callback needs).
 
 Both fresh reviewers otherwise confirmed the shipped work clean: the
@@ -3140,7 +3140,7 @@ between the last dragover and the drop. If it's still not fully reliable
 after this, the more thorough fix is caching each row's position once at
 drag-start instead of re-measuring live throughout the drag.
 
-**Archive page:** the two sections (Archived / Removed from Maestro) now sit
+**Archive page:** the two sections (Archived / Removed from Helm) now sit
 side-by-side in the same 2-column grid the Analysis page already uses,
 instead of stacked vertically.
 
@@ -3149,7 +3149,7 @@ instead of stacked vertically.
 **Decision:** Added a 4th header tab, "Archive," with two sections —
 "Archived sessions" (`isArchived: true`, real desktop-app state; an
 "Unarchive" button flips it back via the existing `session:archive` IPC
-handler with `archived: false`) and "Removed from Maestro" (sessions in
+handler with `archived: false`) and "Removed from Helm" (sessions in
 `config.hiddenSessions`; a "Restore" button removes the id from that array).
 No new IPC or data source needed — both flags were already tracked, there
 was just no UI to see or undo either one before now (archiving/removing were
@@ -3164,9 +3164,9 @@ didn't exist until now.
 **Bug caught in review:** the two flags (`isArchived`, `hiddenSessions`) are
 independent — a session could be both archived AND hidden, which would have
 listed it in both sections with two unrelated "get it back" buttons.
-Archived sessions are now excluded from the "Removed from Maestro" list;
+Archived sessions are now excluded from the "Removed from Helm" list;
 unarchiving is enough to see it again here, even if it's separately still
-hidden from Maestro's own sidebar.
+hidden from Helm's own sidebar.
 
 ## 2026-07-02 — Jot-review fix batch: bullet spacing, icon-only copy button, a real DnD drop bug, image lightbox
 
@@ -3207,8 +3207,8 @@ resolves via `new URL(...).pathname` before shipping.
 **Finding:** `spike/test-mid-turn-interject.mjs` sent a first message asking
 the model to run `sleep 6 && echo done` via Bash, then wrote a SECOND stdin
 message the moment the Bash tool_use event appeared — well before that
-turn's `result` event. The final reply was `DONE1\n\nMAESTRO_INTERJECT_SEEN`:
-the interjected instruction ("say MAESTRO_INTERJECT_SEEN") was genuinely
+turn's `result` event. The final reply was `DONE1\n\nHELM_INTERJECT_SEEN`:
+the interjected instruction ("say HELM_INTERJECT_SEEN") was genuinely
 picked up and honored WITHIN the same in-progress turn, not queued for a
 separate next turn. This is a real answer to the open "flika in med extra
 info under körning" Jot task — `2026-07-01`'s spike only proved multi-turn
@@ -3236,9 +3236,9 @@ should also reflect long individual tool calls, not just subagents.
 **Honest note on how long this took:** spent well over half an hour chasing
 a phantom "intermittent ENOENT spawning claude.exe" before finding the real
 cause — the spike file was originally written via a bash heredoc
-(`cat > file << 'EOF'`), which silently collapsed `"D:\\Repo\\Tools\\maestro"`
+(`cat > file << 'EOF'`), which silently collapsed `"D:\\Repo\\Tools\\helm"`
 into a single-backslash string. `\R`, `\T`, `\m` are not recognized JS escape
-sequences, so the literal cwd string became `"D:RepoToolsmaestro"` — an
+sequences, so the literal cwd string became `"D:RepoToolshelm"` — an
 invalid path, which Windows' CreateProcess surfaces as ENOENT on the
 executable, not as an invalid-cwd error. This looked exactly like
 "environment/sandbox flakiness" for a long time because it was NOT
@@ -3296,7 +3296,7 @@ other change.
    (`config.archiveSuggestions.enabled`). When on, idle sessions with no open
    Jot review/in-progress/open work get a small "Archive?" pill in the
    sidebar row. Clicking it archives immediately — the pill IS the proposal,
-   the click IS the approval. Never suggested for the Maestro-building
+   the click IS the approval. Never suggested for the Helm-building
    session itself (idle between long autonomous stretches isn't "done").
 
 Neither path ever archives without a click in the moment. There is no
@@ -3313,21 +3313,21 @@ file another app owns. New `session:archive` IPC handler + preload bridge.
 
 **Known, NOT-yet-verified risk — flagging per the "verify before theorizing"
 lesson from earlier tonight:** this write goes through `%APPDATA%`, and every
-time Maestro has been rebooted for testing *tonight* it was launched via a
+time Helm has been rebooted for testing *tonight* it was launched via a
 `npm start` spawned from this chat session's own Bash tool. If Claude Code's
 own process is MSIX-sandboxed on this machine (a real, previously-confirmed
 gotcha — see `feedback_verify_before_theory.md`), a write from a
-Claude-spawned Maestro instance could land in an invisible sandbox overlay
+Claude-spawned Helm instance could land in an invisible sandbox overlay
 copy of that `%APPDATA%` path instead of the real file the desktop app reads
 — meaning archiving could report success while doing nothing the real app
 ever sees. **I did not test the actual write against real session state
-tonight, because doing so through a Claude-spawned Maestro instance would not
+tonight, because doing so through a Claude-spawned Helm instance would not
 be a trustworthy test** (my own tool round-tripping with itself is exactly
 the false-positive pattern that lesson warns about). Boot-tested for crashes
-only. **Needs Aidin to verify once**: launch Maestro normally (not through a
+only. **Needs Aidin to verify once**: launch Helm normally (not through a
 Claude Code session), archive a real disposable/old session, and confirm it
 actually disappears from the *desktop app's own* sidebar — not just
-Maestro's.
+Helm's.
 
 ## 2026-07-02 — Image paste: shipped via file-path reference, not base64-in-stream-json
 
@@ -3341,7 +3341,7 @@ subscription auth, same model-fit judge.
 given a path — the agent loop naturally opens an attached screenshot the same
 way it would open one you mentioned by hand. Verified empirically before
 building anything (`spike/test-image-via-path.mjs`): pointed a fresh `claude
--p` call at a real Maestro screenshot with unpredictable content (a dropdown
+-p` call at a real Helm screenshot with unpredictable content (a dropdown
 mid-interaction) and asked it to name the highlighted option and list the
 others in order. It called `Read` on the exact path and answered correctly
 ("Auto mode" highlighted, all 5 options in the right order) — not a guessable
@@ -3351,7 +3351,7 @@ plausible.
 **Why not the earlier `stream-json` base64-block approach:** already tested
 2026-07-01 (see the now-superseded entry below) — the CLI's stream-json input
 does not accept inline image content blocks; the model reported
-`MAESTRO_NO_IMAGE`. The `--file file_id:relative_path` flag hinted at an
+`HELM_NO_IMAGE`. The `--file file_id:relative_path` flag hinted at an
 upload-and-reference flow, but never needed investigating further once the
 much simpler "just save it and mention the path" approach was confirmed to
 work with zero new surface area.
@@ -3380,17 +3380,17 @@ shipping: the summary was genuinely well-structured and even pulled in
 ambient repo context (git branch, uncommitted files) beyond the literal
 chat history.
 
-**Deliberately did NOT build:** an in-Maestro "Archive" action. Real archiving
+**Deliberately did NOT build:** an in-Helm "Archive" action. Real archiving
 means flipping `isArchived` in the desktop app's own `local_*.json` session
 file — writing to another app's live state, which is exactly the kind of
 action flagged as needing explicit confirmation, not something to do
-autonomously while Aidin is away. Maestro's existing "Remove from Maestro"
+autonomously while Aidin is away. Helm's existing "Remove from Helm"
 (hides via config.json only) remains the only session-hiding mechanism until
 real archiving is explicitly requested and scoped carefully.
 
 **Why this order:** the context-flow half directly unblocks Aidin's stated
 goal ("archive more aggressively once I don't lose the thread") without
-touching anything outside Maestro's own repo — pure upside, no destructive
+touching anything outside Helm's own repo — pure upside, no destructive
 risk. Real archiving is a separate, smaller, but riskier follow-up.
 
 ## 2026-07-02 — Model-fit judge: Haiku, non-bare, cost reduced ~78% by stripping tools/MCP
@@ -3424,7 +3424,7 @@ recipe (`--system-prompt` + empty `--allowed-tools` + empty
 Aidin's explicit request "efter varje färdig prompt"). Set `false` to disable
 if the recurring cost isn't worth it later.
 
-Working name: **Maestro** — a personal orchestrator harness over Claude Code
+Working name: **Helm** — a personal orchestrator harness over Claude Code
 sessions. Placeholder name; cheap to rename before there is git history.
 
 ## 2026-07-01 — Stop = kill the child process; interject mid-run deferred
@@ -3459,7 +3459,7 @@ ruled out first.
 **What was tested:** sent a `stream-json` input message with a Messages-API-
 style content block (`{type:"image", source:{type:"base64",...}}`) alongside a
 text block asking the model to confirm it saw an image. Response: it did NOT
-see the image (`MAESTRO_NO_IMAGE`). So the CLI's stream-json input does not
+see the image (`HELM_NO_IMAGE`). So the CLI's stream-json input does not
 accept inline base64 image blocks in that shape.
 
 **What's still open:** `claude --help` lists a `--file file_id:relative_path`
@@ -3467,7 +3467,7 @@ flag ("File resources to download at startup") — suggesting attachments go
 through an upload-and-reference flow (a `file_id`, likely from an Anthropic
 Files API), not a raw paste. Needs research into that flow before building;
 not attempted here to avoid guessing at an unverified upload API on autonomous
-unattended time. [[project-maestro]]
+unattended time. [[project-helm]]
 
 ## 2026-07-01 — Build a custom harness rather than live within the desktop app
 
@@ -3499,18 +3499,18 @@ work tools.
 
 ## 2026-07-01 — Private project, personal git
 
-**Decision:** Lives at `D:\Repo\Tools\maestro`. When a remote is created it goes
+**Decision:** Lives at `D:\Repo\Tools\helm`. When a remote is created it goes
 on Aidin's *personal* GitHub (not The Gang). No remote/push until he asks.
 
 ## 2026-07-01 — Bootstrap build happens in the current session, on main
 
 **Decision:** The initial build is done directly (not delegated to a spawned
-session), in `D:\Repo\Tools\maestro` on `main`.
+session), in `D:\Repo\Tools\helm` on `main`.
 
 **Why:** Bootstrap exception to the "orchestrator is overseer, not worker"
 principle — you cannot delegate through a harness that does not exist yet, the
 only current handoff tool forces a worktree, and this session holds all the
-design context. Session Radar was built the same way without issue. Once Maestro
+design context. Session Radar was built the same way without issue. Once Helm
 exists, the overseer/worker split becomes the operating default (but not
 dogmatically — small direct edits by the orchestrator are fine).
 
@@ -3518,20 +3518,20 @@ dogmatically — small direct edits by the orchestrator are fine).
 
 **Decision:** Port/reuse Session Radar's `lib/sessions.js` (session metadata +
 transcript-tail status) and `lib/jot.js` (Jot matching + work scoring) as
-Maestro's read layer for the overview.
+Helm's read layer for the overview.
 
 **Why:** Already built and verified; avoids duplicating the undocumented
-session-file parsing. Session Radar's overview UI is effectively Maestro's v0
+session-file parsing. Session Radar's overview UI is effectively Helm's v0
 dashboard.
 
 ## Open architectural question (pending Agent SDK verification)
 
 **Do we manage our own SDK sessions, mirror/control the desktop app's sessions,
 or both?** SDK-created sessions are likely independent from the desktop app's.
-Leaning: Maestro fully manages its own SDK sessions (root on main, model/effort,
+Leaning: Helm fully manages its own SDK sessions (root on main, model/effort,
 context injection, streaming) AND surfaces the desktop app's sessions read-only
 in the overview so nothing is lost, with gradual migration of coding work into
-Maestro. To be finalized once SDK capabilities are confirmed.
+Helm. To be finalized once SDK capabilities are confirmed.
 
 ## 2026-07-01 — Phase 0 spike: PASS (wrap the real `claude` CLI)
 
@@ -3593,7 +3593,7 @@ the later re-test did), not just any coherent-sounding reply.
 
 ## 2026-07-06 — The orchestration model: a tiered captain / first mate / second mate / crew hierarchy
 
-**Decision (Aidin, settled in conversation):** Maestro's mental model is an
+**Decision (Aidin, settled in conversation):** Helm's mental model is an
 explicit four-tier hierarchy — captain (Aidin) -> one cross-project **first
 mate** (orchestrator rooted in the meta-home) -> per-project **second mates**
 (orchestrators rooted in a project) -> **crew** (agents / Autopilot runs in
@@ -3603,7 +3603,7 @@ worktrees). Full model + operating rules in `docs/orchestration-model.md`.
 The prior "ephemeral sessions, not a durable fleet" reorientation (2026-07-03,
 in PLAN.md) was reacting to a real problem (megasession bloat) but
 over-corrected into near-pure-ephemeral, which quietly discarded something
-valuable: the persistent coordinator Aidin actually wants (the "Maestro chat"
+valuable: the persistent coordinator Aidin actually wants (the "Helm chat"
 concept came from exactly this instinct). Aidin re-surfaced it as the
 captain/first-mate analogy, and crucially added that the first mate is
 **cross-project**, not per-project — with per-project **second mates** below it.

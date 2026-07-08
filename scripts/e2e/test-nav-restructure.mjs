@@ -2,7 +2,7 @@
 // utility nav, reachable in one click (not buried in Settings). C) the "Goal"
 // facet is renamed "Autopilot". E) "Focus" is gone from the sub-nav but still
 // opens as the click-through detail from a dashboard goal card, with the
-// Dashboard tab staying lit. Real launched Maestro via CDP.
+// Dashboard tab staying lit. Real launched Helm via CDP.
 //
 // Run:  node scripts/e2e/test-nav-restructure.mjs
 import { launch } from "./harness.mjs";

@@ -11,7 +11,7 @@ const repoRoot = path.join(__dirname, "..", "..");
  * a trailing "patch" number that's actually a commit count since whichever
  * commit last changed that major.minor — so it resets to 0 on every bump
  * instead of accumulating forever. Crewline computes this at Vite build
- * time; Maestro has no bundler (plain `electron .`), so this runs once at
+ * time; Helm has no bundler (plain `electron .`), so this runs once at
  * app startup in the main process instead — same formula, different trigger.
  */
 export function computeVersionString() {

@@ -5,7 +5,7 @@ import crypto from "node:crypto";
 // First-mate tier dispatch queue (docs/first-mate-tier-design.md, section 1
 // verdict "A1": a stdio MCP server over an on-disk request/report queue). This
 // is the single on-disk handshake between the MCP server a first-mate session
-// launches (src/mcp/maestroDispatchServer.js) and the Maestro main process
+// launches (src/mcp/helmDispatchServer.js) and the Helm main process
 // (src/main.js's dispatch watcher). No socket, no port lifecycle - the app
 // stays the single dispatch authority, and the queue is trivially
 // restart-survivable (heeding the whisper-server lesson, DECISIONS.md
@@ -13,8 +13,8 @@ import crypto from "node:crypto";
 //
 // Layout, rooted under a caller-supplied meta-home (the first mate's root, the
 // same dir orchestrator:info resolves in main.js):
-//   <meta-home>/.maestro-dispatch/requests/<dispatchId>.json   (mate -> app)
-//   <meta-home>/.maestro-dispatch/reports/<dispatchId>.json    (app -> mate)
+//   <meta-home>/.helm-dispatch/requests/<dispatchId>.json   (mate -> app)
+//   <meta-home>/.helm-dispatch/reports/<dispatchId>.json    (app -> mate)
 //
 // Conventions deliberately mirror goalRunHistory.js / domains.js: plain JSON
 // files, tolerant reads (a corrupt/half-written file is skipped, never throws),
@@ -23,15 +23,15 @@ import crypto from "node:crypto";
 // concurrent producers (several dispatched runs finishing at once) never race
 // on the same file.
 
-const DISPATCH_DIRNAME = ".maestro-dispatch";
+const DISPATCH_DIRNAME = ".helm-dispatch";
 const REQUESTS_SUBDIR = "requests";
 const REPORTS_SUBDIR = "reports";
 // Acks are the synchronous accept/reject handshake for a single dispatch: the
 // app writes one the moment it validates a request (accepted -> goalRunId, or
-// rejected -> reason), so the maestro_dispatch tool call can return promptly
+// rejected -> reason), so the helm_dispatch tool call can return promptly
 // with { dispatchId, goalRunId, status } instead of blocking until the whole
 // run finishes. The final compact result arrives later as a REPORT, which the
-// mate reads with maestro_collect_reports (the pull model, design section 2).
+// mate reads with helm_collect_reports (the pull model, design section 2).
 const ACKS_SUBDIR = "acks";
 
 export function dispatchRoot(metaHome) {
@@ -51,7 +51,7 @@ export function acksDir(metaHome) {
 }
 
 // Fleet-state snapshot (e07a2c5d): the app writes a compact cross-mate view here
-// (single authority), and the maestro_fleet_state MCP tool reads it so a
+// (single authority), and the helm_fleet_state MCP tool reads it so a
 // surveying first mate can see what's already in flight across the fleet.
 export function fleetStatePath(metaHome) {
   return path.join(dispatchRoot(metaHome), "fleet-state.json");
@@ -138,7 +138,7 @@ export function readRequests(metaHome) {
 
 /**
  * Atomically CLAIMS a request by renaming it out of the pending `.json` pool,
- * so when two Maestro instances watch the SAME meta-home only ONE wins and
+ * so when two Helm instances watch the SAME meta-home only ONE wins and
  * launches the run: fs.renameSync of a now-missing source throws on the loser
  * (rename is atomic; unlink-and-hope is not). Returns true iff this process won
  * the claim. The claimed file is `<id>.json.claimed` (readRequests ignores
@@ -199,7 +199,7 @@ export function writeReport(metaHome, report) {
 }
 
 /**
- * Reads report records (app -> mate), the source `maestro_collect_reports`
+ * Reads report records (app -> mate), the source `helm_collect_reports`
  * serves. Optional filters mirror the tool's own params:
  *  - `since`: only reports with reportedAt strictly greater than this ms epoch.
  *  - `dispatchIds`: only reports for these specific dispatch ids.

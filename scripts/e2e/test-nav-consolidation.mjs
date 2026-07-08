@@ -1,5 +1,5 @@
 // E2E: the consolidated navigation (10 flat tabs -> 3 primary + gear + a
-// dashboard sub-nav for the work facets). Drives a real launched Maestro via
+// dashboard sub-nav for the work facets). Drives a real launched Helm via
 // the CDP harness and asserts each nav surface shows the right page, that the
 // primary Dashboard tab stays lit when a sub-nav facet is active (group-aware
 // active state), and that no console errors fire.

@@ -1,7 +1,7 @@
 // E2E: a RUNNING Autopilot run is now visible - (a) an ambient pulsing count on
 // the Dashboard tab (app-wide), and (b) a "working" row in the Dashboard
 // in-motion queue. Before this, a run had NO presence until it errored/escalated
-// (Aidin's task 2dd992c8). Real launched Maestro.
+// (Aidin's task 2dd992c8). Real launched Helm.
 //
 // Run:  node scripts/e2e/test-running-indicator.mjs
 import { launch } from "./harness.mjs";

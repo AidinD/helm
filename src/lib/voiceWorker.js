@@ -44,7 +44,7 @@ function transcribe(samples, language, engine) {
     if (whisperCppAvailable()) {
       return transcribeWithWhisperCpp(samples, language);
     }
-    console.warn("[maestro] voiceEngine is \"whispercpp\" but .whisper/ binary+model are missing; falling back to transformers.js");
+    console.warn("[helm] voiceEngine is \"whispercpp\" but .whisper/ binary+model are missing; falling back to transformers.js");
   }
   return transcribeWithTransformers(samples, language);
 }

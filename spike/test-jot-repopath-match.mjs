@@ -15,13 +15,13 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { loadJot } from "../src/lib/jot.js";
 
-const tmp = path.join(os.tmpdir(), `maestro-jot-${randomUUID()}.json`);
+const tmp = path.join(os.tmpdir(), `helm-jot-${randomUUID()}.json`);
 
 const cats = {
-  maestro: { id: "c-maestro", name: "Maestro", color: "#111", createdAt: 1, repoPath: "D:\\Repo\\Tools\\maestro" },
+  helm: { id: "c-helm", name: "Helm", color: "#111", createdAt: 1, repoPath: "D:\\Repo\\Tools\\helm" },
   crewline: { id: "c-crewline", name: "Crewline", color: "#222", createdAt: 2, repoPath: "D:/Repo/TheGang/Internal/tgs-crewline" },
-  // Nested INSIDE maestro's repo, longer path -> should win for cwds under it.
-  worker: { id: "c-worker", name: "Analytics Worker", color: "#333", createdAt: 3, repoPath: "D:\\Repo\\Tools\\maestro\\infra\\worker" },
+  // Nested INSIDE helm's repo, longer path -> should win for cwds under it.
+  worker: { id: "c-worker", name: "Analytics Worker", color: "#333", createdAt: 3, repoPath: "D:\\Repo\\Tools\\helm\\infra\\worker" },
   // No repoPath: name-fuzzy-match only.
   jot: { id: "c-jot", name: "Jot", color: "#444", createdAt: 4 },
 };
@@ -39,14 +39,14 @@ function check(label, got, wantId) {
 
 check("loadJot ok", { id: ok ? "ok" : "no" }, "ok");
 
-// 1. Path match wins even though the title has nothing to do with "Maestro".
-check("exact cwd -> repoPath, title unrelated", matchByTitle("some random session name", "s1", "D:\\Repo\\Tools\\maestro"), "c-maestro");
+// 1. Path match wins even though the title has nothing to do with "Helm".
+check("exact cwd -> repoPath, title unrelated", matchByTitle("some random session name", "s1", "D:\\Repo\\Tools\\helm"), "c-helm");
 
 // 2. cwd in a subfolder of repoPath still matches its list.
-check("subfolder cwd -> repoPath", matchByTitle("whatever", "s2", "D:\\Repo\\Tools\\maestro\\src\\lib"), "c-maestro");
+check("subfolder cwd -> repoPath", matchByTitle("whatever", "s2", "D:\\Repo\\Tools\\helm\\src\\lib"), "c-helm");
 
 // 3. Different separators + case still match (forward slashes, lowercase).
-check("mixed separators + case -> repoPath", matchByTitle("x", "s3", "d:/repo/tools/maestro/src"), "c-maestro");
+check("mixed separators + case -> repoPath", matchByTitle("x", "s3", "d:/repo/tools/helm/src"), "c-helm");
 check("crewline forward-slash repoPath matches backslash cwd", matchByTitle("x", "s3b", "D:\\Repo\\TheGang\\Internal\\tgs-crewline"), "c-crewline");
 
 // 4. Name fallback still works when NO repoPath applies (cwd unknown).
@@ -54,15 +54,15 @@ check("name fallback (no cwd)", matchByTitle("Working on Jot capture", "s4"), "c
 check("name fallback (cwd matches no repoPath)", matchByTitle("Jot task board", "s5", "C:\\somewhere\\else"), "c-jot");
 
 // 5. Path match beats a competing NAME match for a different list.
-//    Title says "Jot" (would fuzzy-match c-jot) but cwd is the Maestro repo.
-check("repoPath beats name match", matchByTitle("Fixing the Jot integration", "s6", "D:\\Repo\\Tools\\maestro"), "c-maestro");
+//    Title says "Jot" (would fuzzy-match c-jot) but cwd is the Helm repo.
+check("repoPath beats name match", matchByTitle("Fixing the Jot integration", "s6", "D:\\Repo\\Tools\\helm"), "c-helm");
 
 // 6. Nested repos: cwd under the worker subfolder -> longest repoPath wins.
-check("nested repoPaths -> longest wins", matchByTitle("x", "s7", "D:\\Repo\\Tools\\maestro\\infra\\worker\\src"), "c-worker");
+check("nested repoPaths -> longest wins", matchByTitle("x", "s7", "D:\\Repo\\Tools\\helm\\infra\\worker\\src"), "c-worker");
 
 // 7. Sibling with shared string prefix must NOT match (boundary guard).
-//    "maestro-notes" starts with "maestro" as a string but is not inside it.
-check("string-prefix sibling does NOT path-match (falls back to name=null)", matchByTitle("unrelated title", "s8", "D:\\Repo\\Tools\\maestro-notes"), null);
+//    "helm-notes" starts with "helm" as a string but is not inside it.
+check("string-prefix sibling does NOT path-match (falls back to name=null)", matchByTitle("unrelated title", "s8", "D:\\Repo\\Tools\\helm-notes"), null);
 
 fs.unlinkSync(tmp);
 console.log(pass ? "\nALL PASS" : "\nFAILURES");

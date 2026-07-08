@@ -1,7 +1,7 @@
 // Demo / verification for the Electron E2E harness (harness.mjs).
 //
-// Proves the harness works end to end against Maestro:
-//   1. launch Maestro with remote debugging
+// Proves the harness works end to end against Helm:
+//   1. launch Helm with remote debugging
 //   2. wait for the main UI (#pageToggle)
 //   3. screenshot the dashboard (chat page)
 //   4. click the "Focus" facet in the dashboard sub-nav
@@ -29,7 +29,7 @@ function log(...a) {
 const app = await launch();
 let exitCode = 0;
 try {
-  log("launched Maestro; waiting for main UI…");
+  log("launched Helm; waiting for main UI…");
   await app.waitForSelector("#pageToggle", 30000, { visible: true });
   log("main UI ready.");
 

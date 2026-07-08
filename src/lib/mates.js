@@ -19,13 +19,13 @@ import { fileURLToPath } from "node:url";
 //
 // Persisted next to config.json / domains.json / goal-run-history.json - the
 // same "plain JSON file beside the app, machine-specific, gitignored" data
-// convention every other Maestro store uses.
+// convention every other Helm store uses.
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// MAESTRO_MATES_PATH is a test-only seam (E2E/unit tests point it at a temp
+// HELM_MATES_PATH is a test-only seam (E2E/unit tests point it at a temp
 // file so they never touch the real store); production leaves it unset and uses
-// the plain JSON file beside the app, like every other Maestro store.
-const matesPath = process.env.MAESTRO_MATES_PATH || path.join(__dirname, "..", "..", "mates.json");
+// the plain JSON file beside the app, like every other Helm store.
+const matesPath = process.env.HELM_MATES_PATH || path.join(__dirname, "..", "..", "mates.json");
 
 // Exactly two first-mate slots always exist.
 export const MATE_SLOT_COUNT = 2;

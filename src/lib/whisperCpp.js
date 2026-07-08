@@ -157,7 +157,7 @@ export function writeWavFile(filePath, float32Samples, sampleRate = 16000) {
 export async function transcribeAudio(float32Samples, language) {
   const langCode = resolveLanguageCode(language);
 
-  const tempPath = path.join(os.tmpdir(), `maestro-voice-${crypto.randomUUID()}.wav`);
+  const tempPath = path.join(os.tmpdir(), `helm-voice-${crypto.randomUUID()}.wav`);
   writeWavFile(tempPath, float32Samples, 16000);
   try {
     const args = ["-m", MODEL_PATH, "-f", tempPath, "-bo", "1", "-bs", "1", "-nt", "-l", langCode || "auto"];

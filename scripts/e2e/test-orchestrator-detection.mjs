@@ -1,8 +1,8 @@
 // E2E: an orchestrator session is detected purely by being rooted in the
-// meta-home (cwd), replacing the removed manual "Mark as Maestro chat" tag and
+// meta-home (cwd), replacing the removed manual "Mark as Helm chat" tag and
 // the fragile Jot-category-name match. Verifies the meta-home resolves at
 // startup, cwd matching is correct (incl. Windows case/slash normalization),
-// and the manual-tag mechanism is gone. Real launched Maestro.
+// and the manual-tag mechanism is gone. Real launched Helm.
 //
 // Run:  node scripts/e2e/test-orchestrator-detection.mjs
 import { launch } from "./harness.mjs";
@@ -40,7 +40,7 @@ try {
 
   // A session in a subfolder / different repo is NOT.
   assert(!(await app.eval(`isOrchestratorSession({ cwd: state.orchestratorHome + "/some-project" })`)), "a subfolder session is NOT an orchestrator");
-  assert(!(await app.eval(`isOrchestratorSession({ cwd: "D:/Repo/Tools/maestro" })`)), "a different repo is NOT an orchestrator");
+  assert(!(await app.eval(`isOrchestratorSession({ cwd: "D:/Repo/Tools/helm" })`)), "a different repo is NOT an orchestrator");
 
   // No cwd never matches.
   assert(!(await app.eval(`isOrchestratorSession({ cwd: "" })`)), "empty cwd is not an orchestrator");
@@ -53,7 +53,7 @@ try {
   );
 
   // The manual-tag mechanism is gone.
-  assert(await app.eval(`typeof toggleManualMaestroTag === "undefined"`), "the manual 'Mark as Maestro chat' toggle function is removed");
+  assert(await app.eval(`typeof toggleManualHelmTag === "undefined"`), "the manual 'Mark as Helm chat' toggle function is removed");
 
   const errors = app.getConsoleErrors();
   assert(errors.length === 0, `no console errors (got ${errors.length})`);

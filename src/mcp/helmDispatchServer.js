@@ -1,12 +1,12 @@
-// Maestro dispatch MCP server (docs/first-mate-tier-design.md sections 1 + 4).
+// Helm dispatch MCP server (docs/first-mate-tier-design.md sections 1 + 4).
 //
 // A stdio MCP server that a FIRST-MATE claude session launches via the
 // `--mcp-config` entry main.js appends to first-mate launches only (structural
 // depth cap: a dispatched second-mate run never gets this config, so it has no
 // dispatch tools - see the design's section 5). It exposes three tools:
-//   - maestro_dispatch       : launch one project-scoped autonomous run
-//   - maestro_collect_reports: pull compact reports for this mate's dispatches
-//   - maestro_list_projects  : the validated project enum a mate may dispatch to
+//   - helm_dispatch       : launch one project-scoped autonomous run
+//   - helm_collect_reports: pull compact reports for this mate's dispatches
+//   - helm_list_projects  : the validated project enum a mate may dispatch to
 //
 // TRANSPORT / ARCHITECTURE: it does NOT talk to the Electron app over a socket.
 // It reaches the app through the SAME on-disk request/report queue main.js
@@ -14,7 +14,7 @@
 // stays the single dispatch authority, there is no listening socket or port to
 // babysit (the whisper-server lesson, DECISIONS.md 2026-07-05).
 //
-// MCP-SDK NOTE: @modelcontextprotocol/sdk is NOT a Maestro dependency (checked
+// MCP-SDK NOTE: @modelcontextprotocol/sdk is NOT a Helm dependency (checked
 // package.json - only electron + @huggingface/transformers). Per the build
 // brief's explicit instruction, rather than silently `npm install`-ing the SDK,
 // this implements a MINIMAL stdio JSON-RPC MCP server in plain Node: it handles
@@ -24,10 +24,10 @@
 // on top of it without changing the on-disk queue contract or the tool schemas.
 //
 // CONFIG (from env, injected by main.js in the mcp-config payload):
-//   MAESTRO_META_HOME  - the first mate's root (where .maestro-dispatch/ lives)
-//   MAESTRO_MATE_ID    - the dispatching mate's id (stamped on requests)
-//   MAESTRO_PROJECTS   - JSON array of { name, path } known-project entries
-//   MAESTRO_WIDTH_CAP  - max concurrent dispatched runs (default 3)
+//   HELM_META_HOME  - the first mate's root (where .helm-dispatch/ lives)
+//   HELM_MATE_ID    - the dispatching mate's id (stamped on requests)
+//   HELM_PROJECTS   - JSON array of { name, path } known-project entries
+//   HELM_WIDTH_CAP  - max concurrent dispatched runs (default 3)
 
 import process from "node:process";
 import {
@@ -38,13 +38,13 @@ import {
   readFleetState,
 } from "../lib/dispatchQueue.js";
 
-const META_HOME = process.env.MAESTRO_META_HOME || "";
-const MATE_ID = process.env.MAESTRO_MATE_ID || null;
-const WIDTH_CAP = Number(process.env.MAESTRO_WIDTH_CAP) || 3;
+const META_HOME = process.env.HELM_META_HOME || "";
+const MATE_ID = process.env.HELM_MATE_ID || null;
+const WIDTH_CAP = Number(process.env.HELM_WIDTH_CAP) || 3;
 
 function loadProjects() {
   try {
-    const parsed = JSON.parse(process.env.MAESTRO_PROJECTS || "[]");
+    const parsed = JSON.parse(process.env.HELM_PROJECTS || "[]");
     return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
@@ -52,23 +52,23 @@ function loadProjects() {
 }
 
 const PROTOCOL_VERSION = "2024-11-05";
-const SERVER_INFO = { name: "maestro-dispatch", version: "0.1.0" };
+const SERVER_INFO = { name: "helm-dispatch", version: "0.1.0" };
 
 const TOOLS = [
   {
-    name: "maestro_dispatch",
+    name: "helm_dispatch",
     description:
-      "Dispatch ONE project-scoped autonomous Maestro run (a CREW member - the autonomous work a second-mate project session owns) and return immediately with its dispatchId + goalRunId. The run executes as a normal Maestro Autopilot goal in an isolated git worktree (fresh-context iterations, one commit per success, never pushes/merges). Poll maestro_collect_reports later for its compact result. Bounded: at most " +
+      "Dispatch ONE project-scoped autonomous Helm run (a CREW member - the autonomous work a second-mate project session owns) and return immediately with its dispatchId + goalRunId. The run executes as a normal Helm Autopilot goal in an isolated git worktree (fresh-context iterations, one commit per success, never pushes/merges). Poll helm_collect_reports later for its compact result. Bounded: at most " +
       WIDTH_CAP +
       " concurrent dispatched runs per mate; a dispatched run cannot itself dispatch (depth capped at 2). " +
-      "CAVEAT for dispatching work on Maestro itself: a run whose verify step restarts Maestro would kill its own parent process; each iteration is git-committed so at most the in-flight iteration is lost, but avoid a restart-style verifyCommand for the Maestro project until detached runs land.",
+      "CAVEAT for dispatching work on Helm itself: a run whose verify step restarts Helm would kill its own parent process; each iteration is git-committed so at most the in-flight iteration is lost, but avoid a restart-style verifyCommand for the Helm project until detached runs land.",
     inputSchema: {
       type: "object",
       properties: {
         project: {
           type: "string",
           description:
-            "Which project to dispatch to. A known project NAME (see maestro_list_projects), or an explicit absolute git-repo PATH as an escape hatch.",
+            "Which project to dispatch to. A known project NAME (see helm_list_projects), or an explicit absolute git-repo PATH as an escape hatch.",
         },
         goal: { type: "string", description: "The goal for the dispatched run, in one clear brief." },
         tier: { type: "string", description: "Tier label for the run. Defaults to 'second-mate'." },
@@ -80,14 +80,14 @@ const TOOLS = [
         maxIterations: { type: "number", description: "Optional iteration cap (app clamps to 1..20)." },
         verifyCommand: {
           type: "string",
-          description: "Optional independent verify gate, e.g. 'npm test'. See the Maestro-self caveat above.",
+          description: "Optional independent verify gate, e.g. 'npm test'. See the Helm-self caveat above.",
         },
       },
       required: ["project", "goal"],
     },
   },
   {
-    name: "maestro_collect_reports",
+    name: "helm_collect_reports",
     description:
       "Pull compact reports for this mate's dispatched runs (status, one-line summary, what changed, what needs the captain, worktree pointer). Not the transcript. Call at a bookend or when the captain asks 'what came back?'.",
     inputSchema: {
@@ -103,15 +103,15 @@ const TOOLS = [
     },
   },
   {
-    name: "maestro_list_projects",
+    name: "helm_list_projects",
     description:
-      "List the known projects this mate may dispatch to (the validated enum for maestro_dispatch's `project`). An explicit absolute repo path is also accepted as an escape hatch.",
+      "List the known projects this mate may dispatch to (the validated enum for helm_dispatch's `project`). An explicit absolute repo path is also accepted as an escape hatch.",
     inputSchema: { type: "object", properties: {} },
   },
   {
-    name: "maestro_fleet_state",
+    name: "helm_fleet_state",
     description:
-      "Survey the WHOLE fleet before deciding today's focus: the active first mates and every mate's recent dispatched work (project, status, whether it awaits the captain), plus live/needs-captain rollups by project. Your maestro_collect_reports only shows YOUR OWN dispatches - this shows the OTHER mate's too, so you can avoid overlap and propose COMPLEMENTARY focus (e.g. 'the other mate already has crewline + reinmaker in flight, so I'll take X'). Each dispatched entry is tagged `yours: true/false` relative to you.",
+      "Survey the WHOLE fleet before deciding today's focus: the active first mates and every mate's recent dispatched work (project, status, whether it awaits the captain), plus live/needs-captain rollups by project. Your helm_collect_reports only shows YOUR OWN dispatches - this shows the OTHER mate's too, so you can avoid overlap and propose COMPLEMENTARY focus (e.g. 'the other mate already has crewline + reinmaker in flight, so I'll take X'). Each dispatched entry is tagged `yours: true/false` relative to you.",
     inputSchema: { type: "object", properties: {} },
   },
 ];
@@ -135,7 +135,7 @@ async function waitForAck(dispatchId, { timeoutMs = 15000, pollMs = 150 } = {}) 
 
 async function toolDispatch(args) {
   if (!META_HOME) {
-    return { error: "MAESTRO_META_HOME not configured; cannot reach the dispatch queue." };
+    return { error: "HELM_META_HOME not configured; cannot reach the dispatch queue." };
   }
   const project = (args?.project || "").trim();
   const goal = (args?.goal || "").trim();
@@ -162,18 +162,18 @@ async function toolDispatch(args) {
     return {
       dispatchId,
       status: "pending",
-      note: "Request queued; the app has not acknowledged it yet. It may still start - poll maestro_collect_reports.",
+      note: "Request queued; the app has not acknowledged it yet. It may still start - poll helm_collect_reports.",
     };
   }
   if (ack.status === "rejected") {
-    return { dispatchId, status: "rejected", reason: ack.reason || "rejected by Maestro" };
+    return { dispatchId, status: "rejected", reason: ack.reason || "rejected by Helm" };
   }
   return { dispatchId, goalRunId: ack.goalRunId || null, status: "started" };
 }
 
 function toolCollectReports(args) {
   if (!META_HOME) {
-    return { error: "MAESTRO_META_HOME not configured; cannot reach the report inbox." };
+    return { error: "HELM_META_HOME not configured; cannot reach the report inbox." };
   }
   const reports = readReports(META_HOME, {
     since: typeof args?.since === "number" ? args.since : undefined,
@@ -194,7 +194,7 @@ function toolListProjects() {
 // its own work from the other mate's at a glance.
 function toolFleetState() {
   if (!META_HOME) {
-    return { error: "MAESTRO_META_HOME not configured; cannot read the fleet state." };
+    return { error: "HELM_META_HOME not configured; cannot read the fleet state." };
   }
   const state = readFleetState(META_HOME);
   if (!state) {
@@ -209,13 +209,13 @@ function toolFleetState() {
 
 function callTool(name, args) {
   switch (name) {
-    case "maestro_dispatch":
+    case "helm_dispatch":
       return toolDispatch(args || {});
-    case "maestro_collect_reports":
+    case "helm_collect_reports":
       return toolCollectReports(args || {});
-    case "maestro_list_projects":
+    case "helm_list_projects":
       return toolListProjects();
-    case "maestro_fleet_state":
+    case "helm_fleet_state":
       return toolFleetState();
     default:
       return { error: `Unknown tool: ${name}` };

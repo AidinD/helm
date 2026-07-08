@@ -2,7 +2,7 @@
 // the domain-matching behaviour - including the p0 fix: an UNCLASSIFIED list
 // (no work/private domain) belongs to "All" only. It's dimmed under Work AND
 // Private on the dashboard (was shown bright in both), and narrowed out of the
-// Focus page's list. Drives a real launched Maestro via CDP.
+// Focus page's list. Drives a real launched Helm via CDP.
 //
 // Run:  node scripts/e2e/test-focus-filter.mjs
 import { launch } from "./harness.mjs";

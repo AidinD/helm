@@ -36,7 +36,7 @@ function git(cwd, args) {
 // The dangerous layout: an ANCESTOR that is itself a git repo, containing the
 // primary project repo as a subdir. This mirrors e.g. a monorepo checked out
 // at D:\Repo with projects beneath it.
-const scratchRoot = fs.mkdtempSync(path.join(os.tmpdir(), "maestro-discard-guard-spike-"));
+const scratchRoot = fs.mkdtempSync(path.join(os.tmpdir(), "helm-discard-guard-spike-"));
 const ancestorRepo = path.join(scratchRoot, "ancestor-monorepo");
 const projectPath = path.join(ancestorRepo, "project");
 let worktreeToTearDown = null;
@@ -58,7 +58,7 @@ try {
   fs.mkdirSync(ancestorRepo, { recursive: true });
   git(ancestorRepo, ["init", "-q", "-b", "main"]);
   git(ancestorRepo, ["config", "user.email", "spike@example.com"]);
-  git(ancestorRepo, ["config", "user.name", "Maestro Spike"]);
+  git(ancestorRepo, ["config", "user.name", "Helm Spike"]);
   fs.writeFileSync(path.join(ancestorRepo, "PRECIOUS.md"), "unrelated work that must NEVER be reset\n");
   git(ancestorRepo, ["add", "PRECIOUS.md"]);
   git(ancestorRepo, ["commit", "-q", "-m", "ancestor initial"]);
@@ -72,7 +72,7 @@ try {
   fs.mkdirSync(projectPath, { recursive: true });
   git(projectPath, ["init", "-q", "-b", "main"]);
   git(projectPath, ["config", "user.email", "spike@example.com"]);
-  git(projectPath, ["config", "user.name", "Maestro Spike"]);
+  git(projectPath, ["config", "user.name", "Helm Spike"]);
   fs.writeFileSync(path.join(projectPath, "README.md"), "the real project\n");
   git(projectPath, ["add", "README.md"]);
   git(projectPath, ["commit", "-q", "-m", "project initial"]);

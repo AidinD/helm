@@ -1,10 +1,10 @@
 # Orchestrator instructions
 
-This is Maestro's own orchestrator's operating manual - a third layer,
+This is Helm's own orchestrator's operating manual - a third layer,
 distinct from Aidin's global personal `CLAUDE.md` (general collaboration
 rules, applies everywhere) and each project's own repo `CLAUDE.md` (dev
 conventions for that specific project). Those two are about how a *worker*
-session should behave inside a project. This file is about how Maestro's
+session should behave inside a project. This file is about how Helm's
 own orchestrator logic should behave, independent of any project it happens
 to be looking at - the same role `AGENTS.md` plays for the open-source tool
 `firstmate` (see DECISIONS.md/PLAN.md Phase 4): a dedicated, editable
@@ -12,7 +12,7 @@ operating manual, separate from the CLAUDE.md of whatever it's supervising.
 
 **Two audiences, one file.** Most of this file is guidance for the
 orchestrator as a full-capability agent (today: an interactive session
-acting as orchestrator; later: Maestro's own dispatch layer). The one
+acting as orchestrator; later: Helm's own dispatch layer). The one
 exception is the classifier prompt at the bottom, fenced between explicit
 `classifier-prompt` markers - `orchestratorHelper.js` loads ONLY that fenced
 region as the `--system-prompt` for its tiny Haiku status-classification
@@ -115,7 +115,7 @@ Crucially, this convention is backed by REAL structure, not simulated. The
 durable backlog lives in files - Jot for tasks, `PLAN.md`/`DECISIONS.md` for
 plan and rationale - which you RE-READ, not reconstruct from memory in-context
 every turn. Sub-work is done by REAL dispatched agents with their own fresh
-context windows (the Agent tool today, Maestro's dispatch layer later), never
+context windows (the Agent tool today, Helm's dispatch layer later), never
 by role-play personas inside this one session's context.
 
 **Rejected: the single-session simulated-multi-agent megaprompt.** A tempting

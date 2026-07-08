@@ -1,5 +1,5 @@
 // E2E: the dashboard shows a first-run onboarding block ONLY in the cold state
-// (no in-motion sessions + no Jot goals). Real launched Maestro via CDP. The
+// (no in-motion sessions + no Jot goals). Real launched Helm via CDP. The
 // cold branch can't be forced without stubbing the getJotGoals IPC (contextBridge
 // is read-only), so this verifies (a) the block builder produces the right
 // structure, and (b) with real data present the block is absent - the "not
@@ -49,7 +49,7 @@ try {
   // legitimately true and the block SHOULD show; only assert the negative when
   // we know data exists. We assert the builder either way; the live check is
   // informative and only fails if the block shows while data clearly exists.
-  const goalsCount = await app.eval(`(async () => { const r = await window.maestro.getJotGoals(); return r.ok ? r.goals.length : 0; })()`);
+  const goalsCount = await app.eval(`(async () => { const r = await window.helm.getJotGoals(); return r.ok ? r.goals.length : 0; })()`);
   if (goalsCount > 0) {
     assert(!liveHasOnboarding, "onboarding block absent when Jot goals exist (gated to cold state)");
   } else {

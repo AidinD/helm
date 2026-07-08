@@ -34,7 +34,7 @@ function assert(cond, msg) {
   }
 }
 
-const metaHome = fs.mkdtempSync(path.join(os.tmpdir(), "maestro-dispatch-test-"));
+const metaHome = fs.mkdtempSync(path.join(os.tmpdir(), "helm-dispatch-test-"));
 try {
   ensureDispatchDirs(metaHome);
   assert(fs.existsSync(requestsDir(metaHome)), "requests dir created");

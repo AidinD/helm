@@ -41,7 +41,7 @@ const SKIP_FILENAME_PATTERN = /\.(lock|min\.js|map)$/i;
  * the file's full text and returns an array of short human-readable
  * signature strings (e.g. "function foo(a, b)", "class Bar"). Deliberately
  * simple, line-oriented patterns — language-aware enough to be useful for the
- * languages this ecosystem actually uses (JS/TS for Maestro and the web
+ * languages this ecosystem actually uses (JS/TS for Helm and the web
  * tooling, Lua for Roblox work, Python for scripting), not a full grammar.
  */
 const SIG_EXTRACTORS = {

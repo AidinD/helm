@@ -1,6 +1,6 @@
 // E2E: each Settings group is its own column at desktop width (auto-fit grid) -
 // Passive | Acts | Voice side by side, headings top-aligned - so no group is
-// stacked awkwardly under another. Real launched Maestro via CDP at a wide
+// stacked awkwardly under another. Real launched Helm via CDP at a wide
 // viewport. Collapses to fewer columns on a narrow window (auto-fit, no assert).
 //
 // Run:  node scripts/e2e/test-settings-columns.mjs

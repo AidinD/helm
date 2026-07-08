@@ -1,5 +1,5 @@
 // Unit test: named-mate identity store (two fixed slots, name pool, rename,
-// retire/respawn, legacy migration). Uses MAESTRO_MATES_PATH to point at a temp
+// retire/respawn, legacy migration). Uses HELM_MATES_PATH to point at a temp
 // file so it never touches the real mates.json.
 //
 // Run:  node scripts/e2e/test-mates.mjs
@@ -9,7 +9,7 @@ import path from "node:path";
 
 const tmp = path.join(os.tmpdir(), "mates-test-" + Date.now());
 fs.mkdirSync(tmp, { recursive: true });
-process.env.MAESTRO_MATES_PATH = path.join(tmp, "mates.json");
+process.env.HELM_MATES_PATH = path.join(tmp, "mates.json");
 
 const { ensureMates, activeMates, findMateById, renameMate, retireAndRespawn, bindMateSession, loadMates, MATE_SLOT_COUNT } =
   await import("../../src/lib/mates.js");
@@ -25,7 +25,7 @@ function assert(cond, msg) {
   }
 }
 
-const ROOT = "D:/Repo/Tools/maestro";
+const ROOT = "D:/Repo/Tools/helm";
 
 // --- ensureMates: always exactly two, each named + slotted ------------------
 const two = ensureMates(ROOT);
@@ -79,7 +79,7 @@ assert(findMateById(bId).sessionId === "sess-2", "a retired mate keeps its sessi
 assert(!respawned.sessionId, "the freshly respawned mate starts with no session");
 
 // --- legacy migration: a flat-array file becomes retired records ------------
-fs.writeFileSync(process.env.MAESTRO_MATES_PATH, JSON.stringify([{ mateId: "mate_legacy", root: ROOT, name: "Old Salt", createdAt: 1 }]), "utf8");
+fs.writeFileSync(process.env.HELM_MATES_PATH, JSON.stringify([{ mateId: "mate_legacy", root: ROOT, name: "Old Salt", createdAt: 1 }]), "utf8");
 const migrated = ensureMates(ROOT);
 assert(migrated.length === 2, "after migrating a legacy flat array, ensureMates still yields two active mates");
 assert(findMateById("mate_legacy") && findMateById("mate_legacy").status === "retired", "the legacy mate is preserved as a retired record (keeps its name for old runs)");

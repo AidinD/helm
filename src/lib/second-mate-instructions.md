@@ -1,7 +1,7 @@
 # Second mate instructions
 
 This is the operating manual for a **second mate** session - the per-project
-coordinator tier in Maestro's orchestration model (`docs/orchestration-model.md`,
+coordinator tier in Helm's orchestration model (`docs/orchestration-model.md`,
 DECISIONS.md 2026-07-06). It is the successor to the older undifferentiated
 `orchestrator-instructions.md` pattern, now split by tier: this file is what a
 session rooted in a project's repo reads to know it is a second mate

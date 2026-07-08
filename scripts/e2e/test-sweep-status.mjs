@@ -1,5 +1,5 @@
 // E2E: the Settings page shows a background-sweep liveness readout, backed by
-// the new orchestrator:sweepStatus IPC. Real launched Maestro via CDP.
+// the new orchestrator:sweepStatus IPC. Real launched Helm via CDP.
 //
 // Run:  node scripts/e2e/test-sweep-status.mjs
 import { launch } from "./harness.mjs";
@@ -20,7 +20,7 @@ try {
   await app.waitForSelector("#pageToggle", 30000, { visible: true });
 
   // The IPC resolves with the expected shape.
-  const shape = await app.eval(`(async () => { const s = await window.maestro.getSweepStatus(); return JSON.stringify({ keys: Object.keys(s || {}).sort() }); })()`);
+  const shape = await app.eval(`(async () => { const s = await window.helm.getSweepStatus(); return JSON.stringify({ keys: Object.keys(s || {}).sort() }); })()`);
   log("sweepStatus shape:", shape);
   const keys = JSON.parse(shape).keys;
   assert(["classifiedCount", "error", "lastRunAt", "ok"].every((k) => keys.includes(k)), "getSweepStatus resolves with { lastRunAt, ok, classifiedCount, error }");

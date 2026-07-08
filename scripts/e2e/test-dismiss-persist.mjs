@@ -1,6 +1,6 @@
 // E2E: dismissing an archive proposal persists (survives recompute) and is
 // activity-keyed - the session stays hidden until its lastActivityAt changes,
-// then re-surfaces ("not now", not "never"). Real launched Maestro via CDP.
+// then re-surfaces ("not now", not "never"). Real launched Helm via CDP.
 // Everything runs in ONE eval so the app's periodic session refresh can't
 // overwrite the injected state.sessions between steps.
 //

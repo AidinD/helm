@@ -1,6 +1,6 @@
 // E2E: the Settings page groups its toggles (passive vs acts-on-your-data) and
 // surfaces the previously UI-less voiceEngine + voiceLanguage config. Real
-// launched Maestro via CDP.
+// launched Helm via CDP.
 //
 // Run:  node scripts/e2e/test-settings-groups.mjs
 import { launch } from "./harness.mjs";

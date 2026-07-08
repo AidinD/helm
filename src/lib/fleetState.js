@@ -1,11 +1,11 @@
 import path from "node:path";
 
 // Fleet-aware focus survey (e07a2c5d). The two first mates are independent
-// sessions with no shared context, and maestro_collect_reports is scoped to a
+// sessions with no shared context, and helm_collect_reports is scoped to a
 // mate's OWN dispatches - so mate B can't see what mate A already has in flight
 // and may propose overlapping focus. This assembles a compact, cross-mate view
 // of the fleet (the active mates + every mate's dispatched work) that the app
-// snapshots to disk and the maestro_fleet_state MCP tool serves, so a surveying
+// snapshots to disk and the helm_fleet_state MCP tool serves, so a surveying
 // first mate can see what's already underway and propose COMPLEMENTARY work.
 //
 // Pure + compact by design (it lands in a mate's context): the active mates and

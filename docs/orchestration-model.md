@@ -1,6 +1,6 @@
-# Maestro's orchestration model - captain, first mate, second mates, crew
+# Helm's orchestration model - captain, first mate, second mates, crew
 
-The mental model Maestro is built around, and how you actually work in it.
+The mental model Helm is built around, and how you actually work in it.
 Settled with Aidin 2026-07-06 (see DECISIONS.md for the decision + rationale).
 
 > **Evidence check (2026-07-06), resolved.**
@@ -51,7 +51,7 @@ The first mate breaks the captain's intent into per-project assignments and hand
 Each second mate dispatches crew (agents / Autopilot runs) to do the actual work, and reports progress up.
 Small quick things skip the chain - the captain goes straight to a second mate or even an agent.
 
-## How this maps onto Maestro today
+## How this maps onto Helm today
 
 The cwd a session is rooted in *is* its tier - this is why orchestrator detection is cwd-based:
 - Rooted in the **meta-home** (the coordinator root above every project) = **first mate**.
@@ -97,8 +97,8 @@ Externalize, don't hoard: this is what lets every tier below the captain be refr
 
 ## The one capability gap that makes this real
 
-Today a session can dispatch **agents** (the Agent tool), but a first mate cannot tell Maestro:
-*"launch a project-rooted second mate for Crewline and one for Maestro, and stream their reports back to me."*
+Today a session can dispatch **agents** (the Agent tool), but a first mate cannot tell Helm:
+*"launch a project-rooted second mate for Crewline and one for Helm, and stream their reports back to me."*
 
 That is **session/run-spawns-session/run + structured report-back**, and it is the piece that turns this model from a way of thinking into a way of working.
 Everything else already exists: rooting = tier, Autopilot crew, Jot as shared memory, summarize-and-carry-over for the first-mate handoff, the context gauge as the saturation signal.

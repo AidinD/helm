@@ -1,6 +1,6 @@
 // E2E: a goal run whose worktree is already gone from disk can still be cleaned
 // up from the UI (Delete clears the stale record instead of erroring), and Open
-// gives feedback instead of silently doing nothing. Real launched Maestro via
+// gives feedback instead of silently doing nothing. Real launched Helm via
 // CDP. Drives the IPC handlers directly with a nonexistent path.
 //
 // Run:  node scripts/e2e/test-worktree-stale-cleanup.mjs
@@ -24,12 +24,12 @@ try {
   await app.waitForSelector("#pageToggle", 30000, { visible: true });
 
   // Open on a missing worktree -> explicit error (not silent).
-  const openRes = await app.eval(`window.maestro.openGoalWorktree(${JSON.stringify(MISSING)})`);
+  const openRes = await app.eval(`window.helm.openGoalWorktree(${JSON.stringify(MISSING)})`);
   log("openGoalWorktree(missing):", JSON.stringify(openRes));
   assert(openRes && openRes.ok === false && /no longer exists/i.test(openRes.error || ""), "Open on a missing worktree returns an explicit error");
 
   // Delete on a missing worktree -> succeeds as a stale-record cleanup, not an error.
-  const delRes = await app.eval(`window.maestro.deleteGoalWorktree({ goalRunId: "stale-xyz", projectPath: ${JSON.stringify(MISSING)}, worktreePath: ${JSON.stringify(MISSING + "/wt")} })`);
+  const delRes = await app.eval(`window.helm.deleteGoalWorktree({ goalRunId: "stale-xyz", projectPath: ${JSON.stringify(MISSING)}, worktreePath: ${JSON.stringify(MISSING + "/wt")} })`);
   log("deleteGoalWorktree(missing):", JSON.stringify(delRes));
   assert(delRes && delRes.ok === true && delRes.alreadyGone === true, "Delete on a missing worktree clears the stale record (ok + alreadyGone), doesn't error");
 

@@ -103,7 +103,7 @@ const sessionCompactions = new Map();
 // MCP servers, Task-tool subagents), and on Windows those are not
 // automatically terminated when their parent dies. Left running, they keep
 // executing (and consuming subscription usage) after a Stop click or even
-// after Maestro itself quits. `taskkill /T` recurses through the whole tree.
+// after Helm itself quits. `taskkill /T` recurses through the whole tree.
 // `sync: true` runs the kill synchronously — required from the "before-quit"
 // sweep, where an async execFile would very likely lose the race against the
 // process actually exiting (nothing awaits it, so the app tears down before
@@ -130,7 +130,7 @@ function killChildTree(child, { sync = false } = {}) {
         // Best-effort: the process may have already exited on its own
         // between the check above and this call, which taskkill reports as
         // an error — nothing more useful to do with it here.
-        console.error(`[maestro] taskkill failed for pid ${child.pid}:`, err.message);
+        console.error(`[helm] taskkill failed for pid ${child.pid}:`, err.message);
       }
     });
     return;
@@ -147,7 +147,7 @@ function createWindow() {
     minWidth: 760,
     minHeight: 560,
     backgroundColor: "#1a1a1a",
-    title: "Maestro",
+    title: "Helm",
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
@@ -284,7 +284,7 @@ ipcMain.handle("jot:boardSummary", (_event, { projectPaths }) => {
 // --- Goal breakdown: add a subtask under an existing top-level goal, written
 // back to todos.json via the safe atomic-write path (re-read fresh, append one
 // todo, temp file + rename — see addSubtask in jot.js). The one Jot WRITE
-// Maestro performs; only ever in response to an explicit user action. ---
+// Helm performs; only ever in response to an explicit user action. ---
 ipcMain.handle("jot:addSubtask", (_event, { parentId, text }) => {
   const config = loadConfig();
   return addSubtask(config.jot || {}, parentId, text);
@@ -460,7 +460,7 @@ function getVoiceWorker() {
     pending.resolve(message);
   });
   voiceWorker.on("exit", (code) => {
-    console.error(`[maestro] voice worker exited unexpectedly (code ${code})`);
+    console.error(`[helm] voice worker exited unexpectedly (code ${code})`);
     // Fail every request still waiting on the dead worker instead of hanging
     // the mic button forever; the next transcribe call spawns a fresh worker.
     for (const pending of pendingVoiceRequests.values()) {
@@ -493,7 +493,7 @@ ipcMain.handle("voice:transcribe", async (_event, { samples, language }) => {
     }
     return { ok: true, text: message.text };
   } catch (err) {
-    console.error("[maestro] voice transcription failed:", err);
+    console.error("[helm] voice transcription failed:", err);
     return { ok: false, error: err.message };
   }
 });
@@ -561,9 +561,9 @@ ipcMain.handle("app:version", () => computeVersionString());
 // to its operating manual. The cwd is the Claude "meta home" — the dir holding
 // the canonical CLAUDE.md AND the auto-memory (feedback/project rules). This
 // matters: auto-memory is cwd-KEYED, so an empty neutral dir (an earlier
-// attempt used ~/.maestro) would start the orchestrator with NO memory at all —
+// attempt used ~/.helm) would start the orchestrator with NO memory at all —
 // none of the accumulated behavioral rules. The meta home is still above every
-// code project (not Maestro, not a work repo), so it stays a coordinator root,
+// code project (not Helm, not a work repo), so it stays a coordinator root,
 // not a place code work lands. Derived from the ~/.claude/CLAUDE.md @import line
 // so it tracks wherever the canonical rules live; falls back to the home dir if
 // that can't be resolved. instructionsPath is absolute so the session reads the
@@ -572,18 +572,18 @@ ipcMain.handle("app:version", () => computeVersionString());
 // (and the auto-memory), derived from the ~/.claude/CLAUDE.md @import line, or
 // the home dir if that can't be resolved. This is BOTH the cwd a fresh
 // orchestrator (first-mate) session is rooted in AND the root under which the
-// first-mate dispatch queue (.maestro-dispatch/) lives. Extracted so
+// first-mate dispatch queue (.helm-dispatch/) lives. Extracted so
 // orchestrator:info and the first-mate launch detection / dispatch watcher all
 // agree on the exact same path (a first mate is, by definition, a session
 // rooted here).
 function resolveMetaHome() {
-  // Test seam: MAESTRO_META_HOME_OVERRIDE lets an E2E point the dispatch queue
+  // Test seam: HELM_META_HOME_OVERRIDE lets an E2E point the dispatch queue
   // (and first-mate detection) at an isolated temp dir, so a test dispatch is
   // never raced/consumed by a separately-running dev instance watching the real
   // meta-home. Honored ONLY in dev (never a packaged build), so a stray env var
   // can't silently relocate the queue in production (review finding L5).
-  if (process.env.MAESTRO_META_HOME_OVERRIDE && !app.isPackaged) {
-    return process.env.MAESTRO_META_HOME_OVERRIDE;
+  if (process.env.HELM_META_HOME_OVERRIDE && !app.isPackaged) {
+    return process.env.HELM_META_HOME_OVERRIDE;
   }
   try {
     const stub = fs.readFileSync(path.join(os.homedir(), ".claude", "CLAUDE.md"), "utf8");
@@ -679,9 +679,9 @@ function resolveDispatchProject(project) {
 }
 
 // Builds the inline --mcp-config JSON string for a FIRST-MATE launch: names the
-// stdio dispatch server (src/mcp/maestroDispatchServer.js) and injects the
+// stdio dispatch server (src/mcp/helmDispatchServer.js) and injects the
 // meta home, the resolved mateId, the known-project enum, and the width cap via
-// env. Generated per-launch (not a static maestro-mcp.json on disk) precisely
+// env. Generated per-launch (not a static helm-mcp.json on disk) precisely
 // because these values are launch-specific - the design allows "or generate at
 // launch". Returned as a string passed straight to startSession's mcpConfig,
 // exactly the inline-JSON form judge.js already uses for --mcp-config.
@@ -691,8 +691,8 @@ function resolveDispatchProject(project) {
 // PRE-APPROVED for exactly these first-party tools via --allowedTools, because
 // it has no live channel to answer a permission prompt (verified: without this,
 // a real first-mate session replies "TOOL-BLOCKED" and never dispatches - review M3).
-const FIRST_MATE_MCP_SERVER = "maestro-dispatch";
-const FIRST_MATE_ALLOWED_TOOLS = ["maestro_dispatch", "maestro_collect_reports", "maestro_list_projects", "maestro_fleet_state"].map(
+const FIRST_MATE_MCP_SERVER = "helm-dispatch";
+const FIRST_MATE_ALLOWED_TOOLS = ["helm_dispatch", "helm_collect_reports", "helm_list_projects", "helm_fleet_state"].map(
   (t) => `mcp__${FIRST_MATE_MCP_SERVER}__${t}`
 );
 
@@ -704,7 +704,7 @@ function firstMateInstructions() {
     try {
       _firstMateInstructions = fs.readFileSync(path.join(__dirname, "lib", "first-mate-instructions.md"), "utf8");
     } catch (err) {
-      console.error("[maestro] could not read first-mate-instructions.md:", err);
+      console.error("[helm] could not read first-mate-instructions.md:", err);
       _firstMateInstructions = "";
     }
   }
@@ -718,7 +718,7 @@ function buildFirstMateMcpConfig(metaHome, mateId) {
   // always has a stable identity. ensureMates guarantees the two slots exist.
   const active = ensureMates(metaHome);
   const mate = (mateId && findMateById(mateId)) || active[0];
-  const serverPath = path.join(__dirname, "mcp", "maestroDispatchServer.js");
+  const serverPath = path.join(__dirname, "mcp", "helmDispatchServer.js");
   const config = {
     mcpServers: {
       [FIRST_MATE_MCP_SERVER]: {
@@ -730,10 +730,10 @@ function buildFirstMateMcpConfig(metaHome, mateId) {
           // (no BrowserWindow, no app bootstrap) so we don't depend on a
           // separate `node` being on PATH.
           ELECTRON_RUN_AS_NODE: "1",
-          MAESTRO_META_HOME: metaHome,
-          MAESTRO_MATE_ID: mate.mateId,
-          MAESTRO_PROJECTS: JSON.stringify(knownProjects()),
-          MAESTRO_WIDTH_CAP: String(DISPATCH_WIDTH_CAP),
+          HELM_META_HOME: metaHome,
+          HELM_MATE_ID: mate.mateId,
+          HELM_PROJECTS: JSON.stringify(knownProjects()),
+          HELM_WIDTH_CAP: String(DISPATCH_WIDTH_CAP),
         },
       },
     },
@@ -812,7 +812,7 @@ ipcMain.handle("domains:register", (_event, { name, path: domainPath, icon }) =>
 ipcMain.handle("domains:remove", (_event, id) => removeDomain(id));
 
 // --- Routines page (read-only): list Claude Code's OWN scheduled tasks from
-// ~/.claude/scheduled-tasks/. Maestro does not run a scheduler of its own -
+// ~/.claude/scheduled-tasks/. Helm does not run a scheduler of its own -
 // this just surfaces what already exists on disk. Async so a large or slow
 // folder read never blocks the main event loop. ---
 ipcMain.handle("routines:list", async () => {
@@ -963,7 +963,7 @@ ipcMain.handle(
     // A random id, not an incrementing counter — usage-log.jsonl persists
     // across app restarts but this counter wouldn't, so small reused integers
     // (1, 2, 3...) could join a verdict to the WRONG run from a different
-    // Maestro session (found by review, see DECISIONS.md's suggestion-
+    // Helm session (found by review, see DECISIONS.md's suggestion-
     // accuracy entry). randomUUID makes cross-restart collision practically
     // impossible instead of merely unlikely.
     const launchId = crypto.randomUUID();
@@ -997,7 +997,7 @@ ipcMain.handle(
         if (!resumeSessionId) {
           appendSystemPrompt = firstMateInstructions();
         }
-        // First mates launch LEAN: only the maestro_* dispatch tools above, not
+        // First mates launch LEAN: only the helm_* dispatch tools above, not
         // the machine's other MCP servers (Roblox, hevy, home-assistant, Unity,
         // hibob, Atlassian, etc.) a normal chat session inherits from the
         // user's global config. A dispatched second-mate run is a separate
@@ -1006,7 +1006,7 @@ ipcMain.handle(
         strictMcpConfig = true;
       }
     } catch (err) {
-      console.error("[maestro] failed to build first-mate launch config:", err);
+      console.error("[helm] failed to build first-mate launch config:", err);
     }
     const { child, done } = startSession({
       cwd,
@@ -1052,7 +1052,7 @@ ipcMain.handle(
       // throw (a corrupt config.json, a disk-full usage-log write, etc).
       // Previously this came after appendUsageLog — if that threw, the
       // renderer never got its "done" event and the pane stayed "running"
-      // forever with no way to recover short of restarting Maestro.
+      // forever with no way to recover short of restarting Helm.
       // durationMs/totalTokens/costUsd ride along on the same summary object
       // so the renderer can show a "12.3s · 1.2k tokens" readout under the
       // reply that just completed, reusing the CLI's own result-event numbers
@@ -1082,7 +1082,7 @@ ipcMain.handle(
         }
       }
 
-      // Maestro-internal launches (e.g. the hidden "summarize & carry over"
+      // Helm-internal launches (e.g. the hidden "summarize & carry over"
       // resume) are not real user turns: they must not be usage-logged,
       // notified, or judged. Doing so would spend a real judge call per
       // summarize AND inject a synthetic run into the very By-model /
@@ -1117,7 +1117,7 @@ ipcMain.handle(
         const notifyConfig = loadConfig().notifyOnComplete;
         if (notifyConfig !== false && summary.sawResult && Notification.isSupported()) {
           new Notification({
-            title: "Maestro — prompt finished",
+            title: "Helm — prompt finished",
             body: truncateForNotification(prompt),
             silent: false,
           }).show();
@@ -1155,7 +1155,7 @@ ipcMain.handle(
               send({ kind: "modelFit", verdict: result.verdict, reason: result.reason });
             })
             .catch((err) => {
-              console.error("[maestro] model-fit judge failed:", err);
+              console.error("[helm] model-fit judge failed:", err);
             });
         }
       } catch (err) {
@@ -1163,7 +1163,7 @@ ipcMain.handle(
         // kickoff) — the renderer already has its "done" event above and
         // the pane is no longer waiting on any of this, so a failure here
         // is logged, not surfaced as a broken run.
-        console.error("[maestro] post-run bookkeeping failed:", err);
+        console.error("[helm] post-run bookkeeping failed:", err);
       }
     });
     return { ok: true, launchId };
@@ -1275,7 +1275,7 @@ function startGoalRun({
   });
 
   // Persist a compact "running" record now, before the run does anything —
-  // if Maestro is killed/restarted mid-run, rehydration on the next load
+  // if Helm is killed/restarted mid-run, rehydration on the next load
   // sees a stale "running" record with no live process behind it and can
   // reclassify it as interrupted, instead of the run vanishing entirely.
   // dispatchedBy/dispatchId/tier (first-mate tier, design section 3) are
@@ -1365,7 +1365,7 @@ function startGoalRun({
         try {
           dispatch.onComplete(result, { status: "done" });
         } catch (err) {
-          console.error("[maestro] dispatch onComplete (done) failed:", err);
+          console.error("[helm] dispatch onComplete (done) failed:", err);
         }
       }
     })
@@ -1382,7 +1382,7 @@ function startGoalRun({
         try {
           dispatch.onComplete(null, { status: "error", error: errorMessage });
         } catch (hookErr) {
-          console.error("[maestro] dispatch onComplete (error) failed:", hookErr);
+          console.error("[helm] dispatch onComplete (error) failed:", hookErr);
         }
       }
     })
@@ -1578,7 +1578,7 @@ async function runOrchestratorSweepBody(config, { classifyOn, compactOn, accurac
   // "waiting" and "idle"; compaction is restricted to "idle" ONLY (below) —
   // "waiting" means the assistant spoke recently (within the attention
   // window), which is the one status that could still be a session actively
-  // streaming a turn run OUTSIDE Maestro, and compacting a live session
+  // streaming a turn run OUTSIDE Helm, and compacting a live session
   // would be a real problem. "idle" (aged past the window) is safely parked,
   // and matches Aidin's "aktiv men idle" framing for what to auto-compact.
   const candidates = sessions.filter((s) => !s.isArchived && (s.status === "waiting" || s.status === "idle"));
@@ -1614,7 +1614,7 @@ async function runOrchestratorSweepBody(config, { classifyOn, compactOn, accurac
           jotSummary,
         });
       } catch (err) {
-        console.error("[maestro] orchestrator helper classification failed:", err);
+        console.error("[helm] orchestrator helper classification failed:", err);
         continue;
       }
       if (!result) {
@@ -1640,7 +1640,7 @@ async function runOrchestratorSweepBody(config, { classifyOn, compactOn, accurac
     // coarse waiting/idle status: don't compact a session being actively
     // worked, but do tidy one left silent past idleMinutes (e.g. over
     // lunch) even if it's technically still "waiting". This also makes the
-    // earlier "could it be mid-turn outside Maestro?" worry moot — 30+ min
+    // earlier "could it be mid-turn outside Helm?" worry moot — 30+ min
     // of transcript silence means it definitely isn't. `candidates` already
     // excludes "active".
     const compactCandidates = candidates.filter((s) => now - s.lastActivityAt >= idleMs);
@@ -1676,7 +1676,7 @@ async function runOrchestratorSweepBody(config, { classifyOn, compactOn, accurac
           sessionId: session.sessionId,
         });
       } catch (err) {
-        console.error("[maestro] auto-compact failed:", err);
+        console.error("[helm] auto-compact failed:", err);
         continue;
       }
       if (!result || !result.ok) {
@@ -1788,10 +1788,10 @@ function runStaleBuildCheck() {
 // section 4). The app is the single dispatch authority: it watches the
 // meta-home request inbox, and for each new request validates it, enforces the
 // width + depth caps, acks accept/reject back to the mate (so the
-// maestro_dispatch tool can return promptly), launches the run via the SAME
+// helm_dispatch tool can return promptly), launches the run via the SAME
 // startGoalRun the Goal-page IPC uses (stamped with dispatch metadata), and on
 // completion writes the compact report to the report inbox for the mate to pull
-// with maestro_collect_reports.
+// with helm_collect_reports.
 //
 // fs.watch is coalescing/duplicative and platform-inconsistent, so it only ever
 // TRIGGERS a full re-scan of the inbox (processDispatchRequests) rather than
@@ -1825,7 +1825,7 @@ function processDispatchRequests(metaHome) {
       }
       // Atomically CLAIM the request before doing anything with it. This closes
       // both the in-process double-scan (fs.watch + poll) AND the cross-process
-      // race where two Maestro instances watch the same meta-home (review H1):
+      // race where two Helm instances watch the same meta-home (review H1):
       // renameSync has exactly one winner, so only one instance launches the
       // run. We already hold the data in `request`; drop the claimed file.
       if (!claimRequest(metaHome, dispatchId)) {
@@ -1841,7 +1841,7 @@ function processDispatchRequests(metaHome) {
       // hatch, design decision 5).
       const projectPath = resolveDispatchProject(request.project);
       if (!projectPath) {
-        reject(`Unknown project "${request.project}". Call maestro_list_projects, or pass an explicit absolute repo path.`);
+        reject(`Unknown project "${request.project}". Call helm_list_projects, or pass an explicit absolute repo path.`);
         continue;
       }
       // Depth cap (belt-and-suspenders; structurally a dispatched run never
@@ -1891,7 +1891,7 @@ function processDispatchRequests(metaHome) {
       writeAck(metaHome, dispatchId, { status: "accepted", goalRunId });
     }
   } catch (err) {
-    console.error("[maestro] dispatch request scan failed:", err);
+    console.error("[helm] dispatch request scan failed:", err);
   } finally {
     dispatchScanInFlight = false;
   }
@@ -1956,7 +1956,7 @@ function startDispatchWatcher() {
   try {
     ensureDispatchDirs(metaHome);
   } catch (err) {
-    console.error("[maestro] could not create the dispatch inbox dirs:", err);
+    console.error("[helm] could not create the dispatch inbox dirs:", err);
     return;
   }
   // Named mates: guarantee the two fixed first-mate slots exist (each with a
@@ -1965,12 +1965,12 @@ function startDispatchWatcher() {
   try {
     ensureMates(metaHome);
   } catch (err) {
-    console.error("[maestro] could not ensure the two first mates:", err);
+    console.error("[helm] could not ensure the two first mates:", err);
   }
   // Report-back reconciliation (review M2): a dispatched run that finished or
   // was interrupted while the app was down never fired its in-memory report
   // closure. Synthesize the missing report from the persisted history so the
-  // mate's maestro_collect_reports still hears back. liveGoalRuns is empty at
+  // mate's helm_collect_reports still hears back. liveGoalRuns is empty at
   // startup, so every terminal/interrupted dispatched record with no report is
   // covered; a still-live run is skipped (its own onComplete will report).
   try {
@@ -1981,7 +1981,7 @@ function startDispatchWatcher() {
       writeReport(metaHome, buildReportFromRecord(rec, now));
     }
   } catch (err) {
-    console.error("[maestro] dispatch report reconciliation failed:", err);
+    console.error("[helm] dispatch report reconciliation failed:", err);
   }
   // Fleet-state snapshot for the fleet-aware focus survey (e07a2c5d): refresh at
   // startup + on each poll so a surveying first mate reads a reasonably fresh
@@ -1997,7 +1997,7 @@ function startDispatchWatcher() {
     });
   } catch (err) {
     // fs.watch can fail on some filesystems - the poll below still covers it.
-    console.error("[maestro] fs.watch on the dispatch inbox failed (falling back to poll only):", err);
+    console.error("[helm] fs.watch on the dispatch inbox failed (falling back to poll only):", err);
   }
   setInterval(() => {
     processDispatchRequests(metaHome);
@@ -2006,12 +2006,12 @@ function startDispatchWatcher() {
 }
 
 // Assembles + writes the compact cross-mate fleet-state snapshot the
-// maestro_fleet_state tool serves. Best-effort - never throws into a caller.
+// helm_fleet_state tool serves. Best-effort - never throws into a caller.
 function writeFleetStateSnapshot(metaHome) {
   try {
     writeFleetState(metaHome, assembleFleetState(activeMates(), loadGoalRunHistory(), Date.now()));
   } catch (err) {
-    console.error("[maestro] could not write fleet-state snapshot:", err);
+    console.error("[helm] could not write fleet-state snapshot:", err);
   }
 }
 
@@ -2023,7 +2023,7 @@ app.whenReady().then(() => {
   startDispatchWatcher();
 });
 
-// Without this, quitting Maestro while any prompt is still running leaves
+// Without this, quitting Helm while any prompt is still running leaves
 // its claude.exe process tree orphaned — same underlying issue as Stop
 // (see killChildTree above), just triggered by app exit instead of a click.
 app.on("before-quit", () => {

@@ -1,6 +1,6 @@
 // E2E: R1 - Dashboard is the single primary home tab; Chat + Plan are demoted
 // into the quieter secondary nav alongside Skills + Archive (no longer co-equal
-// front doors). Navigation + active-state still work. Real launched Maestro/CDP.
+// front doors). Navigation + active-state still work. Real launched Helm/CDP.
 //
 // Run:  node scripts/e2e/test-chat-demoted.mjs
 import { launch } from "./harness.mjs";

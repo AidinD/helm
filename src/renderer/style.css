@@ -597,9 +597,9 @@ h1 {
   font-size: 12.5px;
 }
 
-/* Marks sessions matched to the "Orchestrator" Jot list — Maestro-building
+/* Marks sessions matched to the "Orchestrator" Jot list — Helm-building
    work itself, kept visually distinct from regular project chats. */
-.maestro-tag {
+.helm-tag {
   font-size: 10px;
   color: var(--accent);
   border: 1px solid var(--accent);

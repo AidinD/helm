@@ -1,7 +1,7 @@
 // E2E: the first-mate refresh pipe - when a first-mate session's context gauge
 // crosses the threshold AND it's idle (not mid-task), a one-click "hand off to
 // a fresh one" nudge appears. Hidden mid-task, and never shown for a normal
-// (non-first-mate) session. Real launched Maestro.
+// (non-first-mate) session. Real launched Helm.
 //
 // Run:  node scripts/e2e/test-first-mate-refresh.mjs
 import { launch } from "./harness.mjs";
@@ -24,7 +24,7 @@ const hidden = (sel) => app.eval(`document.querySelector(${JSON.stringify(sel)})
 // gauge, and return whether the handoff nudge is visible + its text.
 const renderPaneGauge = (overrides, paneMutations) =>
   app.eval(`(() => {
-    openFreshDraftInPane("D:/Repo/Tools/maestro", "t", ${JSON.stringify(overrides)});
+    openFreshDraftInPane("D:/Repo/Tools/helm", "t", ${JSON.stringify(overrides)});
     const p = panes.find(p => p && p.els && ${overrides.paneOverrides?.isOrchestrator ? "p.isOrchestrator" : "!p.isOrchestrator"});
     if (!p) return "no-pane";
     Object.assign(p, ${JSON.stringify(paneMutations)});

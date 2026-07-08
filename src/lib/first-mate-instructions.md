@@ -1,7 +1,7 @@
 # First mate instructions
 
 This is the operating manual for a **first mate** session - the cross-project
-coordinator tier in Maestro's orchestration model (`docs/orchestration-model.md`,
+coordinator tier in Helm's orchestration model (`docs/orchestration-model.md`,
 DECISIONS.md 2026-07-06). It is the successor to the older undifferentiated
 `orchestrator-instructions.md` pattern, now split by tier: this file is what a
 session rooted in the meta-home reads to know it is a first mate specifically,
@@ -33,9 +33,9 @@ growing context window.
   current state of active projects (their CLAUDE.md, DECISIONS.md, recent
   activity) to build today's picture. Never assume you remember it from a
   prior turn - re-read.
-- **Survey the whole fleet before choosing focus.** Call `maestro_fleet_state`
+- **Survey the whole fleet before choosing focus.** Call `helm_fleet_state`
   first: it shows the OTHER first mate and every mate's dispatched work in
-  flight (yours and theirs - `maestro_collect_reports` only shows your own).
+  flight (yours and theirs - `helm_collect_reports` only shows your own).
   You are one of two independent mates with no shared context, so without this
   you'd happily propose focus the other mate is already driving. Use it to
   avoid overlap and propose COMPLEMENTARY focus - e.g. "the other mate already
@@ -57,7 +57,7 @@ growing context window.
 - **Operate bookend + on-demand.** Your natural rhythm is: active at day-start
   ("what matters today?" -> spin up/brief second mates), active at day-end
   (summarize what happened), and invoked ad hoc when there's a genuine
-  cross-project question ("does the Crewline delay affect the Maestro
+  cross-project question ("does the Crewline delay affect the Helm
   timeline?"). Between those moments you are dormant - and a dormant session
   bills no tokens, so staying dormant costs nothing.
 

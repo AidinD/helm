@@ -1,4 +1,4 @@
-// Integration test: the maestro_fleet_state MCP tool serves the app's fleet-state
+// Integration test: the helm_fleet_state MCP tool serves the app's fleet-state
 // snapshot with `yours` tagged relative to the calling mate. Drives the real MCP
 // server over stdio JSON-RPC (as the claude client would); no Electron / no
 // real claude needed - the app's write side is exercised via the shared libs.
@@ -23,7 +23,7 @@ function assert(cond, msg) {
 }
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const SERVER = path.join(process.cwd(), "src", "mcp", "maestroDispatchServer.js");
+const SERVER = path.join(process.cwd(), "src", "mcp", "helmDispatchServer.js");
 const tmp = path.join(os.tmpdir(), "fleet-state-tool-" + Date.now());
 const metaHome = path.join(tmp, "meta-home");
 fs.mkdirSync(metaHome, { recursive: true });
@@ -41,7 +41,7 @@ writeFleetState(
 );
 
 const srv = spawn("node", [SERVER], {
-  env: { ...process.env, MAESTRO_META_HOME: metaHome, MAESTRO_MATE_ID: "mate_A", MAESTRO_PROJECTS: "[]" },
+  env: { ...process.env, HELM_META_HOME: metaHome, HELM_MATE_ID: "mate_A", HELM_PROJECTS: "[]" },
   stdio: ["pipe", "pipe", "pipe"],
 });
 let out = "";
@@ -53,7 +53,7 @@ try {
   await wait(300);
   send({ jsonrpc: "2.0", method: "notifications/initialized", params: {} });
   await wait(150);
-  send({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "maestro_fleet_state", arguments: {} } });
+  send({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "helm_fleet_state", arguments: {} } });
   await wait(700);
 
   const resp = out.split("\n").map((l) => l.trim()).filter(Boolean).map((l) => JSON.parse(l)).find((m) => m.id === 2);
@@ -75,5 +75,5 @@ try {
     fs.rmSync(tmp, { recursive: true, force: true });
   } catch {}
 }
-log(exitCode === 0 ? "VERIFY OK: maestro_fleet_state serves the cross-mate view with yours-tagging." : "VERIFY FAILED.");
+log(exitCode === 0 ? "VERIFY OK: helm_fleet_state serves the cross-mate view with yours-tagging." : "VERIFY FAILED.");
 process.exit(exitCode);
