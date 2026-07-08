@@ -981,6 +981,7 @@ ipcMain.handle(
     let mcpConfig;
     let allowedTools;
     let appendSystemPrompt;
+    let strictMcpConfig;
     try {
       if (isMetaHomeRoot(cwd)) {
         const metaHome = resolveMetaHome();
@@ -996,6 +997,13 @@ ipcMain.handle(
         if (!resumeSessionId) {
           appendSystemPrompt = firstMateInstructions();
         }
+        // First mates launch LEAN: only the maestro_* dispatch tools above, not
+        // the machine's other MCP servers (Roblox, hevy, home-assistant, Unity,
+        // hibob, Atlassian, etc.) a normal chat session inherits from the
+        // user's global config. A dispatched second-mate run is a separate
+        // runGoal path (never this handler), so this only ever narrows a
+        // first-mate launch.
+        strictMcpConfig = true;
       }
     } catch (err) {
       console.error("[maestro] failed to build first-mate launch config:", err);
@@ -1010,6 +1018,7 @@ ipcMain.handle(
       mcpConfig,
       allowedTools,
       appendSystemPrompt,
+      strictMcpConfig,
       onEvent: (evt) => {
         if (evt.kind === "quota" && evt.quota) {
           latestQuota = evt.quota;

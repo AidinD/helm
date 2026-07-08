@@ -47,7 +47,7 @@ export function resolveClaudeBinary() {
  * Returns { child, done } where `done` resolves with a summary once the process
  * exits. Emits normalized events: { kind, ...fields }.
  */
-export function startSession({ cwd, prompt, model, effort, permissionMode, resumeSessionId, onEvent, mcpConfig, allowedTools, appendSystemPrompt }) {
+export function startSession({ cwd, prompt, model, effort, permissionMode, resumeSessionId, onEvent, mcpConfig, allowedTools, appendSystemPrompt, strictMcpConfig }) {
   const args = [
     "-p",
     prompt,
@@ -78,6 +78,16 @@ export function startSession({ cwd, prompt, model, effort, permissionMode, resum
   // pass --mcp-config to a spawned claude (an inline JSON string argv element).
   if (mcpConfig) {
     args.push("--mcp-config", mcpConfig);
+  }
+  // First-mate tier: strict isolation. A first mate should launch LEAN with
+  // ONLY the maestro_* dispatch tools from the inline mcpConfig above, not the
+  // machine's other ~20 MCP servers (Roblox, hevy, home-assistant, Unity,
+  // hibob, Atlassian, etc.) it would otherwise inherit from the user's global
+  // config. Passed ONLY on the first-mate launch path in main.js - never for a
+  // regular chat session, which still needs the user's full MCP set. Same flag
+  // spelling already proven in scripts/e2e/test-first-mate-fleet-state.mjs.
+  if (strictMcpConfig) {
+    args.push("--strict-mcp-config");
   }
   // Pre-approve specific tools (first-mate dispatch tools) so a headless -p
   // session can call them without an unanswerable permission prompt. Passed as
