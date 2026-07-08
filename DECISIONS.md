@@ -1,5 +1,14 @@
 # Decisions
 
+## 2026-07-08 - Renamed the app Maestro -> Helm
+
+The app's model and UI became fully nautical over the Fleet build - captain (Aidin), first/second mates, crew, fleet, the anchor and compass icons.
+"Maestro" is a musical-conductor metaphor (orchestra), which no longer matched.
+Decision: rename to Helm - the wheel the captain steers the fleet from. One word, in the same style as the sibling tools (Jot, Loom), and on-metaphor for command/steering.
+Considered and rejected: Conn (great and ownable but too obscure), Bridge (overloaded - networking, card game, Star Trek), Wheelhouse / Crow's Nest / Tiller / Quarterdeck (longer, or lean too far into lookout rather than command).
+Executed as a deep rename (not just the display name): window.maestro -> window.helm, MAESTRO_* env -> HELM_*, the .maestro-* run dirs, the maestro-dispatch MCP server + maestro_* tools -> helm-*, localStorage keys, package name, three source files, the repo folder (D:\Repo\Tools\helm), and the GitHub repo (AidinD/helm).
+The DECISIONS/PLAN history was swept to the new name too (git preserves the old name); a solo project reads better with one current name than a half-renamed log.
+
 ## 2026-07-08 - Collapsible sidebar (Chat is a supporting surface)
 
 Now that the Fleet is the primary triage view, the Chat page's 300px session sidebar competes for width it no longer earns as the front door.
