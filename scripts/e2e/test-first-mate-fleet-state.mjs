@@ -3,7 +3,12 @@
 // in-flight project (which its own helm_collect_reports would never show).
 // No Electron: the MCP server the mate spawns reads the fleet-state snapshot
 // straight off disk, so we write a controlled one and point the mate at it.
-// haiku + trivial prompt. Run:  node scripts/e2e/test-first-mate-fleet-state.mjs
+// Uses claude-sonnet-5 - the model real first mates actually run on. haiku was
+// too weak for the deferred-MCP-tool ToolSearch->call dance in this setup (it
+// found the tool reference but gave up with TOOL-BLOCKED); Sonnet does it
+// cleanly (ToolSearch loads the schema, then it calls the tool). This is a
+// correctness test of the real first-mate capability, so it uses the real
+// first-mate model, not the cheapest one. Run:  node scripts/e2e/test-first-mate-fleet-state.mjs
 //
 // WHY A PERSISTENT stream-json SESSION, NOT A ONE-SHOT `-p`:
 // A bare `claude -p "<prompt>"` snapshots its tool list at init, and a stdio
@@ -84,7 +89,7 @@ const args = [
   "--input-format", "stream-json",
   "--output-format", "stream-json",
   "--verbose",
-  "--model", "claude-haiku-4-5-20251001",
+  "--model", "claude-sonnet-5",
   "--mcp-config", mcpConfig,
   "--strict-mcp-config",
   "--allowedTools", ...ALLOWED,
