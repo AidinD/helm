@@ -1,5 +1,32 @@
 # Decisions
 
+## 2026-07-08 - Three real dashboard/fleet bugs found and fixed after the captain's own manual test pass, plus a load-bearing architectural gap surfaced (not yet fixed)
+
+The captain asked Claude-in-Helm to fix two P0 Jot bugs (empty-cwd Direct sessions never matching back into the fleet list, and the Dashboard's "New session" button giving no feedback for an empty draft).
+Both were fixed correctly in `renderer.js`, but the fix sat uncommitted and the running dev app was never restarted, so no visible difference appeared - committed + restarted, then verified end to end via `scripts/e2e/test-draft-flash-cue.mjs` (updated; it encoded the pre-fix behavior on purpose) and `scripts/e2e/test-fleet-view.mjs` (regression, all green).
+
+The captain's own manual test pass afterward surfaced three more real bugs, unrelated to the two above:
+
+**Bug: clicking a project chip in the Dashboard's "New session" panel bounced back to the top of the page.**
+Root cause: `dashChipEl`'s click handler called `renderDashboardPage()` - a full `page.innerHTML = ""` teardown and rebuild - on every chip pick, purely to update the New Session slot's selection state.
+Fixed to call the existing targeted-repaint path, `fillDashboardSections()` (its fingerprint already depends on `dashboardSelectedChip`, so it repaints the right slot).
+Verified via a new `scripts/e2e/test-dashboard-chip-select.mjs`: a marker element planted as a direct child of `#dashboardPage` survives a chip click under the fix and is wiped under the pre-fix code (confirmed both ways - scrollTop itself was not a reliable signal since real dashboard content can be tall enough on its own to keep it numerically valid after a rebuild).
+
+**Bug/confusion: "+ other..." vs "+ new domain..." read as two buttons doing the same thing, and there was no way to undo picking the wrong one.**
+"+ other..." picks a folder for just this session; "+ new domain..." permanently registers a non-repo life-domain project (gym, kombucha, ...) as a recurring chip.
+The captain picked "+ new domain..." on Helm's own (already-a-repo) folder by accident and had no way to remove the resulting pin - `removeDomain`/`domains:remove` existed in the backend (`src/lib/domains.js`, IPC in `main.js`) but no UI ever called it.
+Fixed: tooltips on both buttons explaining the distinction, a guard in `promptRegisterDomain` that rejects registering a domain pointed at an already-known repo path (toast points at "+ other..." instead), and a remove (×) control on domain chips wired to the existing IPC handler.
+Not covered by an automated test - registration goes through a native OS folder-picker dialog that CDP cannot drive; exercised manually.
+
+**Architectural finding (not yet fixed): sessions launched through Helm's own chat UI can never appear in Helm's own Direct/Fleet view.**
+The captain still could not find the original bug-fixing session under Captain/Direct after the above fixes.
+Traced to the read layer: `readAllSessions` (`src/lib/sessions.js`) reads exclusively from `local_*.json` files under `%APPDATA%\Claude\claude-code-sessions`.
+Empirically confirmed (a real `claude -p ... --output-format stream-json` invocation, file count before/after) that a **headless `-p` invocation never writes a `local_*.json` file** - that store is populated by interactive CLI/IDE-extension usage.
+`src/lib/launcher.js` spawns every Helm-driven session - Direct, second mate, first mate, all of it - via exactly that headless `-p --output-format stream-json` mode.
+Net effect: `state.sessions` (and everything built on it - Direct, Fleet second-mate binding, Jot category matching, the attention spotlight) can only ever surface sessions the captain runs manually outside Helm (confirmed: `loom` and `jot` - his other CLI-driven personal projects - both have real `local_*.json` entries; `D:\Repo\Tools\helm` itself has none, across every session found on disk today).
+This is architecture-level, not a quick patch, and needs a decision before building: most likely fix is having `launcher.js` write its own `local_<generated-id>.json` in the same schema/location on session start (so every existing consumer - Direct, Fleet, Jot matching, archive - keeps working unmodified), but this hooks into a store whose real schema is Anthropic's own and undocumented, discovered by inspection rather than a spec.
+Flagged to the captain rather than built unilaterally; not started.
+
 ## 2026-07-08 - Real ship's-wheel logo (replaces the ◆ glyph and the 🧭 compass)
 
 The header brand mark was a plain "◆" text glyph, and the Captain/Direct fleet card used a 🧭 compass emoji - both placeholders from before the rename. The captain supplied a generated ship's-wheel artwork (a gradient-shaded terracotta line icon on a flat cream background, 2816x1536) and asked it replace both.
