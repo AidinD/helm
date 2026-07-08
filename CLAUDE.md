@@ -18,6 +18,34 @@ running at the same time. Always restart via `scripts/restart-dev.sh`
 (shells out to `scripts/kill-helm.ps1`), which only kills processes whose
 command line actually points at this repo.
 
+## Session metadata + verifying changes (hard-won gotchas)
+
+These are the traps a fresh session most needs and would otherwise miss (they
+cost real time before being learned). Load-bearing - read before any
+session-storage, discovery, or verification work.
+
+- **Never write into Anthropic's own session dir/schema.** `launcher.js` starts
+  every Helm session via headless `claude -p`, which writes the transcript to
+  `~/.claude/projects/...` but NEVER a Desktop `local_*.json` in
+  `%APPDATA%\Claude\claude-code-sessions`. So Helm-created sessions have no
+  Desktop metadata. The fix is Helm's OWN index (`config.helmSessions` in
+  `config.json`), merged in `readAllSessions` - NOT writing `local_*.json` into
+  Anthropic's private, undocumented dir (that risks destabilizing the real
+  daily-driver Desktop app). See DECISIONS.md "Helm owns its own session index".
+- **The `%APPDATA%\Claude` MSIX sandbox-overlay trap.** A process spawned BY a
+  Claude session (e.g. a Helm launched from a Claude Bash tool) can have its
+  `%APPDATA%` writes land in an invisible sandbox overlay the real Desktop app
+  never sees - so a Claude-spawned-Helm round-trip gives false read-back
+  results. Authoritative verification = a process you did NOT spawn (a real
+  user-launched Helm). `config.json` lives on `D:\` (this repo), a REAL location
+  outside that overlay, so Helm's own state IS reliably testable - one reason
+  the `config.helmSessions` approach beats writing to `%APPDATA%`.
+- **"clean boot" means a real process is up.** `restart-dev.sh` now confirms a
+  live Helm `electron.exe` via `scripts/check-helm.ps1`, not a log grep - an
+  earlier grep-for-"error" check reported "clean boot" while the app was dead
+  (`'electron' is not recognized` contains no "error"). Trust the process check;
+  after a repo folder rename, run `npm install` first (it can drop `.bin`).
+
 ## Icons over emoji
 
 For interactive controls (buttons, icon-buttons), prefer a small inline SVG
