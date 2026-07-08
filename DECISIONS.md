@@ -18,6 +18,7 @@ The strategy (see PLAN.md's Strategic-reorientation section for the full form):
 - Scale by work type: mechanical renews freely/ephemeral; judgment-heavy stays context-rich longer and renews only at topic boundaries after a faithful handoff.
 - Mechanism: retire/respawn (built) is the primitive; "summarize & carry over" must be upgraded to inject the durable stores (not just summarize the transcript); the handoff nudge must fire on saturation OR drainage.
 - When Helm drives Helm, context injection at spawn is load-bearing infrastructure.
+- PRODUCER side (Aidin's extension): the second mate must capture the durable layer ON THE GO - a decision + WHY when it lands, a gotcha when learned, a short running state-of-play - NOT at renewal time. This is the only thing that survives an ABRUPT handoff (crash, sudden context-limit, quota cut, where no end-of-session summary ever runs), and it keeps the stores faithful so carry-over (the consumer side) has something faithful to inject. Discipline is the RIGHT LAYER, not more volume: capture decisions/traps/state, never the step-by-step (git history + transcript already hold that). Must stay cheap/targeted (a one-click capture affordance, not a heavy ritual) so it doesn't fight "stay thin".
 
 ## 2026-07-08 - Helm owns its own session index (FIXES the local_*.json gap flagged below)
 
