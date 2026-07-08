@@ -1568,6 +1568,41 @@ function openFreshDraftInPane(cwd, draftText, opts = {}) {
   return index;
 }
 
+// The faithful-transfer directive appended to a carried-over draft: names the
+// durable stores that DON'T auto-load (DECISIONS.md/PLAN.md, the memory index)
+// so the fresh session pulls them in on turn one instead of reasoning from the
+// transcript summary alone. CLAUDE.md is mentioned only as "already loaded".
+// Returns "" (no noise) when the cwd has no durable stores - e.g. a non-dev
+// project. Best-effort: any failure just yields no directive.
+async function buildDurableContextDirective(cwd) {
+  if (!cwd) {
+    return "";
+  }
+  let ctx;
+  try {
+    ctx = await window.helm.listContext(cwd);
+  } catch {
+    return "";
+  }
+  const toRead = (ctx?.projectDocs || []).filter((d) => d.exists).map((d) => d.name);
+  const memCount = ctx?.memory?.files?.length || 0;
+  const projectClaudeLoads = (ctx?.claudeMd || []).some((c) => c.kind === "projectClaude" && c.exists);
+  if (toRead.length === 0 && memCount === 0 && !projectClaudeLoads) {
+    return "";
+  }
+  const lines = ["\n\nBefore acting, load this project's DURABLE context (a transcript summary alone misses it):"];
+  if (projectClaudeLoads) {
+    lines.push("- CLAUDE.md auto-loads for this folder - its gotchas are already in your context.");
+  }
+  if (toRead.length) {
+    lines.push(`- READ these first (they do NOT auto-load): ${toRead.join(", ")} in ${cwd}.`);
+  }
+  if (memCount) {
+    lines.push(`- ${memCount} memory file(s) exist for this project; consult the memory index for relevant decisions/traps.`);
+  }
+  return lines.join("\n");
+}
+
 async function summarizeAndCarryOver(session) {
   const statusIndex = focusedPaneIndex;
   const statusPane = panes[statusIndex]; // identity check below: focus/reset can change during the await
@@ -1580,7 +1615,16 @@ async function summarizeAndCarryOver(session) {
     openFreshDraftInPane(session.cwd, `⚠ Failed to summarize: ${result.error}`);
     return;
   }
-  const draft = `Continuing from "${session.title}". Summary of prior context:\n\n${result.text.trim()}\n\nPlease continue from here.`;
+  // A transcript summary alone would drop the durable layer (proven 2026-07-08:
+  // a fresh session missed load-bearing traps). So point the new session at the
+  // durable stores that actually exist for this cwd - CLAUDE.md auto-loads, but
+  // DECISIONS.md/PLAN.md/memory do NOT, so the handoff must name them. See
+  // DECISIONS.md "Session-renewal strategy".
+  const durable = await buildDurableContextDirective(session.cwd);
+  const draft =
+    `Continuing from "${session.title}". Summary of prior context:\n\n${result.text.trim()}` +
+    durable +
+    `\n\nPlease continue from here.`;
   // A first-mate handoff should produce a fresh FIRST MATE (same meta-home root
   // = orchestrator by cwd anyway, but carry the isOrchestrator flag + Sonnet
   // default so it behaves as one from turn one), not a plain chat.
@@ -8194,6 +8238,18 @@ function contextFilesEl(context, cwd) {
     chip.disabled = !c.exists;
     chip.title = c.exists ? "Reveal in Explorer" : "Not present";
     chip.addEventListener("click", () => window.helm.openContext({ cwd, kind: c.kind }));
+    list.append(chip);
+  }
+  // Durable project docs (DECISIONS.md/PLAN.md) - the "etc": they do NOT
+  // auto-load like CLAUDE.md, so they're exactly what a fresh/carried-over
+  // session has to be pointed at.
+  for (const d of context?.projectDocs || []) {
+    const chip = document.createElement("button");
+    chip.className = "skill-chip";
+    chip.textContent = d.name + (d.exists ? "" : " (none)");
+    chip.disabled = !d.exists;
+    chip.title = d.exists ? "Reveal in Explorer (does not auto-load)" : "Not present";
+    chip.addEventListener("click", () => window.helm.openContext({ cwd, kind: "projectDoc", name: d.name }));
     list.append(chip);
   }
   section.append(list);
