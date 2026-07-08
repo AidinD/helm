@@ -1,6 +1,6 @@
 # Voice transcription: research + speed plan (2026-07-04)
 
-Research into why Maestro's Swedish voice transcription is slow, and how to fix it.
+Research into why Helm's Swedish voice transcription is slow, and how to fix it.
 Full sourced report is in the session transcript; this captures the durable conclusions and the plan.
 
 ## The core finding
@@ -12,7 +12,7 @@ So the model is NOT the problem, and swapping models is not the lever.
 The latency comes from two things we have not yet touched:
 
 1. The runtime.
-Maestro runs the model through transformers.js -> onnxruntime-node's CPU execution provider, which the ONNX Runtime team itself benchmarks at 2-4x slower than optimized native inference.
+Helm runs the model through transformers.js -> onnxruntime-node's CPU execution provider, which the ONNX Runtime team itself benchmarks at 2-4x slower than optimized native inference.
 We only ever pulled the quantization lever (fp32 -> q8 -> q4), which lowers cost-per-matmul but not the number of matmuls, so it hit a floor.
 
 2. The decoding strategy.

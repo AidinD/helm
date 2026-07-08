@@ -1,7 +1,7 @@
 // E2E: the dashboard refreshes per-section. A change to the queue re-renders
 // ONLY the queue slot, leaving the goals slot untouched; an idle tick repaints
 // nothing. This is the real anti-flicker guarantee (a single session change no
-// longer tears down the whole page). Real launched Maestro.
+// longer tears down the whole page). Real launched Helm.
 //
 // Run:  node scripts/e2e/test-dashboard-section-scope.mjs
 import { launch } from "./harness.mjs";

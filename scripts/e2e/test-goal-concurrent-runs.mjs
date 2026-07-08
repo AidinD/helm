@@ -1,6 +1,6 @@
 // E2E: the Goal page supports (a) model/effort selection on the launcher, and
 // (b) several concurrent goal runs rendered as distinct blocks. Real launched
-// Maestro via CDP. To avoid spawning real autonomous claude subprocesses, this
+// Helm via CDP. To avoid spawning real autonomous claude subprocesses, this
 // injects fake run entries into the renderer's goalRuns map and re-renders -
 // exercising the concurrent-rendering path (goalRunDetailEl) directly.
 //

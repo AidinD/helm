@@ -138,7 +138,7 @@ export function enrichWithJot(sessions, jotIndex, weightsOverride = {}) {
  */
 /**
  * Shared safe-mutation path for the desktop app's OWN local_<uuid>.json
- * session metadata — the one place Maestro writes into another app's live
+ * session metadata — the one place Helm writes into another app's live
  * state, so every caller goes through this same careful sequence: find the
  * file by sessionId, re-read it fresh right before writing (the desktop app
  * could still be flushing a turn to it — this can't fully eliminate the
@@ -281,7 +281,7 @@ export function forkTranscriptAtUserMessage(cliSessionId, userMsgIndex) {
  * directory than the one it was created in. `claude --resume` scopes its own
  * session lookup by cwd — verified in spike/test-cwd-switch.mjs that
  * resuming from a different folder fails outright with "No conversation
- * found with session ID," even though Maestro's own findTranscriptPath
+ * found with session ID," even though Helm's own findTranscriptPath
  * searches every project dir. The fix, also spike-verified
  * (spike/test-cwd-switch-copy.mjs): copy the transcript into the TARGET
  * folder's own encoded project directory (same id, so --resume from there
@@ -302,7 +302,7 @@ export function forkTranscriptAtUserMessage(cliSessionId, userMsgIndex) {
  * right after a successful send from the new folder) re-read the metadata's
  * still-OLD cwd and silently reverted. Without this patch, "switch root
  * folder" would only ever be a one-shot fix for the CURRENT message, not an
- * actual durable change to where Maestro considers the session rooted.
+ * actual durable change to where Helm considers the session rooted.
  */
 export function switchSessionRootFolder(cliSessionId, sessionId, newCwd) {
   const transcriptPath = findTranscriptPath([cliSessionId, sessionId]);

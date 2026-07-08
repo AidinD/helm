@@ -1,4 +1,4 @@
-// Maestro Phase 0 spike — prove we can wrap the real `claude` CLI.
+// Helm Phase 0 spike — prove we can wrap the real `claude` CLI.
 //
 // Goal: spawn the real Claude Code CLI headlessly, rooted in a chosen repo
 // folder (on main, no worktree), stream its output, and confirm it runs on the
@@ -21,9 +21,9 @@ const repoRoot = path.resolve(__dirname, "..");
 const cwd = process.argv[2] || repoRoot;
 const model = process.argv[3] || "claude-sonnet-5";
 const prompt =
-  "Respond with exactly this token and nothing else: MAESTRO_SPIKE_OK";
+  "Respond with exactly this token and nothing else: HELM_SPIKE_OK";
 
-console.log("── Maestro spike ──────────────────────────────");
+console.log("── Helm spike ──────────────────────────────");
 console.log("cwd   :", cwd);
 console.log("model :", model);
 console.log("prompt:", prompt);

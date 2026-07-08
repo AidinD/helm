@@ -287,7 +287,7 @@ export function stopStream(child, { sync = false } = {}) {
     }
     execFile("taskkill", args, (err) => {
       if (err) {
-        console.error(`[maestro] taskkill failed for whisper-stream pid ${child.pid}:`, err.message);
+        console.error(`[helm] taskkill failed for whisper-stream pid ${child.pid}:`, err.message);
       }
     });
     return;

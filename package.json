@@ -1,5 +1,5 @@
 {
-  "name": "maestro",
+  "name": "helm",
   "version": "0.1.0",
   "private": true,
   "description": "Personal orchestrator harness over Claude Code sessions — overview, rooting, and rooted-session launch. Wraps the real claude CLI.",

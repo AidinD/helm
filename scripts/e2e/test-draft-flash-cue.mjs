@@ -1,7 +1,7 @@
 // E2E: a programmatically-inserted draft (openFreshDraftInPane) gives a visible
 // cue - the composer shell flashes and the textarea is focused with the cursor
 // at the end - so a silently-populated composer doesn't read as "nothing
-// happened". Empty drafts get no flash. Real launched Maestro via CDP.
+// happened". Empty drafts get no flash. Real launched Helm via CDP.
 //
 // Run:  node scripts/e2e/test-draft-flash-cue.mjs
 import { launch } from "./harness.mjs";

@@ -2,9 +2,9 @@
 // that carries BOTH the canonical CLAUDE.md AND the cwd-keyed auto-memory - so
 // the orchestrator starts with the accumulated rules + memory in context, and
 // never in a code project repo. Regression guard for two fixes: (1) it used to
-// root in Maestro's own repo (a footgun), and (2) an interim neutral ~/.maestro
+// root in Helm's own repo (a footgun), and (2) an interim neutral ~/.helm
 // dir was empty, so the orchestrator would have had NO memory. Drives a real
-// launched Maestro via the CDP harness.
+// launched Helm via the CDP harness.
 //
 // Run:  node scripts/e2e/test-orchestrator-root.mjs
 import os from "node:os";
@@ -35,12 +35,12 @@ function assert(cond, msg) {
 try {
   await app.waitForSelector("#pageToggle", 30000, { visible: true });
 
-  const info = await app.eval("window.maestro.getOrchestratorInfo()");
+  const info = await app.eval("window.helm.getOrchestratorInfo()");
   log("orchestrator:info ->", JSON.stringify(info));
   const cwd = (info && info.cwd) || "";
 
   assert(!!cwd && fs.existsSync(cwd), `cwd exists on disk (got ${JSON.stringify(cwd)})`);
-  assert(!/[\\/]Tools[\\/]maestro$/i.test(cwd), "cwd is NOT the Maestro project repo");
+  assert(!/[\\/]Tools[\\/]helm$/i.test(cwd), "cwd is NOT the Helm project repo");
   assert(
     /orchestrator-instructions\.md$/.test((info && info.instructionsPath) || ""),
     "instructionsPath still points at the operating manual (absolute)"

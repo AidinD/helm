@@ -11,7 +11,7 @@ const DEFAULT_JOT_PATH = "D:\\Dropbox\\jot\\todos.json";
  * editor or a legacy external tool, even though Jot's own app writes it
  * without one (see jot's INTEGRATION.md — "UTF-8 without a BOM"). A raw
  * JSON.parse throws on a leading BOM, which previously made loadJot silently
- * fall through to its empty index and disable Maestro's whole Jot integration.
+ * fall through to its empty index and disable Helm's whole Jot integration.
  * Stripping the BOM here is the single, shared parse path for every reader in
  * this module. Returns the parsed object, or null on any read/parse failure.
  */
@@ -480,7 +480,7 @@ export function loadGoals(jotConfig = {}) {
  *
  * Writes UTF-8 WITHOUT a BOM and standard 2-space JSON — byte-for-byte the same
  * shape Jot's own app writer produces (JSON.stringify(state, null, 2), utf-8;
- * confirmed in jot's storage.ts) — so the file Maestro leaves behind is
+ * confirmed in jot's storage.ts) — so the file Helm leaves behind is
  * indistinguishable from one Jot wrote itself. Jot reloads on any content
  * change and compares parsed JSON, so whitespace normalization is safe.
  *

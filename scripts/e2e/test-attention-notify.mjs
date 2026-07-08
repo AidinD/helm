@@ -22,10 +22,10 @@ function assert(cond, msg) {
 try {
   await app.waitForSelector("#pageToggle", 30000, { visible: true });
 
-  const api = await app.eval(`JSON.stringify({ notify: typeof window.maestro.notifyAttention, count: typeof window.maestro.setAttentionCount })`);
+  const api = await app.eval(`JSON.stringify({ notify: typeof window.helm.notifyAttention, count: typeof window.helm.setAttentionCount })`);
   const a = JSON.parse(api);
-  assert(a.notify === "function", "window.maestro.notifyAttention is exposed");
-  assert(a.count === "function", "window.maestro.setAttentionCount is exposed");
+  assert(a.notify === "function", "window.helm.notifyAttention is exposed");
+  assert(a.count === "function", "window.helm.setAttentionCount is exposed");
 
   // The taskbar-count helper runs without throwing (with injected attention).
   const ran = await app.eval(`(() => {

@@ -20,8 +20,8 @@ import { fileURLToPath } from "node:url";
 // modelled the same way, under the synthetic firstMateId "direct".
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// Test-only seam, like mates.js's MAESTRO_MATES_PATH.
-const bindingsPath = process.env.MAESTRO_SECOND_MATES_PATH || path.join(__dirname, "..", "..", "second-mates.json");
+// Test-only seam, like mates.js's HELM_MATES_PATH.
+const bindingsPath = process.env.HELM_SECOND_MATES_PATH || path.join(__dirname, "..", "..", "second-mates.json");
 
 export const DIRECT_FIRST_MATE = "direct";
 

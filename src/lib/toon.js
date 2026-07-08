@@ -9,7 +9,7 @@
 // arrays of uniform objects).
 //
 // This is a small, purpose-built encoder — NOT a full TOON spec
-// implementation. It covers exactly the shapes Maestro embeds in its own
+// implementation. It covers exactly the shapes Helm embeds in its own
 // prompts:
 //   - an array of uniform (or near-uniform) objects -> tabular header + rows
 //   - a plain object (nested/irregular) -> indented "key: value" lines
@@ -129,7 +129,7 @@ function encodeCell(value) {
   }
   if (typeof value === "object") {
     // Inline JSON for a nested structure inside a tabular cell — rare in
-    // practice for Maestro's payloads, but keeps the encoding lossless
+    // practice for Helm's payloads, but keeps the encoding lossless
     // instead of silently dropping data.
     return quoteIfNeeded(JSON.stringify(value));
   }

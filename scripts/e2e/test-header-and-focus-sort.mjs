@@ -1,7 +1,7 @@
 // E2E: (1) chat-specific header controls (Simple/Advanced, split, Background
 // tasks) are hidden except on the Chat view; (2) the dashboard sorts matching-
 // domain goals to the top when a Work/Private focus is active. Real launched
-// Maestro via CDP.
+// Helm via CDP.
 //
 // Run:  node scripts/e2e/test-header-and-focus-sort.mjs
 import { launch } from "./harness.mjs";

@@ -162,7 +162,7 @@ export function classifySessionStatus({ cwd, cliSessionId, sessionId, title, jot
       // full session transcript on disk (one per session per sweep, forever)
       // in the SAME project directory as the real session it checked —
       // confirmed live 2026-07-03: 320 of these had piled up under one
-      // project dir alone, indistinguishable from real sessions to Maestro's
+      // project dir alone, indistinguishable from real sessions to Helm's
       // own directory-scanning sidebar. Runs here, in `finish`, rather than
       // only on the successful-parse path below, so a timeout-killed or
       // errored-before-valid-JSON call (which never reaches that parse)

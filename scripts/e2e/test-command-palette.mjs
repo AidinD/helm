@@ -1,6 +1,6 @@
 // E2E: R2 - the command palette (Cmd/Ctrl+K) opens over a real launched
-// Maestro, fuzzy-filters commands, is keyboard-navigable, runs a command
-// (navigation), and closes cleanly. Real launched Maestro/CDP.
+// Helm, fuzzy-filters commands, is keyboard-navigable, runs a command
+// (navigation), and closes cleanly. Real launched Helm/CDP.
 //
 // Run:  node scripts/e2e/test-command-palette.mjs
 import { launch } from "./harness.mjs";

@@ -42,9 +42,9 @@ import { buildRepoMap } from "./repoMap.js";
  * than every iteration running the same "work on the smallest next step"
  * prompt, a goal run now moves through three phases in order — `research`
  * (read-only investigation, findings written to notes.md), `plan` (a durable
- * `.maestro-goal/plan.md` artifact, no code edits), then `implement` (today's
+ * `.helm-goal/plan.md` artifact, no code edits), then `implement` (today's
  * pre-existing behavior, gated on plan.md existing, iterating until done or
- * maxIterations). The phase is persisted to `.maestro-goal/phase.json` so it
+ * maxIterations). The phase is persisted to `.helm-goal/phase.json` so it
  * survives the same fresh-subprocess-per-iteration model notes.md already
  * survives, and is included on every iteration record so a future UI layer
  * can display it and gate an "approve plan before implement" human checkpoint
@@ -91,13 +91,13 @@ import { buildRepoMap } from "./repoMap.js";
  * opt-in shape.
  */
 
-const NOTES_DIR = ".maestro-goal";
+const NOTES_DIR = ".helm-goal";
 const NOTES_FILENAME = "notes.md";
 const PHASE_FILENAME = "phase.json";
 const PLAN_FILENAME = "plan.md";
 const DEFAULT_MAX_ITERATIONS = 5;
 // How many consecutive implement-phase iterations may report success while
-// producing NO file changes outside .maestro-goal/ before the run stops on its
+// producing NO file changes outside .helm-goal/ before the run stops on its
 // own (ship-review: a stuck-or-done agent that keeps self-reporting success
 // otherwise burns every remaining iteration + tokens undetected, because the
 // orchestrator's own notes.md append makes `committed` an unreliable
@@ -208,7 +208,7 @@ const PHASE_PROMPTS = {
     "   the orchestrator does not verify tree cleanliness for this phase, so",
     "   the instruction alone is the only guard.",
     "3. Before finishing, write your findings to the continuity notes file at",
-    "   `.maestro-goal/notes.md` (append, do not overwrite): what the",
+    "   `.helm-goal/notes.md` (append, do not overwrite): what the",
     "   relevant code/architecture looks like, constraints discovered, open",
     "   questions, and a recommended approach. This is the ONLY deliverable",
     "   of this phase — the next phase (plan) will read it instead of",
@@ -225,7 +225,7 @@ const PHASE_PROMPTS = {
     "",
     "Rules specific to this phase:",
     "1. Using the goal and the research notes below, write a concrete,",
-    "   actionable implementation plan to `.maestro-goal/plan.md`. Create the",
+    "   actionable implementation plan to `.helm-goal/plan.md`. Create the",
     "   file if it does not exist, or replace it if it does — plan.md always",
     "   reflects the current, single best plan, not a history of revisions.",
     "2. The plan should break the goal into a sequence of small, concrete",
@@ -233,8 +233,8 @@ const PHASE_PROMPTS = {
     "   works on one smallest-next-step at a time, with no memory beyond",
     "   notes.md and this plan) can follow one at a time.",
     "3. Do NOT make any other code changes this iteration. This phase's only",
-    "   deliverable is `.maestro-goal/plan.md` itself.",
-    "4. Set success:true once `.maestro-goal/plan.md` has been written with a",
+    "   deliverable is `.helm-goal/plan.md` itself.",
+    "4. Set success:true once `.helm-goal/plan.md` has been written with a",
     "   real plan — that alone is a complete, successful iteration for this",
     "   phase.",
   ].join("\n"),
@@ -245,7 +245,7 @@ const PHASE_PROMPTS = {
     "This iteration's phase is IMPLEMENT.",
     "",
     "Rules specific to this phase:",
-    "1. A plan already exists at `.maestro-goal/plan.md` (included below).",
+    "1. A plan already exists at `.helm-goal/plan.md` (included below).",
     "   Work on the SMALLEST next logical step from that plan, not the whole",
     "   goal at once. Leave the rest for future iterations.",
     "2. Run any relevant build/test/lint yourself and fix what you find before",
@@ -269,7 +269,7 @@ function readOrCreateNotes(worktreePath) {
     fs.mkdirSync(dir, { recursive: true });
   }
   if (!fs.existsSync(file)) {
-    const header = `# Goal orchestrator notes\n\nThis file is the ONLY continuity mechanism between iterations — each\niteration runs in a fresh subprocess with no conversation memory. See\nDECISIONS.md / PLAN.md (Fas 3 Point 11) in the Maestro repo for why.\n`;
+    const header = `# Goal orchestrator notes\n\nThis file is the ONLY continuity mechanism between iterations — each\niteration runs in a fresh subprocess with no conversation memory. See\nDECISIONS.md / PLAN.md (Fas 3 Point 11) in the Helm repo for why.\n`;
     fs.writeFileSync(file, header, "utf8");
     return header;
   }
@@ -306,7 +306,7 @@ function planPath(worktreePath) {
 /**
  * Reads the persisted RPI phase, defaulting to the first phase (`research`)
  * when no phase file exists yet (a brand-new goal run). Persisting phase to
- * disk under the same `.maestro-goal/` dir as notes.md — rather than only in
+ * disk under the same `.helm-goal/` dir as notes.md — rather than only in
  * a JS variable local to the `runGoal` loop — matters because that directory
  * is the one piece of state that survives the fresh-subprocess-per-iteration
  * model; a future caller inspecting or resuming a goal run from just the
@@ -330,7 +330,7 @@ function readPhase(worktreePath) {
   return PHASE_ORDER[0];
 }
 
-/** Persists the current RPI phase to `.maestro-goal/phase.json`. */
+/** Persists the current RPI phase to `.helm-goal/phase.json`. */
 function writePhase(worktreePath, phase) {
   const dir = path.join(worktreePath, NOTES_DIR);
   if (!fs.existsSync(dir)) {
@@ -510,7 +510,7 @@ function runIteration({ worktreePath, goal, notesContent, planContent, repoMapCo
     );
     if (planContent) {
       promptLines.push(
-        "Current implementation plan (.maestro-goal/plan.md):",
+        "Current implementation plan (.helm-goal/plan.md):",
         "---",
         planContent,
         "---",
@@ -520,7 +520,7 @@ function runIteration({ worktreePath, goal, notesContent, planContent, repoMapCo
     if (phase === "research") {
       promptLines.push("Research the codebase and write your findings to notes.md as instructed.");
     } else if (phase === "plan") {
-      promptLines.push("Write the implementation plan to .maestro-goal/plan.md as instructed.");
+      promptLines.push("Write the implementation plan to .helm-goal/plan.md as instructed.");
     } else {
       promptLines.push("Work on the smallest next logical step toward the overall goal above.");
     }
@@ -824,7 +824,7 @@ function detectCostSoftCap(record, maxCostPerIterationUsd) {
 
 /**
  * Signal (d): no net progress — `streak` or more consecutive SUCCESSFUL
- * implement-phase iterations that each changed NOTHING outside .maestro-goal/.
+ * implement-phase iterations that each changed NOTHING outside .helm-goal/.
  * This is intentionally distinct from `consecutiveFailures` (which already
  * stops the run on outright failures): it catches the quieter failure mode of
  * an agent reporting success and getting past the verify gate but not actually
@@ -836,7 +836,7 @@ function detectCostSoftCap(record, maxCostPerIterationUsd) {
  * distinguish real work from the orchestrator's own bookkeeping. Only
  * implement-phase iterations are considered: research/plan iterations
  * legitimately produce no code (their deliverables — notes.md/plan.md — live
- * inside .maestro-goal/), so counting them here would false-positive.
+ * inside .helm-goal/), so counting them here would false-positive.
  */
 export function detectNoNetProgress(iterations, streak) {
   const implementSuccesses = iterations.filter(
@@ -847,7 +847,7 @@ export function detectNoNetProgress(iterations, streak) {
   }
   const recent = implementSuccesses.slice(-streak);
   if (recent.every((r) => r.producedChanges === false)) {
-    return `${streak} consecutive implement iterations reported success but changed no files outside .maestro-goal/ (no real progress).`;
+    return `${streak} consecutive implement iterations reported success but changed no files outside .helm-goal/ (no real progress).`;
   }
   return null;
 }
@@ -933,10 +933,10 @@ function discardWorktreeChanges(worktreePath) {
 }
 
 /**
- * Whether this iteration actually changed any file OUTSIDE .maestro-goal/ —
+ * Whether this iteration actually changed any file OUTSIDE .helm-goal/ —
  * the honest "did the agent do real work" signal (ship-review finding).
  * MUST be called BEFORE the orchestrator appends its own notes.md/plan.md,
- * which live under .maestro-goal/ and would otherwise always dirty the tree,
+ * which live under .helm-goal/ and would otherwise always dirty the tree,
  * making a plain `git status` (and therefore `committed`) useless for telling
  * agent work apart from bookkeeping. Best-effort: on any git error it returns
  * `true` (assume progress) so a transient git hiccup never wrongly flags a
@@ -948,7 +948,7 @@ export function producedRealChanges(worktreePath) {
       encoding: "utf8",
       windowsHide: true,
     });
-    // A single path is "real work" if it lives OUTSIDE .maestro-goal/. git
+    // A single path is "real work" if it lives OUTSIDE .helm-goal/. git
     // may C-quote paths containing special/non-ASCII chars ("...\303\266...");
     // strip only the surrounding quotes - the escapes sit in the filename after
     // any dir prefix, so the prefix test still holds, and git always uses
@@ -965,7 +965,7 @@ export function producedRealChanges(worktreePath) {
       const pathPart = line.slice(3); // porcelain v1: "XY <path>" or "XY <old> -> <new>"
       if (pathPart.includes(" -> ")) {
         // Rename/copy: a real file LEAVING or ENTERING the tree both count, so
-        // a real file renamed INTO .maestro-goal/ is still real work (its source
+        // a real file renamed INTO .helm-goal/ is still real work (its source
         // left the tree) - check both sides, not just the destination.
         const [from, to] = pathPart.split(" -> ");
         if (isReal(from) || isReal(to)) {
@@ -1087,7 +1087,7 @@ function countCommitsOnBranch(worktreePath, baseCommit) {
  *   `contextBudgetWarning: true` plus `notesTruncated` recording whether
  *   notes.md was truncated to guard against unbounded growth feeding that
  *   same problem into later iterations. `plan` carries the CURRENT
- *   `.maestro-goal/plan.md` content as of right after this iteration (null
+ *   `.helm-goal/plan.md` content as of right after this iteration (null
  *   before the plan phase has written one yet), so a live caller can surface
  *   the plan without waiting for the run to finish.
  * @param {object} [opts.escalationConfig] - opt-in (default undefined/absent
@@ -1185,7 +1185,7 @@ export async function runGoal({
   // `deps: "junction"` so an iteration can actually run builds/tests in the
   // worktree (this is the whole point of Point 11 hardening - a goal that
   // can't run its own tests can't self-verify). Junction, not a full
-  // install: it's near-instant and Maestro is a single JS/Electron app with
+  // install: it's near-instant and Helm is a single JS/Electron app with
   // one Node/Electron ABI, so sharing the main repo's node_modules across
   // worktrees is safe here (see worktree.js's provisionDeps doc comment for
   // when that would NOT hold). A failed provisioning still leaves a usable
@@ -1195,12 +1195,12 @@ export async function runGoal({
   // A crypto.randomUUID() suffix (not Date.now()+short-random) so two runs
   // started in the same millisecond can never collide on the worktree id /
   // branch name and have the second worktree creation throw. Keep the
-  // human-readable `goal-`/`maestro/goal-` prefixes for at-a-glance
+  // human-readable `goal-`/`helm/goal-` prefixes for at-a-glance
   // identification; only the collision-prone suffix changes.
   const runUuid = randomUUID();
   const { worktreePath, branchName } = createWorktree(projectPath, {
     id: `goal-${runUuid}`,
-    branchName: `maestro/goal-${runUuid}`,
+    branchName: `helm/goal-${runUuid}`,
     deps: "junction",
   });
   // The exact commit this worktree forked from — the baseline for counting
@@ -1234,7 +1234,7 @@ export async function runGoal({
   const iterations = [];
   let consecutiveFailures = 0;
   // Consecutive implement-phase iterations that reported success but changed
-  // nothing outside .maestro-goal/ (see NO_OP_CONVERGENCE_STREAK). Reset the
+  // nothing outside .helm-goal/ (see NO_OP_CONVERGENCE_STREAK). Reset the
   // moment any real change or phase progress happens.
   let consecutiveNoOps = 0;
   let stoppedReason = "max_iterations_reached";
@@ -1293,7 +1293,7 @@ export async function runGoal({
     const iterationPhase = phase;
     // Honest "did the agent do real work" signal (ship-review finding) —
     // measured NOW, before any appendNotes/plan write below dirties
-    // .maestro-goal/. Only meaningful on a successful iteration (a failed one is
+    // .helm-goal/. Only meaningful on a successful iteration (a failed one is
     // rolled back regardless).
     const producedChanges = outcome.ok ? producedRealChanges(worktreePath) : false;
 
@@ -1424,7 +1424,7 @@ export async function runGoal({
       consecutiveFailures = 0;
       // Only an implement iteration that changed nothing real is a no-op toward
       // convergence (finding). research/plan legitimately produce no code
-      // outside .maestro-goal/ but DO make phase progress, so they reset the
+      // outside .helm-goal/ but DO make phase progress, so they reset the
       // streak rather than counting against it.
       if (iterationPhase === "implement" && !producedChanges) {
         consecutiveNoOps += 1;
@@ -1541,7 +1541,7 @@ export async function runGoal({
   // Auto-clean up a run that produced NOTHING to review (zero commits) - a
   // bad-path fast-fail, an all-failed run, or a cancel before any commit.
   // Otherwise every such run would leave a stale `<repo>-worktrees/goal-*`
-  // dir + `maestro/goal-*` branch in the user's real repo forever, and a
+  // dir + `helm/goal-*` branch in the user's real repo forever, and a
   // cancelled run would leave a dirty worktree with no cleanup path (review
   // finding). Discard any uncommitted leftovers first (handles the dirty-
   // cancel case), then remove the worktree and delete its now-unused branch.

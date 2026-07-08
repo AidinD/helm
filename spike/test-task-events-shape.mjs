@@ -6,14 +6,14 @@ const child = spawn(
   claudePath,
   [
     "-p",
-    "Use the Task tool to spawn a general-purpose subagent that reads the file D:\\Repo\\Tools\\maestro\\package.json and reports back its \"version\" field. Wait for it to finish and tell me the version.",
+    "Use the Task tool to spawn a general-purpose subagent that reads the file D:\\Repo\\Tools\\helm\\package.json and reports back its \"version\" field. Wait for it to finish and tell me the version.",
     "--output-format",
     "stream-json",
     "--verbose",
     "--model",
     "claude-sonnet-5",
   ],
-  { cwd: "D:\\Repo\\Tools\\maestro", shell: !claudePath.toLowerCase().endsWith(".exe"), env: process.env }
+  { cwd: "D:\\Repo\\Tools\\helm", shell: !claudePath.toLowerCase().endsWith(".exe"), env: process.env }
 );
 
 let buffer = "";

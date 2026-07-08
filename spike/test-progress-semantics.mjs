@@ -1,6 +1,6 @@
 // Spike: unit-level proof of the ship-review cluster-A/B/C fixes in
 // goalOrchestrator.js, exercised deterministically (no claude calls):
-//   - producedRealChanges: true only for changes OUTSIDE .maestro-goal/
+//   - producedRealChanges: true only for changes OUTSIDE .helm-goal/
 //   - detectNoNetProgress: keys off producedChanges, implement-phase only
 //   - advancePhaseAfterSuccess: gates plan -> implement on plan.md content
 //   - extractKeyLearnings: rescues learnings from truncated notes middle
@@ -30,7 +30,7 @@ function git(cwd, args) {
   return execFileSync("git", args, { cwd, encoding: "utf8", windowsHide: true });
 }
 
-const scratchRoot = fs.mkdtempSync(path.join(os.tmpdir(), "maestro-progress-spike-"));
+const scratchRoot = fs.mkdtempSync(path.join(os.tmpdir(), "helm-progress-spike-"));
 const repo = path.join(scratchRoot, "repo");
 
 function cleanup() {
@@ -45,44 +45,44 @@ try {
   fs.writeFileSync(path.join(repo, "README.md"), "x\n");
   git(repo, ["add", "README.md"]);
   git(repo, ["commit", "-q", "-m", "init"]);
-  fs.mkdirSync(path.join(repo, ".maestro-goal"), { recursive: true });
+  fs.mkdirSync(path.join(repo, ".helm-goal"), { recursive: true });
 
   // --- producedRealChanges ---
   assert(producedRealChanges(repo) === false, "clean tree -> producedRealChanges false");
 
-  fs.writeFileSync(path.join(repo, ".maestro-goal", "notes.md"), "# notes\n");
-  fs.writeFileSync(path.join(repo, ".maestro-goal", "plan.md"), "# plan\n");
+  fs.writeFileSync(path.join(repo, ".helm-goal", "notes.md"), "# notes\n");
+  fs.writeFileSync(path.join(repo, ".helm-goal", "plan.md"), "# plan\n");
   assert(
     producedRealChanges(repo) === false,
-    "changes ONLY inside .maestro-goal/ -> producedRealChanges false (bookkeeping is not real work)"
+    "changes ONLY inside .helm-goal/ -> producedRealChanges false (bookkeeping is not real work)"
   );
 
   fs.writeFileSync(path.join(repo, "src.js"), "console.log(1)\n");
   assert(
     producedRealChanges(repo) === true,
-    "a change OUTSIDE .maestro-goal/ (src.js) -> producedRealChanges true"
+    "a change OUTSIDE .helm-goal/ (src.js) -> producedRealChanges true"
   );
 
-  // L2 (ship-review): a real file renamed INTO .maestro-goal/ still counts as
+  // L2 (ship-review): a real file renamed INTO .helm-goal/ still counts as
   // real work - its source left the tree. Needs a clean committed tree so git
   // reports an actual rename ("R old -> new"), not add+delete.
   git(repo, ["add", "-A"]);
   git(repo, ["commit", "-q", "-m", "wip"]);
   assert(producedRealChanges(repo) === false, "clean committed tree -> producedRealChanges false");
-  git(repo, ["mv", "src.js", ".maestro-goal/moved.md"]);
+  git(repo, ["mv", "src.js", ".helm-goal/moved.md"]);
   assert(
     producedRealChanges(repo) === true,
-    "real file renamed INTO .maestro-goal/ -> true (source left the tree; dest alone would read as bookkeeping)"
+    "real file renamed INTO .helm-goal/ -> true (source left the tree; dest alone would read as bookkeeping)"
   );
   git(repo, ["add", "-A"]);
   git(repo, ["commit", "-q", "-m", "wip2"]);
 
   // L3 (ship-review): non-ASCII paths (git C-quotes them) classify by the
-  // .maestro-goal/ prefix, not corrupted by separator rewriting.
-  fs.writeFileSync(path.join(repo, ".maestro-goal", "anteckningar-åäö.md"), "x\n");
-  assert(producedRealChanges(repo) === false, "non-ASCII file INSIDE .maestro-goal/ -> false");
+  // .helm-goal/ prefix, not corrupted by separator rewriting.
+  fs.writeFileSync(path.join(repo, ".helm-goal", "anteckningar-åäö.md"), "x\n");
+  assert(producedRealChanges(repo) === false, "non-ASCII file INSIDE .helm-goal/ -> false");
   fs.writeFileSync(path.join(repo, "källkod-åäö.js"), "x\n");
-  assert(producedRealChanges(repo) === true, "non-ASCII file OUTSIDE .maestro-goal/ -> true");
+  assert(producedRealChanges(repo) === true, "non-ASCII file OUTSIDE .helm-goal/ -> true");
 
   // --- detectNoNetProgress: implement-phase only, keys off producedChanges ---
   const impl = (n, produced) => ({ iteration: n, ok: true, phase: "implement", result: { success: true }, producedChanges: produced });
@@ -101,9 +101,9 @@ try {
   assert(advancePhaseAfterSuccess(repo, "research") === "plan", "research always advances to plan");
   // plan.md currently has "# plan\n" (non-empty) -> advance allowed
   assert(advancePhaseAfterSuccess(repo, "plan") === "implement", "plan with real content advances to implement");
-  fs.writeFileSync(path.join(repo, ".maestro-goal", "plan.md"), "   \n\n");
+  fs.writeFileSync(path.join(repo, ".helm-goal", "plan.md"), "   \n\n");
   assert(advancePhaseAfterSuccess(repo, "plan") === "plan", "whitespace-only plan.md keeps phase in plan (deliverable gate)");
-  fs.rmSync(path.join(repo, ".maestro-goal", "plan.md"));
+  fs.rmSync(path.join(repo, ".helm-goal", "plan.md"));
   assert(advancePhaseAfterSuccess(repo, "plan") === "plan", "missing plan.md keeps phase in plan");
   assert(advancePhaseAfterSuccess(repo, "implement") === "implement", "implement stays implement");
 

@@ -1,10 +1,10 @@
 // E2E (M3, the crux): a REAL claude first-mate session - launched with the same
 // --mcp-config + --allowedTools the app now attaches to a first mate - actually
-// CALLS maestro_dispatch, and the app's watcher launches the run + writes a
+// CALLS helm_dispatch, and the app's watcher launches the run + writes a
 // report. This is the path the review flagged as unverified (the other loop test
 // drives the MCP server with a hand-rolled client; this uses a real claude
 // session, so it proves the permission gate is actually cleared). Cheap-ish:
-// haiku mate + haiku dispatched run, trivial goal. Real launched Maestro.
+// haiku mate + haiku dispatched run, trivial goal. Real launched Helm.
 //
 // Run:  node scripts/e2e/test-first-mate-real-session.mjs
 import { launch } from "./harness.mjs";
@@ -26,15 +26,15 @@ function assert(cond, msg) {
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const CLAUDE = "C:/Users/<you>/.local/bin/claude.exe";
-const REPO = "D:/Repo/Tools/maestro";
-const SERVER = path.join(REPO, "src", "mcp", "maestroDispatchServer.js");
-const SERVER_NAME = "maestro-dispatch";
-const ALLOWED = ["maestro_dispatch", "maestro_collect_reports", "maestro_list_projects"].map((t) => `mcp__${SERVER_NAME}__${t}`);
+const REPO = "D:/Repo/Tools/helm";
+const SERVER = path.join(REPO, "src", "mcp", "helmDispatchServer.js");
+const SERVER_NAME = "helm-dispatch";
+const ALLOWED = ["helm_dispatch", "helm_collect_reports", "helm_list_projects"].map((t) => `mcp__${SERVER_NAME}__${t}`);
 const stamp = String(Date.now());
 const tmp = path.join(os.tmpdir(), "fm-real-" + stamp);
 const metaHome = path.join(tmp, "meta-home");
 const scratch = path.join(tmp, "scratch");
-const reportsDir = path.join(metaHome, ".maestro-dispatch", "reports");
+const reportsDir = path.join(metaHome, ".helm-dispatch", "reports");
 
 let app;
 try {
@@ -48,7 +48,7 @@ try {
   execSync('git commit -m "init"', { cwd: scratch });
 
   // App watches the temp meta-home (isolated from any dev instance).
-  process.env.MAESTRO_META_HOME_OVERRIDE = metaHome;
+  process.env.HELM_META_HOME_OVERRIDE = metaHome;
   app = await launch();
   await app.waitForSelector("#pageToggle", 30000, { visible: true });
 
@@ -60,10 +60,10 @@ try {
         command: "node",
         args: [SERVER],
         env: {
-          MAESTRO_META_HOME: metaHome,
-          MAESTRO_MATE_ID: "mate-real",
-          MAESTRO_PROJECTS: JSON.stringify([{ name: "scratch", path: scratch }]),
-          MAESTRO_WIDTH_CAP: "3",
+          HELM_META_HOME: metaHome,
+          HELM_MATE_ID: "mate-real",
+          HELM_PROJECTS: JSON.stringify([{ name: "scratch", path: scratch }]),
+          HELM_WIDTH_CAP: "3",
         },
       },
     },
@@ -72,7 +72,7 @@ try {
   // A REAL claude first-mate session. It must clear the permission gate to call
   // the tool (without --allowedTools this returns TOOL-BLOCKED, verified).
   const prompt =
-    `Use the maestro_dispatch tool to dispatch ONE run with these exact arguments: ` +
+    `Use the helm_dispatch tool to dispatch ONE run with these exact arguments: ` +
     `project="${scratch}", goal="Create a file named HELLO.txt containing exactly the word hello", model="haiku", maxIterations=3. ` +
     `After the tool returns, reply with ONLY the dispatchId. If you cannot call the tool, reply exactly: TOOL-BLOCKED.`;
 
@@ -126,6 +126,6 @@ try {
   }
   try { execSync("git worktree prune", { cwd: scratch }); } catch {}
   try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}
-  delete process.env.MAESTRO_META_HOME_OVERRIDE;
+  delete process.env.HELM_META_HOME_OVERRIDE;
 }
 process.exit(exitCode);

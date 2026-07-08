@@ -71,7 +71,7 @@ export function startSession({ cwd, prompt, model, effort, permissionMode, resum
   }
   // First-mate tier (docs/first-mate-tier-design.md section 5): main.js passes
   // an inline mcp-config JSON string ONLY when this launch is a first mate
-  // (session rooted in the meta home), so ONLY first mates get the maestro_*
+  // (session rooted in the meta home), so ONLY first mates get the helm_*
   // dispatch tools. A dispatched second-mate run (a runGoal iteration, which
   // does not go through startSession at all) never gets them - the structural
   // depth cap. Passed exactly the way judge.js/orchestratorHelper.js already
@@ -80,7 +80,7 @@ export function startSession({ cwd, prompt, model, effort, permissionMode, resum
     args.push("--mcp-config", mcpConfig);
   }
   // First-mate tier: strict isolation. A first mate should launch LEAN with
-  // ONLY the maestro_* dispatch tools from the inline mcpConfig above, not the
+  // ONLY the helm_* dispatch tools from the inline mcpConfig above, not the
   // machine's other ~20 MCP servers (Roblox, hevy, home-assistant, Unity,
   // hibob, Atlassian, etc.) it would otherwise inherit from the user's global
   // config. Passed ONLY on the first-mate launch path in main.js - never for a
@@ -98,7 +98,7 @@ export function startSession({ cwd, prompt, model, effort, permissionMode, resum
   }
   // User-confirmed default is "auto" (matches what the captain already runs daily
   // in the desktop app); UI exposes the full mode list from the composer.
-  // Maestro's -p invocation has no live channel to answer an interactive
+  // Helm's -p invocation has no live channel to answer an interactive
   // approval prompt, so a stricter mode that genuinely needs to ask mid-run
   // could still stall — untested beyond "default" not blocking in this
   // environment's existing broad allowlists.
@@ -272,7 +272,7 @@ export function startSession({ cwd, prompt, model, effort, permissionMode, resum
       sawResult = true;
       // The CLI reports each model's real context-window size here, keyed by
       // model name (evt.modelUsage["claude-…"].contextWindow). This is the
-      // authoritative source Maestro uses to learn model→window (far better
+      // authoritative source Helm uses to learn model→window (far better
       // than a hardcoded guess) for the context gauge's percentage.
       const contextWindows = {};
       if (evt.modelUsage && typeof evt.modelUsage === "object") {

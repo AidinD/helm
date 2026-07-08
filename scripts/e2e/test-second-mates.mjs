@@ -1,5 +1,5 @@
 // Unit test: second-mate identity (derived per (firstMate, project) from run
-// history) + sessionId/name binding. Uses MAESTRO_SECOND_MATES_PATH so it never
+// history) + sessionId/name binding. Uses HELM_SECOND_MATES_PATH so it never
 // touches the real store.
 //
 // Run:  node scripts/e2e/test-second-mates.mjs
@@ -9,7 +9,7 @@ import path from "node:path";
 
 const tmp = path.join(os.tmpdir(), "second-mates-test-" + Date.now());
 fs.mkdirSync(tmp, { recursive: true });
-process.env.MAESTRO_SECOND_MATES_PATH = path.join(tmp, "second-mates.json");
+process.env.HELM_SECOND_MATES_PATH = path.join(tmp, "second-mates.json");
 
 const { secondMateId, deriveSecondMates, bindSecondMateSession, renameSecondMate, readBindings, DIRECT_FIRST_MATE } =
   await import("../../src/lib/secondMates.js");
@@ -39,16 +39,16 @@ const history = [
   { goalRunId: "r2", dispatchedBy: "mate_A", projectPath: "D:/Repo/nw-skiff", status: "running" }, // same second mate, 2nd crew
   { goalRunId: "r3", dispatchedBy: "mate_A", projectPath: "D:/Repo/nw-halyard", status: "running" }, // another second mate
   { goalRunId: "r4", dispatchedBy: "mate_B", projectPath: "D:/Repo/nw-skiff", status: "done" }, // different first mate
-  { goalRunId: "r5", dispatchedBy: null, projectPath: "D:/Repo/maestro", status: "running" }, // direct
+  { goalRunId: "r5", dispatchedBy: null, projectPath: "D:/Repo/helm", status: "running" }, // direct
   { goalRunId: "r6", dispatchedBy: "mate_A", projectPath: null, status: "running" }, // no project -> skipped
 ];
 const sms = deriveSecondMates(history, {});
-assert(sms.length === 4, "four distinct second mates derived (A/skiff, A/halyard, B/skiff, direct/maestro) - got " + sms.length);
+assert(sms.length === 4, "four distinct second mates derived (A/skiff, A/halyard, B/skiff, direct/helm) - got " + sms.length);
 const aCrew = sms.find((s) => s.firstMateId === "mate_A" && s.projectPath === "D:/Repo/nw-skiff");
 assert(aCrew && aCrew.crew.length === 2, "the A/skiff second mate owns both its crew runs");
 assert(aCrew.name === "nw-skiff", "second-mate name defaults to the project basename");
 const direct = sms.find((s) => s.firstMateId === DIRECT_FIRST_MATE);
-assert(direct && direct.projectPath === "D:/Repo/maestro", "a run with no first mate becomes a DIRECT second mate");
+assert(direct && direct.projectPath === "D:/Repo/helm", "a run with no first mate becomes a DIRECT second mate");
 assert(!sms.some((s) => s.crew.some((c) => c.goalRunId === "r6")), "a run with no projectPath is skipped");
 
 // --- session binding --------------------------------------------------------

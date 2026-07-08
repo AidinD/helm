@@ -1,7 +1,7 @@
 // E2E: a mockup can be opened straight into the Plan (Lavish) view in one
 // action - both from raw HTML (openMockupInPlan) and from a file on disk
 // (openMockupFileInPlan, the path a generated artifact takes). Real launched
-// Maestro via CDP. Starts on Dashboard and confirms the call switches to Plan
+// Helm via CDP. Starts on Dashboard and confirms the call switches to Plan
 // and renders the sandboxed mockup iframe.
 //
 // Arg: absolute path to a sample .html mockup (defaults to the bundled one).

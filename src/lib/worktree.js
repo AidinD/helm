@@ -3,7 +3,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 
 /**
- * Git worktree automation for Maestro's own future dispatch features
+ * Git worktree automation for Helm's own future dispatch features
  * (Phase 4 — see PLAN.md's "treehouse" entry and DECISIONS.md's 2026-07-03
  * worktree-note / self-hosting-hazard entries).
  *
@@ -25,7 +25,7 @@ import { execFileSync } from "node:child_process";
 
 /**
  * Where a project's worktrees live: a sibling directory to the repo itself,
- * e.g. `D:\Repo\Tools\maestro` -> `D:\Repo\Tools\maestro-worktrees\<id>`.
+ * e.g. `D:\Repo\Tools\helm` -> `D:\Repo\Tools\helm-worktrees\<id>`.
  * Mirrors gnhf's own `<repo>-gnhf-worktrees/<runId>` sibling-directory
  * pattern (confirmed in its `git.ts`) rather than nesting worktrees inside
  * the repo itself, which would make them show up as untracked/ignored
@@ -148,7 +148,7 @@ function isJunctionOrSymlink(dirPath) {
  *     a real directory. Caveat: this means the worktree shares the exact
  *     same installed packages - including any native (.node) addons built
  *     for the source repo's Node/Electron ABI - with the main checkout.
- *     That is fine and in fact desirable for Maestro's own case (a single
+ *     That is fine and in fact desirable for Helm's own case (a single
  *     JS/Electron app, one Node/Electron version, no per-worktree native
  *     rebuild needed), but would NOT be safe for a project that needs a
  *     genuinely isolated install (e.g. testing a dependency version bump in
@@ -214,7 +214,7 @@ function provisionDeps(projectPath, worktreePath, strategy) {
  * @param {string} [options.id] - worktree directory name; defaults to a
  *   timestamp + random suffix so concurrent calls never collide.
  * @param {string} [options.branchName] - new branch name for the worktree;
- *   defaults to `maestro/<id>`.
+ *   defaults to `helm/<id>`.
  * @param {"junction"|"install"|"none"} [options.deps="none"] - dependency
  *   provisioning strategy. Defaults to `"none"` (the original behavior: no
  *   node_modules at all) so callers that don't need to build/test in the
@@ -230,7 +230,7 @@ export function createWorktree(projectPath, options = {}) {
   }
 
   const id = options.id || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const branchName = options.branchName || `maestro/${id}`;
+  const branchName = options.branchName || `helm/${id}`;
   const worktreesRoot = worktreesRootFor(resolvedProject);
   const worktreePath = path.join(worktreesRoot, id);
   const deps = options.deps || "none";

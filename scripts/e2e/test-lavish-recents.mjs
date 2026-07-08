@@ -1,6 +1,6 @@
 // E2E: the Plan "Recent" list remembers both file-path loads AND pasted-HTML
 // loads (each reloadable in one click), most-recent-first, deduped, capped at
-// 5, and migrates the old string[] localStorage format. Real launched Maestro
+// 5, and migrates the old string[] localStorage format. Real launched Helm
 // via CDP.
 //
 // Run:  node scripts/e2e/test-lavish-recents.mjs
@@ -24,7 +24,7 @@ try {
 
   // Old string[] format migrates to the object shape.
   const migrated = await app.eval(`(() => {
-    localStorage.setItem("maestro.lavish.recentMockups", JSON.stringify(["C:\\\\old\\\\legacy-mockup.html"]));
+    localStorage.setItem("helm.lavish.recentMockups", JSON.stringify(["C:\\\\old\\\\legacy-mockup.html"]));
     const r = loadLavishRecents();
     return JSON.stringify(r);
   })()`);
@@ -35,7 +35,7 @@ try {
   // Seed one file + one paste via the runtime helpers, then render Plan.
   await app.eval(`(() => {
     lavishRecents = [];
-    localStorage.removeItem("maestro.lavish.recentMockups");
+    localStorage.removeItem("helm.lavish.recentMockups");
     addLavishFileRecent("C:\\\\mocks\\\\alpha-mockup.html");
     addLavishPasteRecent("<h1>Pasted A</h1>");
     navigateToPage("lavish");
@@ -74,7 +74,7 @@ try {
   exitCode = 1;
   log("ERROR:", err.message);
 } finally {
-  await app.eval(`localStorage.removeItem("maestro.lavish.recentMockups")`).catch(() => {});
+  await app.eval(`localStorage.removeItem("helm.lavish.recentMockups")`).catch(() => {});
   const killOut = await app.close();
   log("cleanup:", killOut || "(nothing killed)");
 }

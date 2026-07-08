@@ -3,7 +3,7 @@
 // (project sessions) branch under a first mate; crew (autonomous runs) sit under
 // a second mate; a dual-trigger retire nudge appears when a mate's work is
 // wrapped. Drives dashboardFleetSection directly with controlled data (second
-// mates are otherwise derived from persisted run history). Real launched Maestro.
+// mates are otherwise derived from persisted run history). Real launched Helm.
 //
 // Run:  node scripts/e2e/test-fleet-view.mjs
 import { launch } from "./harness.mjs";
@@ -56,7 +56,7 @@ try {
         { goalRunId: "c1", goal: "Antigravity auth spike", status: "running", iterations: [{},{}] } ] },
       { secondMateId: "s2", firstMateId: "m1", name: "jot", sessionId: null, crew: [
         { goalRunId: "c2", goal: "double-encoding self-heal", status: "done", commitCount: 0, iterations: [{},{}] } ] },
-      { secondMateId: "s3", firstMateId: "direct", name: "maestro", sessionId: "ds3", crew: [], isSessionNode: true },
+      { secondMateId: "s3", firstMateId: "direct", name: "helm", sessionId: "ds3", crew: [], isSessionNode: true },
       { secondMateId: "s4", firstMateId: "direct", name: "old-run", sessionId: null, crew: [] },
     ];
     document.getElementById("dashFleetSlot").replaceChildren(dashboardFleetSection(mates, secondMates));
@@ -75,7 +75,7 @@ try {
 
   // Second mates branch under their first mate.
   const projs = await app.eval(`[...document.querySelectorAll("#dashFleetSlot .fleet-branch-proj")].map(e => e.textContent)`);
-  assert(projs.includes("nw-halyard") && projs.includes("jot") && projs.includes("maestro"), "second mates + Direct session nodes render (got: " + JSON.stringify(projs) + ")");
+  assert(projs.includes("nw-halyard") && projs.includes("jot") && projs.includes("helm"), "second mates + Direct session nodes render (got: " + JSON.stringify(projs) + ")");
   assert(!projs.includes("old-run"), "a run-only Direct node (no session) is NOT shown - Direct lists sessions only, no confusing duplicates");
 
   // Crew under a second mate (rendered even while collapsed).

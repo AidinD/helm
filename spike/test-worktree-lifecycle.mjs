@@ -4,7 +4,7 @@
 // wired into any dispatch feature.
 //
 // Runs against a SCRATCH git repo created fresh under the OS temp dir, never
-// against Maestro's own working tree — so Maestro's actual branch/worktree
+// against Helm's own working tree — so Helm's actual branch/worktree
 // state is left completely untouched regardless of outcome. The scratch repo
 // and its worktrees dir are removed at the end (including on failure).
 import { execFileSync } from "node:child_process";
@@ -35,7 +35,7 @@ function git(cwd, args) {
   return execFileSync("git", args, { cwd, encoding: "utf8", windowsHide: true });
 }
 
-const scratchRoot = fs.mkdtempSync(path.join(os.tmpdir(), "maestro-worktree-spike-"));
+const scratchRoot = fs.mkdtempSync(path.join(os.tmpdir(), "helm-worktree-spike-"));
 const projectPath = path.join(scratchRoot, "scratch-repo");
 let worktreesRoot = null;
 
@@ -49,7 +49,7 @@ try {
   fs.mkdirSync(projectPath, { recursive: true });
   git(projectPath, ["init", "-q", "-b", "main"]);
   git(projectPath, ["config", "user.email", "spike@example.com"]);
-  git(projectPath, ["config", "user.name", "Maestro Spike"]);
+  git(projectPath, ["config", "user.name", "Helm Spike"]);
   fs.writeFileSync(path.join(projectPath, "README.md"), "scratch repo for worktree spike\n");
   fs.writeFileSync(path.join(projectPath, ".env"), "SECRET=spike-value\n");
   fs.writeFileSync(path.join(projectPath, ".gitignore"), ".env\n.env.local\n");

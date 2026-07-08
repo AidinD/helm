@@ -18,7 +18,7 @@ const child = spawn(
     "--model",
     "claude-haiku-4-5-20251001",
   ],
-  { cwd: "D:\\Repo\\Tools\\maestro", shell: true, env: process.env }
+  { cwd: "D:\\Repo\\Tools\\helm", shell: true, env: process.env }
 );
 
 let buffer = "";

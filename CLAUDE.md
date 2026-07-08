@@ -1,9 +1,9 @@
-# Maestro — project rules
+# Helm — project rules
 
 Personal Electron wrapper around the real `claude` CLI. See `PLAN.md` for
 the current build plan and active phase, and `DECISIONS.md` for past
 decisions and why - both live in this repo, not in global memory.
-`docs/USING-MAESTRO.md` is the day-to-day usage guide (the daily loop, when
+`docs/USING-HELM.md` is the day-to-day usage guide (the daily loop, when
 to reach for Chat vs Autopilot vs an orchestrator session, the keyboard
 layer) - point the captain at it if he asks how to use the app.
 `docs/orchestration-model.md` is the conceptual model the app is built around
@@ -15,7 +15,7 @@ first-mate capability gap) - read it before any orchestration/dispatch work.
 Never `taskkill /IM electron.exe` directly - it matches by image name only,
 machine-wide, and has silently killed unrelated Electron apps (Halyard)
 running at the same time. Always restart via `scripts/restart-dev.sh`
-(shells out to `scripts/kill-maestro.ps1`), which only kills processes whose
+(shells out to `scripts/kill-helm.ps1`), which only kills processes whose
 command line actually points at this repo.
 
 ## Icons over emoji

@@ -6,7 +6,7 @@
 // invocation (this WILL make real API calls against the captain's subscription).
 //
 // Runs against a SCRATCH git repo created fresh under the OS temp dir, never
-// against Maestro's own working tree — createWorktree's own worktrees-dir
+// against Helm's own working tree — createWorktree's own worktrees-dir
 // convention (a sibling of the scratch repo) keeps everything self-contained
 // under one throwaway root. The scratch root is removed at the end
 // (including on failure).
@@ -32,7 +32,7 @@ function git(cwd, args) {
   return execFileSync("git", args, { cwd, encoding: "utf8", windowsHide: true });
 }
 
-const scratchRoot = fs.mkdtempSync(path.join(os.tmpdir(), "maestro-goal-orchestrator-spike-"));
+const scratchRoot = fs.mkdtempSync(path.join(os.tmpdir(), "helm-goal-orchestrator-spike-"));
 const projectPath = path.join(scratchRoot, "scratch-repo");
 let worktreePathToTearDown = null;
 
@@ -67,7 +67,7 @@ try {
   fs.mkdirSync(projectPath, { recursive: true });
   git(projectPath, ["init", "-q", "-b", "main"]);
   git(projectPath, ["config", "user.email", "spike@example.com"]);
-  git(projectPath, ["config", "user.name", "Maestro Spike"]);
+  git(projectPath, ["config", "user.name", "Helm Spike"]);
   fs.writeFileSync(path.join(projectPath, "README.md"), "scratch repo for goal-orchestrator spike\n");
   git(projectPath, ["add", "README.md"]);
   git(projectPath, ["commit", "-q", "-m", "initial commit"]);
@@ -102,7 +102,7 @@ try {
 
   // --- Assertions: worktree, branch, commits, notes, and real file content ---
   assert(fs.existsSync(result.worktreePath), "worktree directory actually exists on disk");
-  assert(result.branchName.startsWith("maestro/goal-"), "branch name follows the goal-run naming convention");
+  assert(result.branchName.startsWith("helm/goal-"), "branch name follows the goal-run naming convention");
   assert(iterationLog.length > 0, "onIteration fired at least once");
   assert(iterationLog.length === result.iterations.length, "onIteration fired once per iteration in the returned log");
 
@@ -135,7 +135,7 @@ try {
 
   assert(result.notes.length > 0, "notes.md has real content");
   assert(result.notes.includes("Iteration 1"), "notes.md documents at least iteration 1");
-  const notesOnDisk = fs.readFileSync(path.join(result.worktreePath, ".maestro-goal", "notes.md"), "utf8");
+  const notesOnDisk = fs.readFileSync(path.join(result.worktreePath, ".helm-goal", "notes.md"), "utf8");
   assert(notesOnDisk === result.notes, "returned notes content matches notes.md as actually written on disk");
 
   assert(

@@ -15,7 +15,7 @@ const child = spawn(
     "--model",
     "claude-sonnet-5",
   ],
-  { cwd: "D:\\Repo\\Tools\\maestro", shell: true, env: process.env }
+  { cwd: "D:\\Repo\\Tools\\helm", shell: true, env: process.env }
 );
 
 let buffer = "";
@@ -40,7 +40,7 @@ child.stdout.on("data", (chunk) => {
       turnsSeen++;
       if (turnsSeen === 1) {
         console.log("→ First turn done. Sending a SECOND message on the SAME process...");
-        sendUserMessage("Now say MAESTRO_SECOND_OK and nothing else.");
+        sendUserMessage("Now say HELM_SECOND_OK and nothing else.");
       } else {
         console.log("→ Second turn done. Process stayed alive for multi-turn stdin. Closing stdin.");
         child.stdin.end();
@@ -58,4 +58,4 @@ function sendUserMessage(text) {
   child.stdin.write(JSON.stringify(msg) + "\n");
 }
 
-sendUserMessage("Say MAESTRO_FIRST_OK and nothing else.");
+sendUserMessage("Say HELM_FIRST_OK and nothing else.");

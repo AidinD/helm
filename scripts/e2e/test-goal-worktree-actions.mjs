@@ -1,6 +1,6 @@
 // E2E: the Goal page offers Open/Delete worktree actions on finished runs (that
 // leave a worktree on disk) and NOT on live/running runs (whose worktree is in
-// use) or runs with no worktree. Real launched Maestro via CDP. Injects runs
+// use) or runs with no worktree. Real launched Helm via CDP. Injects runs
 // into goalRuns and re-renders - actual deletion needs a real git worktree, so
 // that path is only exercised in a live run, not here.
 //
@@ -29,7 +29,7 @@ try {
   // one WITHOUT a worktree (errored before creating one).
   await app.eval(`(() => {
     goalRuns.clear();
-    goalRuns.set("done-wt", { goalRunId: "done-wt", ordinal: ++goalRunSeq, goal: "Finished with worktree", projectPath: "P", status: "done", iterations: [], result: { worktreePath: "P-worktrees/goal-x", branchName: "maestro/goal-x", stoppedReason: "completed" }, error: null, escalation: null, latestPlan: null });
+    goalRuns.set("done-wt", { goalRunId: "done-wt", ordinal: ++goalRunSeq, goal: "Finished with worktree", projectPath: "P", status: "done", iterations: [], result: { worktreePath: "P-worktrees/goal-x", branchName: "helm/goal-x", stoppedReason: "completed" }, error: null, escalation: null, latestPlan: null });
     goalRuns.set("running-1", { goalRunId: "running-1", ordinal: ++goalRunSeq, goal: "Still running", projectPath: "P", status: "running", iterations: [], result: null, error: null, escalation: null, latestPlan: null });
     goalRuns.set("err-nowt", { goalRunId: "err-nowt", ordinal: ++goalRunSeq, goal: "Errored, no worktree", projectPath: "P", status: "error", iterations: [], result: null, error: "boom", escalation: null, latestPlan: null });
     renderGoalPage();

@@ -1,6 +1,6 @@
-// E2E (real claude): a REAL first-mate session calls maestro_fleet_state through
+// E2E (real claude): a REAL first-mate session calls helm_fleet_state through
 // the permission gate and USES the cross-mate view - naming the OTHER mate's
-// in-flight project (which its own maestro_collect_reports would never show).
+// in-flight project (which its own helm_collect_reports would never show).
 // No Electron: the MCP server the mate spawns reads the fleet-state snapshot
 // straight off disk, so we write a controlled one and point the mate at it.
 // haiku + trivial prompt. Run:  node scripts/e2e/test-first-mate-fleet-state.mjs
@@ -23,10 +23,10 @@ function assert(cond, msg) {
 }
 
 const CLAUDE = "C:/Users/<you>/.local/bin/claude.exe";
-const REPO = "D:/Repo/Tools/maestro";
-const SERVER = path.join(REPO, "src", "mcp", "maestroDispatchServer.js");
-const SERVER_NAME = "maestro-dispatch";
-const ALLOWED = ["maestro_dispatch", "maestro_collect_reports", "maestro_list_projects", "maestro_fleet_state"].map((t) => `mcp__${SERVER_NAME}__${t}`);
+const REPO = "D:/Repo/Tools/helm";
+const SERVER = path.join(REPO, "src", "mcp", "helmDispatchServer.js");
+const SERVER_NAME = "helm-dispatch";
+const ALLOWED = ["helm_dispatch", "helm_collect_reports", "helm_list_projects", "helm_fleet_state"].map((t) => `mcp__${SERVER_NAME}__${t}`);
 const tmp = path.join(os.tmpdir(), "fm-fleet-" + Date.now());
 const metaHome = path.join(tmp, "meta-home");
 fs.mkdirSync(metaHome, { recursive: true });
@@ -51,15 +51,15 @@ const mcpConfig = JSON.stringify({
     [SERVER_NAME]: {
       command: "node",
       args: [SERVER],
-      env: { MAESTRO_META_HOME: metaHome, MAESTRO_MATE_ID: "mate_me", MAESTRO_PROJECTS: "[]", MAESTRO_WIDTH_CAP: "3" },
+      env: { HELM_META_HOME: metaHome, HELM_MATE_ID: "mate_me", HELM_PROJECTS: "[]", HELM_WIDTH_CAP: "3" },
     },
   },
 });
 
 const prompt =
-  "Call the maestro_fleet_state tool. Then reply with ONLY the project name that the OTHER first mate (not you) has dispatched work in, lowercase. " +
+  "Call the helm_fleet_state tool. Then reply with ONLY the project name that the OTHER first mate (not you) has dispatched work in, lowercase. " +
   "If you cannot call the tool, reply exactly: TOOL-BLOCKED.";
-// --strict-mcp-config: use ONLY the maestro-dispatch server, not the machine's
+// --strict-mcp-config: use ONLY the helm-dispatch server, not the machine's
 // other MCP servers - otherwise a spawned claude here inherits ~20 of them and a
 // small model drowns (verified). This isolates the test to the tool under test.
 const args = ["-p", prompt, "--model", "claude-haiku-4-5-20251001", "--mcp-config", mcpConfig, "--strict-mcp-config", "--allowedTools", ...ALLOWED];
@@ -75,7 +75,7 @@ await new Promise((r) => {
 
 const reply = out.trim();
 log("mate reply (tail):", reply.slice(-160).replace(/\s+/g, " "));
-assert(!/TOOL-BLOCKED/.test(reply), "the real first-mate session was NOT permission-blocked from calling maestro_fleet_state");
+assert(!/TOOL-BLOCKED/.test(reply), "the real first-mate session was NOT permission-blocked from calling helm_fleet_state");
 assert(/halyard/i.test(reply), "the mate surveyed the fleet and named the OTHER mate's in-flight project (halyard)");
 assert(!/skiff/i.test(reply) || /halyard/i.test(reply), "it did not confuse its own project (skiff) for the other mate's");
 

@@ -1,6 +1,6 @@
 // E2E: a failed/escalated goal run is DISCOVERABLE - it shows as a needs-you
 // row in the Dashboard queue (click -> Goal) and its block on the Goal page
-// carries an attention accent. Real launched Maestro via CDP. Injects runs into
+// carries an attention accent. Real launched Helm via CDP. Injects runs into
 // goalRuns and re-renders (no real goal run needed).
 //
 // Run:  node scripts/e2e/test-goal-attention-queue.mjs

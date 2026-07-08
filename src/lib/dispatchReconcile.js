@@ -1,9 +1,9 @@
 // First-mate tier - report-back reconciliation (review finding M2).
 //
 // A dispatched run reports back via an in-memory onComplete closure in main.js.
-// If Maestro is killed/restarted mid-run, that closure is gone: the run's work
+// If Helm is killed/restarted mid-run, that closure is gone: the run's work
 // survives (worktree/commits), but no report is ever written, so the mate
-// polling maestro_collect_reports never hears back. On startup the app scans the
+// polling helm_collect_reports never hears back. On startup the app scans the
 // persisted run history and synthesizes a report for any dispatched run that is
 // terminal (or interrupted) yet has no report on disk - so the handshake
 // completes across a restart.

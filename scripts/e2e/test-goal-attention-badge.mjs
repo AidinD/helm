@@ -1,6 +1,6 @@
 // E2E: goal-run errors/escalations surface even when off-page - a persistent
 // attention badge on the Dashboard tab tracks unseen failed/paused runs and
-// clears when you visit the Goal/Agents facet. Real launched Maestro via CDP.
+// clears when you visit the Goal/Agents facet. Real launched Helm via CDP.
 // The actual toast fires from the IPC onGoalEvent path (needs a real/simulated
 // event); here we drive the badge state machine directly (unseenGoalAttention +
 // updateGoalAttentionBadge + navigateToPage clearing), which is the persistent,

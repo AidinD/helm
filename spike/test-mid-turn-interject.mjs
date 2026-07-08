@@ -20,7 +20,7 @@ const child = spawn(
     "--model",
     "claude-sonnet-5",
   ],
-  { cwd: "D:/Repo/Tools/maestro", shell: !claudePath.toLowerCase().endsWith(".exe"), env: process.env }
+  { cwd: "D:/Repo/Tools/helm", shell: !claudePath.toLowerCase().endsWith(".exe"), env: process.env }
 );
 
 let buffer = "";
@@ -53,7 +53,7 @@ child.stdout.on("data", (chunk) => {
           if (!sentInterject && b.name === "Bash") {
             sentInterject = true;
             timeline.push(`  >>> INTERJECTING now (before result) <<<`);
-            sendUserMessage("Also say the exact word MAESTRO_INTERJECT_SEEN somewhere in your next reply.");
+            sendUserMessage("Also say the exact word HELM_INTERJECT_SEEN somewhere in your next reply.");
           }
         }
         if (b.type === "text") {

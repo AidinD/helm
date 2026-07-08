@@ -15,8 +15,8 @@ const DEFAULT_CONFIG = {
   // Display-only session title overrides — never writes to the desktop app's
   // own session files, so "renaming a chat" can't corrupt live app state.
   titleOverrides: {}, // { "<sessionId>": "Custom title" }
-  manualMaestroSessions: [], // sessionIds tagged "◆ Maestro" by hand, independent of Jot category matching
-  hiddenSessions: [], // sessionIds removed from Maestro's view (restore by editing this array)
+  manualHelmSessions: [], // sessionIds tagged "◆ Helm" by hand, independent of Jot category matching
+  hiddenSessions: [], // sessionIds removed from Helm's view (restore by editing this array)
   // Runs a cheap Haiku judge after every completed prompt to flag whether the
   // model/effort choice was too weak/too strong (~$0.015-0.02 extra per run,
   // after stripping MCP/tool defs the judge doesn't need). User-requested;
@@ -79,7 +79,7 @@ const DEFAULT_CONFIG = {
   // finding instead of a per-session one).
   suggestionAccuracyNotice: null, // { message, diffPoints, totalAtCheck, dismissed }
   // Fallback context-window size for the gauge's %, used only for a model
-  // Maestro hasn't yet learned a real window for (see modelContextWindows).
+  // Helm hasn't yet learned a real window for (see modelContextWindows).
   // Defaulted to 1M to match the captain's current environment.
   contextWindowTokens: 1000000,
   // Language the composer's mic button transcribes voice input as (see
@@ -102,7 +102,7 @@ const DEFAULT_CONFIG = {
   voiceEngine: "whispercpp",
   // model name -> real context-window size, LEARNED from the CLI's own
   // result events (evt.modelUsage[model].contextWindow) as sessions run
-  // through Maestro. Authoritative per model; the gauge prefers this over
+  // through Helm. Authoritative per model; the gauge prefers this over
   // the contextWindowTokens fallback. Grows as new models are used.
   modelContextWindows: {},
   jot: {

@@ -1,4 +1,4 @@
-# Using Maestro - a guided walkthrough
+# Using Helm - a guided walkthrough
 
 This is both the agenda for our live walkthrough and a reference to keep.
 It is written for how the captain actually works today, not for a generic user.
@@ -9,12 +9,12 @@ You do not learn a tool like this from a feature tour.
 You learn it by running one real piece of your own work through it, once, with the "why" narrated at each step.
 So the plan is: we take a real task from your Jot board tomorrow and drive it through the full loop together - dispatch, oversee, review - and I tie each move back to how you and I already work in plain Claude Code.
 No slides, no toy task.
-By the end you will have shipped one real thing through Maestro and know which surface to reach for next time without thinking about it.
+By the end you will have shipped one real thing through Helm and know which surface to reach for next time without thinking about it.
 
 ## The one mental shift
 
 Plain Claude Code is a chat you drive turn by turn.
-Maestro is a workspace you oversee.
+Helm is a workspace you oversee.
 
 The front door is the Dashboard - live state, "what needs you right now" - not a prompt box.
 You are not meant to sit inside one long conversation.
@@ -28,11 +28,11 @@ That is why throwing a session away is safe - nothing important lived only in it
 
 This is the rhythm to internalize.
 
-1. Open Maestro. You land on the Dashboard.
+1. Open Helm. You land on the Dashboard.
 2. Read "Needs you & in motion" - the single prioritized queue. Waiting sessions and archive proposals (things that need a click) sort above active runs (just visibility).
 3. Act on what needs you - answer a waiting session, approve/dismiss a proposal.
 4. Dispatch new work - a fresh session, a project-rooted session, an orchestrator session, or an Autopilot goal (decision guide below).
-5. Step away. You do not babysit. When something needs you or errors while you are away, Maestro fires an OS notification and a taskbar badge (toggle in Settings: "Notify when something needs you").
+5. Step away. You do not babysit. When something needs you or errors while you are away, Helm fires an OS notification and a taskbar badge (toggle in Settings: "Notify when something needs you").
 6. Come back, review the result - read the diff, read Autopilot's captured contract + verify evidence, decide.
 7. Finish and discard the session. The knowledge is already in files and Jot.
 
@@ -57,12 +57,12 @@ Rule of thumb: if you want to watch every turn, use Chat. If you want to review 
 ## Why ephemeral sessions are safe (the thing that makes the loop work)
 
 The instinct to keep one big session alive comes from fear of losing context.
-Maestro removes that fear by making the durable layer explicit.
+Helm removes that fear by making the durable layer explicit.
 
 - Rules and how-you-work live in CLAUDE.md (global + per project).
 - Decisions and their rationale live in DECISIONS.md.
 - Cross-session facts live in memory.
-- Work and priorities live in your Jot board, which Maestro reads.
+- Work and priorities live in your Jot board, which Helm reads.
 
 So a fresh session is cheap to start and already well-fed, and a finished session is safe to discard.
 The unit you organize is work/goals (in Jot), not sessions.
@@ -74,7 +74,7 @@ Roughly 30-40 minutes, on real work.
 
 1. Orientation on the Dashboard - read the queue together, I explain each row kind (2 min).
 2. Cmd/Ctrl+K tour - we navigate the whole app from the keyboard, no clicking (3 min).
-3. Pick one real, well-defined task from your Maestro or another Jot category (2 min).
+3. Pick one real, well-defined task from your Helm or another Jot category (2 min).
 4. Run it through Autopilot - set the goal + verify command, launch, and I narrate what it is doing in the worktree while it runs (10 min).
 5. While it runs, we start a second, hands-on piece in a Chat session - so you feel the difference between overseeing and driving (5 min).
 6. Review Autopilot's result - read the diff, the contract, the verify evidence, decide accept or not (5 min).

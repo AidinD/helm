@@ -279,7 +279,7 @@ function wireVoiceStreamListener() {
     return;
   }
   voiceStreamListenerWired = true;
-  window.maestro.onVoiceStreamEvent((payload) => {
+  window.helm.onVoiceStreamEvent((payload) => {
     for (const [index, entry] of activeVoiceStreams.entries()) {
       if (entry.streamId !== payload.streamId) {
         continue;
@@ -298,7 +298,7 @@ function wireVoiceStreamListener() {
         // here — just release the hold and surface the failure. Text already
         // committed into the composer (from before the crash) is left as-is
         // rather than discarded; the user can keep typing or retry the hold.
-        console.error("[maestro] voice stream error:", payload.message);
+        console.error("[helm] voice stream error:", payload.message);
         activeVoiceStreams.delete(index);
         heldRecordings.delete(index);
         entry.micBtn.classList.remove("recording");
@@ -348,17 +348,17 @@ async function tryStartVoiceStream(index, micBtn, promptEl, language) {
     return false; // streaming only exists for the whisper.cpp backend
   }
   wireVoiceStreamListener();
-  const res = await window.maestro.startVoiceStream(language);
+  const res = await window.helm.startVoiceStream(language);
   if (!heldRecordings.has(index)) {
     // Hold released while the spawn round-trip was pending — if it did
     // start, stop it immediately rather than leaving it running unheld.
     if (res.ok) {
-      window.maestro.stopVoiceStream(res.streamId);
+      window.helm.stopVoiceStream(res.streamId);
     }
     return true; // claim the hold either way so the caller doesn't also fall back to the rolling path
   }
   if (!res.ok) {
-    console.warn("[maestro] real-time voice streaming unavailable, falling back to rolling re-transcription:", res.error);
+    console.warn("[helm] real-time voice streaming unavailable, falling back to rolling re-transcription:", res.error);
     return false;
   }
   const selStart = typeof promptEl.selectionStart === "number" ? promptEl.selectionStart : promptEl.value.length;
@@ -386,7 +386,7 @@ async function stopVoiceStreamIfActive(index) {
     return false;
   }
   activeVoiceStreams.delete(index);
-  await window.maestro.stopVoiceStream(entry.streamId);
+  await window.helm.stopVoiceStream(entry.streamId);
   // Whatever text is already in the composer's voice span (committed +
   // last live partial) IS the final result — unlike the rolling path, there
   // is no separate "final transcription" pass to run, since whisper-stream
@@ -531,7 +531,7 @@ async function startVoiceRecording(index, micBtn, promptEl) {
     entry.inFlight = true;
     try {
       const samples = await decodeToMono16k(new Blob(chunks.slice(), { type: mediaRecorder.mimeType }));
-      const res = await window.maestro.transcribeVoice(Array.from(samples), currentLanguage());
+      const res = await window.helm.transcribeVoice(Array.from(samples), currentLanguage());
       if (!entry.stopped && activeRecordings.get(index) === entry && res.ok && typeof res.text === "string") {
         applyResult(res.text);
       }
@@ -558,7 +558,7 @@ async function startVoiceRecording(index, micBtn, promptEl) {
     micBtn.title = "Transcribing…";
     try {
       const samples = await decodeToMono16k(new Blob(chunks, { type: mediaRecorder.mimeType }));
-      const res = await window.maestro.transcribeVoice(Array.from(samples), currentLanguage());
+      const res = await window.helm.transcribeVoice(Array.from(samples), currentLanguage());
       if (res.ok) {
         // Authoritative final result — replaces whatever partial the last
         // rolling tick left in the voice span (voiceStart/voiceLen still point
@@ -713,7 +713,7 @@ function sessionById(id) {
   return state.sessions.find((s) => s.sessionId === id);
 }
 
-// Context-window size for a pane's session: prefer the real window Maestro
+// Context-window size for a pane's session: prefer the real window Helm
 // learned for that session's model (from the CLI's result events, stored in
 // config.modelContextWindows), fall back to the configurable default for a
 // model not yet seen. Used to turn the token estimate into the gauge's %.
@@ -760,19 +760,19 @@ function isOrchestratorSession(session) {
   return samePath(session.cwd, state.orchestratorHome);
 }
 
-// "Delete" a session from Maestro's own view — never touches the desktop
+// "Delete" a session from Helm's own view — never touches the desktop
 // app's real session files (that would risk destroying real conversation
 // history). Purely hides it from the sidebar via config; restorable from
 // the Archive page.
-async function removeFromMaestro(session) {
+async function removeFromHelm(session) {
   const hidden = [...(state.config.hiddenSessions || []), session.sessionId];
-  state.config = await window.maestro.setConfig({ hiddenSessions: hidden });
+  state.config = await window.helm.setConfig({ hiddenSessions: hidden });
   refresh();
 }
 
-async function restoreToMaestro(session) {
+async function restoreToHelm(session) {
   const hidden = (state.config.hiddenSessions || []).filter((id) => id !== session.sessionId);
-  state.config = await window.maestro.setConfig({ hiddenSessions: hidden });
+  state.config = await window.helm.setConfig({ hiddenSessions: hidden });
   await refresh();
   refreshArchivePageIfVisible();
 }
@@ -788,14 +788,14 @@ function refreshArchivePageIfVisible() {
 }
 
 // Real archiving: flips isArchived in the desktop app's OWN local_*.json
-// file (unlike removeFromMaestro, which only ever touches Maestro's config).
+// file (unlike removeFromHelm, which only ever touches Helm's config).
 // Always a direct response to an explicit click — either the manual context
 // menu action, or the user clicking a suggested-archive pill — never fired
 // on a timer or any other unattended trigger.
 async function archiveSession(session) {
-  const res = await window.maestro.archiveSession(session.sessionId, true);
+  const res = await window.helm.archiveSession(session.sessionId, true);
   if (!res.ok) {
-    console.error("[maestro] archive failed:", res.error);
+    console.error("[helm] archive failed:", res.error);
     showToast(`Couldn't archive "${session.title}": ${res.error}`);
     return;
   }
@@ -803,11 +803,11 @@ async function archiveSession(session) {
 }
 
 // From the Archive page — flips isArchived back to false so the session
-// reappears both in Maestro's sidebar and in the real desktop app.
+// reappears both in Helm's sidebar and in the real desktop app.
 async function unarchiveSession(session) {
-  const res = await window.maestro.archiveSession(session.sessionId, false);
+  const res = await window.helm.archiveSession(session.sessionId, false);
   if (!res.ok) {
-    console.error("[maestro] unarchive failed:", res.error);
+    console.error("[helm] unarchive failed:", res.error);
     showToast(`Couldn't unarchive "${session.title}": ${res.error}`);
     return;
   }
@@ -1038,7 +1038,7 @@ function nextCategoryLabel() {
 
 async function createCategory() {
   const groups = [...(state.config.groups || []), { label: nextCategoryLabel(), sessionIds: [], collapsed: false }];
-  state.config = await window.maestro.setConfig({ groups });
+  state.config = await window.helm.setConfig({ groups });
   renderSidebar();
 }
 
@@ -1047,24 +1047,24 @@ async function renameCategoryTo(oldLabel, newLabel) {
     return;
   }
   const groups = (state.config.groups || []).map((g) => (g.label === oldLabel ? { ...g, label: newLabel.trim() } : g));
-  state.config = await window.maestro.setConfig({ groups });
+  state.config = await window.helm.setConfig({ groups });
   renderSidebar();
 }
 
 async function deleteCategory(label) {
   const groups = (state.config.groups || []).filter((g) => g.label !== label);
-  state.config = await window.maestro.setConfig({ groups });
+  state.config = await window.helm.setConfig({ groups });
   renderSidebar();
 }
 
 // Display-only rename — never writes to the desktop app's own session files,
-// so it can't corrupt live state there; it just overrides what Maestro shows.
+// so it can't corrupt live state there; it just overrides what Helm shows.
 async function renameSessionTo(session, newTitle) {
   if (!newTitle || !newTitle.trim() || newTitle === session.title) {
     return;
   }
   const titleOverrides = { ...(state.config.titleOverrides || {}), [session.sessionId]: newTitle.trim() };
-  state.config = await window.maestro.setConfig({ titleOverrides });
+  state.config = await window.helm.setConfig({ titleOverrides });
   refresh();
 }
 
@@ -1122,7 +1122,7 @@ async function moveSessionToGroup(sessionId, targetLabel, insertBeforeId) {
       }
     }
   }
-  state.config = await window.maestro.setConfig({ groups });
+  state.config = await window.helm.setConfig({ groups });
   renderSidebar();
 }
 
@@ -1157,7 +1157,7 @@ async function reorderCategory(draggedLabel, targetLabel, before) {
   } else {
     groups.splice(before ? targetIdx : targetIdx + 1, 0, dragged);
   }
-  state.config = await window.maestro.setConfig({ groups });
+  state.config = await window.helm.setConfig({ groups });
   renderSidebar();
 }
 
@@ -1181,9 +1181,9 @@ function rowEl(session) {
   titleLine.append(dot, title);
   if (isOrchestratorSession(session)) {
     const tag = document.createElement("span");
-    tag.className = "maestro-tag";
+    tag.className = "helm-tag";
     tag.textContent = "◆";
-    tag.title = "Maestro orchestrator work";
+    tag.title = "Helm orchestrator work";
     titleLine.append(tag);
   }
   row.append(titleLine);
@@ -1228,7 +1228,7 @@ function rowEl(session) {
   // "Orchestrator proposes, you approve" — only ever a suggestion. Clicking
   // this pill IS the approval step; nothing archives without it. Only shown
   // for genuinely idle sessions with no open Jot work, and never for a
-  // Maestro-building session (idle between long autonomous stretches doesn't
+  // Helm-building session (idle between long autonomous stretches doesn't
   // mean done).
   const hasOpenJotWork =
     session.jot && (session.jot.review > 0 || session.jot.inProgress > 0 || session.jot.open > 0);
@@ -1329,16 +1329,16 @@ function rowEl(session) {
         onClick: () => {
           // Re-opens with an explicit confirm step (no native window.confirm()
           // — unreliable in this build) since this writes to the desktop
-          // app's OWN session file, not just Maestro's local config.
+          // app's OWN session file, not just Helm's local config.
           showContextMenu(x, y, [
             { label: `Confirm archive "${session.title}"`, danger: true, onClick: () => archiveSession(session) },
           ]);
         },
       },
       {
-        label: "Remove from Maestro",
+        label: "Remove from Helm",
         danger: true,
-        onClick: () => removeFromMaestro(session),
+        onClick: () => removeFromHelm(session),
       },
     ]);
   });
@@ -1468,13 +1468,13 @@ const SUMMARIZE_TIMEOUT_MS = 5 * 60 * 1000;
 
 function summarizeSession(session) {
   return new Promise(async (resolve) => {
-    const res = await window.maestro.startSession({
+    const res = await window.helm.startSession({
       cwd: session.cwd,
       prompt: CARRY_OVER_PROMPT,
       model: "claude-sonnet-5",
       effort: "medium",
       resumeSessionId: session.cliSessionId || session.sessionId,
-      // Maestro-internal launch (the hidden carry-over summary), not a real
+      // Helm-internal launch (the hidden carry-over summary), not a real
       // user turn — keeps it out of the usage log, the "prompt finished"
       // notification, and the model-fit judge, which would otherwise spend a
       // real judge call on it AND contaminate the By-model / Model-fit /
@@ -1690,7 +1690,7 @@ async function loadTranscriptInto(paneIndex) {
   if (!pane || !pane.cliSessionId) {
     return;
   }
-  const { turns, hiddenCount, truncated, contextTokens } = await window.maestro.getTranscript({
+  const { turns, hiddenCount, truncated, contextTokens } = await window.helm.getTranscript({
     cliSessionId: pane.cliSessionId,
     sessionId: pane.sessionId,
   });
@@ -1941,7 +1941,7 @@ function wireListDropZone(el, targetLabel) {
 
 async function persistCollapsed(groupLabel, collapsed) {
   const groups = (state.config.groups || []).map((g) => (g.label === groupLabel ? { ...g, collapsed } : g));
-  state.config = await window.maestro.setConfig({ groups });
+  state.config = await window.helm.setConfig({ groups });
 }
 
 function renderSidebar() {
@@ -1963,7 +1963,7 @@ function renderSidebar() {
   // column (every session, flat) with none of Fleet's status/crew info. The
   // sidebar's distinct value is organizing + searching your own sessions.
 
-  // A Maestro-building session (isOrchestratorSession) gets a "◆" marker inline
+  // A Helm-building session (isOrchestratorSession) gets a "◆" marker inline
   // (see rowEl) but otherwise flows into Needs-attention / its group / Unsorted
   // like any other session - no privileged pinned card.
   const attention = visible.filter((s) => s.needsAttention);
@@ -2243,7 +2243,7 @@ function turnEl(turn) {
     copyBtn.title = "Copy";
     copyBtn.textContent = "⧉";
     copyBtn.addEventListener("click", () => {
-      window.maestro.copyToClipboard(turn.text);
+      window.helm.copyToClipboard(turn.text);
       copyBtn.textContent = "✓";
       copyBtn.classList.add("copied");
       setTimeout(() => {
@@ -2296,7 +2296,7 @@ function truncateText(text, max) {
 
 // A centered divider marking where the conversation was compacted — shown
 // for ANY compaction found in the transcript: the CLI's own auto-compact
-// when the window fills (trigger "auto"), Maestro's Fas 3 auto-compact, or a
+// when the window fills (trigger "auto"), Helm's Fas 3 auto-compact, or a
 // manual /compact (both "manual"). Mirrors the desktop app showing where
 // context was summarized. The captain's ask: "skriv även ut i chatten med en pill
 // att compacting skett."
@@ -2390,7 +2390,7 @@ function renderPane(index) {
     btn.className = "load-earlier";
     btn.textContent = `Show ${pane.hiddenCount} earlier messages`;
     btn.addEventListener("click", async () => {
-      const { turns, hiddenCount, truncated } = await window.maestro.getTranscript({
+      const { turns, hiddenCount, truncated } = await window.helm.getTranscript({
         cliSessionId: pane.cliSessionId,
         sessionId: pane.sessionId,
       });
@@ -2591,7 +2591,7 @@ function wireDoneButtonOnLastReply(index, scroll) {
     } else {
       delete acknowledgedSessions[session.sessionId];
     }
-    state.config = await window.maestro.setConfig({ acknowledgedSessions });
+    state.config = await window.helm.setConfig({ acknowledgedSessions });
     refresh();
   });
   // prepend, not append: Done sits BEFORE Copy in the row. With append, the
@@ -2735,7 +2735,7 @@ function wireQuestionFlagOnLastReply(index, scroll) {
 async function rewindToTurn(index, userMsgIndex, messageText) {
   const pane = panes[index];
   const sourcePane = pane; // identity-check the async result against this
-  const res = await window.maestro.forkSession(pane.cliSessionId, userMsgIndex);
+  const res = await window.helm.forkSession(pane.cliSessionId, userMsgIndex);
   if (!res.ok) {
     showToast(`Couldn't rewind: ${res.error}`);
     return;
@@ -2814,7 +2814,7 @@ function updateClaudeMdLinks(header, cwd) {
   globalBtn.title = "Open your global CLAUDE.md folder";
   globalBtn.addEventListener("click", async (e) => {
     e.stopPropagation();
-    const res = await window.maestro.openGlobalClaudeMd();
+    const res = await window.helm.openGlobalClaudeMd();
     if (!res.ok) {
       showToast(res.error || "Couldn't open global CLAUDE.md");
     }
@@ -2825,7 +2825,7 @@ function updateClaudeMdLinks(header, cwd) {
     // Existence is checked before showing the button at all, rather than
     // showing one that errors on click — per the ask, a project without a
     // CLAUDE.md just shouldn't get this affordance.
-    window.maestro.projectClaudeMdExists(cwd).then((exists) => {
+    window.helm.projectClaudeMdExists(cwd).then((exists) => {
       if (!exists || !links.isConnected) {
         return;
       }
@@ -2835,7 +2835,7 @@ function updateClaudeMdLinks(header, cwd) {
       projectBtn.title = "Open this project's folder";
       projectBtn.addEventListener("click", async (e) => {
         e.stopPropagation();
-        const res = await window.maestro.openProjectClaudeMd(cwd);
+        const res = await window.helm.openProjectClaudeMd(cwd);
         if (!res.ok) {
           showToast(res.error || "Couldn't open project CLAUDE.md");
         }
@@ -2872,9 +2872,9 @@ function paneHeaderEl(index) {
   header.append(title);
   if (pane.isOrchestrator) {
     const tag = document.createElement("span");
-    tag.className = "maestro-tag";
-    tag.textContent = "◆ Maestro";
-    tag.title = "This is Maestro-building work, not a regular project chat";
+    tag.className = "helm-tag";
+    tag.textContent = "◆ Helm";
+    tag.title = "This is Helm-building work, not a regular project chat";
     header.append(tag);
   }
   if (pane.cwd) {
@@ -3118,7 +3118,7 @@ function paneComposerEl(index) {
         reader.readAsDataURL(file);
       });
       const base64 = dataUrl.split(",")[1] || "";
-      const res = await window.maestro.saveImage(base64, ext);
+      const res = await window.helm.saveImage(base64, ext);
       // Pane may have been reset/reused while the save round-tripped through
       // main — don't attach a stale paste to whatever now occupies this slot.
       if (res.ok && panes[index] === pane) {
@@ -3148,7 +3148,7 @@ function paneComposerEl(index) {
   pickBtn.textContent = "…";
   pickBtn.title = "Pick repo folder";
   pickBtn.addEventListener("click", async () => {
-    const folder = await window.maestro.pickFolder();
+    const folder = await window.helm.pickFolder();
     // The dialog can stay open indefinitely — same guard as the attach-file
     // and paste-image handlers, so a folder pick doesn't land on a pane that
     // was reset/reused while the dialog was up.
@@ -3160,7 +3160,7 @@ function paneComposerEl(index) {
     }
   });
 
-  // "Auto" lets Maestro pick per-prompt (resolved at send time from the
+  // "Auto" lets Helm pick per-prompt (resolved at send time from the
   // current text); picking a specific value locks it in and stops the
   // suggestion from silently overriding your choice. A pane may carry a
   // modelDefault (e.g. a first-mate/orchestrator session defaults to Sonnet -
@@ -3190,13 +3190,13 @@ function paneComposerEl(index) {
   );
 
   // Matches the desktop app's mode picker (Ask permissions / Accept edits /
-  // Plan mode / Auto mode / Bypass permissions). Maestro's -p invocation has
+  // Plan mode / Auto mode / Bypass permissions). Helm's -p invocation has
   // no live channel to answer an interactive approval prompt, so a mode that
   // genuinely needs to ask mid-run could still stall — tested "default" in
   // this environment and it did not (the captain's existing broad allowlists let
   // tools through), but that is not a general guarantee for every setup.
   // Note: this "auto" is a literal CLI permission mode name, unrelated to the
-  // model/effort "Auto" above (let Maestro pick) — they just share the word.
+  // model/effort "Auto" above (let Helm pick) — they just share the word.
   const permissionDD = dropdownPill(
     "auto",
     [
@@ -3211,13 +3211,13 @@ function paneComposerEl(index) {
 
   // Same mechanism as pasting an image, just picked via a dialog instead of
   // the clipboard — a plain file (any type) attached by path. Read tool
-  // handles whatever it can from there; Maestro doesn't need to know the type.
+  // handles whatever it can from there; Helm doesn't need to know the type.
   const attachBtn = document.createElement("button");
   attachBtn.className = "icon-btn";
   attachBtn.innerHTML = PAPERCLIP_ICON;
   attachBtn.title = "Attach a file";
   attachBtn.addEventListener("click", async () => {
-    const filePaths = await window.maestro.pickFiles();
+    const filePaths = await window.helm.pickFiles();
     // The dialog is modal and can sit open a long time — the pane may have
     // been reset while it was up. Same guard as the paste handler.
     if (!filePaths?.length || panes[index] !== pane) {
@@ -3298,7 +3298,7 @@ function paneComposerEl(index) {
     ],
     async (value) => {
       // Persist globally via the same setConfig IPC every other setting uses.
-      state.config = await window.maestro.setConfig({ voiceLanguage: value });
+      state.config = await window.helm.setConfig({ voiceLanguage: value });
     }
   );
   languageDD.el.title = "Voice transcription language";
@@ -3372,7 +3372,7 @@ function paneComposerEl(index) {
       handoffEl.append(msg, btn);
       if (!firstMateHandoffNotified.has(pane.sessionId)) {
         firstMateHandoffNotified.add(pane.sessionId);
-        window.maestro.notifyAttention({ title: "Maestro — your first mate is filling up", body: "Hand off to a fresh first mate to keep it sharp." });
+        window.helm.notifyAttention({ title: "Helm — your first mate is filling up", body: "Hand off to a fresh first mate to keep it sharp." });
       }
     }
   };
@@ -3416,7 +3416,7 @@ function paneComposerEl(index) {
       if (pane.currentLaunchId) {
         pane.stopRequested = true;
         setPaneBusyUI(index, "Stopping…");
-        const res = await window.maestro.stopSession(pane.currentLaunchId);
+        const res = await window.helm.stopSession(pane.currentLaunchId);
         // The process may have finished naturally in the tiny window between
         // the click and this call landing in main — its "done" event is then
         // already queued and will clear busy shortly, but don't leave the
@@ -3444,7 +3444,7 @@ function paneComposerEl(index) {
   promptEl.addEventListener("input", () => {
     clearTimeout(suggestTimer);
     suggestTimer = setTimeout(async () => {
-      const suggestion = await window.maestro.suggestModelEffort(promptEl.value);
+      const suggestion = await window.helm.suggestModelEffort(promptEl.value);
       const modelLabel = suggestion.model.replace("claude-", "");
       const usingAuto = modelDD.value === "auto" && effortDD.value === "auto";
       suggestHint.textContent = usingAuto
@@ -3645,7 +3645,7 @@ async function sendFromPane(index, els) {
   // background suggestion, which could be stale) — used to fill in any "Auto"
   // picks, and always logged as the suggestion regardless of whether you
   // followed it, so usage-log's followedSuggestion stays meaningful.
-  const suggestion = await window.maestro.suggestModelEffort(prompt);
+  const suggestion = await window.helm.suggestModelEffort(prompt);
   const model = els.modelDD.value === "auto" ? suggestion.model : els.modelDD.value;
   const effort = els.effortDD.value === "auto" ? suggestion.effort : els.effortDD.value;
   if (els.modelDD.value === "auto" || els.effortDD.value === "auto") {
@@ -3662,7 +3662,7 @@ async function sendFromPane(index, els) {
   // copy the transcript into the new folder's project dir FIRST so --resume
   // can actually find it there.
   if (pane.cliSessionId && sessionById(pane.sessionId)?.cwd && sessionById(pane.sessionId).cwd !== cwd) {
-    const switchRes = await window.maestro.switchSessionRootFolder(pane.cliSessionId, pane.sessionId, cwd);
+    const switchRes = await window.helm.switchSessionRootFolder(pane.cliSessionId, pane.sessionId, cwd);
     if (!switchRes.ok) {
       if (panes[index] === pane) {
         pane.busy = false;
@@ -3690,7 +3690,7 @@ async function sendFromPane(index, els) {
     }
   }
 
-  const res = await window.maestro.startSession({
+  const res = await window.helm.startSession({
     cwd,
     prompt,
     model,
@@ -3842,14 +3842,14 @@ function computeSidebarFingerprint(sessions, config) {
 let lastSidebarFingerprint = null;
 
 async function refresh() {
-  const data = await window.maestro.getSessions();
+  const data = await window.helm.getSessions();
   // Detect sessions newly transitioning INTO "waiting" (not already waiting
   // before this poll) for away-from-desk attention delivery - fire once per
   // transition, not on every poll tick a session happens to still be waiting.
   const previouslyWaiting = new Set(state.sessions.filter((s) => s.status === "waiting").map((s) => s.sessionId));
   for (const session of data.sessions) {
     if (session.status === "waiting" && !previouslyWaiting.has(session.sessionId)) {
-      window.maestro.notifyAttention({ title: "Maestro - session needs input", body: session.title });
+      window.helm.notifyAttention({ title: "Helm - session needs input", body: session.title });
     }
   }
   state.sessions = data.sessions;
@@ -3896,7 +3896,7 @@ async function startup() {
   // an async round-trip. Fetched before the first refresh so the initial
   // render already tags orchestrator sessions correctly.
   try {
-    const oi = await window.maestro.getOrchestratorInfo();
+    const oi = await window.helm.getOrchestratorInfo();
     if (oi.ok) {
       state.orchestratorHome = oi.cwd;
     }
@@ -3914,14 +3914,14 @@ async function startup() {
 // runs still show on the Goal page after a restart, instead of the in-memory
 // Map silently starting empty every time. Only the compact fields main.js
 // wrote are available (no iteration list/plan — those live in the worktree's
-// own .maestro-goal/notes.md), so each rehydrated entry renders as a plain
+// own .helm-goal/notes.md), so each rehydrated entry renders as a plain
 // finished/interrupted summary rather than the richer live-run view. Runs
 // left "running" have already been downgraded to "interrupted" by the
 // goal:history handler if no live process backs them.
 async function rehydrateGoalRuns() {
   let records = [];
   try {
-    records = await window.maestro.getGoalRunHistory();
+    records = await window.helm.getGoalRunHistory();
   } catch {
     return;
   }
@@ -4032,7 +4032,7 @@ document.getElementById("newCategory").addEventListener("click", createCategory)
 // a supporting surface now that the Fleet is the primary triage view, so the
 // sidebar can fold to a slim rail and hand its width back to the workspace.
 // The collapse class lives on #chatPage (which carries .layout, the grid).
-const SIDEBAR_COLLAPSED_KEY = "maestro.sidebar.collapsed";
+const SIDEBAR_COLLAPSED_KEY = "helm.sidebar.collapsed";
 
 function isSidebarCollapsed() {
   try {
@@ -4078,7 +4078,7 @@ document.getElementById("collapseAll").addEventListener("click", async () => {
   }
   const allCollapsed = groups.every((g) => g.collapsed);
   const next = groups.map((g) => ({ ...g, collapsed: !allCollapsed }));
-  state.config = await window.maestro.setConfig({ groups: next });
+  state.config = await window.helm.setConfig({ groups: next });
   renderSidebar();
 });
 
@@ -4424,7 +4424,7 @@ function fleetMateCardEl(mate, sms, boardSummary = {}) {
       done = true;
       const v = input.value.trim();
       if (save && v && v !== mate.name) {
-        window.maestro.renameMate(mate.mateId, v).then(() => fillDashboardSections({ force: true }));
+        window.helm.renameMate(mate.mateId, v).then(() => fillDashboardSections({ force: true }));
       } else {
         fillDashboardSections({ force: true }); // restore the label
       }
@@ -4450,7 +4450,7 @@ function fleetMateCardEl(mate, sms, boardSummary = {}) {
   retireBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     customConfirm(`Retire ${mate.name} and spin up a fresh mate in its place?`, "Retire", () => {
-      window.maestro.retireMate(mate.mateId).then(() => fillDashboardSections({ force: true }));
+      window.helm.retireMate(mate.mateId).then(() => fillDashboardSections({ force: true }));
     });
   });
   actions.append(renameBtn, retireBtn);
@@ -4553,7 +4553,7 @@ function fleetNudgeEl(mate, kind, opts = {}) {
       e.stopPropagation();
       // Same guarded path as the header retire icon - was firing with no confirm.
       customConfirm(`Retire ${mate.name} and spin up a fresh mate in its place?`, "Retire", () => {
-        window.maestro.retireMate(mate.mateId).then(() => fillDashboardSections({ force: true }));
+        window.helm.retireMate(mate.mateId).then(() => fillDashboardSections({ force: true }));
       });
     });
     nudge.append(btn);
@@ -4665,7 +4665,7 @@ function fleetSecondMateEl(sm) {
         s.isArchived = true; // the app's real archived flag (not status)
       }
       branch.remove();
-      window.maestro.archiveSession(backingSession.sessionId, true);
+      window.helm.archiveSession(backingSession.sessionId, true);
     });
     head.append(archiveBtn);
   }
@@ -4840,7 +4840,7 @@ async function fillDashboardSections({ force = false } = {}) {
     return;
   }
 
-  const goalsResult = await window.maestro.getJotGoals();
+  const goalsResult = await window.helm.getJotGoals();
   const inMotion = dashboardInMotionRows();
   const isColdStart = inMotion.length === 0 && (!goalsResult.ok || goalsResult.goals.length === 0);
 
@@ -4861,13 +4861,13 @@ async function fillDashboardSections({ force = false } = {}) {
     document.getElementById("dashQueueSlot").replaceChildren(dashboardQueueSection());
   }
 
-  const [matesResult, secondMatesResult] = await Promise.all([window.maestro.listMates(), window.maestro.listSecondMates()]);
+  const [matesResult, secondMatesResult] = await Promise.all([window.helm.listMates(), window.helm.listSecondMates()]);
   const activeMatesList = matesResult?.ok ? matesResult.active : [];
   const secondMatesList = augmentSecondMatesWithSessions(secondMatesResult?.ok ? secondMatesResult.secondMates : []);
   // Trigger layer 3: the Jot board state of the projects the mates work, so the
   // retire nudge can strengthen (boards clear) or dampen (urgent task queued).
   const projectPaths = [...new Set(secondMatesList.map((s) => s.projectPath).filter(Boolean))];
-  const boardResult = projectPaths.length ? await window.maestro.getJotBoardSummary(projectPaths) : null;
+  const boardResult = projectPaths.length ? await window.helm.getJotBoardSummary(projectPaths) : null;
   const boardSummary = boardResult?.ok ? boardResult.summary : {};
   // Live sub-agents as crew: only for session nodes whose session is actively
   // working (an idle session has none), so we tail-read only a couple of
@@ -4877,7 +4877,7 @@ async function fillDashboardSections({ force = false } = {}) {
     .map((sm) => ({ sm, sess: state.sessions.find((s) => (s.cliSessionId || s.sessionId) === sm.sessionId) }))
     .filter((x) => x.sess && x.sess.status === "active");
   if (activeSessionNodes.length) {
-    const saRes = await window.maestro.getLiveSubAgents(activeSessionNodes.map((x) => ({ cliSessionId: x.sess.cliSessionId, sessionId: x.sess.sessionId })));
+    const saRes = await window.helm.getLiveSubAgents(activeSessionNodes.map((x) => ({ cliSessionId: x.sess.cliSessionId, sessionId: x.sess.sessionId })));
     const saMap = saRes?.ok ? saRes.subAgents : {};
     for (const { sm, sess } of activeSessionNodes) {
       sm.crew = (saMap[sess.sessionId] || []).map((a) => ({ isSubAgent: true, id: a.id, goal: a.description, status: "running" }));
@@ -5039,11 +5039,11 @@ function focusModeToggleEl(rerender = renderDashboardPage) {
 // dashProposeRowEl used before this change) rather than hiding that control
 // behind a second page.
 // NOT wired up: the mock's per-row context-budget bar and worktree path
-// (PLAN.md's worker/isolated-worktree model isn't built yet - Maestro today
+// (PLAN.md's worker/isolated-worktree model isn't built yet - Helm today
 // runs sessions directly, not via dispatched worktree workers) - labeled as a
 // placeholder rather than faked. Proposal KINDS beyond archive suggestions
 // (stale Jot task, "merge this worker branch") have no backing signal yet in
-// Maestro and are NOT fabricated here.
+// Helm and are NOT fabricated here.
 let dashboardArchiveGroupExpanded = false; // local UI state, resets on reload
 
 // Shared between dashboardProposalSessions() below and the sidebar's
@@ -5293,7 +5293,7 @@ function dashProposeRowEl(session) {
   dismiss.addEventListener("click", async (e) => {
     e.stopPropagation();
     row.classList.add("dash-resolved");
-    state.config = await window.maestro.setConfig({
+    state.config = await window.helm.setConfig({
       dismissedArchiveProposals: {
         ...(state.config.dismissedArchiveProposals || {}),
         [session.sessionId]: session.lastActivityAt,
@@ -5404,7 +5404,7 @@ function dashGoalRunRowEl(run) {
 // domainForGoal (see comment above the toggle). An unclassified goal (no domain
 // on its Jot category) belongs to "All" only - dimmed under Work/Private.
 async function dashboardGoalsSection(preloadedResult) {
-  const result = preloadedResult ?? (await window.maestro.getJotGoals());
+  const result = preloadedResult ?? (await window.helm.getJotGoals());
 
   const section = document.createElement("section");
   section.className = "dash-board";
@@ -5492,7 +5492,7 @@ function dashGoalCardEl(goal) {
 // --- New session -------------------------------------------------------
 // Project chips come from two sources:
 //   - repo projects: derived from actual repo cwd's seen among state.sessions
-//     (so the chip list reflects real projects Maestro has touched).
+//     (so the chip list reflects real projects Helm has touched).
 //   - domain projects: PLAN.md's non-repo "life-domain" project type (gym,
 //     cycling, kombucha, ...) — a small persisted registry (domains.js),
 //     surfaced here with a distinct icon per the approved dashboard mock
@@ -5527,7 +5527,7 @@ async function dashboardNewSessionSection() {
   chipGrid.className = "dash-chip-grid";
 
   const knownRepos = [...new Set(state.sessions.filter((s) => s.cwd).map((s) => s.cwd))];
-  const domains = await window.maestro.listDomains();
+  const domains = await window.helm.listDomains();
 
   // { cwd, label, icon } for every selectable chip, repos first then domains,
   // so dashAutoContextStripEl can look up the selected chip's label/icon by
@@ -5580,7 +5580,7 @@ function dashChipEl(label, cwd, icon) {
   chip.append(document.createTextNode(label));
   chip.addEventListener("click", async () => {
     if (cwd === "__other__") {
-      const folder = await window.maestro.pickFolder();
+      const folder = await window.helm.pickFolder();
       if (folder) {
         dashboardSelectedChip = folder;
         renderDashboardPage();
@@ -5606,7 +5606,7 @@ function dashChipEl(label, cwd, icon) {
 // the task's "keep it simple" - no dedicated modal/form. A domain's
 // CLAUDE.md is optional, so nothing here requires or creates one.
 async function promptRegisterDomain() {
-  const folder = await window.maestro.pickDomainFolder();
+  const folder = await window.helm.pickDomainFolder();
   if (!folder) {
     return;
   }
@@ -5630,7 +5630,7 @@ async function promptRegisterDomain() {
     if (!finalName) {
       return;
     }
-    const result = await window.maestro.registerDomain({ name: finalName, path: folder });
+    const result = await window.helm.registerDomain({ name: finalName, path: folder });
     if (!result.ok) {
       showToast(result.error || "Couldn't register domain.");
       return;
@@ -5726,7 +5726,7 @@ async function renderFocusPage() {
   header.textContent = "Focus";
   page.append(header);
 
-  const result = await window.maestro.getJotGoals();
+  const result = await window.helm.getJotGoals();
 
   if (!result.ok) {
     const empty = document.createElement("div");
@@ -5922,7 +5922,7 @@ function focusGoalBreakdown(goal) {
     }
     btn.disabled = true;
     input.disabled = true;
-    const res = await window.maestro.addJotSubtask(goal.id, text);
+    const res = await window.helm.addJotSubtask(goal.id, text);
     if (res.ok) {
       // Keep this goal expanded so the new subtask is visible after re-render.
       selectedGoalId = goal.id;
@@ -6003,7 +6003,7 @@ function renderGoalPage() {
   pickBtn.textContent = "…";
   pickBtn.title = "Pick project folder";
   pickBtn.addEventListener("click", async () => {
-    const folder = await window.maestro.pickFolder();
+    const folder = await window.helm.pickFolder();
     if (folder) {
       cwdInput.value = folder;
       await suggestVerifyCommandFor(folder);
@@ -6074,7 +6074,7 @@ function renderGoalPage() {
     if (!folder || verifyInput.value.trim()) {
       return;
     }
-    const res = await window.maestro.suggestVerifyCommand(folder);
+    const res = await window.helm.suggestVerifyCommand(folder);
     if (res && res.ok && res.command && !verifyInput.value.trim()) {
       verifyInput.value = res.command;
     }
@@ -6139,7 +6139,7 @@ function renderGoalPage() {
       err.textContent = "Pick a project folder first.";
       return;
     }
-    const res = await window.maestro.runGoal({ projectPath, goal, maxIterations, model, effort, verifyCommand, escalationConfig });
+    const res = await window.helm.runGoal({ projectPath, goal, maxIterations, model, effort, verifyCommand, escalationConfig });
     if (!res || !res.ok) {
       err.textContent = "Failed to start: " + (res?.error || "unknown error");
       return;
@@ -6224,7 +6224,7 @@ function goalRunDetailEl(run) {
     cancelBtn.addEventListener("click", async () => {
       cancelBtn.disabled = true;
       cancelBtn.textContent = "Cancelling after current iteration…";
-      await window.maestro.cancelGoal(run.goalRunId);
+      await window.helm.cancelGoal(run.goalRunId);
     });
     head.append(cancelBtn);
   } else {
@@ -6257,7 +6257,7 @@ function goalRunDetailEl(run) {
     statusLine.textContent = "Run ended with an error.";
   } else if (run.status === "interrupted") {
     // Rehydrated from disk (see goalRunHistory.js/goal:history): the run was
-    // still "running" when Maestro last shut down, so there is no live
+    // still "running" when Helm last shut down, so there is no live
     // process behind it anymore - its actual outcome is unknown, not "done".
     statusLine.textContent = "Interrupted by an app restart - check the worktree/branch on disk for what it left behind.";
   }
@@ -6324,7 +6324,7 @@ function goalWorktreeActionsEl(run, worktreePath) {
   openBtn.textContent = "Open worktree";
   openBtn.title = worktreePath;
   openBtn.addEventListener("click", async () => {
-    const res = await window.maestro.openGoalWorktree(worktreePath);
+    const res = await window.helm.openGoalWorktree(worktreePath);
     if (res && !res.ok) {
       showToast(res.error || "Couldn't open the worktree.");
     }
@@ -6349,7 +6349,7 @@ function goalWorktreeActionsEl(run, worktreePath) {
         onClick: async () => {
           deleteBtn.disabled = true;
           openBtn.disabled = true;
-          const res = await window.maestro.deleteGoalWorktree({
+          const res = await window.helm.deleteGoalWorktree({
             goalRunId: run.goalRunId,
             projectPath: run.projectPath,
             worktreePath,
@@ -6378,14 +6378,14 @@ function goalWorktreeActionsEl(run, worktreePath) {
 // for the iteration card, matching the app's other compact-label conventions.
 const GOAL_PHASE_LABELS = { research: "Research", plan: "Plan", implement: "Implement" };
 
-// An expandable block showing the current `.maestro-goal/plan.md` content -
+// An expandable block showing the current `.helm-goal/plan.md` content -
 // reuses the same <details>/.tool-group pattern as tool-call output elsewhere
 // in the app, rather than inventing a new expandable widget.
 function goalPlanBlock(planContent) {
   const details = document.createElement("details");
   details.className = "tool-group goal-plan-block";
   const summary = document.createElement("summary");
-  summary.textContent = "Plan (.maestro-goal/plan.md)";
+  summary.textContent = "Plan (.helm-goal/plan.md)";
   details.append(summary);
   const pre = document.createElement("pre");
   pre.className = "tool-call-output goal-plan-content";
@@ -6413,7 +6413,7 @@ function goalContractBlock(contract) {
     // Don't toggle the <details> when the copy icon (inside <summary>) is clicked.
     e.preventDefault();
     e.stopPropagation();
-    window.maestro.copyToClipboard(contract);
+    window.helm.copyToClipboard(contract);
     copyBtn.textContent = "✓";
     copyBtn.classList.add("copied");
     setTimeout(() => {
@@ -6658,7 +6658,7 @@ function goalEscalationCard(escalation) {
 // Live goal-run events (own channel, parallel to session events). Each payload
 // carries goalRunId; events from a stale run (a previous run, or after a new
 // one started) are ignored so late events can't clobber current state.
-window.maestro.onGoalEvent((evt) => {
+window.helm.onGoalEvent((evt) => {
   let run = goalRuns.get(evt.goalRunId);
   if (!run) {
     // A DISPATCHED run (launched by the app's dispatch watcher, not the Goal
@@ -6708,7 +6708,7 @@ window.maestro.onGoalEvent((evt) => {
     unseenGoalAttention.add(run.goalRunId);
     showToast(`Goal run "${run.goal}" failed: ${run.error}`);
     updateGoalAttentionBadge();
-    window.maestro.notifyAttention({ title: "Maestro - a goal run failed", body: run.goal });
+    window.helm.notifyAttention({ title: "Helm - a goal run failed", body: run.goal });
   } else if (evt.kind === "escalation") {
     // Point 12 Phase-0 escalation (opt-in) - arrives BEFORE "done" (see
     // main.js's goal:run handler), so the escalation card can show up the
@@ -6718,7 +6718,7 @@ window.maestro.onGoalEvent((evt) => {
     unseenGoalAttention.add(run.goalRunId);
     showToast(`Goal run "${run.goal}" paused - needs you`);
     updateGoalAttentionBadge();
-    window.maestro.notifyAttention({ title: "Maestro - a run needs you", body: run.goal });
+    window.helm.notifyAttention({ title: "Helm - a run needs you", body: run.goal });
   }
   // Ambient running indicator is app-wide, so update it on every event
   // regardless of which page is visible.
@@ -6755,7 +6755,7 @@ function updateGoalAttentionBadge() {
 // unseen goal-run error/escalation, or a session sitting in "waiting".
 function updateAttentionTaskbarCount() {
   const waitingSessions = state.sessions.filter((s) => !s.isArchived && s.status === "waiting").length;
-  window.maestro.setAttentionCount(unseenGoalAttention.size + waitingSessions);
+  window.helm.setAttentionCount(unseenGoalAttention.size + waitingSessions);
 }
 
 // Ambient "N Autopilot runs in progress" indicator on the Dashboard tab -
@@ -6812,7 +6812,7 @@ let lavishState = {
 // file load { kind: "file", path } or a pasted-HTML load { kind: "paste",
 // html, label } - so a pasted mockup (which has no path to remember) can still
 // be reloaded in one click, not just file-path loads.
-const LAVISH_RECENT_KEY = "maestro.lavish.recentMockups";
+const LAVISH_RECENT_KEY = "helm.lavish.recentMockups";
 const LAVISH_RECENT_MAX = 5;
 
 function loadLavishRecents() {
@@ -6879,7 +6879,7 @@ let lavishRecents = loadLavishRecents();
 // is one action rather than a copy-paste round-trip. Returns { ok } or
 // { ok: false, error }.
 async function openMockupInPlan(html) {
-  const built = await window.maestro.buildArtifactSrcdoc(html);
+  const built = await window.helm.buildArtifactSrcdoc(html);
   if (!built || !built.ok) {
     return { ok: false, error: built?.error || "unknown error" };
   }
@@ -6902,7 +6902,7 @@ async function openMockupInPlan(html) {
 // in the Plan view - the entry point for a generated artifact. Reads the file,
 // then hands off to openMockupInPlan. Returns { ok } / { ok: false, error }.
 async function openMockupFileInPlan(filePath) {
-  const res = await window.maestro.readArtifactFile(filePath);
+  const res = await window.helm.readArtifactFile(filePath);
   if (!res || !res.ok) {
     return { ok: false, error: res?.error || "unknown error" };
   }
@@ -6918,8 +6918,8 @@ async function openMockupFileInPlan(filePath) {
 // This is the connection point the artifact-generation-during-planning flow
 // will call so a generated vision-mockup lands in the annotator in one step;
 // nothing sends it yet, so it's inert until that flow is wired.
-if (window.maestro.onOpenMockup) {
-  window.maestro.onOpenMockup(async (payload = {}) => {
+if (window.helm.onOpenMockup) {
+  window.helm.onOpenMockup(async (payload = {}) => {
     const { filePath, html } = payload;
     let res;
     if (html) {
@@ -6982,7 +6982,7 @@ function renderLavishPage() {
   pickBtn.textContent = "…";
   pickBtn.title = "Pick an HTML file";
   pickBtn.addEventListener("click", async () => {
-    const files = await window.maestro.pickFiles();
+    const files = await window.helm.pickFiles();
     if (files && files.length) {
       pathInput.value = files[0];
     }
@@ -7153,7 +7153,7 @@ function renderLavishCollected() {
   copyBtn.addEventListener("click", async () => {
     const text = await lavishFormatText();
     if (text) {
-      await window.maestro.copyToClipboard(text);
+      await window.helm.copyToClipboard(text);
       copyBtn.textContent = "Copied!";
       setTimeout(() => (copyBtn.textContent = "Copy feedback"), 1500);
     }
@@ -7178,7 +7178,7 @@ function renderLavishCollected() {
       promptEl.dispatchEvent(new Event("input", { bubbles: true }));
     }
     // Also copy, so it's usable even if the user isn't looking at the composer.
-    await window.maestro.copyToClipboard(text);
+    await window.helm.copyToClipboard(text);
     // Jump to the Chat page so the composer is visible with the feedback in it.
     navigateToPage("chat");
   });
@@ -7238,7 +7238,7 @@ function lavishAnnotationCard(a, index) {
 // Format the collected annotations + DOM snapshot into an agent-ready block.
 // Delegates to main (single source of truth in lib/lavishSdk.js).
 async function lavishFormatText() {
-  const res = await window.maestro.formatAnnotations(lavishState.annotations, lavishState.domSnapshot);
+  const res = await window.helm.formatAnnotations(lavishState.annotations, lavishState.domSnapshot);
   return res && res.ok ? res.text : "";
 }
 
@@ -7281,10 +7281,10 @@ window.addEventListener("message", (event) => {
 
 // ============================== Routines page ==============================
 // Read-only view over Claude Code's OWN scheduled tasks (files under
-// ~/.claude/scheduled-tasks/, one folder per task with a SKILL.md). Maestro
+// ~/.claude/scheduled-tasks/, one folder per task with a SKILL.md). Helm
 // does NOT run a scheduler of its own here - this page only lists what
 // already exists on disk, via routines:list (see lib/routines.js). A
-// Maestro-native routine type is a real idea (PLAN.md) but is not built in
+// Helm-native routine type is a real idea (PLAN.md) but is not built in
 // this pass; it is shown below as a clearly-marked "(coming)" placeholder
 // rather than faked with invented schedule data.
 
@@ -7299,7 +7299,7 @@ async function renderRoutinesPage() {
   const intro = document.createElement("div");
   intro.className = "analysis-totals";
   intro.textContent =
-    "Claude Code's own scheduled tasks (~/.claude/scheduled-tasks/) - read-only. Maestro doesn't run a scheduler of its own; this just shows what's already there.";
+    "Claude Code's own scheduled tasks (~/.claude/scheduled-tasks/) - read-only. Helm doesn't run a scheduler of its own; this just shows what's already there.";
   page.append(intro);
 
   const board = document.createElement("section");
@@ -7311,7 +7311,7 @@ async function renderRoutinesPage() {
   board.append(body);
   page.append(board);
 
-  const res = await window.maestro.listRoutines();
+  const res = await window.helm.listRoutines();
   // The page may have been navigated away from while the read was in flight;
   // avoid clobbering whatever the user is looking at now.
   if (page.classList.contains("hidden")) {
@@ -7331,7 +7331,7 @@ async function renderRoutinesPage() {
   const later = document.createElement("div");
   later.className = "later-note";
   later.textContent =
-    "(coming) A Maestro-native routine type - defined and run from inside Maestro itself, alongside these Claude-native ones - is not built in this pass.";
+    "(coming) A Helm-native routine type - defined and run from inside Helm itself, alongside these Claude-native ones - is not built in this pass.";
   page.append(later);
 }
 
@@ -7370,7 +7370,7 @@ function routineRowEl(task) {
   openBtn.textContent = "Copy path";
   openBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    window.maestro.copyToClipboard(task.skillPath);
+    window.helm.copyToClipboard(task.skillPath);
   });
   const actions = document.createElement("div");
   actions.className = "dash-queue-actions";
@@ -7521,7 +7521,7 @@ function settingsToggleRow(title, desc, checked, onChange) {
   return row;
 }
 
-// A place to actually get sessions back — "Remove from Maestro" and
+// A place to actually get sessions back — "Remove from Helm" and
 // "Archive" both used to be one-way (restorable only by hand-editing
 // config.json / knowing to look). Reads the same state.sessions/state.config
 // refresh() already keeps current; no separate IPC needed.
@@ -7585,7 +7585,7 @@ function renderArchivePage() {
   // session could be both, and listing it (with two unrelated "get it back"
   // actions) in both sections at once would just be confusing. Archived is
   // the more definitive state; unarchiving it is enough to see it again here
-  // even if it's still separately hidden from Maestro's own sidebar view.
+  // even if it's still separately hidden from Helm's own sidebar view.
   const hidden = hiddenIds
     .map(sessionById)
     .filter(Boolean)
@@ -7598,8 +7598,8 @@ function renderArchivePage() {
     archiveSectionEl("Archived sessions", archived, "No archived sessions.", (session) =>
       archiveRowEl(session, "Unarchive", () => unarchiveSession(session))
     ),
-    archiveSectionEl("Removed from Maestro", hidden, "Nothing hidden.", (session) =>
-      archiveRowEl(session, "Restore", () => restoreToMaestro(session))
+    archiveSectionEl("Removed from Helm", hidden, "Nothing hidden.", (session) =>
+      archiveRowEl(session, "Restore", () => restoreToHelm(session))
     )
   );
   page.append(grid);
@@ -7668,7 +7668,7 @@ function renderSettingsPage() {
       "Runs a cheap Haiku call after every completed prompt to flag whether the model/effort choice was too weak, too strong, or appropriate. Adds ~$0.015 per prompt. Shown under the composer, not in the chat history.",
       state.config.modelFitJudge?.enabled !== false,
       async (checked) => {
-        state.config = await window.maestro.setConfig({
+        state.config = await window.helm.setConfig({
           modelFitJudge: { ...(state.config.modelFitJudge || {}), enabled: checked },
         });
       }
@@ -7681,7 +7681,7 @@ function renderSettingsPage() {
       "Shows a native Windows notification (with its default sound) when a session completes a run, so you can switch away while it works.",
       state.config.notifyOnComplete !== false,
       async (checked) => {
-        state.config = await window.maestro.setConfig({ notifyOnComplete: checked });
+        state.config = await window.helm.setConfig({ notifyOnComplete: checked });
       }
     )
   );
@@ -7689,10 +7689,10 @@ function renderSettingsPage() {
   passiveGroup.append(
     settingsToggleRow(
       "Notify when something needs you",
-      "Fires an OS notification (and taskbar badge) when a run fails/pauses or a session needs input, only while Maestro isn't the focused window - so you can step away.",
+      "Fires an OS notification (and taskbar badge) when a run fails/pauses or a session needs input, only while Helm isn't the focused window - so you can step away.",
       state.config.notifyAttention !== false,
       async (checked) => {
-        state.config = await window.maestro.setConfig({ notifyAttention: checked });
+        state.config = await window.helm.setConfig({ notifyAttention: checked });
       }
     )
   );
@@ -7703,7 +7703,7 @@ function renderSettingsPage() {
       "Shows an \"Archive?\" pill on idle sessions with no open Jot review/in-progress/open work. Archiving still needs your click — this only surfaces the suggestion, it never archives on its own.",
       state.config.archiveSuggestions?.enabled === true,
       async (checked) => {
-        state.config = await window.maestro.setConfig({
+        state.config = await window.helm.setConfig({
           archiveSuggestions: { ...(state.config.archiveSuggestions || {}), enabled: checked },
         });
         refresh();
@@ -7717,7 +7717,7 @@ function renderSettingsPage() {
       "Periodically reads recent messages in idle/waiting sessions (a cheap Haiku call, ~15 min intervals) to tell apart a real open question from a finished answer, or genuinely stuck from genuinely idle. Sharpens the archive suggestion above and shows its read as a small note on the session row. A proposal only — never archives or acts on its own.",
       state.config.orchestratorHelper?.enabled === true,
       async (checked) => {
-        state.config = await window.maestro.setConfig({
+        state.config = await window.helm.setConfig({
           orchestratorHelper: { ...(state.config.orchestratorHelper || {}), enabled: checked },
         });
         refresh();
@@ -7733,7 +7733,7 @@ function renderSettingsPage() {
   sweepStatusEl.className = "settings-toggle-desc settings-sweep-status";
   sweepStatusEl.textContent = "Background sweep: checking…";
   passiveGroup.append(sweepStatusEl);
-  window.maestro.getSweepStatus().then((status) => {
+  window.helm.getSweepStatus().then((status) => {
     if (!status || !status.lastRunAt) {
       sweepStatusEl.textContent = "Background sweep: never run yet";
       return;
@@ -7752,7 +7752,7 @@ function renderSettingsPage() {
       "Periodically re-checks the same \"Suggestion accuracy\" comparison shown on the Analysis page (no extra cost — it's the existing usage log, no model call) and surfaces a dismissible note there when overriding the model/effort suggestion has been judged \"appropriate\" meaningfully more often than following it. Checked on the same sweep as the items above, after enough new judged runs accumulate. Never changes the suggestion heuristic itself — only tells you it might be worth revisiting.",
       state.config.suggestionAccuracyCheck?.enabled === true,
       async (checked) => {
-        state.config = await window.maestro.setConfig({
+        state.config = await window.helm.setConfig({
           suggestionAccuracyCheck: { ...(state.config.suggestionAccuracyCheck || {}), enabled: checked },
         });
       }
@@ -7772,7 +7772,7 @@ function renderSettingsPage() {
       `Automatically runs /compact on a session left idle for ~${state.config.autoCompact?.idleMinutes || 10} min whose context has grown past ~${Math.round((state.config.autoCompact?.thresholdTokens || 150000) / 1000)}k tokens (checked on the ~15 min sweep). Time-based, so it won't fire mid-work — only after you've stepped away. Unlike everything else here this ACTS on its own — it summarizes the session's context (lossy, but the full history stays in the transcript on disk). A small note appears on the row after it happens.`,
       state.config.autoCompact?.enabled === true,
       async (checked) => {
-        state.config = await window.maestro.setConfig({
+        state.config = await window.helm.setConfig({
           autoCompact: { ...(state.config.autoCompact || {}), enabled: checked },
         });
         refresh();
@@ -7810,7 +7810,7 @@ function renderSettingsPage() {
       { value: "transformers", label: "transformers.js" },
     ],
     async (value) => {
-      state.config = await window.maestro.setConfig({ voiceEngine: value });
+      state.config = await window.helm.setConfig({ voiceEngine: value });
     }
   );
   engineRow.append(engineLabel, engineDD.el);
@@ -7835,7 +7835,7 @@ function renderSettingsPage() {
       { value: "english", label: "English" },
     ],
     async (value) => {
-      state.config = await window.maestro.setConfig({ voiceLanguage: value });
+      state.config = await window.helm.setConfig({ voiceLanguage: value });
     }
   );
   languageRow.append(languageLabel, settingsLanguageDD.el);
@@ -7891,7 +7891,7 @@ function skillListEl(title, names, origin, cwd) {
       chip.className = "skill-chip";
       chip.textContent = n;
       chip.title = "Open SKILL.md";
-      chip.addEventListener("click", () => window.maestro.openSkill({ name: n, origin, cwd }));
+      chip.addEventListener("click", () => window.helm.openSkill({ name: n, origin, cwd }));
       list.append(chip);
     });
     section.append(list);
@@ -7913,8 +7913,8 @@ async function renderAnalysisPage() {
 
   const cwd = panes[focusedPaneIndex]?.cwd || "";
   const [{ global, project }, summary] = await Promise.all([
-    window.maestro.listSkills(cwd),
-    window.maestro.getUsageSummary(),
+    window.helm.listSkills(cwd),
+    window.helm.getUsageSummary(),
   ]);
 
   const header = document.createElement("h2");
@@ -7947,7 +7947,7 @@ async function renderAnalysisPage() {
     dismiss.className = "analysis-notice-dismiss";
     dismiss.textContent = "Dismiss";
     dismiss.addEventListener("click", async () => {
-      state.config = await window.maestro.setConfig({
+      state.config = await window.helm.setConfig({
         suggestionAccuracyNotice: { ...notice, dismissed: true },
       });
       renderAnalysisPage();
@@ -7969,7 +7969,7 @@ async function renderAnalysisPage() {
   if (modelEntries.length === 0) {
     const empty = document.createElement("div");
     empty.className = "pane-empty";
-    empty.textContent = "No data yet — usage logs as you use Maestro.";
+    empty.textContent = "No data yet — usage logs as you use Helm.";
     modelBlock.append(empty);
   } else {
     modelEntries.forEach(([m, c]) => modelBlock.append(barRow(m.replace("claude-", ""), c, modelMax)));
@@ -8098,7 +8098,7 @@ document.getElementById("viewToggle").addEventListener("click", async (e) => {
   if (!btn) {
     return;
   }
-  state.config = await window.maestro.setConfig({ viewMode: btn.dataset.mode });
+  state.config = await window.helm.setConfig({ viewMode: btn.dataset.mode });
   applyViewMode();
 });
 
@@ -8167,7 +8167,7 @@ document.getElementById("backgroundTasksBtn").addEventListener("click", (e) => {
   showContextMenu(e.clientX, e.clientY, items);
 });
 
-window.maestro.onSessionEvent((evt) => {
+window.helm.onSessionEvent((evt) => {
   // Ad-hoc one-off launch (e.g. a summarization call) not tied to any pane's
   // normal display — captured entirely here instead of routing further down.
   if (pendingLaunchCallbacks.has(evt.launchId)) {
@@ -8274,10 +8274,10 @@ window.maestro.onSessionEvent((evt) => {
       // Named mates: bind this now-identified session to the mate/second mate it
       // embodies, so the Fleet's "jump in" resumes it next time.
       if (pane.mateId) {
-        window.maestro.bindMateSession(pane.mateId, evt.sessionId);
+        window.helm.bindMateSession(pane.mateId, evt.sessionId);
       }
       if (pane.secondMateId) {
-        window.maestro.bindSecondMateSession(pane.secondMateId, evt.sessionId);
+        window.helm.bindSecondMateSession(pane.secondMateId, evt.sessionId);
       }
       break;
     case "tool_use":
@@ -8483,7 +8483,7 @@ function cmdkBuildCommands() {
     });
   }
 
-  // PROJECT ENTITIES - repo projects derived from cwd's Maestro has seen among
+  // PROJECT ENTITIES - repo projects derived from cwd's Helm has seen among
   // its sessions (the same repo-chip source as the dashboard launcher; kept
   // synchronous, so no async listDomains here - domains are omitted to keep
   // the palette instant). Starting one reuses the chip's Start-fresh flow.
@@ -8635,14 +8635,14 @@ renderBackgroundTasksBadge();
 startup();
 setInterval(refresh, 30000);
 
-window.maestro.getVersion().then((v) => {
+window.helm.getVersion().then((v) => {
   document.getElementById("appVersion").textContent = v;
 });
 
 // Stale-build indicator: shows the pill when main.js's periodic on-disk
 // check (see runStaleBuildCheck) finds the git HEAD has moved past what this
 // running instance booted with — i.e. the source on disk changed (a pull, an
-// edit) since Maestro started, so the currently running window no longer
+// edit) since Helm started, so the currently running window no longer
 // matches what's on disk. Purely informational (there is no in-app restart
 // action here — the captain restarts via his own script, which this must not try
 // to replace or second-guess).
@@ -8659,5 +8659,5 @@ function applyBuildStatus(status) {
   }
 }
 
-window.maestro.getBuildStatus().then(applyBuildStatus);
-window.maestro.onBuildStaleUpdate(applyBuildStatus);
+window.helm.getBuildStatus().then(applyBuildStatus);
+window.helm.onBuildStaleUpdate(applyBuildStatus);

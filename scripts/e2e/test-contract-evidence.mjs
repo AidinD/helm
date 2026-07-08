@@ -1,7 +1,7 @@
 // E2E: R7 - an Autopilot iteration surfaces its delegation contract (the exact
 // prompt) and its verify evidence (command + output behind the pass/fail
 // badge), and each run states it runs fresh-context per iteration. So a green
-// result is backed by visible proof, not a bare badge. Real launched Maestro/CDP.
+// result is backed by visible proof, not a bare badge. Real launched Helm/CDP.
 //
 // Run:  node scripts/e2e/test-contract-evidence.mjs
 import { launch } from "./harness.mjs";

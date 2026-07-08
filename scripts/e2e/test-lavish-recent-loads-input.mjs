@@ -1,6 +1,6 @@
 // E2E: clicking a Recent mockup loads its HTML back into the "Artifact HTML"
 // textarea (not just the iframe), so it's visible + editable. Real launched
-// Maestro via CDP. Covers both a paste recent and a file recent (via the
+// Helm via CDP. Covers both a paste recent and a file recent (via the
 // unified pastedHtml mirror in openMockupInPlan).
 //
 // Run:  node scripts/e2e/test-lavish-recent-loads-input.mjs
@@ -53,7 +53,7 @@ try {
   exitCode = 1;
   log("ERROR:", err.message);
 } finally {
-  await app.eval(`localStorage.removeItem("maestro.lavish.recentMockups")`).catch(() => {});
+  await app.eval(`localStorage.removeItem("helm.lavish.recentMockups")`).catch(() => {});
   const killOut = await app.close();
   log("cleanup:", killOut || "(nothing killed)");
 }
