@@ -328,8 +328,9 @@ h1 {
 
 .sidebar-collapsed .sidebar-head-row {
   flex-direction: column;
-  margin: 10px 6px 0;
-  gap: 4px;
+  align-items: center;
+  margin: 10px 0 0;
+  gap: 6px;
 }
 
 .sidebar-collapsed .sidebar-toolbar,
@@ -337,8 +338,25 @@ h1 {
   display: none;
 }
 
+/* Collapsed rail: match the plain .icon-btn styling used by the chevron next
+   to it, instead of keeping the full-width accent pill shrunk down - a bright
+   orange oval floating above a small grey chevron read as broken, not rail-like. */
 .sidebar-collapsed .new-chat-btn {
-  padding: 7px 0;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 6px;
+  font-weight: 400;
+}
+
+.sidebar-collapsed .new-chat-btn:hover {
+  background: var(--bg-card-hover);
+  color: var(--text);
+  filter: none;
 }
 
 .sidebar-collapsed .new-chat-btn .nc-full {
@@ -347,7 +365,8 @@ h1 {
 
 .sidebar-collapsed .new-chat-btn .nc-mini {
   display: inline;
-  font-size: 16px;
+  font-size: 15px;
+  line-height: 1;
 }
 
 .sidebar-toolbar {
