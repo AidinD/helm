@@ -3289,19 +3289,37 @@ button.primary {
   display: flex;
   gap: 4px;
 }
-.fleet-icon-btn {
+/* One shared Fleet button family. Ghost by default (subtle, border-only,
+   hover to accent - matches the app's button style + Aidin's "color only for
+   active states" rule); the .fleet-btn-accent modifier is the single filled
+   variant (retire/respawn). Folds five near-identical bespoke fleet button
+   classes (icon/start/archive/follow + the accent retire) into this family so
+   they stop drifting from the app's button look. */
+.fleet-btn {
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--text-dim);
   border-radius: 6px;
-  padding: 3px 6px;
+  padding: 3px 8px;
   font-size: 11px;
-  cursor: pointer;
   line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
 }
-.fleet-icon-btn:hover {
+.fleet-btn:hover {
   border-color: var(--accent);
   color: var(--text);
+}
+.fleet-btn-accent {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #1a1a1a;
+  font-weight: 600;
+}
+.fleet-btn-accent:hover {
+  border-color: var(--accent);
+  color: #1a1a1a;
+  filter: brightness(1.08);
 }
 
 .fleet-gauge {
@@ -3354,21 +3372,6 @@ button.primary {
 }
 .fleet-nudge.hold .fleet-nudge-tag {
   color: var(--text-dim);
-}
-.fleet-start-btn {
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text-dim);
-  border-radius: 7px;
-  padding: 4px 9px;
-  font-size: 11px;
-  font-weight: 600;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.fleet-start-btn:hover {
-  border-color: var(--accent);
-  color: var(--text);
 }
 .fleet-rename-input {
   font: inherit;
@@ -3441,21 +3444,10 @@ button.primary {
 .confirm-ok:hover {
   filter: brightness(1.08);
 }
+/* Positioning-only modifier on top of .fleet-btn (the look lives there). */
 .fleet-archive-btn {
   align-self: flex-start;
   margin-top: 1px;
-  border: 1px solid var(--border);
-  background: var(--bg-card);
-  color: var(--text-dim);
-  border-radius: 6px;
-  padding: 3px 8px;
-  font-size: 10.5px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.fleet-archive-btn:hover {
-  border-color: var(--accent);
-  color: var(--text);
 }
 .fleet-nudge-txt {
   flex: 1;
@@ -3474,21 +3466,6 @@ button.primary {
 .fleet-nudge.done .fleet-nudge-tag {
   color: var(--good);
 }
-.fleet-retire-btn {
-  border: 1px solid var(--accent);
-  border-radius: 6px;
-  padding: 4px 9px;
-  font-size: 11px;
-  font-weight: 600;
-  cursor: pointer;
-  white-space: nowrap;
-  background: var(--accent);
-  color: #1a1a1a;
-}
-.fleet-retire-btn:hover {
-  filter: brightness(1.08);
-}
-
 .fleet-branches {
   padding: 0 9px 9px;
   display: flex;
@@ -3648,21 +3625,6 @@ button.primary {
 .fleet-crew-item.crew-run .fleet-crew-g {
   color: var(--active);
 }
-.fleet-follow {
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text-dim);
-  border-radius: 5px;
-  padding: 2px 8px;
-  font-size: 10px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.fleet-follow:hover {
-  border-color: var(--active);
-  color: var(--active);
-}
-
 .dash-q-body {
   flex: 1;
   min-width: 0;
@@ -3769,10 +3731,14 @@ button.primary {
   border: 1px solid var(--accent);
 }
 
+/* Private is a quiet neutral outline, NOT var(--active): --active is the
+   running/selected STATE color (crew-run, etc.), so wearing it on a static
+   category label was a semantic clash. Work keeps the accent (it's the brand
+   hue, not a transient state); Private stays subtle. */
 .dash-domain-private {
   background: var(--bg);
-  color: var(--active);
-  border: 1px solid var(--active);
+  color: var(--text-dim);
+  border: 1px solid var(--text-faint);
 }
 
 .dash-goal-meta {

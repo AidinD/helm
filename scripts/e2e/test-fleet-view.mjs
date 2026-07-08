@@ -87,15 +87,15 @@ try {
   // awaiting) -> a 'work wrapped' retire nudge with a retire button.
   assert((await count("#dashFleetSlot .fleet-nudge.done")) === 1, "a work-wrapped mate shows the 'work wrapped' retire nudge");
   assert((await count("#dashFleetSlot .fleet-nudge.ctx")) === 0, "no context nudge when no session is open/saturated");
-  assert((await count("#dashFleetSlot .fleet-retire-btn")) === 1, "the nudge carries a Retire & respawn button");
+  assert((await count("#dashFleetSlot .fleet-btn-accent")) === 1, "the nudge carries a Retire & respawn button");
 
   // Jump-in handlers exist (clicking a mate card / second mate opens a session).
   assert(await app.eval(`typeof jumpIntoFirstMate === "function" && typeof jumpIntoSecondMate === "function"`), "jump-in handlers are wired");
 
   // Header controls + Direct start-session button.
-  assert((await count("#dashFleetSlot .fleet-mate-card:not(.direct) .fleet-icon-btn")) >= 4, "each first mate has rename + retire icons");
-  assert((await count("#dashFleetSlot .fleet-start-btn")) === 1, "the Direct column has a start-session button");
-  assert((await count("#dashFleetSlot .fleet-mate-card .fleet-retire-btn")) === 1, "the work-wrapped mate's nudge offers a retire button");
+  assert((await count("#dashFleetSlot .fleet-mate-card:not(.direct) .fleet-btn:not(.fleet-btn-accent)")) >= 4, "each first mate has rename + retire icons");
+  assert((await count("#dashFleetSlot .fleet-mate-card.direct .fleet-btn")) === 1, "the Direct column has a start-session button");
+  assert((await count("#dashFleetSlot .fleet-mate-card .fleet-btn-accent")) === 1, "the work-wrapped mate's nudge offers a retire button");
 
   // Trigger layer 3: re-render with an URGENT queued task on the work-wrapped
   // mate's project -> the nudge dampens to 'hold' with no retire button.
@@ -108,7 +108,7 @@ try {
   })()`);
   await wait(200);
   assert((await count("#dashFleetSlot .fleet-nudge.hold")) === 1, "an urgent queued task dampens the work-wrapped nudge to 'hold'");
-  assert((await count("#dashFleetSlot .fleet-nudge.hold .fleet-retire-btn")) === 0, "the dampened 'hold' nudge offers no retire button");
+  assert((await count("#dashFleetSlot .fleet-nudge.hold .fleet-btn-accent")) === 0, "the dampened 'hold' nudge offers no retire button");
   assert((await count("#dashFleetSlot .fleet-nudge.done")) === 0, "the 'done' nudge is suppressed while urgent work is queued");
 
   // Jump-in bug fix: a second mate with no bound session resumes the most recent
@@ -163,12 +163,12 @@ try {
 
   // Rename is inline (native window.prompt is disabled in Electron + unwanted):
   // clicking the rename icon shows an input, not a dialog.
-  await app.eval(`document.querySelector("#dashFleetSlot .fleet-mate-card:not(.direct) .fleet-icon-btn").click(); true`);
+  await app.eval(`document.querySelector("#dashFleetSlot .fleet-mate-card:not(.direct) .fleet-btn:not(.fleet-btn-accent)").click(); true`);
   await wait(120);
   assert((await count("#dashFleetSlot .fleet-rename-input")) === 1, "rename opens an inline input (not a native prompt)");
 
   // Retire shows a custom confirm MODAL (not window.confirm): 2nd icon = retire.
-  await app.eval(`document.querySelectorAll("#dashFleetSlot .fleet-mate-card:not(.direct) .fleet-icon-btn")[1].click(); true`);
+  await app.eval(`document.querySelectorAll("#dashFleetSlot .fleet-mate-card:not(.direct) .fleet-btn:not(.fleet-btn-accent)")[1].click(); true`);
   await wait(120);
   assert((await count(".confirm-overlay")) === 1, "retire opens a custom confirm modal (not window.confirm)");
   assert((await count(".confirm-overlay .confirm-ok")) === 1 && (await count(".confirm-overlay .confirm-cancel")) === 1, "the confirm modal has Retire + Cancel buttons");
@@ -203,7 +203,7 @@ try {
   const sub = await app.eval(`(() => {
     const el = fleetSecondMateEl({ secondMateId:"ss", firstMateId:"direct", projectPath:"D:/Repo/x", name:"x", sessionId:null, isSessionNode:true, crew:[{ isSubAgent:true, id:"a1", goal:"review dashboard", status:"running" }] });
     const it = el.querySelector(".fleet-crew-item");
-    return { count: el.querySelectorAll(".fleet-crew-item").length, label: it?.querySelector(".fleet-crew-label")?.textContent, hasFollow: !!it?.querySelector(".fleet-follow"), run: it?.classList.contains("crew-run") };
+    return { count: el.querySelectorAll(".fleet-crew-item").length, label: it?.querySelector(".fleet-crew-label")?.textContent, hasFollow: !!it?.querySelector(".fleet-btn"), run: it?.classList.contains("crew-run") };
   })()`);
   assert(sub.count === 1 && /^agent · review dashboard/.test(sub.label || ""), "a live sub-agent renders as an 'agent ·' crew item (got " + JSON.stringify(sub) + ")");
   assert(!sub.hasFollow, "a sub-agent crew item has no Follow button (the session node is the way in)");
