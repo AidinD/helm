@@ -74,6 +74,14 @@ relevance-matched, not guaranteed for a project-scoped worker. So the strategy:
   summarize the transcript - a transcript summary would have missed the traps too.
 - When Helm drives Helm, this transfer (context injection at spawn) is
   load-bearing infrastructure, not a nicety.
+- **Producer side (2026-07-08 extension):** the second mate documents the
+  durable layer ON THE GO - decision+WHY when it lands, gotcha when learned, a
+  short running state-of-play - not at renewal time. It is the only thing that
+  survives an ABRUPT handoff (crash / sudden context-limit / quota cut, where no
+  end-of-session summary runs), and keeps the stores faithful so carry-over has
+  something faithful to inject. Capture the RIGHT layer (decisions/traps/state),
+  not the step-by-step (git + transcript hold that); keep it a one-click
+  affordance so it doesn't fight "stay thin".
 
 This reframes several things already built or planned tonight:
 
