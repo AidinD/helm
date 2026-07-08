@@ -57,8 +57,10 @@ header {
 }
 
 .logo {
-  color: var(--accent);
-  font-size: 17px;
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+  flex: none;
 }
 
 h1 {
@@ -3252,6 +3254,11 @@ button.primary {
 }
 .fleet-anchor.direct {
   background: color-mix(in srgb, var(--text-faint) 22%, transparent);
+}
+.fleet-anchor-img {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
 }
 .fleet-mate-idbox {
   flex: 1;
