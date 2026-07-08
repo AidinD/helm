@@ -1551,21 +1551,18 @@ function openFreshDraftInPane(cwd, draftText, opts = {}) {
     promptEl.focus();
     promptEl.setSelectionRange(promptEl.value.length, promptEl.value.length);
     promptEl.dispatchEvent(new Event("input"));
-    // A non-empty draft landing silently in the textarea reads as "nothing
-    // happened" (esp. the long orchestrator block, and the composer is at the
-    // bottom while the launcher button is up top - a brief border flash alone
-    // is easy to miss). So: a toast (the app's reliable "something happened"
-    // signal, visible wherever you're looking) PLUS an accent flash on the
-    // composer shell for when your eyes are already there. Skipped for ""
-    // drafts (e.g. plain "Start fresh session"), which have nothing to show.
-    if (draftText) {
-      showToast("Draft loaded — review and press Enter to send");
-      const shellEl = paneEl.querySelector(".composer-shell");
-      if (shellEl) {
-        shellEl.classList.remove("composer-shell-draft-flash");
-        void shellEl.offsetWidth; // restart animation if triggered again quickly
-        shellEl.classList.add("composer-shell-draft-flash");
-      }
+    // A fresh pane landing silently reads as "nothing happened" (esp. when
+    // triggered from the Dashboard, far from the composer, or with a long
+    // orchestrator draft where a border flash alone is easy to miss). So: a
+    // toast (the app's reliable "something happened" signal, visible wherever
+    // you're looking) PLUS an accent flash on the composer shell for when your
+    // eyes are already there - for every fresh pane, draft or empty.
+    showToast(draftText ? "Draft loaded — review and press Enter to send" : "New session started");
+    const shellEl = paneEl.querySelector(".composer-shell");
+    if (shellEl) {
+      shellEl.classList.remove("composer-shell-draft-flash");
+      void shellEl.offsetWidth; // restart animation if triggered again quickly
+      shellEl.classList.add("composer-shell-draft-flash");
     }
   }
   return index;
@@ -4769,9 +4766,17 @@ function fleetDirectCardEl(sms) {
   startBtn.className = "fleet-btn";
   startBtn.textContent = "+ Session";
   startBtn.title = "Start a fresh session here (you pick the project)";
-  startBtn.addEventListener("click", (e) => {
+  startBtn.addEventListener("click", async (e) => {
     e.stopPropagation();
-    openFreshDraftInPane("", "", { forceIndex: 0 });
+    // Must have a real cwd: augmentSecondMatesWithSessions filters sessions on
+    // `s.cwd` truthy, so a session opened with cwd="" can never be matched back
+    // into the Direct list - it starts, but is unfindable from the fleet tree
+    // ever after ("new session hamnar inte under captain - hittar inte tillbaka").
+    const folder = await window.helm.pickFolder();
+    if (!folder) {
+      return;
+    }
+    openFreshDraftInPane(folder, "", { forceIndex: 0 });
     navigateToPage("chat");
   });
   top.append(anchor, idBox, startBtn);
