@@ -57,7 +57,10 @@
 
     <div class="layout hidden" id="chatPage">
       <nav class="sidebar" id="sidebar">
-        <button id="newChat" class="new-chat-btn">+ New chat</button>
+        <div class="sidebar-head-row">
+          <button id="newChat" class="new-chat-btn"><span class="nc-full">+ New chat</span><span class="nc-mini">+</span></button>
+          <button id="sidebarCollapse" class="icon-btn" title="Collapse sidebar" aria-label="Collapse sidebar">‹</button>
+        </div>
         <div class="sidebar-toolbar">
           <input type="text" id="search" class="search" placeholder="Search sessions…" />
           <button id="collapseAll" class="icon-btn" title="Collapse / expand all categories">⊟</button>

@@ -4027,6 +4027,43 @@ document.getElementById("search").addEventListener("input", (e) => {
 
 document.getElementById("newCategory").addEventListener("click", createCategory);
 
+// Collapsible sidebar (renderer-only pref, persisted in localStorage). Chat is
+// a supporting surface now that the Fleet is the primary triage view, so the
+// sidebar can fold to a slim rail and hand its width back to the workspace.
+// The collapse class lives on #chatPage (which carries .layout, the grid).
+const SIDEBAR_COLLAPSED_KEY = "maestro.sidebar.collapsed";
+
+function isSidebarCollapsed() {
+  try {
+    return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function applySidebarCollapsed(collapsed) {
+  document.getElementById("chatPage").classList.toggle("sidebar-collapsed", collapsed);
+  const btn = document.getElementById("sidebarCollapse");
+  if (btn) {
+    btn.textContent = collapsed ? "›" : "‹"; // › expand / ‹ collapse
+    btn.title = collapsed ? "Expand sidebar" : "Collapse sidebar";
+    btn.setAttribute("aria-label", btn.title);
+  }
+}
+
+function toggleSidebarCollapsed() {
+  const next = !isSidebarCollapsed();
+  try {
+    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, next ? "1" : "0");
+  } catch {
+    // localStorage unavailable - the collapse just won't persist this run.
+  }
+  applySidebarCollapsed(next);
+}
+
+document.getElementById("sidebarCollapse").addEventListener("click", toggleSidebarCollapsed);
+applySidebarCollapsed(isSidebarCollapsed());
+
 // Collapse/expand ALL categories at once — the lightweight "list-sorting
 // view" Aidin asked for: collapse everything to headers to see the whole
 // category order at a glance (and reorder), then expand back. Toggles based
