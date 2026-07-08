@@ -387,12 +387,18 @@ function memoryDirFor(cwd) {
 }
 
 ipcMain.handle("context:list", (_event, cwd) => {
-  const out = { claudeMd: [], memory: { dir: null, exists: false, files: [] } };
+  const out = { claudeMd: [], projectDocs: [], memory: { dir: null, exists: false, files: [] } };
   const g = resolveCanonicalGlobalClaudeMd();
   out.claudeMd.push({ kind: "globalClaude", label: "Global CLAUDE.md (canonical)", path: g.ok ? g.file : null, exists: g.ok });
   if (cwd) {
     const pj = path.join(cwd, "CLAUDE.md");
     out.claudeMd.push({ kind: "projectClaude", label: "Project CLAUDE.md", path: pj, exists: fs.existsSync(pj) });
+    // The durable project docs that do NOT auto-load (unlike CLAUDE.md) - the
+    // "etc" of the request, and what a carried-over session must be pointed at.
+    for (const name of ["DECISIONS.md", "PLAN.md"]) {
+      const p = path.join(cwd, name);
+      out.projectDocs.push({ kind: "projectDoc", name, path: p, exists: fs.existsSync(p) });
+    }
   }
   const memDir = memoryDirFor(cwd);
   out.memory.dir = memDir;
@@ -441,6 +447,18 @@ ipcMain.handle("context:open", (_event, { cwd, kind, name } = {}) => {
     const file = path.join(memoryDirFor(cwd), name);
     if (!fs.existsSync(file)) {
       return { ok: false, error: "Memory file not found" };
+    }
+    shell.showItemInFolder(file);
+    return { ok: true };
+  }
+  if (kind === "projectDoc") {
+    // Guarded to the known durable-doc names in the session's own cwd.
+    if (!cwd || (name !== "DECISIONS.md" && name !== "PLAN.md")) {
+      return { ok: false, error: "Invalid project doc" };
+    }
+    const file = path.join(cwd, name);
+    if (!fs.existsSync(file)) {
+      return { ok: false, error: name + " not found" };
     }
     shell.showItemInFolder(file);
     return { ok: true };
