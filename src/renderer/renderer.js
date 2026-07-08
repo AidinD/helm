@@ -1945,9 +1945,7 @@ async function persistCollapsed(groupLabel, collapsed) {
 
 function renderSidebar() {
   const body = document.getElementById("sidebarBody");
-  const pinned = document.getElementById("sidebarPinned");
   body.innerHTML = "";
-  pinned.innerHTML = "";
   // Defensive: the category-drag "collapse lists to headers" class lives on
   // this persistent element, cleared on dragend. If dragend ever fails to
   // fire (odd HTML5-drag cancel path), a full re-render must not leave every
@@ -1960,21 +1958,15 @@ function renderSidebar() {
     .filter((s) => !hiddenIds.has(s.sessionId))
     .filter(matchesSearch);
 
-  if ((state.config.sidebarMode || "smart") === "list") {
-    body.append(
-      sectionEl({ label: "All sessions", sessions: visible, collapsed: false, droppable: false })
-    );
-    return;
-  }
+  // Flat "list" mode was removed (2026-07-07): it duplicated the Fleet's Direct
+  // column (every session, flat) with none of Fleet's status/crew info. The
+  // sidebar's distinct value is organizing + searching your own sessions.
 
-  // No privileged "orchestrator session" pinned above everything else
-  // anymore (PLAN.md's orchestrator-lifespan redesign) — a session tagged as
-  // Maestro-building work (isOrchestratorSession) still gets its "◆" marker
-  // inline (see rowEl) but otherwise flows into Needs-attention/its
-  // group/Unsorted exactly like any other session. #sidebarPinned is left
-  // unused here (still cleared above) rather than removed outright, in case
-  // a future slice pins something else there.
+  // A Maestro-building session (isOrchestratorSession) gets a "◆" marker inline
+  // (see rowEl) but otherwise flows into Needs-attention / its group / Unsorted
+  // like any other session - no privileged pinned card.
   const attention = visible.filter((s) => s.needsAttention);
+  const attentionIds = new Set(attention.map((s) => s.sessionId));
   if (attention.length > 0) {
     body.append(
       sectionEl({ label: "Needs your attention", sessions: attention, collapsed: false, pinned: true, droppable: false })
@@ -2002,7 +1994,9 @@ function renderSidebar() {
     );
   }
 
-  const unsorted = visible.filter((s) => !grouped.has(s.sessionId));
+  // Exclude sessions already shown in the pinned "Needs your attention" section
+  // so a needs-attention, uncategorized session doesn't render twice (review).
+  const unsorted = visible.filter((s) => !grouped.has(s.sessionId) && !attentionIds.has(s.sessionId));
   body.append(sectionEl({ label: "Unsorted", sessions: unsorted, collapsed: false, droppable: "unsorted" }));
 }
 
@@ -3862,7 +3856,6 @@ async function refresh() {
   state.quota = data.quota;
   updateAttentionTaskbarCount();
   applyViewMode();
-  applySidebarMode();
   // Don't rebuild the sidebar out from under an in-progress category drag —
   // innerHTML="" would destroy the dragged header and the drag-collapse
   // mid-gesture (jarring layout jump). State above is still refreshed; the
@@ -8063,21 +8056,6 @@ document.getElementById("viewToggle").addEventListener("click", async (e) => {
   applyViewMode();
 });
 
-document.getElementById("sidebarModeToggle").addEventListener("click", async (e) => {
-  const btn = e.target.closest("button[data-mode]");
-  if (!btn) {
-    return;
-  }
-  state.config = await window.maestro.setConfig({ sidebarMode: btn.dataset.mode });
-  applySidebarMode();
-  renderSidebar();
-});
-
-function applySidebarMode() {
-  document.querySelectorAll("#sidebarModeToggle button").forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.mode === (state.config.sidebarMode || "smart"));
-  });
-}
 
 
 // ============================== Background tasks (subagents) ==============================

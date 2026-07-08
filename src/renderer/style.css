@@ -330,15 +330,6 @@ h1 {
   outline: none;
 }
 
-.sidebar-mode-toggle {
-  margin: 4px 10px 6px;
-  align-self: flex-start;
-}
-
-.sidebar-mode-toggle button {
-  flex: 1;
-}
-
 .search {
   flex: 1;
   min-width: 0;
@@ -350,13 +341,6 @@ h1 {
   padding: 0 10px;
   font: inherit;
   font-size: 12.5px;
-}
-
-/* Sibling of #sidebarBody, not its first child — holds only the pinned
-   orchestrator card, which must stay visible while the rest of the sidebar
-   scrolls underneath it. */
-#sidebarPinned {
-  flex-shrink: 0;
 }
 
 #sidebarBody {
