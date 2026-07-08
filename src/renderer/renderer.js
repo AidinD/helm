@@ -4816,32 +4816,39 @@ function fleetSecondMateEl(sm) {
     archiveBtn.className = "fleet-btn fleet-archive-btn";
     archiveBtn.title = "Archive this session";
     archiveBtn.textContent = "Archive";
-    archiveBtn.addEventListener("click", async (e) => {
+    archiveBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      // Optimistic + no forced REFETCH (that's the distinction that matters).
-      // The flicker before was: remove the node, then fillDashboardSections
-      // re-derived from a freshly refetched state.sessions - which STILL had
-      // the session (the archive hadn't propagated back yet) - so the node
-      // reappeared until a later refresh finally dropped it. Fix stays the
-      // same optimistic mutation, but now also repaints the other dashboard
-      // sections (queue/"needs you & in motion") from the ALREADY-updated
-      // in-memory state.sessions via refreshDashboardIfVisible, which is a
-      // pure in-place re-render (no refetch) - so it can't reintroduce that bug.
-      const s = state.sessions.find((x) => x.sessionId === backingSession.sessionId);
-      if (s) {
-        s.isArchived = true; // the app's real archived flag (not status)
-      }
-      branch.remove();
-      refreshDashboardIfVisible();
-      const res = await window.helm.archiveSession(backingSession.sessionId, true);
-      if (!res.ok) {
-        console.error("[helm] archive failed:", res.error);
-        showToast(`Couldn't archive "${backingSession.title}": ${res.error}`);
+      // Optimistic plain-archive (no forced REFETCH). The flicker before was:
+      // remove the node, then fillDashboardSections re-derived from a freshly
+      // refetched state.sessions that STILL had the session - so it reappeared
+      // until a later refresh. Fix: optimistic in-memory mutation + an in-place
+      // repaint (no refetch), so it can't reintroduce that bug.
+      const doPlainArchive = async () => {
+        const s = state.sessions.find((x) => x.sessionId === backingSession.sessionId);
         if (s) {
-          s.isArchived = false;
+          s.isArchived = true; // the app's real archived flag (not status)
         }
+        branch.remove();
         refreshDashboardIfVisible();
-      }
+        const res = await window.helm.archiveSession(backingSession.sessionId, true);
+        if (!res.ok) {
+          console.error("[helm] archive failed:", res.error);
+          showToast(`Couldn't archive "${backingSession.title}": ${res.error}`);
+          if (s) {
+            s.isArchived = false;
+          }
+          refreshDashboardIfVisible();
+        }
+      };
+      // Offer the last-effort handoff (save to the project's DECISIONS.md) when
+      // the session has a project cwd, same as the sidebar context menu - so
+      // this Fleet button isn't a silent no-handoff archive path.
+      showContextMenu(e.clientX, e.clientY, [
+        ...(backingSession.cwd
+          ? [{ label: "Save handoff to DECISIONS.md + archive", danger: true, onClick: () => archiveWithHandoff(backingSession) }]
+          : []),
+        { label: "Archive without a handoff", danger: true, onClick: () => doPlainArchive() },
+      ]);
     });
     head.append(archiveBtn);
   }
