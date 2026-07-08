@@ -1,5 +1,17 @@
 # Decisions
 
+## 2026-07-08 - Helm owns its own session index (FIXES the local_*.json gap flagged below)
+
+This is the fix for the "load-bearing architectural gap" the entry immediately below surfaced but left unfixed.
+Root cause (verified empirically AND re-verified in code): launcher.js starts every Helm session via headless `claude -p`, which writes the transcript to `~/.claude/projects/...` but NEVER a Desktop `local_*.json` in `%APPDATA%\Claude\claude-code-sessions`. readAllSessions (the only discovery path) reads ONLY that Desktop dir, so a session started inside Helm's own chat was structurally invisible in Helm's own Direct/Fleet/sidebar. The same root cause also broke archiving those sessions (patchSessionMeta scans Desktop files). Concretely confirmed: loom/jot have real local_*.json entries; this repo had zero.
+
+Two fixes were on the table. A context-poor spawned session proposed writing our own `local_*.json` into Anthropic's dir in their format. Rejected: it writes into the real Desktop app's live, undocumented, reverse-engineered private index - a schema slip could destabilize the daily-driver Desktop app, two writers race on files we don't own, a Claude Code update could silently break our writer, and it is barely verifiable from a Claude session (%APPDATA%\Claude writes hit the MSIX sandbox overlay - the same trap that already forced the archive write to be Aidin-verified).
+
+Chosen: Helm owns a `config.helmSessions` index (config.json, on D:\ - a REAL location, not the overlay; never Anthropic's schema). Same overlay pattern Helm already uses for titleOverrides/hiddenSessions. main.js records an entry the moment the CLI session id appears (so it shows while the first turn still runs), keyed by sessionId, with the cwd/model/title/timestamps Helm already knows; readAllSessions merges these with the Desktop list (Desktop file WINS on any id collision, so a resumed Desktop session is never doubled); session:archive routes a Helm-owned session's isArchived to our index. Status/last-role still derive from the transcript (which exists), so nothing downstream changed there.
+createIfAbsent gating: a fresh launch creates an entry, a resume only bumps an existing one (so resuming a Desktop session never fabricates a stray Helm entry); internal launches (summarize-carry-over) are excluded.
+Out of v1 scope (noted): durable folder-switch for a Helm session still warns rather than persists (switchSessionRootFolder's patchSessionMeta finds no Desktop file); rename already works (titleOverrides is a display overlay independent of the metadata file).
+Verified: unit test (scripts/e2e/test-helm-session-index.mjs, 7/7) proves merge + Desktop-wins dedup + archived-status, no claude/Electron needed. The full live path (real Helm chat -> entry in config.json -> shows in Direct -> archivable) is reliably verifiable BECAUSE config.json is on D:\ (unlike the rejected %APPDATA% approach) - to confirm on a real user-launched Helm.
+
 ## 2026-07-08 - Three real dashboard/fleet bugs found and fixed after Aidin's own manual test pass, plus a load-bearing architectural gap surfaced (not yet fixed)
 
 Aidin asked Claude-in-Helm to fix two P0 Jot bugs (empty-cwd Direct sessions never matching back into the fleet list, and the Dashboard's "New session" button giving no feedback for an empty draft).

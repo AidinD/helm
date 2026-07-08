@@ -381,6 +381,16 @@ ipcMain.handle("claudeMd:projectExists", (_event, cwd) => {
 // approving an orchestrator-proposed suggestion) — never called on a timer or
 // any other unattended trigger. ---
 ipcMain.handle("session:archive", (_event, { sessionId, archived }) => {
+  // A Helm-created session has no Desktop local_*.json for setSessionArchived
+  // to patch (it lives in config.helmSessions), so route its archive flag to
+  // our own index. Desktop sessions still patch their own file as before.
+  const cfg = loadConfig();
+  if (cfg.helmSessions && cfg.helmSessions[sessionId]) {
+    const map = { ...cfg.helmSessions };
+    map[sessionId] = { ...map[sessionId], isArchived: archived !== false };
+    writeConfig({ ...cfg, helmSessions: map });
+    return { ok: true };
+  }
   return setSessionArchived(sessionId, archived !== false);
 });
 
@@ -953,6 +963,42 @@ ipcMain.handle("secondMates:rename", (_event, { secondMateId, name }) => {
   }
 });
 
+// Records a Helm-created session into config.helmSessions so readAllSessions
+// can surface it (the headless `claude -p` launcher never writes a Desktop
+// local_*.json - see config.js/DECISIONS). Upserts: immutable fields are set
+// once (on create), lastActivityAt always bumps. `createIfAbsent:false` means
+// "only bump an existing entry" - used on resume/completion so resuming a
+// DESKTOP session (which Helm didn't create) never fabricates a stray entry.
+function recordHelmSession(sessionId, { cwd, model, effort, permissionMode, title, createIfAbsent } = {}) {
+  if (!sessionId) {
+    return;
+  }
+  try {
+    const cfg = loadConfig();
+    const map = { ...(cfg.helmSessions || {}) };
+    const existing = map[sessionId];
+    if (!existing && !createIfAbsent) {
+      return;
+    }
+    const now = Date.now();
+    map[sessionId] = {
+      sessionId,
+      cliSessionId: sessionId,
+      cwd: existing?.cwd ?? cwd ?? "",
+      model: existing?.model ?? model ?? "",
+      effort: existing?.effort ?? effort ?? "",
+      permissionMode: existing?.permissionMode ?? permissionMode ?? "",
+      title: existing?.title ?? title ?? "(untitled)",
+      isArchived: existing?.isArchived ?? false,
+      createdAt: existing?.createdAt ?? now,
+      lastActivityAt: now,
+    };
+    writeConfig({ ...cfg, helmSessions: map });
+  } catch (err) {
+    console.error("[helm] failed to record helm session:", err);
+  }
+}
+
 // --- Start (or resume) a rooted session; stream events to the renderer ---
 ipcMain.handle(
   "session:start",
@@ -1020,6 +1066,22 @@ ipcMain.handle(
       appendSystemPrompt,
       strictMcpConfig,
       onEvent: (evt) => {
+        if (evt.kind === "session" && evt.sessionId && !internal) {
+          // Record into Helm's own index the moment the session id appears, so
+          // a session shows in Direct/Fleet while its first turn is still
+          // running - not only once it completes. createIfAbsent only on a
+          // FRESH launch (no resume); a resumed Desktop session isn't ours to
+          // index. Title defaults to the first prompt line (renamable via the
+          // display-only titleOverrides overlay).
+          recordHelmSession(evt.sessionId, {
+            cwd,
+            model,
+            effort,
+            permissionMode,
+            title: prompt.trim().split("\n")[0].slice(0, 80) || "(untitled)",
+            createIfAbsent: !resumeSessionId,
+          });
+        }
         if (evt.kind === "quota" && evt.quota) {
           latestQuota = evt.quota;
         } else if (evt.kind === "tool_use" && evt.toolName) {
@@ -1080,6 +1142,14 @@ ipcMain.handle(
         if (changed) {
           writeConfig({ ...cfg, modelContextWindows: known });
         }
+      }
+
+      // Bump the Helm session index's lastActivityAt so status (waiting/idle
+      // age window) and attention sorting stay fresh across turns. Only bumps
+      // an existing entry (createIfAbsent:false) - never fabricates one for a
+      // resumed Desktop session.
+      if (!internal && summary.sessionId) {
+        recordHelmSession(summary.sessionId, { createIfAbsent: false });
       }
 
       // Helm-internal launches (e.g. the hidden "summarize & carry over"

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { findSessionsDir, findTranscriptPath, encodeProjectDir, projectsRoot } from "./paths.js";
+import { loadConfig } from "./config.js";
 
 // Default scoring weights for the attention ranking. Overridable via
 // config.jot.weights. "review" is weighted highest because in Aidin's Jot
@@ -79,6 +80,40 @@ export function readAllSessions(options = {}) {
     }
     sessions.push(buildSession(meta, attentionWindowMs));
   }
+
+  // Merge Helm-owned sessions. launcher.js starts every Helm session via a
+  // headless `claude -p`, which writes the transcript (so status/last-role
+  // still derive correctly below) but NEVER a Desktop local_*.json - so these
+  // sessions have no Desktop metadata and were invisible here. They live in
+  // config.helmSessions instead (see config.js). A Desktop file WINS on any id
+  // collision (e.g. a Desktop session later resumed through Helm), so a session
+  // is never listed twice. options.helmSessions lets tests inject a controlled
+  // map without touching the real config.
+  let helmSessions = options.helmSessions;
+  if (!helmSessions) {
+    try {
+      helmSessions = loadConfig().helmSessions || {};
+    } catch {
+      helmSessions = {};
+    }
+  }
+  const seenIds = new Set();
+  for (const s of sessions) {
+    seenIds.add(s.sessionId);
+    if (s.cliSessionId) {
+      seenIds.add(s.cliSessionId);
+    }
+  }
+  for (const meta of Object.values(helmSessions)) {
+    if (!meta || !meta.sessionId) {
+      continue;
+    }
+    if (seenIds.has(meta.sessionId) || (meta.cliSessionId && seenIds.has(meta.cliSessionId))) {
+      continue;
+    }
+    sessions.push(buildSession(meta, attentionWindowMs));
+  }
+
   return { error: null, sessions };
 }
 
