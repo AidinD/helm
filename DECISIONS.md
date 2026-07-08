@@ -1,5 +1,12 @@
 # Decisions
 
+## 2026-07-08 - Collapsible sidebar (Chat is a supporting surface)
+
+Now that the Fleet is the primary triage view, the Chat page's 300px session sidebar competes for width it no longer earns as the front door.
+Decision: keep the sidebar (its categories, live search, and rich row-actions have no Fleet equivalent) but make it collapsible to a slim 44px rail that hands its width back to the workspace.
+The collapse state persists in localStorage (renderer-only, no main-process IPC - matches the existing Lavish-recents pref pattern) and is applied on load, so it survives reloads.
+Rejected: cutting the sidebar entirely (would lose organizing/search/row-actions that the Fleet's Direct column doesn't offer) and a full flat "list" mode (already removed 2026-07-07 as a Fleet-Direct duplicate).
+
 ## 2026-07-07 - Cut split view (single pane is the model)
 
 Split view (two side-by-side panes with a draggable divider) is removed.

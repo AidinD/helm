@@ -291,8 +291,15 @@ h1 {
   min-height: 0;
 }
 
-.new-chat-btn {
+.sidebar-head-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin: 10px 10px 0;
+}
+
+.new-chat-btn {
+  flex: 1;
   background: var(--accent);
   border: none;
   color: #1a1a1a;
@@ -303,6 +310,42 @@ h1 {
 
 .new-chat-btn:hover {
   filter: brightness(1.08);
+}
+
+.new-chat-btn .nc-mini {
+  display: none;
+}
+
+/* Collapsible sidebar: Chat is a supporting surface now that the Fleet is the
+   primary triage view, so the 300px column can fold to a slim rail (just the
+   expand chevron + a new-chat affordance). State persists in localStorage
+   (renderer-only, no IPC). The class lives on #chatPage (which is .layout). */
+.layout.sidebar-collapsed {
+  grid-template-columns: 44px 1fr;
+}
+
+.sidebar-collapsed .sidebar-head-row {
+  flex-direction: column;
+  margin: 10px 6px 0;
+  gap: 4px;
+}
+
+.sidebar-collapsed .sidebar-toolbar,
+.sidebar-collapsed #sidebarBody {
+  display: none;
+}
+
+.sidebar-collapsed .new-chat-btn {
+  padding: 7px 0;
+}
+
+.sidebar-collapsed .new-chat-btn .nc-full {
+  display: none;
+}
+
+.sidebar-collapsed .new-chat-btn .nc-mini {
+  display: inline;
+  font-size: 16px;
 }
 
 .sidebar-toolbar {
