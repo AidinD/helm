@@ -68,9 +68,21 @@ try {
   assert(!(await isVisible("chatToolbar")), "#chatToolbar not visible on Plan");
   const leftPlan = await leftOf("pageToggle");
 
-  // (d) The primary tab bar must not shift horizontally across views.
+  // (d) The primary tab bar must not visibly shift across views. #pageToggle
+  // used to hold Dashboard/Chat/Plan together, so switching the active tab
+  // swapped bold state within that ONE box and the width delta cancelled out.
+  // The "Demote Chat/Plan" nav restructure split that into two boxes
+  // (#pageToggle = Dashboard only, #headerUtilityNav = Chat/Plan/Skills/
+  // Archive) - Dashboard's own group-active highlight (DASHBOARD_FACET_PAGES)
+  // now toggles independently in its own box, so #pageToggle's left edge can
+  // legitimately drift by a couple of sub-pixel-rounded px when leaving the
+  // Dashboard group. A tolerance keeps this catching the real regression it
+  // was written for (a control appearing/disappearing in the header, which
+  // shifts things by tens of px), not the two-box split's harmless noise.
+  const JUMP_TOLERANCE_PX = 3;
+  const noJump = Math.abs(leftDash - leftChat) <= JUMP_TOLERANCE_PX && Math.abs(leftChat - leftPlan) <= JUMP_TOLERANCE_PX;
   log(`#pageToggle left: dashboard=${leftDash} chat=${leftChat} plan=${leftPlan}`);
-  assert(leftDash === leftChat && leftChat === leftPlan, "#pageToggle left-edge is identical across Dashboard/Chat/Plan (no jump)");
+  assert(noJump, `#pageToggle left-edge is stable (within ${JUMP_TOLERANCE_PX}px) across Dashboard/Chat/Plan (no visible jump)`);
 
   const errors = app.getConsoleErrors();
   assert(errors.length === 0, `no console errors (got ${errors.length})`);
