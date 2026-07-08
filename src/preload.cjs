@@ -88,7 +88,8 @@ contextBridge.exposeInMainWorld("helm", {
   // renameMate/retireMate mutate (retire discards + respawns a fresh one).
   listMates: () => ipcRenderer.invoke("mates:list"),
   renameMate: (mateId, name) => ipcRenderer.invoke("mates:rename", { mateId, name }),
-  retireMate: (mateId) => ipcRenderer.invoke("mates:retire", { mateId }),
+  retireMate: (mateId, handoff) => ipcRenderer.invoke("mates:retire", { mateId, handoff }),
+  consumeMateHandoff: (mateId) => ipcRenderer.invoke("mates:consumeHandoff", { mateId }),
   // Links the CLI session currently embodying a mate, so "jump in" resumes it.
   bindMateSession: (mateId, sessionId) => ipcRenderer.invoke("mates:bindSession", { mateId, sessionId }),
   // Second mates: per-(firstMate,project) sessions derived from dispatched runs.

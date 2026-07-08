@@ -802,6 +802,37 @@ async function archiveSession(session) {
   refresh();
 }
 
+// Archive WITH a last-effort handoff: give the session one final turn to
+// summarize itself, save that to its project's DECISIONS.md (a durable store,
+// where a future session will actually read it), THEN archive. Unlike retire
+// (which continues under a fresh mate), archiving means "done here", so the
+// handoff lands in files rather than seeding a successor. A failed/empty
+// summary still archives - the save is best-effort, never a blocker. Only
+// offered when the session has a project cwd to write the handoff into.
+async function archiveWithHandoff(session) {
+  setPaneBusyUIRaw(focusedPaneIndex, `Saving handoff for "${session.title}"…`);
+  let saved = false;
+  try {
+    const res = await summarizeSession(session);
+    if (res && res.text) {
+      const cap = await window.helm.captureNote(session.cwd, `Handoff (on archiving "${session.title}"):\n\n${res.text.trim()}`);
+      saved = !!(cap && cap.ok);
+      if (!saved) {
+        showToast(`Handoff save failed: ${cap?.error || "unknown"} - archiving anyway.`);
+      }
+    } else if (res && res.error) {
+      showToast(`Couldn't summarize handoff: ${res.error} - archiving anyway.`);
+    }
+  } catch (err) {
+    showToast(`Handoff failed: ${err.message} - archiving anyway.`);
+  }
+  setPaneBusyUIRaw(focusedPaneIndex, "");
+  if (saved) {
+    showToast(`Handoff saved to DECISIONS.md; archiving "${session.title}".`);
+  }
+  archiveSession(session);
+}
+
 // From the Archive page — flips isArchived back to false so the session
 // reappears both in Helm's sidebar and in the real desktop app.
 async function unarchiveSession(session) {
@@ -1329,9 +1360,15 @@ function rowEl(session) {
         onClick: () => {
           // Re-opens with an explicit confirm step (no native window.confirm()
           // — unreliable in this build) since this writes to the desktop
-          // app's OWN session file, not just Helm's local config.
+          // app's OWN session file, not just Helm's local config. When the
+          // session has a project cwd, also offer a last-effort handoff save
+          // to its DECISIONS.md before archiving (planned handoff = faithful
+          // transfer; see DECISIONS.md "Session-renewal strategy").
           showContextMenu(x, y, [
-            { label: `Confirm archive "${session.title}"`, danger: true, onClick: () => archiveSession(session) },
+            ...(session.cwd
+              ? [{ label: `Save handoff to DECISIONS.md + archive "${session.title}"`, danger: true, onClick: () => archiveWithHandoff(session) }]
+              : []),
+            { label: `Archive "${session.title}" without a handoff`, danger: true, onClick: () => archiveSession(session) },
           ]);
         },
       },
@@ -1630,6 +1667,30 @@ async function summarizeAndCarryOver(session) {
   // default so it behaves as one from turn one), not a plain chat.
   const carryOpts = isOrchestratorSession(session) ? { paneOverrides: { isOrchestrator: true, modelDefault: "claude-sonnet-5" } } : {};
   openFreshDraftInPane(session.cwd, draft, carryOpts);
+}
+
+// Retire a first mate WITH a last-effort handoff: give the outgoing mate's
+// session one final turn to summarize itself, hand that to retireAndRespawn so
+// the fresh mate's first jump-in continues the cross-project thread under the
+// new name (planned renewal = faithful transfer, see DECISIONS.md
+// "Session-renewal strategy"). A missing session or a failed summary never
+// blocks retiring - it just respawns without a handoff.
+async function retireMateWithCarryOver(mate) {
+  let handoff = null;
+  if (mate.sessionId) {
+    setPaneBusyUIRaw(focusedPaneIndex, `Retiring ${mate.name} - saving handoff…`);
+    try {
+      const res = await summarizeSession({ cwd: mate.root || state.orchestratorHome, cliSessionId: mate.sessionId, sessionId: mate.sessionId, title: mate.name });
+      if (res && res.text) {
+        handoff = res.text.trim();
+      }
+    } catch {
+      // fall through - retire without a handoff rather than blocking
+    }
+    setPaneBusyUIRaw(focusedPaneIndex, "");
+  }
+  await window.helm.retireMate(mate.mateId, handoff);
+  fillDashboardSections({ force: true });
 }
 
 // Sets just the status text on whichever pane is currently focused, without
@@ -4553,7 +4614,7 @@ function fleetMateCardEl(mate, sms, boardSummary = {}) {
   retireBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     customConfirm(`Retire ${mate.name} and spin up a fresh mate in its place?`, "Retire", () => {
-      window.helm.retireMate(mate.mateId).then(() => fillDashboardSections({ force: true }));
+      retireMateWithCarryOver(mate);
     });
   });
   actions.append(renameBtn, retireBtn);
@@ -4656,7 +4717,7 @@ function fleetNudgeEl(mate, kind, opts = {}) {
       e.stopPropagation();
       // Same guarded path as the header retire icon - was firing with no confirm.
       customConfirm(`Retire ${mate.name} and spin up a fresh mate in its place?`, "Retire", () => {
-        window.helm.retireMate(mate.mateId).then(() => fillDashboardSections({ force: true }));
+        retireMateWithCarryOver(mate);
       });
     });
     nudge.append(btn);
@@ -4914,7 +4975,15 @@ function jumpIntoFirstMate(mate) {
     // in from the Fleet is "take me to this mate", not "open beside".
     openSessionInPane(existing, 0);
   } else {
-    openFreshDraftInPane(state.orchestratorHome, "", {
+    // A freshly respawned mate carries a one-shot handoff from its retired
+    // predecessor: seed the composer with it so the cross-project thread
+    // continues under the new name, then consume it so a later reopen is clean.
+    let seed = "";
+    if (mate.pendingHandoff) {
+      seed = `You are ${mate.name}, a fresh first mate taking over from a retired predecessor. Their handoff:\n\n${mate.pendingHandoff}\n\nContinue the cross-project thread from here.`;
+      window.helm.consumeMateHandoff(mate.mateId);
+    }
+    openFreshDraftInPane(state.orchestratorHome, seed, {
       forceIndex: 0,
       // Title the fresh chat after the mate, so opening Hector Barbossa reads as
       // "Hector Barbossa", not a nameless new chat.
