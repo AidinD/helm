@@ -4349,7 +4349,9 @@ function dashboardFleetSection(mates = [], secondMates = [], boardSummary = {}) 
   // One column per active first mate (ordered by slot), then Direct.
   for (const mate of mates) {
     const sms = secondMates.filter((s) => s.firstMateId === mate.mateId);
-    cols.append(fleetColumnEl(`First mate · slot ${(mate.slot ?? 0) + 1}`, fleetMateCardEl(mate, sms, boardSummary), false));
+    // Header is just "First mate" - the mate's name (in the card below) is the
+    // identity, so the slot number was redundant noise now that mates are named.
+    cols.append(fleetColumnEl("First mate", fleetMateCardEl(mate, sms, boardSummary), false));
   }
   // Direct lists your SESSIONS only (the captain's choice). A run-derived direct node
   // (an autonomous run with no session) would otherwise show as a confusing
@@ -4404,7 +4406,7 @@ function fleetMateCardEl(mate, sms, boardSummary = {}) {
   // Rename = inline edit (window.prompt is disabled in Electron + the captain never
   // wants native dialogs). Clicking ✎ swaps the name for an input.
   const renameBtn = document.createElement("button");
-  renameBtn.className = "fleet-icon-btn";
+  renameBtn.className = "fleet-btn";
   renameBtn.title = "Rename this mate";
   renameBtn.textContent = "✎";
   renameBtn.addEventListener("click", (e) => {
@@ -4441,7 +4443,7 @@ function fleetMateCardEl(mate, sms, boardSummary = {}) {
   });
   // Retire = custom inline confirm (no native window.confirm).
   const retireBtn = document.createElement("button");
-  retireBtn.className = "fleet-icon-btn";
+  retireBtn.className = "fleet-btn";
   retireBtn.title = "Retire this mate & respawn a fresh one";
   retireBtn.textContent = "↻";
   retireBtn.addEventListener("click", (e) => {
@@ -4544,7 +4546,7 @@ function fleetNudgeEl(mate, kind, opts = {}) {
   nudge.append(txt);
   if (offerRetire) {
     const btn = document.createElement("button");
-    btn.className = "fleet-retire-btn";
+    btn.className = "fleet-btn fleet-btn-accent";
     btn.textContent = "Retire & respawn";
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -4646,7 +4648,7 @@ function fleetSecondMateEl(sm) {
   const backingSession = sess;
   if (backingSession) {
     const archiveBtn = document.createElement("button");
-    archiveBtn.className = "fleet-archive-btn";
+    archiveBtn.className = "fleet-btn fleet-archive-btn";
     archiveBtn.title = "Archive this session";
     archiveBtn.textContent = "Archive";
     archiveBtn.addEventListener("click", (e) => {
@@ -4715,7 +4717,7 @@ function fleetCrewItemEl(run) {
   // sub-agent doesn't - the session node itself is the way in, so no button.
   if (!run.isSubAgent) {
     const follow = document.createElement("button");
-    follow.className = "fleet-follow";
+    follow.className = "fleet-btn";
     follow.textContent = running ? "Follow" : "View";
     follow.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -4746,7 +4748,7 @@ function fleetDirectCardEl(sms) {
   role.textContent = "work you drive yourself";
   idBox.append(name, role);
   const startBtn = document.createElement("button");
-  startBtn.className = "fleet-start-btn";
+  startBtn.className = "fleet-btn";
   startBtn.textContent = "+ Session";
   startBtn.title = "Start a fresh session here (you pick the project)";
   startBtn.addEventListener("click", (e) => {
