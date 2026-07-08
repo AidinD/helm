@@ -26,7 +26,7 @@ const goto = (page) => app.eval(`(() => { navigateToPage(${JSON.stringify(page)}
 // hidden by an ancestor (#chatPage) rather than its own class.
 const isVisible = (id) => app.eval(`!!document.getElementById(${JSON.stringify(id)})?.offsetParent`);
 const leftOf = (id) => app.eval(`Math.round(document.getElementById(${JSON.stringify(id)}).getBoundingClientRect().left)`);
-const CTRLS = ["viewToggle", "splitToggle", "backgroundTasksBtn"];
+const CTRLS = ["viewToggle", "backgroundTasksBtn"]; // splitToggle removed with split view
 
 try {
   await app.waitForSelector("#pageToggle", 30000, { visible: true });

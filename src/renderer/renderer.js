@@ -1307,8 +1307,7 @@ function rowEl(session) {
     const y = e.clientY;
     const groupLabels = (state.config.groups || []).map((g) => g.label);
     showContextMenu(x, y, [
-      { label: "Open here", onClick: () => openSessionInPane(session, focusedPaneIndex) },
-      { label: "Open in split pane", onClick: () => openSessionInPane(session, focusedPaneIndex === 0 ? 1 : 0, true) },
+      { label: "Open", onClick: () => openSessionInPane(session, 0) },
       { label: "Rename chat (or double-click it)", onClick: () => makeInlineEditable(title, session.title, (v) => renameSessionTo(session, v)) },
       {
         label: "Summarize & carry over to new chat",
@@ -1508,20 +1507,11 @@ function summarizeSession(session) {
 // pane via openFreshDraftInPane's forceIndex.) The chosen pane's in-memory
 // view is replaced, but the replaced session's transcript on disk is
 // untouched and still reopenable from the sidebar.
-function pickDraftTargetPane(avoidIndex) {
-  const emptyIndex = panes.findIndex((p) => !p.sessionId && p.turns.length === 0 && !p.busy);
-  if (emptyIndex !== -1) {
-    return { index: emptyIndex, addedPane: false };
-  }
-  if (panes.length < 2) {
-    panes.push(freshPane());
-    return { index: panes.length - 1, addedPane: true };
-  }
-  // Both panes full: use the one that ISN'T the source, so the pane the
-  // action came from stays intact. Only fall back to avoidIndex if there's
-  // genuinely no other pane (avoidIndex undefined, or a future 1-pane edge).
-  const alternative = panes.findIndex((_, i) => i !== avoidIndex);
-  return { index: alternative !== -1 ? alternative : focusedPaneIndex, addedPane: false };
+function pickDraftTargetPane() {
+  // Single pane since split view was removed: always pane 0 (the draft replaces
+  // whatever's there - the replaced session's transcript is untouched on disk
+  // and reopenable from the sidebar).
+  return { index: 0, addedPane: false };
 }
 
 // opts.forceIndex — drop the draft into THIS exact pane, replacing whatever's
@@ -1615,22 +1605,17 @@ function setPaneBusyUIRaw(index, statusText) {
 // fromHistoryNav is true only when THIS call originated from clicking the
 // back/forward buttons — it skips the history push below so navigating
 // backward doesn't itself get recorded as a new forward step.
-function openSessionInPane(session, paneIndex, forceSplit, fromHistoryNav) {
+// paneIndex is always 0 since split view was removed; the 3rd param is a vestige
+// of the old forceSplit and is ignored. fromHistoryNav is true only when THIS
+// call came from the back/forward buttons - it skips the history push.
+function openSessionInPane(session, paneIndex, _ignored, fromHistoryNav) {
   focusedPaneIndex = paneIndex;
   selectedSessionId = session.sessionId;
-  const addedPane = forceSplit && panes.length < 2;
-  if (addedPane) {
-    panes.push(freshPane());
-  }
-  // Re-opening the session ALREADY showing in this exact pane (e.g.
-  // navigating to a different session and back) is a no-op for the pane's
-  // own in-memory state — rebuilding from scratch silently discarded any
-  // in-progress edit. Real bug this fixed: picking a new root folder via
-  // "…", navigating away and back, then sending reverted to the OLD folder
-  // with zero warning (see DECISIONS.md — the captain caught this live). Skipping
-  // the reset here also happens to preserve any unsent draft prompt text for
-  // the same scenario.
-  const alreadyOpenHere = !addedPane && panes[paneIndex]?.sessionId === session.sessionId;
+  // Re-opening the session ALREADY showing in this exact pane (e.g. navigating
+  // to a different session and back) is a no-op for the pane's own in-memory
+  // state: rebuilding from scratch silently discarded any in-progress edit.
+  // Skipping the reset also preserves any unsent draft prompt text.
+  const alreadyOpenHere = panes[paneIndex]?.sessionId === session.sessionId;
   if (!alreadyOpenHere) {
     stopLiveStatsTicker(paneIndex);
     panes[paneIndex] = {
@@ -1646,11 +1631,7 @@ function openSessionInPane(session, paneIndex, forceSplit, fromHistoryNav) {
   if (!fromHistoryNav) {
     pushNavHistory(paneIndex, session.sessionId);
   }
-  if (addedPane) {
-    renderWorkspace(); // pane count changed — full rebuild is unavoidable here
-  } else {
-    renderSinglePane(paneIndex); // leaves any typing in the other pane intact
-  }
+  renderSinglePane(paneIndex);
   renderSidebar();
   loadTranscriptInto(paneIndex);
 }
@@ -2929,32 +2910,6 @@ function paneHeaderEl(index) {
     });
     actions.append(resetBtn);
   }
-  if (index === 1) {
-    const close = document.createElement("button");
-    close.className = "pane-close icon-btn";
-    close.textContent = "✕";
-    close.title = "Close split";
-    close.addEventListener("click", () => {
-      // If this pane has a live launch, stop it before discarding the pane
-      // — otherwise the process keeps running with no UI left able to show
-      // its completion or stop it. No map entry to clean up here: once
-      // `panes = [panes[0]]` below drops this slot, launchPaneHistory's own
-      // identity check (`panes[index] === pane`) naturally rejects any of
-      // this launch's late events on its own.
-      const closingPane = panes[1];
-      if (closingPane?.busy && closingPane.currentLaunchId) {
-        window.maestro.stopSession(closingPane.currentLaunchId);
-      }
-      // A future split reusing slot 1 is a new browsing context — don't let
-      // it inherit back/forward history from whatever used to live there.
-      paneNavHistory.delete(1);
-      stopLiveStatsTicker(1);
-      panes = [panes[0]];
-      document.getElementById("workspace").classList.remove("split");
-      renderWorkspace();
-    });
-    actions.append(close);
-  }
   // The chat-global controls (Simple/Advanced, split, background tasks) ride on
   // the PRIMARY pane's header row rather than a dedicated bar - so no extra row,
   // and the top header stays just the primary tabs + gear (the captain design note
@@ -3806,81 +3761,22 @@ function fireQueuedPromptIfAny(index, pane) {
   sendFromPane(index, pane.els);
 }
 
-// Left pane's share of the split, 0..1. Module-level (not per-pane, not
-// persisted) so it survives split toggles within a session but resets on
-// restart — a reasonable v1; persisting to config is a possible follow-up.
-let splitRatio = 0.5;
-const MIN_SPLIT_RATIO = 0.2;
-const MAX_SPLIT_RATIO = 0.8;
-
-function applySplitRatio() {
-  const workspace = document.getElementById("workspace");
-  workspace.style.setProperty("--left-fr", `${splitRatio}fr`);
-  workspace.style.setProperty("--right-fr", `${1 - splitRatio}fr`);
-}
-
 // Rebuilds every pane's DOM. Only call this when the NUMBER of panes changes
 // (split on/off) — it discards any in-progress typing in every pane.
 function renderWorkspace() {
+  // Split view was removed (2026-07-07): a single pane is the model - jumping in
+  // from the Fleet always meant "take me to this", not "open beside", and the
+  // two-pane machinery carried real bugs (orphaned launch on toolbar-close,
+  // same session in both panes, cross-pane task conflation) for a feature the
+  // owner was ambivalent about. The workspace always renders exactly one pane.
   const workspace = document.getElementById("workspace");
-  const split = panes.length > 1;
-  workspace.classList.toggle("split", split);
   workspace.innerHTML = "";
-  const makePane = (index) => {
-    const paneEl = document.createElement("section");
-    paneEl.className = "pane";
-    paneEl.dataset.pane = String(index);
-    paneEl.addEventListener("click", () => {
-      focusedPaneIndex = index;
-    });
-    workspace.append(paneEl);
-    renderSinglePane(index);
-  };
-  makePane(0);
-  if (split) {
-    workspace.append(paneDividerEl());
-    applySplitRatio();
-    makePane(1);
-  } else {
-    // Clear any leftover split sizing so a future single-pane layout isn't
-    // constrained by stale fr variables.
-    workspace.style.removeProperty("--left-fr");
-    workspace.style.removeProperty("--right-fr");
-  }
-}
-
-// Draggable divider between the two split panes — adjusts their relative
-// width. Pointer events (not mouse) so a capture keeps tracking even if the
-// cursor briefly leaves the thin divider mid-drag.
-function paneDividerEl() {
-  const divider = document.createElement("div");
-  divider.className = "pane-divider";
-  divider.title = "Drag to resize";
-  divider.addEventListener("pointerdown", (e) => {
-    e.preventDefault();
-    const workspace = document.getElementById("workspace");
-    divider.setPointerCapture(e.pointerId);
-    divider.classList.add("dragging");
-    const onMove = (ev) => {
-      const rect = workspace.getBoundingClientRect();
-      if (rect.width <= 0) {
-        return;
-      }
-      const raw = (ev.clientX - rect.left) / rect.width;
-      splitRatio = Math.min(MAX_SPLIT_RATIO, Math.max(MIN_SPLIT_RATIO, raw));
-      applySplitRatio();
-    };
-    const onUp = () => {
-      divider.classList.remove("dragging");
-      divider.removeEventListener("pointermove", onMove);
-      divider.removeEventListener("pointerup", onUp);
-      divider.removeEventListener("pointercancel", onUp);
-    };
-    divider.addEventListener("pointermove", onMove);
-    divider.addEventListener("pointerup", onUp);
-    divider.addEventListener("pointercancel", onUp);
-  });
-  return divider;
+  const paneEl = document.createElement("section");
+  paneEl.className = "pane";
+  paneEl.dataset.pane = "0";
+  workspace.append(paneEl);
+  focusedPaneIndex = 0;
+  renderSinglePane(0);
 }
 
 // Rebuilds ONE pane's header/scroll/composer in place. Use this for anything
@@ -4323,20 +4219,6 @@ function crewNeedsCaptain(r) {
 }
 function crewRunning(r) {
   return r.status === "running" && !r.escalation;
-}
-
-// Collapse to a single pane (the primary). Fleet actions open there and never
-// split - jumping in / starting a session is "take me to this", not "open
-// beside". Drops any extra pane's DOM so you land in a clean single view.
-function ensureSinglePane() {
-  if (panes.length > 1) {
-    for (let i = 1; i < panes.length; i++) {
-      stopLiveStatsTicker(i);
-    }
-    panes.length = 1;
-    focusedPaneIndex = 0;
-    renderWorkspace();
-  }
 }
 
 // A small themed, centered confirm modal (never the native window.confirm -
@@ -4839,7 +4721,6 @@ function fleetDirectCardEl(sms) {
   startBtn.title = "Start a fresh session here (you pick the project)";
   startBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    ensureSinglePane();
     openFreshDraftInPane("", "", { forceIndex: 0 });
     navigateToPage("chat");
   });
@@ -4866,7 +4747,6 @@ function fleetDirectCardEl(sms) {
 // fresh orchestrator session (meta-home root, Sonnet, tagged with its mateId so
 // session:start attaches the dispatch tools and the session binds back to it).
 function jumpIntoFirstMate(mate) {
-  ensureSinglePane();
   const existing = mate.sessionId ? state.sessions.find((s) => (s.cliSessionId || s.sessionId) === mate.sessionId) : null;
   if (existing) {
     // Always land in the primary pane (0), overwriting it - never split. Jumping
@@ -4902,7 +4782,6 @@ function mostRecentSessionForCwd(cwd) {
 // mates, whose sessionId was never bound - they used to always open fresh);
 // else start a fresh one rooted in the project (Opus, tagged so it binds back).
 function jumpIntoSecondMate(sm) {
-  ensureSinglePane();
   const bound = sm.sessionId ? state.sessions.find((s) => (s.cliSessionId || s.sessionId) === sm.sessionId) : null;
   const existing = bound || mostRecentSessionForCwd(sm.projectPath);
   if (existing) {
@@ -8200,18 +8079,6 @@ function applySidebarMode() {
   });
 }
 
-document.getElementById("splitToggle").addEventListener("click", () => {
-  const workspace = document.getElementById("workspace");
-  if (panes.length > 1) {
-    stopLiveStatsTicker(1);
-    panes = [panes[0]];
-  } else {
-    panes.push(freshPane());
-  }
-  workspace.classList.toggle("split", panes.length > 1);
-  document.getElementById("splitToggle").classList.toggle("active", panes.length > 1);
-  renderWorkspace();
-});
 
 // ============================== Background tasks (subagents) ==============================
 // Matches the desktop app's "Background tasks" drawer, backed by real
@@ -8512,7 +8379,7 @@ window.maestro.onSessionEvent((evt) => {
 // A keyboard-first fuzzy launcher over EXISTING affordances - it never
 // reimplements navigation or session logic, it just calls the same functions
 // the buttons do (navigateToPage, openSessionInPane, openFreshDraftInPane) or
-// clicks the real button (#splitToggle, #backgroundTasksBtn). The command
+// clicks the real button (#backgroundTasksBtn). The command
 // registry is rebuilt every open because entities (sessions, projects) are
 // live. State is renderer-local; nothing persists.
 let cmdkSelectedIndex = 0;
@@ -8569,10 +8436,6 @@ function cmdkBuildCommands() {
         newChatBtn.click();
       },
     });
-  }
-  const splitBtn = document.getElementById("splitToggle");
-  if (splitBtn) {
-    cmds.push({ label: "Toggle split view", tag: "Action", run: () => splitBtn.click() });
   }
   const bgBtn = document.getElementById("backgroundTasksBtn");
   if (bgBtn) {

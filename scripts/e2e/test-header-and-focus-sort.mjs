@@ -18,7 +18,7 @@ function assert(cond, msg) {
   }
 }
 const isHidden = (id) => app.eval(`!!document.getElementById(${JSON.stringify(id)})?.classList.contains("hidden")`);
-const CHAT_CTRLS = ["viewToggle", "splitToggle", "backgroundTasksBtn"];
+const CHAT_CTRLS = ["viewToggle", "backgroundTasksBtn"]; // splitToggle removed with split view
 
 try {
   await app.waitForSelector("#pageToggle", 30000, { visible: true });

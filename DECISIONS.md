@@ -1,5 +1,12 @@
 # Decisions
 
+## 2026-07-07 - Cut split view (single pane is the model)
+
+Split view (two side-by-side panes with a draggable divider) is removed.
+The newer Fleet flow already routed around it - every jump-in called ensureSinglePane ("take me to this", not "open beside") - and a double review found real bugs it carried: closing split via the toolbar toggle orphaned a running launch (no stop, wasted quota) and left stale nav history; the same session could be opened in both panes → concurrent --resume against one transcript; background tasks conflated across panes with no session attribution.
+The captain was ambivalent about split and chose to cut it.
+So the workspace now always renders exactly one pane: removed the split toggle (button + handler + command-palette entry), the "Open in split pane" context action, the pane divider + drag-resize + ratio machinery, pickDraftTargetPane's pane-adding, openSessionInPane's forceSplit branch, the index===1 pane-close, and ensureSinglePane (now a no-op). Kept as a possible future: nothing - if a real need for side-by-side returns, rebuild it deliberately with the bugs above designed out.
+
 ## 2026-07-07 - Named mates, second-mate-as-session, and fleet-aware coordination (the model made concrete)
 
 This day turned the 2026-07-06 tiered model into a built, reviewed Fleet.
