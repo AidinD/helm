@@ -3842,6 +3842,20 @@ button.primary {
   opacity: 0.85;
 }
 
+/* Unregister control on a domain chip only - a repo chip is derived from
+   real sessions, so there is nothing there to remove. */
+.dash-chip-remove {
+  margin-left: 2px;
+  opacity: 0.5;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.dash-chip-remove:hover {
+  opacity: 1;
+  color: var(--danger, #d9534f);
+}
+
 /* Passive confirmation strip - replaces the old manual load-context
    checklist entirely. Nothing to check, nothing to decide: it states what a
    session rooted in the selected project already auto-loads. */

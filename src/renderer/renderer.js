@@ -5560,12 +5560,36 @@ async function dashboardNewSessionSection() {
       label: cwd.split(/[\\/]/).filter(Boolean).pop() || cwd,
       icon: REPO_CHIP_ICON,
     })),
-    ...domains.map((d) => ({ cwd: d.path, label: d.name, icon: d.icon })),
+    ...domains.map((d) => ({ cwd: d.path, label: d.name, icon: d.icon, domainId: d.id })),
   ];
 
-  chips.forEach((chip) => chipGrid.append(dashChipEl(chip.label, chip.cwd, chip.icon)));
-  chipGrid.append(dashChipEl("+ other…", "__other__", null));
-  chipGrid.append(dashChipEl("+ new domain…", "__new_domain__", null));
+  chips.forEach((chip) =>
+    chipGrid.append(
+      dashChipEl(chip.label, chip.cwd, chip.icon, {
+        // Only a registered domain is removable - a repo chip is derived from
+        // real sessions, not a standalone registration to undo.
+        onRemove: chip.domainId
+          ? async () => {
+              const result = await window.helm.removeDomain(chip.domainId);
+              if (!result.ok) {
+                showToast(result.error || "Couldn't remove domain.");
+                return;
+              }
+              if (dashboardSelectedChip === chip.cwd) {
+                dashboardSelectedChip = null;
+              }
+              fillDashboardSections();
+            }
+          : null,
+      })
+    )
+  );
+  chipGrid.append(dashChipEl("+ other…", "__other__", null, { title: "Use any folder for just this session - not saved" }));
+  chipGrid.append(
+    dashChipEl("+ new domain…", "__new_domain__", null, {
+      title: "Permanently add a non-repo folder (e.g. Gym, Kombucha) as a recurring project",
+    })
+  );
   panel.append(chipGrid);
 
   panel.append(dashAutoContextStripEl(dashboardSelectedChip, chips));
@@ -5590,9 +5614,12 @@ async function dashboardNewSessionSection() {
   return section;
 }
 
-function dashChipEl(label, cwd, icon) {
+function dashChipEl(label, cwd, icon, opts = {}) {
   const chip = document.createElement("div");
   chip.className = "dash-chip" + (dashboardSelectedChip === cwd ? " dash-chip-selected" : "");
+  if (opts.title) {
+    chip.title = opts.title;
+  }
   if (icon) {
     const ic = document.createElement("span");
     ic.className = "dash-chip-ic";
@@ -5600,12 +5627,28 @@ function dashChipEl(label, cwd, icon) {
     chip.append(ic);
   }
   chip.append(document.createTextNode(label));
+  if (opts.onRemove) {
+    const removeBtn = document.createElement("span");
+    removeBtn.className = "dash-chip-remove";
+    removeBtn.textContent = "×"; // multiplication sign, used as an "x"
+    removeBtn.title = "Remove this domain";
+    removeBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      opts.onRemove();
+    });
+    chip.append(removeBtn);
+  }
   chip.addEventListener("click", async () => {
+    // fillDashboardSections (not renderDashboardPage) - a chip pick only
+    // changes the New Session slot's fingerprint, so this repaints just that
+    // slot in place. renderDashboardPage tears down page.innerHTML and
+    // rebuilds the whole page, which reset scroll to the top on every click -
+    // felt like "clicking a chip bounces me back to the top of the dashboard".
     if (cwd === "__other__") {
       const folder = await window.helm.pickFolder();
       if (folder) {
         dashboardSelectedChip = folder;
-        renderDashboardPage();
+        fillDashboardSections();
       }
       return;
     }
@@ -5614,7 +5657,7 @@ function dashChipEl(label, cwd, icon) {
       return;
     }
     dashboardSelectedChip = cwd;
-    renderDashboardPage();
+    fillDashboardSections();
   });
   return chip;
 }
@@ -5627,9 +5670,22 @@ function dashChipEl(label, cwd, icon) {
 // build (see the Category CRUD comment above). Kept intentionally simple per
 // the task's "keep it simple" - no dedicated modal/form. A domain's
 // CLAUDE.md is optional, so nothing here requires or creates one.
+//
+// "+ other..." vs "+ new domain..." reads as two buttons doing the same
+// thing (a folder picker) unless you already know a domain is a PERSISTENT,
+// non-repo project (gym, kombucha, ...) while "other" is a one-off pick for
+// this session only. Guard here so picking an already-known repo folder
+// (the mistake that's easy to make - "I just wanted to use Helm's own
+// folder") doesn't silently create a permanent, confusing duplicate chip
+// with no obvious way back - point at "+ other..." instead.
 async function promptRegisterDomain() {
   const folder = await window.helm.pickDomainFolder();
   if (!folder) {
+    return;
+  }
+  const knownRepos = [...new Set(state.sessions.filter((s) => s.cwd).map((s) => s.cwd))];
+  if (knownRepos.some((repo) => samePath(repo, folder))) {
+    showToast('That folder is already a project - use "+ other..." instead of "+ new domain...".');
     return;
   }
   const defaultName = folder.split(/[\\/]/).filter(Boolean).pop() || folder;
@@ -5658,7 +5714,7 @@ async function promptRegisterDomain() {
       return;
     }
     dashboardSelectedChip = result.domain.path;
-    renderDashboardPage();
+    fillDashboardSections();
   });
 }
 
