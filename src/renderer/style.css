@@ -1086,6 +1086,21 @@ body.advanced .row-jot {
   gap: 6px;
 }
 
+.pane-capture-input {
+  width: 260px;
+  max-width: 40vw;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 3px 8px;
+  font: inherit;
+  font-size: 12px;
+}
+.pane-capture-input::placeholder {
+  color: var(--text-faint);
+}
+
 .pane-scroll {
   flex: 1;
   overflow-y: auto;
