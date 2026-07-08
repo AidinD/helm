@@ -17,6 +17,17 @@ const DEFAULT_CONFIG = {
   titleOverrides: {}, // { "<sessionId>": "Custom title" }
   manualHelmSessions: [], // sessionIds tagged "◆ Helm" by hand, independent of Jot category matching
   hiddenSessions: [], // sessionIds removed from Helm's view (restore by editing this array)
+  // Helm's OWN session index, for sessions Helm CREATES via launcher.js. The
+  // headless `claude -p` variant launcher.js uses never writes a Desktop
+  // local_*.json (verified), so these sessions were structurally invisible to
+  // readAllSessions (which reads only the Desktop app's dir) - the root cause
+  // of "a session started inside Helm never shows in Direct/Fleet". We record
+  // our own metadata here (on D:\, never the %APPDATA% MSIX overlay, and never
+  // writing into Anthropic's private schema) and merge it in readAllSessions.
+  // Keyed by sessionId. Shape mirrors what buildSession() reads from a Desktop
+  // meta: { sessionId, cliSessionId, cwd, model, effort, permissionMode, title,
+  // createdAt, lastActivityAt, isArchived }.
+  helmSessions: {},
   // Runs a cheap Haiku judge after every completed prompt to flag whether the
   // model/effort choice was too weak/too strong (~$0.015-0.02 extra per run,
   // after stripping MCP/tool defs the judge doesn't need). User-requested;
