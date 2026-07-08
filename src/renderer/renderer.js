@@ -7990,9 +7990,10 @@ async function renderAnalysisPage() {
   page.innerHTML = "";
 
   const cwd = panes[focusedPaneIndex]?.cwd || "";
-  const [{ global, project }, summary] = await Promise.all([
+  const [{ global, project }, summary, context] = await Promise.all([
     window.helm.listSkills(cwd),
     window.helm.getUsageSummary(),
+    window.helm.listContext(cwd),
   ]);
 
   const header = document.createElement("h2");
@@ -8168,7 +8169,62 @@ async function renderAnalysisPage() {
     skillListEl("Global skills (~/.claude/skills)", global, "global", cwd),
     skillListEl(`This pane's project skills${cwd ? "" : " (no folder set on the focused pane)"}`, project, "project", cwd)
   );
+  grid.append(contextFilesEl(context, cwd));
   page.append(grid);
+}
+
+// The context files that actually shape a session: the CLAUDE.md(s) that
+// auto-load and the auto-memory files for the focused pane's cwd. Surfacing
+// them here makes "what's in the room" visible - the point the 2026-07-08
+// session-renewal work turns on (load-bearing knowledge belongs on the
+// always-loaded surface). Click reveals the file in Explorer.
+function contextFilesEl(context, cwd) {
+  const section = document.createElement("div");
+  section.className = "analysis-block";
+  const h = document.createElement("h3");
+  h.textContent = "Context files (what auto-loads into a session)";
+  section.append(h);
+
+  const list = document.createElement("div");
+  list.className = "skill-chip-list";
+  for (const c of context?.claudeMd || []) {
+    const chip = document.createElement("button");
+    chip.className = "skill-chip";
+    chip.textContent = c.label + (c.exists ? "" : " (none)");
+    chip.disabled = !c.exists;
+    chip.title = c.exists ? "Reveal in Explorer" : "Not present";
+    chip.addEventListener("click", () => window.helm.openContext({ cwd, kind: c.kind }));
+    list.append(chip);
+  }
+  section.append(list);
+
+  const memH = document.createElement("div");
+  memH.className = "suggest-hint";
+  const memDir = context?.memory?.dir;
+  memH.textContent = context?.memory?.exists
+    ? `Memory · ${context.memory.files.length} file${context.memory.files.length === 1 ? "" : "s"}`
+    : cwd
+      ? "Memory · none for this folder yet"
+      : "Memory · set a folder on the focused pane to see its memory";
+  if (memDir) {
+    memH.title = memDir;
+  }
+  section.append(memH);
+
+  if (context?.memory?.files?.length) {
+    const memList = document.createElement("div");
+    memList.className = "skill-chip-list";
+    for (const f of context.memory.files) {
+      const chip = document.createElement("button");
+      chip.className = "skill-chip";
+      chip.textContent = f.name;
+      chip.title = "Reveal in Explorer";
+      chip.addEventListener("click", () => window.helm.openContext({ cwd, kind: "memory", name: f.name }));
+      memList.append(chip);
+    }
+    section.append(memList);
+  }
+  return section;
 }
 
 document.getElementById("viewToggle").addEventListener("click", async (e) => {

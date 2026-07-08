@@ -12,7 +12,7 @@ import { startSession } from "./lib/launcher.js";
 import { suggestModelEffort } from "./lib/suggest.js";
 import { readTranscript } from "./lib/transcript.js";
 import { liveSubAgents } from "./lib/subAgents.js";
-import { findTranscriptPath } from "./lib/paths.js";
+import { findTranscriptPath, projectsRoot, encodeProjectDir } from "./lib/paths.js";
 import { listSkills, skillMdPath } from "./lib/skills.js";
 import { appendUsageLog, readUsageSummary, computeSuggestionAccuracyVerdict } from "./lib/usage.js";
 import { judgeModelFit } from "./lib/judge.js";
@@ -374,6 +374,78 @@ ipcMain.handle("claudeMd:projectExists", (_event, cwd) => {
     return false;
   }
   return fs.existsSync(path.join(cwd, "CLAUDE.md"));
+});
+
+// --- Context files that shape a session: the CLAUDE.md(s) that auto-load and
+// the auto-memory files for this cwd. Surfaced in the Analysis view so "what
+// context is actually in the room" is visible (directly serves the 2026-07-08
+// session-renewal work: the always-loaded surface is where load-bearing
+// knowledge belongs). Memory lives under ~/.claude/projects/<encoded-cwd>/memory
+// - the same encoding the CLI uses (encodeProjectDir), so it's per-project. ---
+function memoryDirFor(cwd) {
+  return cwd ? path.join(projectsRoot, encodeProjectDir(cwd), "memory") : null;
+}
+
+ipcMain.handle("context:list", (_event, cwd) => {
+  const out = { claudeMd: [], memory: { dir: null, exists: false, files: [] } };
+  const g = resolveCanonicalGlobalClaudeMd();
+  out.claudeMd.push({ kind: "globalClaude", label: "Global CLAUDE.md (canonical)", path: g.ok ? g.file : null, exists: g.ok });
+  if (cwd) {
+    const pj = path.join(cwd, "CLAUDE.md");
+    out.claudeMd.push({ kind: "projectClaude", label: "Project CLAUDE.md", path: pj, exists: fs.existsSync(pj) });
+  }
+  const memDir = memoryDirFor(cwd);
+  out.memory.dir = memDir;
+  if (memDir && fs.existsSync(memDir)) {
+    out.memory.exists = true;
+    try {
+      const files = fs.readdirSync(memDir).filter((f) => f.endsWith(".md"));
+      // MEMORY.md (the always-loaded index) first, then the rest alphabetically.
+      files.sort((a, b) => (a === "MEMORY.md" ? -1 : b === "MEMORY.md" ? 1 : a.localeCompare(b)));
+      out.memory.files = files.map((name) => ({ name }));
+    } catch {
+      // best-effort listing
+    }
+  }
+  return out;
+});
+
+// --- Reveal a context file in Explorer. The path is recomputed server-side
+// from a (kind[, name]) reference rather than trusting a renderer-supplied
+// absolute path; a memory `name` is guarded to a bare .md filename so it can't
+// escape the memory dir. ---
+ipcMain.handle("context:open", (_event, { cwd, kind, name } = {}) => {
+  if (kind === "globalClaude") {
+    const g = resolveCanonicalGlobalClaudeMd();
+    if (!g.ok) {
+      return g;
+    }
+    shell.showItemInFolder(g.file);
+    return { ok: true };
+  }
+  if (kind === "projectClaude") {
+    if (!cwd) {
+      return { ok: false, error: "No project folder for this session" };
+    }
+    const file = path.join(cwd, "CLAUDE.md");
+    if (!fs.existsSync(file)) {
+      return { ok: false, error: "No CLAUDE.md in " + cwd };
+    }
+    shell.showItemInFolder(file);
+    return { ok: true };
+  }
+  if (kind === "memory") {
+    if (!cwd || !name || name.includes("/") || name.includes("\\") || !name.endsWith(".md")) {
+      return { ok: false, error: "Invalid memory file" };
+    }
+    const file = path.join(memoryDirFor(cwd), name);
+    if (!fs.existsSync(file)) {
+      return { ok: false, error: "Memory file not found" };
+    }
+    shell.showItemInFolder(file);
+    return { ok: true };
+  }
+  return { ok: false, error: "Unknown context kind" };
 });
 
 // --- Archive/unarchive a session in the desktop app's own state. Always a
