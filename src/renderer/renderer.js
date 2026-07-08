@@ -1272,7 +1272,8 @@ function rowEl(session) {
   if (
     state.config.archiveSuggestions?.enabled === true &&
     (session.status === "idle" || classifierSaysDone) &&
-    !hasOpenJotWork
+    !hasOpenJotWork &&
+    !isArchiveProposalDismissed(session)
   ) {
     const suggest = document.createElement("button");
     suggest.type = "button";
@@ -5045,6 +5046,17 @@ function focusModeToggleEl(rerender = renderDashboardPage) {
 // Maestro and are NOT fabricated here.
 let dashboardArchiveGroupExpanded = false; // local UI state, resets on reload
 
+// Shared between dashboardProposalSessions() below and the sidebar's
+// per-row "Archive?" pill (see renderSessionRow / row-orchestrator-tag
+// area) so the two lists can never drift on what counts as dismissed.
+// A dismissed proposal stays hidden only while the session is unchanged
+// since the dismissal ("not now", not "never") - if lastActivityAt has
+// moved on, the dismissal is stale and the session is re-proposed.
+function isArchiveProposalDismissed(session) {
+  const dismissed = state.config.dismissedArchiveProposals || {};
+  return dismissed[session.sessionId] === session.lastActivityAt;
+}
+
 function dashboardProposalSessions() {
   const hasOpenJotWork = (s) => s.jot && (s.jot.review > 0 || s.jot.inProgress > 0 || s.jot.open > 0);
   const classifierSaysDone = (s) => s.orchestratorTag?.statusTag === "done_not_archived";
@@ -5052,17 +5064,12 @@ function dashboardProposalSessions() {
   if (!suggestionsEnabled) {
     return [];
   }
-  // A dismissed proposal stays hidden only while the session is unchanged
-  // since the dismissal ("not now", not "never") - if lastActivityAt has
-  // moved on, the dismissal is stale and the session is re-proposed.
-  const dismissed = state.config.dismissedArchiveProposals || {};
-  const isDismissed = (s) => dismissed[s.sessionId] === s.lastActivityAt;
   const proposalSessions = state.sessions.filter(
     (s) =>
       !s.isArchived &&
       (s.status === "idle" || classifierSaysDone(s)) &&
       !hasOpenJotWork(s) &&
-      !isDismissed(s)
+      !isArchiveProposalDismissed(s)
   );
   return sortByAttention(proposalSessions);
 }
