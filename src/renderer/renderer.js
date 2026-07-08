@@ -7923,7 +7923,7 @@ async function renderAnalysisPage() {
   ]);
 
   const header = document.createElement("h2");
-  header.textContent = "Skills";
+  header.textContent = "Analysis";
   page.append(header);
 
   const totals = document.createElement("div");
@@ -8446,7 +8446,7 @@ function cmdkBuildCommands() {
     ["Go to Routines", "routines"],
     ["Go to Chat", "chat"],
     ["Go to Plan", "lavish"],
-    ["Go to Skills", "analysis"],
+    ["Go to Analysis", "analysis"],
     ["Go to Archive", "archive"],
     ["Go to Settings", "settings"],
   ];
