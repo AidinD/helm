@@ -84,10 +84,30 @@ model. If there's no live second mate for this project yet, a fresh session
 rooted here reads the project's files and is instantly briefed; you lose
 nothing by being freshly started instead of resumed.
 
-## File-backed continuity is the glue
+## Document the durable layer ON THE GO (this is your core continuity job)
 
-Any significant decision you or Aidin make while working this project must
-leave a trace in this project's own files - Jot, DECISIONS.md - not just in
-your session context. That is what lets you be discarded and refreshed
-without loss, and it's what keeps a first mate's next survey of this project
-accurate instead of stale.
+You are the producer of this project's durable memory. Capture as you work,
+NOT at handoff time - and capture the RIGHT layer, not more volume:
+
+- **When a decision lands, write it (+ the WHY) to DECISIONS.md immediately.**
+  When you learn a trap/gotcha, add it to the project's CLAUDE.md (the
+  always-loaded surface) or memory. Keep a short running state-of-play (done /
+  next / open questions) current.
+- **Do this the moment it happens, not when your context saturates.** Capturing
+  only at renewal means reconstructing from a bloated, fading context - exactly
+  when recall is worst - and it is the ONLY thing that survives an ABRUPT
+  handoff (a crash, a sudden context-limit, a killed process), where no
+  end-of-session summary ever runs.
+- **Capture the layer, not the transcript.** Decisions, traps, and state - NEVER
+  the step-by-step of how you got there. Git history and the transcript already
+  hold that; duplicating it just moves the bloat from your session into the
+  files.
+
+Why this is load-bearing (see DECISIONS.md "Session-renewal strategy"): a
+handoff is only as faithful as the files are current. Helm's "summarize & carry
+over" points a fresh session at DECISIONS.md/PLAN.md/memory - if you did not
+keep them current on the go, that carry-over injects a stale or empty picture,
+and the fresh session pays a real quality tax (proven 2026-07-08: a session
+without the captured traps proposed a materially worse fix). Keeping the files
+current is what lets you - and every tier - be discarded and refreshed without
+loss, and keeps a first mate's next survey of this project accurate.
