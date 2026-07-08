@@ -833,6 +833,22 @@ async function archiveWithHandoff(session) {
   archiveSession(session);
 }
 
+// Shows the "save a handoff first?" choice for a DELIBERATE single-session
+// archive (the Fleet button, the sidebar context menu, the "Archive?" pill,
+// the queue approve). `plainArchive` runs the caller's own no-handoff archive
+// so each flow keeps its specifics (e.g. the Fleet button's optimistic
+// removal). The handoff branch only appears when the session has a project cwd
+// to write into. NOT used for bulk "Archive all" - a per-session summarize
+// there would be N Sonnet calls (see its own inline note).
+function offerArchiveChoice(x, y, session, plainArchive) {
+  showContextMenu(x, y, [
+    ...(session.cwd
+      ? [{ label: "Save handoff to DECISIONS.md + archive", danger: true, onClick: () => archiveWithHandoff(session) }]
+      : []),
+    { label: "Archive without a handoff", danger: true, onClick: plainArchive },
+  ]);
+}
+
 // From the Archive page — flips isArchived back to false so the session
 // reappears both in Helm's sidebar and in the real desktop app.
 async function unarchiveSession(session) {
@@ -1315,7 +1331,7 @@ function rowEl(session) {
       : "Suggested: this session looks idle with no open Jot work. Click to archive.";
     suggest.addEventListener("click", (e) => {
       e.stopPropagation();
-      archiveSession(session);
+      offerArchiveChoice(e.clientX, e.clientY, session, () => archiveSession(session));
     });
     row.append(suggest);
   }
@@ -5391,13 +5407,26 @@ function dashArchiveGroupEl(proposalSessions) {
   const archiveAll = document.createElement("button");
   archiveAll.className = "text-btn";
   archiveAll.textContent = "Archive all";
-  archiveAll.addEventListener("click", async (e) => {
+  archiveAll.addEventListener("click", (e) => {
     e.stopPropagation();
-    archiveAll.disabled = true;
-    for (const session of proposalSessions) {
-      await archiveSession(session);
-    }
-    refreshDashboardIfVisible();
+    // Bulk archive does NOT save per-session handoffs (that would be N Sonnet
+    // summaries); state it honestly in a one-step confirm. Transcripts survive
+    // and each session stays unarchivable/resumable, so nothing is destroyed -
+    // just not promoted into the durable layer. To capture a handoff, archive
+    // that session individually.
+    showContextMenu(e.clientX, e.clientY, [
+      {
+        label: `Archive all ${proposalSessions.length} (no handoffs saved - bulk)`,
+        danger: true,
+        onClick: async () => {
+          archiveAll.disabled = true;
+          for (const session of proposalSessions) {
+            await archiveSession(session);
+          }
+          refreshDashboardIfVisible();
+        },
+      },
+    ]);
   });
   const review = document.createElement("button");
   review.className = "text-btn";
@@ -5486,10 +5515,12 @@ function dashProposeRowEl(session) {
   const approve = document.createElement("button");
   approve.className = "text-btn";
   approve.textContent = "Archive";
-  approve.addEventListener("click", async (e) => {
+  approve.addEventListener("click", (e) => {
     e.stopPropagation();
-    await archiveSession(session);
-    refreshDashboardIfVisible();
+    offerArchiveChoice(e.clientX, e.clientY, session, async () => {
+      await archiveSession(session);
+      refreshDashboardIfVisible();
+    });
   });
   const dismiss = document.createElement("button");
   dismiss.className = "text-btn";
