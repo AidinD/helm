@@ -17,7 +17,13 @@ function assert(cond, msg) {
     exitCode = 1;
   }
 }
-const isHidden = (id) => app.eval(`!!document.getElementById(${JSON.stringify(id)})?.classList.contains("hidden")`);
+// The chat-only controls are RELOCATED into the pane header (which only renders
+// on the Chat page), not toggled via a "hidden" class - so assert on effective
+// visibility (offsetParent === null when their ancestor page is not shown),
+// which is what actually matters to the user, not a class that is no longer the
+// mechanism.
+const isHidden = (id) =>
+  app.eval(`(() => { const el = document.getElementById(${JSON.stringify(id)}); return !el || el.offsetParent === null; })()`);
 const CHAT_CTRLS = ["viewToggle", "backgroundTasksBtn"]; // splitToggle removed with split view
 
 try {
@@ -29,8 +35,10 @@ try {
     assert(await isHidden(id), `#${id} hidden on Dashboard`);
   }
 
-  // On Chat, they must be visible.
-  await app.click('#pageToggle button[data-page="chat"]');
+  // On Chat, they must be visible. Chat lives in #headerUtilityNav now (moved
+  // out of #pageToggle by the "Demote Chat/Plan" nav restructure - #pageToggle
+  // holds only the Dashboard tab today).
+  await app.click('#headerUtilityNav button[data-page="chat"]');
   await app.waitForSelector("#chatPage", 8000, { visible: true });
   for (const id of CHAT_CTRLS) {
     assert(!(await isHidden(id)), `#${id} visible on Chat`);
