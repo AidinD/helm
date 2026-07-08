@@ -30,4 +30,22 @@ powershell.exe -NoProfile -File "$(pwd -W)/scripts/kill-helm.ps1"
 sleep 1
 (npm start > /tmp/helm-boot.log 2>&1 &)
 sleep 6
-grep -i error /tmp/helm-boot.log || echo "clean boot"
+
+# Real liveness signal, not a single-keyword grep. The old check
+# (`grep -i error ... || echo "clean boot"`) reported "clean boot" whenever
+# the log lacked the literal word "error" — but a broken start such as
+# `'electron' is not recognized ...` (seen after the Maestro->Helm rename
+# broke node_modules/.bin) contains no "error", so it printed "clean boot"
+# while no process was actually running. Ask the OS whether a Helm
+# electron.exe is really up, reusing the same filter kill-helm.ps1 uses.
+if powershell.exe -NoProfile -File "$(pwd -W)/scripts/check-helm.ps1" >/dev/null 2>&1; then
+    echo "clean boot"
+else
+    echo "BOOT FAILED - no Helm electron.exe process is running."
+    # Broadened failure-pattern scan for a quick hint at the cause; the full
+    # log tail follows regardless.
+    grep -iE "not recognized|cannot find module|error:?|throw|exception" /tmp/helm-boot.log || true
+    echo "--- last 30 lines of /tmp/helm-boot.log ---"
+    tail -n 30 /tmp/helm-boot.log
+    exit 1
+fi
