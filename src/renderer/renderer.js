@@ -4738,7 +4738,12 @@ function fleetDirectCardEl(sms) {
   top.className = "fleet-mate-top";
   const anchor = document.createElement("span");
   anchor.className = "fleet-anchor direct";
-  anchor.textContent = "🧭"; // compass - the captain sets the course
+  // The Helm wheel, not the compass - the captain steers the fleet from here.
+  const anchorImg = document.createElement("img");
+  anchorImg.className = "fleet-anchor-img";
+  anchorImg.src = "assets/helm-wheel.png";
+  anchorImg.alt = "";
+  anchor.append(anchorImg);
   const idBox = document.createElement("div");
   idBox.className = "fleet-mate-idbox";
   const name = document.createElement("div");

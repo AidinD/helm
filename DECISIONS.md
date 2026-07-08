@@ -1,5 +1,12 @@
 # Decisions
 
+## 2026-07-08 - Real ship's-wheel logo (replaces the ◆ glyph and the 🧭 compass)
+
+The header brand mark was a plain "◆" text glyph, and the Captain/Direct fleet card used a 🧭 compass emoji - both placeholders from before the rename. Aidin supplied a generated ship's-wheel artwork (a gradient-shaded terracotta line icon on a flat cream background, 2816x1536) and asked it replace both.
+Processed it into a usable asset rather than using it as-is: scanned for the wheel's true content bounding box (excluding a few stray artifact pixels at the extreme image corners and a faint background watermark), cropped to a centered square, and alpha-keyed the cream background out via a soft color-distance ramp (not a hard cutoff) so the existing gradient shading on the line art is preserved with clean anti-aliased edges. Saved as one 512x512 master PNG (`src/renderer/assets/helm-wheel.png`), reused at both display sizes (18px header, 18px inside the 28px fleet badge) rather than exporting multiple fixed sizes - simpler, and 512px downscales crisply for anything this app needs.
+Rejected keeping the compass on the Captain card: the wheel is the app's actual namesake image now, and having two different nautical icons (wheel in the header, compass on Captain) for the same "this is Helm" idea was redundant - one consistent mark reads better.
+A real Electron app/taskbar icon (.ico/.icns) was left out of scope - there isn't one configured today, and that belongs with the parked installer/packaging task, not this UI mark swap.
+
 ## 2026-07-08 - Renamed the app Maestro -> Helm
 
 The app's model and UI became fully nautical over the Fleet build - captain (Aidin), first/second mates, crew, fleet, the anchor and compass icons.
