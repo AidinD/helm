@@ -23,7 +23,7 @@ import { runGoal } from "./lib/goalOrchestrator.js";
 import { loadGoalRunHistory, upsertGoalRunRecord, removeGoalRunRecord } from "./lib/goalRunHistory.js";
 import { removeWorktree } from "./lib/worktree.js";
 import { loadDomains, registerDomain, removeDomain } from "./lib/domains.js";
-import { ensureMates, activeMates, findMateById, loadMates, renameMate, retireAndRespawn, bindMateSession } from "./lib/mates.js";
+import { ensureMates, activeMates, findMateById, loadMates, renameMate, retireAndRespawn, bindMateSession, consumeMateHandoff } from "./lib/mates.js";
 import { deriveSecondMates, bindSecondMateSession, renameSecondMate } from "./lib/secondMates.js";
 import {
   ensureDispatchDirs,
@@ -1058,10 +1058,17 @@ ipcMain.handle("mates:rename", (_event, { mateId, name }) => {
     return { ok: false, error: err?.message || String(err) };
   }
 });
-ipcMain.handle("mates:retire", (_event, { mateId }) => {
+ipcMain.handle("mates:retire", (_event, { mateId, handoff }) => {
   try {
-    const mate = retireAndRespawn(mateId);
+    const mate = retireAndRespawn(mateId, handoff || null);
     return { ok: true, mate };
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err) };
+  }
+});
+ipcMain.handle("mates:consumeHandoff", (_event, { mateId }) => {
+  try {
+    return { ok: true, handoff: consumeMateHandoff(mateId) };
   } catch (err) {
     return { ok: false, error: err?.message || String(err) };
   }

@@ -202,7 +202,7 @@ export function renameMate(mateId, name) {
  * active mate. No-op-safe: if the id is unknown or already retired, still
  * guarantees the slot is filled.
  */
-export function retireAndRespawn(mateId) {
+export function retireAndRespawn(mateId, pendingHandoff = null) {
   const state = readState();
   const outgoing = state.mates.find((m) => m.mateId === mateId);
   const slot = outgoing && typeof outgoing.slot === "number" ? outgoing.slot : null;
@@ -224,10 +224,32 @@ export function retireAndRespawn(mateId) {
     status: "active",
     createdAt: Date.now(),
     retiredAt: null,
+    // Handoff from the retiring mate: the fresh mate's first jump-in seeds its
+    // composer with this so the cross-project thread continues under the new
+    // name (continuity via the logbook, not the old growing context window).
+    // Consumed once (see consumeMateHandoff).
+    pendingHandoff: pendingHandoff || null,
   };
   state.mates.push(fresh);
   writeState(state);
   return fresh;
+}
+
+/**
+ * Reads and CLEARS a mate's pending handoff (one-shot): the fresh mate's first
+ * jump-in seeds its composer with this, then consumes it so a later reopen of
+ * that same mate starts clean. Returns the handoff text, or null.
+ */
+export function consumeMateHandoff(mateId) {
+  const state = readState();
+  const mate = state.mates.find((m) => m.mateId === mateId);
+  if (!mate || !mate.pendingHandoff) {
+    return null;
+  }
+  const handoff = mate.pendingHandoff;
+  mate.pendingHandoff = null;
+  writeState(state);
+  return handoff;
 }
 
 /** Lowest slot index [0, MATE_SLOT_COUNT) not currently held by an active mate. */

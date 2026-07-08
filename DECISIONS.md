@@ -1,5 +1,12 @@
 # Decisions
 
+## 2026-07-08 - Retire + archive run a last-effort handoff (wire the transfer into the actions)
+
+The renewal ACTIONS (retire a mate, archive a session) previously discarded without running any transfer - the WHY/decisions lived only in the transcript, unextracted. Now they make a last effort to save it, closing the loop the session-renewal strategy opened (we had the transfer MECHANISM + producer discipline, but the actions didn't invoke it).
+- **Retire** (a first mate = planned renewal, continues under a fresh name): the outgoing mate's session gets one final self-summary; that handoff is stored on the respawned mate (`pendingHandoff`, one-shot) and seeds its first jump-in, so the cross-project thread continues instead of starting cold. A missing session or failed summary never blocks retiring.
+- **Archive** (= "done here", no successor): offers "Save handoff to DECISIONS.md + archive" when the session has a project cwd - summarizes, appends the handoff to that project's DECISIONS.md (a durable store a future session will actually read), then archives. Plain "archive without a handoff" stays available; a no-cwd session only gets the plain option.
+Both are best-effort (never block the action) and reuse existing pieces (summarizeSession + the capture IPC + retireAndRespawn's new handoff slot). This is the planned-handoff complement to the on-the-go capture that covers abrupt handoffs.
+
 ## 2026-07-08 - Session-renewal strategy: renewal = faithful transfer
 
 Decision on when/how to renew (retire + respawn) a session, forced by a concrete case: a fresh spawned session proposed a naive fix while a context-rich long session proposed a better one, purely because of context it carried that the fresh one lacked.
