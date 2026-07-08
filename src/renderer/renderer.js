@@ -4652,20 +4652,32 @@ function fleetSecondMateEl(sm) {
     archiveBtn.className = "fleet-btn fleet-archive-btn";
     archiveBtn.title = "Archive this session";
     archiveBtn.textContent = "Archive";
-    archiveBtn.addEventListener("click", (e) => {
+    archiveBtn.addEventListener("click", async (e) => {
       e.stopPropagation();
-      // Optimistic + no forced re-render. The flicker before was: remove the
-      // node, then fillDashboardSections re-derived Direct from state.sessions -
-      // which STILL had the session (the archive hadn't propagated back yet) - so
-      // the node reappeared until a later refresh finally dropped it. Fix: mark
-      // the session archived in local state right away so any re-render already
-      // excludes it, drop the node, and fire the archive without a forced refetch.
+      // Optimistic + no forced REFETCH (that's the distinction that matters).
+      // The flicker before was: remove the node, then fillDashboardSections
+      // re-derived from a freshly refetched state.sessions - which STILL had
+      // the session (the archive hadn't propagated back yet) - so the node
+      // reappeared until a later refresh finally dropped it. Fix stays the
+      // same optimistic mutation, but now also repaints the other dashboard
+      // sections (queue/"needs you & in motion") from the ALREADY-updated
+      // in-memory state.sessions via refreshDashboardIfVisible, which is a
+      // pure in-place re-render (no refetch) - so it can't reintroduce that bug.
       const s = state.sessions.find((x) => x.sessionId === backingSession.sessionId);
       if (s) {
         s.isArchived = true; // the app's real archived flag (not status)
       }
       branch.remove();
-      window.helm.archiveSession(backingSession.sessionId, true);
+      refreshDashboardIfVisible();
+      const res = await window.helm.archiveSession(backingSession.sessionId, true);
+      if (!res.ok) {
+        console.error("[helm] archive failed:", res.error);
+        showToast(`Couldn't archive "${backingSession.title}": ${res.error}`);
+        if (s) {
+          s.isArchived = false;
+        }
+        refreshDashboardIfVisible();
+      }
     });
     head.append(archiveBtn);
   }
