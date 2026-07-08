@@ -2946,6 +2946,18 @@ function paneHeaderEl(index) {
     });
     actions.append(resetBtn);
   }
+  // One-click "capture on the go" - append a decision/gotcha to this project's
+  // DECISIONS.md the moment it happens (producer side of faithful transfer, see
+  // DECISIONS.md "Session-renewal strategy"). Only when the pane has a project
+  // cwd to write into.
+  if (pane.cwd) {
+    const captureBtn = document.createElement("button");
+    captureBtn.className = "icon-btn";
+    captureBtn.textContent = "✎";
+    captureBtn.title = "Capture a decision/gotcha to this project's DECISIONS.md (on the go)";
+    captureBtn.addEventListener("click", () => openInlineCapture(actions, captureBtn, pane.cwd));
+    actions.append(captureBtn);
+  }
   // The chat-global controls (Simple/Advanced, split, background tasks) ride on
   // the PRIMARY pane's header row rather than a dedicated bar - so no extra row,
   // and the top header stays just the primary tabs + gear (Aidin design note
@@ -2963,6 +2975,56 @@ function paneHeaderEl(index) {
   }
   header.append(actions);
   return header;
+}
+
+// Inline capture input for the pane-header ✎ button: swaps the button for a
+// text field (custom UI, never a native prompt - Aidin's standing rule), Enter
+// saves to DECISIONS.md via captureNote, Esc/blur cancels. The button briefly
+// flashes ✓/✕ to confirm without stealing focus or popping a dialog.
+function openInlineCapture(actions, button, cwd) {
+  if (actions.querySelector(".pane-capture-input")) {
+    return;
+  }
+  button.style.display = "none";
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "pane-capture-input";
+  input.placeholder = "Capture to DECISIONS.md — Enter to save, Esc to cancel";
+  let done = false;
+  const close = () => {
+    if (done) {
+      return;
+    }
+    done = true;
+    input.remove();
+    button.style.display = "";
+  };
+  const flash = (ok, err) => {
+    button.textContent = ok ? "✓" : "✕";
+    button.title = ok ? "Captured to DECISIONS.md" : "Capture failed: " + (err || "unknown");
+    setTimeout(() => {
+      button.textContent = "✎";
+      button.title = "Capture a decision/gotcha to this project's DECISIONS.md (on the go)";
+    }, 1600);
+  };
+  input.addEventListener("keydown", async (e) => {
+    if (e.key === "Escape") {
+      close();
+    } else if (e.key === "Enter") {
+      const text = input.value.trim();
+      if (!text) {
+        close();
+        return;
+      }
+      input.disabled = true;
+      const res = await window.helm.captureNote(cwd, text);
+      close();
+      flash(!!res?.ok, res?.error);
+    }
+  });
+  input.addEventListener("blur", () => close());
+  actions.insertBefore(input, button);
+  input.focus();
 }
 
 // Convention for "this session generated a vision mockup": a Write/Edit to an

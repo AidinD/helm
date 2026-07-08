@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld("helm", {
   projectClaudeMdExists: (cwd) => ipcRenderer.invoke("claudeMd:projectExists", cwd),
   listContext: (cwd) => ipcRenderer.invoke("context:list", cwd),
   openContext: (opts) => ipcRenderer.invoke("context:open", opts),
+  captureNote: (cwd, text) => ipcRenderer.invoke("context:capture", { cwd, text }),
   copyToClipboard: (text) => ipcRenderer.invoke("clipboard:write", text),
   saveImage: (base64Data, ext) => ipcRenderer.invoke("image:save", { base64Data, ext }),
   transcribeVoice: (samples, language) => ipcRenderer.invoke("voice:transcribe", { samples, language }),

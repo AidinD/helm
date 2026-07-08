@@ -466,6 +466,54 @@ ipcMain.handle("context:open", (_event, { cwd, kind, name } = {}) => {
   return { ok: false, error: "Unknown context kind" };
 });
 
+// --- One-click "capture on the go": append a dated note to the session's own
+// project DECISIONS.md (where carry-over already points a fresh session). The
+// producer side of faithful transfer - capture a decision/gotcha the MOMENT it
+// happens instead of reconstructing at handoff (see DECISIONS.md
+// "Session-renewal strategy"). Append-only + atomic (temp+rename); creates the
+// file with a "# Decisions" header if absent; prepends after the existing H1
+// (newest-first, matching this repo's DECISIONS.md) so it can't clobber curated
+// content. Labeled "Capture:" so it's honestly a raw on-the-go note, promotable
+// into a polished entry later. ---
+ipcMain.handle("context:capture", (_event, { cwd, text } = {}) => {
+  if (!cwd || !text || !text.trim()) {
+    return { ok: false, error: "Nothing to capture" };
+  }
+  const note = text.trim();
+  const file = path.join(cwd, "DECISIONS.md");
+  const date = new Date().toISOString().slice(0, 10);
+  const title = note.split("\n")[0].slice(0, 60);
+  const entry = `## ${date} - Capture: ${title}\n\n${note}\n\n`;
+  try {
+    let existing = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
+    let updated;
+    if (/^#\s+/.test(existing)) {
+      // Insert after the existing top-level H1 (any title), keeping it first.
+      const nl = existing.indexOf("\n");
+      const head = nl === -1 ? existing + "\n" : existing.slice(0, nl + 1);
+      const rest = (nl === -1 ? "" : existing.slice(nl + 1)).replace(/^\n+/, "");
+      updated = head + "\n" + entry + rest;
+    } else {
+      updated = "# Decisions\n\n" + entry + existing;
+    }
+    const tmp = file + "." + crypto.randomBytes(4).toString("hex") + ".tmp";
+    try {
+      fs.writeFileSync(tmp, updated, "utf8");
+      fs.renameSync(tmp, file);
+    } catch (err) {
+      try {
+        fs.unlinkSync(tmp);
+      } catch {
+        // best-effort cleanup
+      }
+      throw err;
+    }
+    return { ok: true, path: file };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
 // --- Archive/unarchive a session in the desktop app's own state. Always a
 // direct response to an explicit click in the renderer (manual "Archive", or
 // approving an orchestrator-proposed suggestion) — never called on a timer or
