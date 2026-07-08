@@ -45,6 +45,36 @@ same instinct behind Kun Chen's "fresh context per step" (Phase 4). Durable
 continuity should live in FILES (CLAUDE.md, DECISIONS.md, memory), not in
 keeping one session alive indefinitely — externalize, don't hoard.
 
+**2026-07-08 refinement - renewal = faithful transfer, and it is only as safe
+as the transfer is faithful.** A concrete case forced this nuance. A fresh
+spawned session diagnosed a bug well but proposed the naive fix; a context-rich
+long session proposed a materially better one, because it carried gotchas the
+fresh one lacked (the %APPDATA% MSIX sandbox-overlay trap, that config.json is
+on D:\, an archive follow-on bug). The lesson is NOT "keep megasessions" - it is
+that "durable continuity lives in files" only pays off if the files actually
+carry what the fresh session needs. Here they did not: (1) DECISIONS/PLAN are
+NOT auto-loaded (only the repo-root CLAUDE.md is), so a fresh session never read
+them; (2) the load-bearing traps were not even in DECISIONS - they lived in the
+orchestrator's personal memory + the code; (3) auto-memory recall is
+relevance-matched, not guaranteed for a project-scoped worker. So the strategy:
+
+- **Trigger renewal on saturation OR (drained AND topic-shift)**, not context-%
+  alone. A drained-but-not-saturated session mid-topic is not force-renewed.
+- **The transfer bar for judgment-heavy work:** before renewing, the outgoing
+  session emits a handoff capturing the durable decisions + WHY, the traps
+  learned this session, and the live task state - to the bar "would this let a
+  fresh session reach the GOOD answer, not just a working one?"
+- **Scale by work type:** mechanical work renews freely/ephemeral; judgment-heavy
+  work (design, architecture, adversarial review) stays in a context-rich session
+  longer and renews only at genuine topic boundaries, after a faithful handoff.
+- **Load-bearing gotchas belong in the ALWAYS-loaded surface** (repo-root
+  CLAUDE.md), not buried in DECISIONS or personal memory.
+- **"Summarize & carry over" must inject the durable stores** (DECISIONS/CLAUDE.md/
+  PLAN/relevant memory) into the fresh session's system context, not just
+  summarize the transcript - a transcript summary would have missed the traps too.
+- When Helm drives Helm, this transfer (context injection at spawn) is
+  load-bearing infrastructure, not a nicety.
+
 This reframes several things already built or planned tonight:
 
 - **Auto-compact is a partial anti-pattern.** The CLI's own built-in

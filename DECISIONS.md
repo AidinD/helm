@@ -1,5 +1,24 @@
 # Decisions
 
+## 2026-07-08 - Session-renewal strategy: renewal = faithful transfer
+
+Decision on when/how to renew (retire + respawn) a session, forced by a concrete case: a fresh spawned session proposed a naive fix while a context-rich long session proposed a better one, purely because of context it carried that the fresh one lacked.
+
+Reframe: renewal is not kill+restart. Context is both an ASSET (it produced the better fix) and a LIABILITY (bloat dilutes signal, hits token limits, carries stale assumptions). Renewal = transfer the asset, drop the liability - and it is only as safe as the transfer is faithful.
+
+Why DECISIONS.md did NOT prevent the naive fix (the important diagnosis):
+1. DECISIONS/PLAN are NOT auto-loaded - only the repo-root CLAUDE.md is (the captain's own rule). A fresh session never opened them.
+2. The load-bearing traps were not even in DECISIONS - they lived in the orchestrator's personal memory (the %APPDATA% MSIX sandbox-overlay / verify-before-theory lesson) and in the code (config.json is on D:\). Reading all of DECISIONS would still have missed them.
+3. Auto-memory recall is relevance-matched, not guaranteed for a project-scoped worker session.
+So "force the session to read DECISIONS" is insufficient on its own - the fix is to (a) move load-bearing gotchas into the always-loaded repo CLAUDE.md, and (b) make judgment-heavy spawns/handoffs actively CARRY the relevant WHY rather than hope for recall.
+
+The strategy (see PLAN.md's Strategic-reorientation section for the full form):
+- Trigger renewal on saturation OR (drained AND topic-shift), not context-% alone.
+- Transfer bar for judgment-heavy work: a handoff must carry durable decisions + WHY + traps-learned + live state, to the bar "would this let a fresh session reach the GOOD answer, not just a working one?"
+- Scale by work type: mechanical renews freely/ephemeral; judgment-heavy stays context-rich longer and renews only at topic boundaries after a faithful handoff.
+- Mechanism: retire/respawn (built) is the primitive; "summarize & carry over" must be upgraded to inject the durable stores (not just summarize the transcript); the handoff nudge must fire on saturation OR drainage.
+- When Helm drives Helm, context injection at spawn is load-bearing infrastructure.
+
 ## 2026-07-08 - Helm owns its own session index (FIXES the local_*.json gap flagged below)
 
 This is the fix for the "load-bearing architectural gap" the entry immediately below surfaced but left unfixed.
