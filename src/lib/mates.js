@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { isValidPersonaKey } from "./personas.js";
 
 // First-mate identity (docs/first-mate-tier-design.md section 3 + the "named
 // mates" refinement). A first mate is a NAMED coordination context the captain
@@ -138,6 +139,9 @@ export function ensureMates(root) {
         name: pickName(takenNames, state.mates.length),
         root: resolvedRoot,
         status: "active",
+        // Optional temperament overlay (personas.js) chosen per-spawn; null =
+        // plain coordinator. Injected after the base manual at launch.
+        persona: null,
         createdAt: Date.now(),
         retiredAt: null,
       });
@@ -202,7 +206,7 @@ export function renameMate(mateId, name) {
  * active mate. No-op-safe: if the id is unknown or already retired, still
  * guarantees the slot is filled.
  */
-export function retireAndRespawn(mateId, pendingHandoff = null) {
+export function retireAndRespawn(mateId, pendingHandoff = null, persona = null) {
   const state = readState();
   const outgoing = state.mates.find((m) => m.mateId === mateId);
   const slot = outgoing && typeof outgoing.slot === "number" ? outgoing.slot : null;
@@ -222,6 +226,11 @@ export function retireAndRespawn(mateId, pendingHandoff = null) {
     name: pickName(takenNames, state.mates.length),
     root: root ? path.resolve(root) : null,
     status: "active",
+    // Persona for the fresh mate. A respawn normally resets to the plain
+    // coordinator (null); a deliberate persona SWITCH passes the new key here
+    // (the running-mate change path retires with a handoff, then respawns into
+    // the chosen persona - a system prompt can't change mid-session).
+    persona: isValidPersonaKey(persona) ? persona || null : null,
     createdAt: Date.now(),
     retiredAt: null,
     // Handoff from the retiring mate: the fresh mate's first jump-in seeds its
@@ -233,6 +242,28 @@ export function retireAndRespawn(mateId, pendingHandoff = null) {
   state.mates.push(fresh);
   writeState(state);
   return fresh;
+}
+
+/**
+ * Sets (or clears) an active mate's persona overlay. Used for a FRESH mate
+ * before its session starts - once a session is running the overlay is already
+ * in its context, so switching then goes through retireAndRespawn instead.
+ * The renderer enforces that fresh-vs-running policy; this just persists the
+ * choice. Returns the updated mate, or null if not found. Unknown keys are
+ * rejected (treated as no-op error) to keep the store clean.
+ */
+export function setMatePersona(mateId, persona) {
+  if (!isValidPersonaKey(persona)) {
+    throw new Error(`setMatePersona: unknown persona "${persona}"`);
+  }
+  const state = readState();
+  const mate = state.mates.find((m) => m.mateId === mateId);
+  if (!mate) {
+    return null;
+  }
+  mate.persona = persona || null;
+  writeState(state);
+  return mate;
 }
 
 /**

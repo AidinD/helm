@@ -3585,6 +3585,42 @@ button.primary {
   filter: brightness(1.08);
 }
 
+.fleet-persona {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 13px 10px;
+  margin-top: -2px;
+}
+.fleet-persona-tag {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 9.5px;
+  color: var(--text-faint);
+}
+.fleet-persona-btn {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-dim);
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.fleet-persona-btn:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+/* Only a chosen persona gets colour - default coordinator stays neutral (the
+   "colour only for active states" rule). */
+.fleet-persona-btn.is-set {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  color: var(--text);
+}
+
 .fleet-gauge {
   display: flex;
   align-items: center;

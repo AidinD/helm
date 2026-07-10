@@ -23,7 +23,8 @@ import { runGoal } from "./lib/goalOrchestrator.js";
 import { loadGoalRunHistory, upsertGoalRunRecord, removeGoalRunRecord } from "./lib/goalRunHistory.js";
 import { removeWorktree } from "./lib/worktree.js";
 import { loadDomains, registerDomain, removeDomain } from "./lib/domains.js";
-import { ensureMates, activeMates, findMateById, loadMates, renameMate, retireAndRespawn, bindMateSession, consumeMateHandoff } from "./lib/mates.js";
+import { ensureMates, activeMates, findMateById, loadMates, renameMate, retireAndRespawn, bindMateSession, consumeMateHandoff, setMatePersona } from "./lib/mates.js";
+import { personaOverlay, PERSONAS } from "./lib/personas.js";
 import { deriveSecondMates, bindSecondMateSession, renameSecondMate } from "./lib/secondMates.js";
 import {
   ensureDispatchDirs,
@@ -1103,10 +1104,24 @@ ipcMain.handle("mates:rename", (_event, { mateId, name }) => {
     return { ok: false, error: err?.message || String(err) };
   }
 });
-ipcMain.handle("mates:retire", (_event, { mateId, handoff }) => {
+ipcMain.handle("mates:retire", (_event, { mateId, handoff, persona }) => {
   try {
-    const mate = retireAndRespawn(mateId, handoff || null);
+    // `persona` set = a deliberate persona switch: respawn into it. Absent =
+    // an ordinary retire, which resets the fresh mate to the plain coordinator.
+    const mate = retireAndRespawn(mateId, handoff || null, persona || null);
     return { ok: true, mate };
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err) };
+  }
+});
+// The persona catalog for the Fleet picker (key/label/blurb only - the overlay
+// text stays server-side, injected at launch). Single source of truth is
+// personas.js; the renderer can't import an ES module, so it fetches this.
+ipcMain.handle("personas:list", () => PERSONAS.map(({ key, label, blurb }) => ({ key, label, blurb })));
+ipcMain.handle("mates:setPersona", (_event, { mateId, persona }) => {
+  try {
+    const mate = setMatePersona(mateId, persona || null);
+    return mate ? { ok: true, mate } : { ok: false, error: "unknown mateId" };
   } catch (err) {
     return { ok: false, error: err?.message || String(err) };
   }
@@ -1232,6 +1247,15 @@ ipcMain.handle(
         // it's already in the session's context - don't re-append.
         if (!resumeSessionId) {
           appendSystemPrompt = firstMateInstructions();
+          // Persona overlay (personas.js): a per-spawn temperament layer after
+          // the base manual. Read from the mate record so it's fixed for this
+          // session (a system prompt can't change mid-session). null persona =
+          // plain coordinator = no overlay.
+          const mate = mateId ? findMateById(mateId) : null;
+          const overlay = personaOverlay(mate?.persona);
+          if (overlay) {
+            appendSystemPrompt = `${appendSystemPrompt || ""}\n\n${overlay}`;
+          }
         }
         // First mates launch LEAN: only the helm_* dispatch tools above, not
         // the machine's other MCP servers (Roblox, hevy, home-assistant, Unity,
