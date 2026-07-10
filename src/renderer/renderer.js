@@ -4655,7 +4655,7 @@ function refreshDashboardIfVisible() {
 
 // Per-section fingerprints so fillDashboardSections can skip sections whose
 // source data is unchanged. Reset on each full renderDashboardPage.
-let dashSectionFingerprints = { onboarding: null, queue: null, fleet: null, goals: null, newSession: null };
+let dashSectionFingerprints = { onboarding: null, queue: null, report: null, fleet: null, goals: null, newSession: null };
 
 function dashboardQueueFingerprint(inMotion) {
   const rows = (inMotion || dashboardInMotionRows())
@@ -5505,6 +5505,12 @@ async function fillDashboardSections({ force = false } = {}) {
     document.getElementById("dashQueueSlot").replaceChildren(dashboardQueueSection());
   }
 
+  const reportFp = dashboardReportFingerprint();
+  if (force || reportFp !== dashSectionFingerprints.report) {
+    dashSectionFingerprints.report = reportFp;
+    document.getElementById("dashReportSlot").replaceChildren(dashboardReportBackSection());
+  }
+
   const [matesResult, secondMatesResult] = await Promise.all([window.helm.listMates(), window.helm.listSecondMates()]);
   const activeMatesList = matesResult?.ok ? matesResult.active : [];
   const secondMatesList = augmentSecondMatesWithSessions(secondMatesResult?.ok ? secondMatesResult.secondMates : [], activeMatesList);
@@ -5578,8 +5584,15 @@ async function renderDashboardPage() {
     d.className = "dash-section-slot";
     return d;
   };
-  page.append(mkSlot("dashOnboardingSlot"), mkSlot("dashQueueSlot"), mkSlot("dashFleetSlot"), mkSlot("dashGoalsSlot"), mkSlot("dashNewSessionSlot"));
-  dashSectionFingerprints = { onboarding: null, queue: null, fleet: null, goals: null, newSession: null };
+  page.append(
+    mkSlot("dashOnboardingSlot"),
+    mkSlot("dashQueueSlot"),
+    mkSlot("dashReportSlot"),
+    mkSlot("dashFleetSlot"),
+    mkSlot("dashGoalsSlot"),
+    mkSlot("dashNewSessionSlot")
+  );
+  dashSectionFingerprints = { onboarding: null, queue: null, report: null, fleet: null, goals: null, newSession: null };
   await fillDashboardSections({ force: true });
 }
 
@@ -6055,6 +6068,164 @@ function dashGoalRunRowEl(run) {
   const meta = document.createElement("div");
   meta.className = "dash-q-meta";
   meta.textContent = isRunning ? "running" : "needs input";
+  row.append(meta);
+
+  return row;
+}
+
+// --- Report-back -----------------------------------------------------------
+// Orchestration-model phase 2 ("Structured report-back"): a dispatched/autopilot
+// run should report a COMPACT result up to the Dashboard - status, one-line what
+// changed, whether it needs the captain - so results are visible without opening
+// each run's worktree or expanding the Fleet tree.
+//
+// The queue above ("Needs you & in motion") already surfaces LIVE runs (running)
+// and act-now attention runs (errored/escalated). The gap this fills is the
+// FINISHED run: a run that completed cleanly with commits to review had no
+// compact Dashboard presence at all - it lived only as a collapsed crew node
+// under a second mate in the Fleet tree. This section is the consolidated
+// "what came back" view over every TERMINAL run (done, escalated, errored,
+// interrupted), newest first, each rendered as one compact report row.
+
+// Compact report derived from a goalRuns entry, deliberately mirroring main.js's
+// buildDispatchReport (same three load-bearing fields: status / summary /
+// needsCaptain) so the Dashboard report matches what a dispatched run writes
+// back to its first mate. Renderer-side + read-only over goalRuns - it invents
+// no new data and never touches the orchestrator.
+function goalRunReport(run) {
+  const escalated = !!run.escalation;
+  const commitCount = crewCommitCount(run);
+  const branchName = run.result?.branchName || null;
+  // Newest implement-phase iteration's own one-sentence summary is the honest
+  // "what changed" line (same source buildDispatchReport uses). Rehydrated runs
+  // carry no iteration list, so this is absent for them and we fall back below.
+  const lastImplement = [...(run.iterations || [])]
+    .reverse()
+    .find((r) => r.ok && r.result && r.phase === "implement");
+
+  if (run.status === "error") {
+    return {
+      status: "failed",
+      changed: run.error || "The run ended with an error.",
+      needsCaptain: "Errored - inspect and re-dispatch.",
+      commitCount,
+      branchName,
+    };
+  }
+  if (run.status === "interrupted") {
+    return {
+      status: "interrupted",
+      changed: "Interrupted by an app restart - outcome unknown.",
+      needsCaptain: "Check the worktree/branch on disk for what it left behind.",
+      commitCount,
+      branchName,
+    };
+  }
+  if (escalated) {
+    const detail = run.escalation?.detail || "Run paused for a human decision.";
+    return { status: "paused", changed: detail, needsCaptain: detail, commitCount, branchName };
+  }
+  // Clean finish (status "done", not escalated).
+  const changed =
+    lastImplement?.result?.summary ||
+    (commitCount > 0
+      ? `${commitCount} commit${commitCount === 1 ? "" : "s"} landed.`
+      : `Run stopped: ${run.result?.stoppedReason || "done"}.`);
+  const needsCaptain =
+    commitCount > 0
+      ? `${commitCount} commit${commitCount === 1 ? "" : "s"} ready for review${branchName ? ` in ${branchName}` : ""}.`
+      : null;
+  return { status: "done", changed, needsCaptain, commitCount, branchName };
+}
+
+// Terminal runs, newest first, capped so the section stays a compact glance
+// rather than an ever-growing history (the Goal page is the full log). "Newest"
+// = highest ordinal (assigned in run order, live + rehydrated).
+const REPORT_BACK_LIMIT = 6;
+function dashboardReportBackRuns() {
+  return [...goalRuns.values()]
+    .filter((r) => r.status === "done" || r.status === "error" || r.status === "interrupted")
+    .sort((a, b) => (b.ordinal || 0) - (a.ordinal || 0))
+    .slice(0, REPORT_BACK_LIMIT);
+}
+
+function dashboardReportFingerprint() {
+  return dashboardReportBackRuns()
+    .map((r) => `${r.goalRunId}:${r.status}:${r.escalation ? 1 : 0}:${crewCommitCount(r)}:${r.iterations?.length || 0}`)
+    .join("|");
+}
+
+function dashboardReportBackSection() {
+  const runs = dashboardReportBackRuns();
+  const needsCount = runs.filter((r) => goalRunReport(r).needsCaptain).length;
+  const countLabel = runs.length === 0 ? null : needsCount > 0 ? `${needsCount} need${needsCount === 1 ? "s" : ""} you` : "all clear";
+
+  const section = document.createElement("section");
+  section.className = "dash-board";
+  section.append(
+    dashBoardHead("Report-back", countLabel, "What your dispatched & autopilot runs came back with - no need to open each one", {
+      urgent: needsCount > 0,
+    })
+  );
+
+  const body = document.createElement("div");
+  body.className = "dash-board-body";
+  if (runs.length === 0) {
+    body.append(dashEmpty("No finished runs yet - dispatched and autopilot runs report their results here when they wrap up."));
+  } else {
+    const list = document.createElement("div");
+    list.className = "dash-queue-list";
+    runs.forEach((run) => list.append(dashReportRowEl(run)));
+    body.append(list);
+  }
+  section.append(body);
+  return section;
+}
+
+// One compact report row. Reuses the queue-row structure/classes so it reads as
+// part of the same Dashboard system. Clicking jumps to the Goal page (same as a
+// queue goal-run row), where goalRunDetailEl renders the full run + worktree
+// actions.
+function dashReportRowEl(run) {
+  const report = goalRunReport(run);
+  const row = document.createElement("div");
+  row.className = "dash-queue-row" + (report.needsCaptain ? " dash-report-needs" : "");
+  row.addEventListener("click", () => navigateToPage("goal"));
+
+  // Left icon: needs-you warning when the captain must act; a done check
+  // otherwise. Own markup (dashQueueStateIcon's goalRun path assumes a live/
+  // attention run, not a clean finish) but the same .dash-state-* tokens.
+  const ic = document.createElement("div");
+  ic.className = "dash-state-ic " + (report.needsCaptain ? "dash-state-needs" : "dash-state-done");
+  ic.textContent = report.needsCaptain ? "⚠" : "✓";
+  row.append(ic);
+
+  const qbody = document.createElement("div");
+  qbody.className = "dash-q-body";
+  const top = document.createElement("div");
+  top.className = "dash-q-top";
+  const goalSnippet = run.goal.length > 60 ? run.goal.slice(0, 60) + "…" : run.goal;
+  const title = document.createElement("span");
+  title.className = "dash-q-title";
+  const origin = run.dispatchedBy ? "Dispatched" : "Autopilot";
+  title.textContent = `${origin}: "${goalSnippet}" — ${report.status}`;
+  top.append(title);
+  qbody.append(top);
+
+  const why = document.createElement("div");
+  why.className = "dash-q-why";
+  // "What changed" one-liner; append the needs-captain nudge when it adds info
+  // beyond the change line itself (e.g. the commit-review count).
+  why.textContent =
+    report.needsCaptain && report.needsCaptain !== report.changed
+      ? `${report.changed} · ${report.needsCaptain}`
+      : report.changed;
+  qbody.append(why);
+  row.append(qbody);
+
+  const meta = document.createElement("div");
+  meta.className = "dash-q-meta";
+  meta.textContent = report.needsCaptain ? "needs you" : report.commitCount > 0 ? `${report.commitCount} commit${report.commitCount === 1 ? "" : "s"}` : "done";
   row.append(meta);
 
   return row;
