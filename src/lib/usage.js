@@ -3,7 +3,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const logPath = path.join(__dirname, "..", "..", "usage-log.jsonl");
+// HELM_USAGE_LOG_PATH is a test/packaged-app seam (see main.js's
+// packagedPaths.js; distinct from helmUsage.js's HELM_USAGE_PATH, which backs
+// a different file). Production/dev leaves it unset and uses the plain JSONL
+// file beside the app.
+const logPath = process.env.HELM_USAGE_LOG_PATH || path.join(__dirname, "..", "..", "usage-log.jsonl");
 
 /**
  * Appends one completed-launch record. Foundation for the "which model/skills

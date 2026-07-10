@@ -18,7 +18,9 @@ import { fileURLToPath } from "node:url";
  */
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const domainsPath = path.join(__dirname, "..", "..", "domains.json");
+// HELM_DOMAINS_PATH is a test/packaged-app seam (see main.js's packagedPaths.js);
+// production/dev leaves it unset and uses the plain JSON file beside the app.
+const domainsPath = process.env.HELM_DOMAINS_PATH || path.join(__dirname, "..", "..", "domains.json");
 
 /**
  * @typedef {object} Domain

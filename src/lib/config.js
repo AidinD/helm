@@ -4,7 +4,11 @@ import { fileURLToPath } from "node:url";
 import { desktopConfigPath } from "./paths.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const configPath = path.join(__dirname, "..", "..", "config.json");
+// HELM_CONFIG_PATH is a test/packaged-app seam (see main.js's packagedPaths.js,
+// which points this at Electron's userData dir in a packaged build, since
+// app.asar is read-only there); dev and unit tests leave it unset and use the
+// plain JSON file beside the app, like every other Helm store.
+const configPath = process.env.HELM_CONFIG_PATH || path.join(__dirname, "..", "..", "config.json");
 
 const DEFAULT_CONFIG = {
   sort: "attention", // attention | recent | title
