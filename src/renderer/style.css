@@ -876,6 +876,32 @@ body.advanced .row-jot {
   z-index: 1000;
 }
 
+/* Persistent busy toast (a long op like a handoff summarize) - a spinner so a
+   dashboard-triggered retire/archive doesn't read as "nothing happened". */
+.toast-busy {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.toast-spin {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .toast-spin {
+    animation: toast-spin-rot 0.7s linear infinite;
+  }
+}
+@keyframes toast-spin-rot {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* --- Workspace: 1 or 2 conversation panes --- */
 .workspace {
   display: grid;

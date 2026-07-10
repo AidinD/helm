@@ -834,6 +834,7 @@ async function archiveSession(session) {
 // summary still archives - the save is best-effort, never a blocker. Only
 // offered when the session has a project cwd to write the handoff into.
 async function archiveWithHandoff(session) {
+  const busy = showBusyToast(`Saving handoff for "${session.title}"…`);
   setPaneBusyUIRaw(focusedPaneIndex, `Saving handoff for "${session.title}"…`);
   let saved = false;
   try {
@@ -851,6 +852,7 @@ async function archiveWithHandoff(session) {
     showToast(`Handoff failed: ${err.message} - archiving anyway.`);
   }
   setPaneBusyUIRaw(focusedPaneIndex, "");
+  busy.done();
   if (saved) {
     showToast(`Handoff saved to DECISIONS.md; archiving "${session.title}".`);
   }
@@ -894,6 +896,30 @@ function showToast(text) {
   el.textContent = text;
   document.body.append(el);
   setTimeout(() => el.remove(), 4000);
+}
+
+// A PERSISTENT toast with a spinner, for a multi-second op (a handoff
+// summarize) triggered from anywhere - including the dashboard, where the
+// per-pane busy text isn't visible, so retire/archive-with-handoff used to look
+// like nothing happened. Returns { done } to remove it. Never auto-dismisses.
+function showBusyToast(text) {
+  const el = document.createElement("div");
+  el.className = "toast toast-busy";
+  const spin = document.createElement("span");
+  spin.className = "toast-spin";
+  const label = document.createElement("span");
+  label.textContent = text;
+  el.append(spin, label);
+  document.body.append(el);
+  let removed = false;
+  return {
+    done: () => {
+      if (!removed) {
+        removed = true;
+        el.remove();
+      }
+    },
+  };
 }
 
 // ============================== Context menu ==============================
@@ -1721,7 +1747,12 @@ async function summarizeAndCarryOver(session) {
 // thread survives the transfer.
 async function retireMateWithCarryOver(mate, persona = null) {
   let handoff = null;
+  let busy = null;
   if (mate.sessionId) {
+    // The summarize is multi-second and usually triggered from the dashboard,
+    // where the per-pane status isn't visible - so show a persistent spinner
+    // toast too, or the click reads as "nothing happened".
+    busy = showBusyToast(`Retiring ${mate.name} - saving handoff…`);
     setPaneBusyUIRaw(focusedPaneIndex, `Retiring ${mate.name} - saving handoff…`);
     try {
       const res = await summarizeSession({ cwd: mate.root || state.orchestratorHome, cliSessionId: mate.sessionId, sessionId: mate.sessionId, title: mate.name });
@@ -1734,6 +1765,9 @@ async function retireMateWithCarryOver(mate, persona = null) {
     setPaneBusyUIRaw(focusedPaneIndex, "");
   }
   await window.helm.retireMate(mate.mateId, handoff, persona || null);
+  if (busy) {
+    busy.done();
+  }
   fillDashboardSections({ force: true });
 }
 
