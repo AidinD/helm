@@ -23,6 +23,10 @@ const count = (sel) => app.eval(`document.querySelectorAll(${JSON.stringify(sel)
 
 try {
   await app.waitForSelector("#pageToggle", 30000, { visible: true });
+  // #pageToggle is static HTML and can become visible a hair BEFORE renderer.js
+  // finishes evaluating its top-level `let goalRuns = new Map()`, so seeding
+  // immediately races that and can throw "goalRuns is not defined". Settle first.
+  await new Promise((r) => setTimeout(r, 800));
 
   // Inject a spread of terminal runs + one live run (which must NOT appear in
   // report-back - it's not a finished result yet).
