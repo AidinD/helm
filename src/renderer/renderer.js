@@ -777,6 +777,17 @@ async function restoreToHelm(session) {
   refreshArchivePageIfVisible();
 }
 
+// "Removed from Helm" (hiddenSessions) is a permanent hide, DISTINCT from
+// archived (config.archivedSessions, applied as isArchived in readAllSessions).
+// Every user-facing / attention derivation that reads state.sessions must honor
+// it, or a removed session leaks back into some view (the sidebar filtered it,
+// but Fleet Direct, the dashboard queues, and the taskbar badge did not - they
+// drifted). Keyed on sessionId, matching what removeFromHelm writes. This is
+// the single predicate; do not re-inline the membership check.
+function isHiddenFromHelm(session) {
+  return (state.config.hiddenSessions || []).includes(session.sessionId);
+}
+
 // refresh() only ever re-renders the sidebar — Analysis/Settings/Archive are
 // pull-based (re-rendered on tab switch), which would otherwise leave a
 // just-restored/unarchived row stale on screen if you're currently ON the
@@ -2075,10 +2086,9 @@ function renderSidebar() {
   // session list stuck hidden.
   body.classList.remove("dragging-category");
 
-  const hiddenIds = new Set(state.config.hiddenSessions || []);
   const visible = state.sessions
     .filter((s) => !s.isArchived)
-    .filter((s) => !hiddenIds.has(s.sessionId))
+    .filter((s) => !isHiddenFromHelm(s))
     .filter(matchesSearch);
 
   // Flat "list" mode was removed (2026-07-07): it duplicated the Fleet's Direct
@@ -2103,6 +2113,7 @@ function renderSidebar() {
       .map(sessionById)
       .filter(Boolean)
       .filter((s) => !s.isArchived)
+      .filter((s) => !isHiddenFromHelm(s))
       .filter(matchesSearch);
     (group.sessionIds || []).forEach((id) => grouped.add(id));
     body.append(
@@ -4151,8 +4162,13 @@ async function refresh() {
   // before this poll) for away-from-desk attention delivery - fire once per
   // transition, not on every poll tick a session happens to still be waiting.
   const previouslyWaiting = new Set(state.sessions.filter((s) => s.status === "waiting").map((s) => s.sessionId));
+  // A session "removed from Helm" must not fire an OS attention toast - that's
+  // the most intrusive way a hidden session could leak back. Read the freshly
+  // fetched config (data.config), not state.config, so a hide applied this very
+  // poll is honored immediately.
+  const hiddenNow = new Set(data.config?.hiddenSessions || []);
   for (const session of data.sessions) {
-    if (session.status === "waiting" && !previouslyWaiting.has(session.sessionId)) {
+    if (session.status === "waiting" && !previouslyWaiting.has(session.sessionId) && !hiddenNow.has(session.sessionId)) {
       window.helm.notifyAttention({ title: "Helm - session needs input", body: session.title });
     }
   }
@@ -4645,7 +4661,7 @@ function augmentSecondMatesWithSessions(secondMates, mates = []) {
     }
   }
   const sessions = state.sessions
-    .filter((s) => s.cwd && !s.isArchived)
+    .filter((s) => s.cwd && !s.isArchived && !isHiddenFromHelm(s))
     .sort((a, b) => (b.lastActivityAt || 0) - (a.lastActivityAt || 0));
   for (const sess of sessions) {
     const sid = sess.cliSessionId || sess.sessionId;
@@ -5265,7 +5281,7 @@ function mostRecentSessionForCwd(cwd) {
   }
   return (
     state.sessions
-      .filter((s) => !s.isArchived && samePath(s.cwd, cwd))
+      .filter((s) => !s.isArchived && !isHiddenFromHelm(s) && samePath(s.cwd, cwd))
       .sort((a, b) => (b.lastActivityAt || 0) - (a.lastActivityAt || 0))[0] || null
   );
 }
@@ -5530,6 +5546,7 @@ function dashboardProposalSessions() {
   const proposalSessions = state.sessions.filter(
     (s) =>
       !s.isArchived &&
+      !isHiddenFromHelm(s) &&
       (s.status === "idle" || classifierSaysDone(s)) &&
       !hasOpenJotWork(s) &&
       !isArchiveProposalDismissed(s)
@@ -5555,7 +5572,9 @@ function dashboardRunningRuns() {
 }
 
 function dashboardInMotionRows() {
-  const inMotionSessions = state.sessions.filter((s) => !s.isArchived && (s.status === "active" || s.status === "waiting"));
+  const inMotionSessions = state.sessions.filter(
+    (s) => !s.isArchived && !isHiddenFromHelm(s) && (s.status === "active" || s.status === "waiting")
+  );
   const sessionRows = sortByAttention(inMotionSessions).map((s) => ({
     kind: "session",
     session: s,
@@ -7288,7 +7307,9 @@ function updateGoalAttentionBadge() {
 // the same "needs you" total the Dashboard attention spotlight uses - an
 // unseen goal-run error/escalation, or a session sitting in "waiting".
 function updateAttentionTaskbarCount() {
-  const waitingSessions = state.sessions.filter((s) => !s.isArchived && s.status === "waiting").length;
+  const waitingSessions = state.sessions.filter(
+    (s) => !s.isArchived && !isHiddenFromHelm(s) && s.status === "waiting"
+  ).length;
   window.helm.setAttentionCount(unseenGoalAttention.size + waitingSessions);
 }
 
@@ -9360,7 +9381,7 @@ function cmdkBuildCommands() {
   // SESSION ENTITIES - non-archived sessions open in the focused pane (same as
   // clicking one in the sidebar), switching to Chat first.
   for (const session of state.sessions) {
-    if (session.isArchived) {
+    if (session.isArchived || isHiddenFromHelm(session)) {
       continue;
     }
     const statusLabel = STATUS_LABEL[session.status] || session.status || "";

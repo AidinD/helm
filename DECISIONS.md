@@ -1,5 +1,15 @@
 # Decisions
 
+## 2026-07-10 - "Removed from Helm" honored consistently across all derivations
+
+Follow-up to the archive fix below, which flagged that the Fleet Direct derivation filtered only `isArchived` while the sidebar also honored `hiddenSessions` - so a session "removed from Helm" still showed as a Direct card (and, it turned out, leaked into more places).
+Audited every consumer of `state.sessions` (grep `!s.isArchived`) and found the hide was honored in exactly one place (the sidebar's top-level list) and missed everywhere else: Fleet Direct, the sidebar's own group members, the dashboard needs-you/in-motion queue, the archive-proposal list, the command palette, the jump-in fallback (`mostRecentSessionForCwd`), the OS attention toast in `refresh()`, and the taskbar badge.
+Fix: a single `isHiddenFromHelm(session)` predicate in renderer.js (keyed on `sessionId`, matching what `removeFromHelm` writes), applied at every one of those sites - the convention is now "don't re-inline the membership check."
+Also excluded hidden sessions from the main-process orchestrator sweep (`main.js`): a session the user removed from Helm must not be silently auto-classified or, more importantly, auto-COMPACTED (a mutation) in the background. `main.js` inlines a `Set` there rather than importing the renderer helper (separate process).
+Deliberately left alone: `knownRepos` derivations (hiding one session shouldn't make Helm forget the project) and the Archive page's own "Removed from Helm" section (that's the restore UI, it must list hidden sessions).
+Kept distinct from archived (`config.archivedSessions`, applied as `isArchived` in `readAllSessions`) throughout - they're separate concepts.
+Verified via a new CDP E2E (`scripts/e2e/test-hidden-sessions-filtered.mjs`): a hidden session is absent from the sidebar, Fleet Direct, and the attention queue, while a sibling visible session in the same cwd stays; 0 console errors.
+
 ## 2026-07-10 - Helm usage analytics (local, content-free)
 
 Instrument Helm's OWN usage - which views Aidin visits and the navigation paths he takes - to inform later UX calls (e.g. "is the chat list needed", the Autopilot-as-primitive rework). Deliberately separate from usage-log.jsonl (that's per-prompt model/effort/cost, already surfaced on the Analysis page); this is app-interaction telemetry.

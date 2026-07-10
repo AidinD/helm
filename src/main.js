@@ -1908,7 +1908,15 @@ async function runOrchestratorSweepBody(config, { classifyOn, compactOn, accurac
   // streaming a turn run OUTSIDE Helm, and compacting a live session
   // would be a real problem. "idle" (aged past the window) is safely parked,
   // and matches Aidin's "aktiv men idle" framing for what to auto-compact.
-  const candidates = sessions.filter((s) => !s.isArchived && (s.status === "waiting" || s.status === "idle"));
+  // Sessions "removed from Helm" (config.hiddenSessions) are excluded too: they
+  // are gone from every Helm view, so Helm must not keep spending on classifying
+  // them - and, more importantly, must not auto-COMPACT (mutate) a session the
+  // user explicitly told it to stop managing. Distinct from archived (isArchived
+  // above); see config.js and isHiddenFromHelm in renderer.js.
+  const hidden = new Set(config.hiddenSessions || []);
+  const candidates = sessions.filter(
+    (s) => !s.isArchived && !hidden.has(s.sessionId) && (s.status === "waiting" || s.status === "idle")
+  );
 
   // Returned to the caller for the "orchestrator:sweepStatus" liveness readout.
   let classifiedCount = 0;
