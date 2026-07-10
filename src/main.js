@@ -27,6 +27,7 @@ import { ensureMates, activeMates, findMateById, loadMates, renameMate, retireAn
 import { personaOverlay, PERSONAS } from "./lib/personas.js";
 import { listSlashItems } from "./lib/slashCommands.js";
 import { trackHelmUsage, summarizeHelmUsage } from "./lib/helmUsage.js";
+import { initAutoUpdate } from "./lib/autoUpdate.js";
 import { deriveSecondMates, bindSecondMateSession, renameSecondMate } from "./lib/secondMates.js";
 import {
   ensureDispatchDirs,
@@ -2468,6 +2469,9 @@ app.whenReady().then(() => {
   // while Helm was closed), then a check every minute.
   runDueRoutines();
   setInterval(runDueRoutines, 60 * 1000);
+  // Auto-update: no-op in dev (app.isPackaged false); checks GitHub Releases in
+  // the packaged build. See lib/autoUpdate.js + docs/installer-and-auto-update.md.
+  initAutoUpdate();
 });
 
 // Without this, quitting Helm while any prompt is still running leaves
