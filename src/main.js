@@ -303,6 +303,30 @@ ipcMain.handle("skills:open", (_event, { name, origin, cwd }) => {
   return { ok: true };
 });
 
+// --- Read a skill's SKILL.md for the in-app rendered viewer (same readable-
+// HTML treatment as context docs). Path is resolved server-side via the
+// guarded skillMdPath; capped like context:read. ---
+ipcMain.handle("skills:read", (_event, { name, origin, cwd } = {}) => {
+  const file = skillMdPath(name, origin, cwd);
+  if (!file) {
+    return { ok: false, error: "SKILL.md not found" };
+  }
+  try {
+    const stat = fs.statSync(file);
+    const truncated = stat.size > CONTEXT_READ_MAX_BYTES;
+    const fd = fs.openSync(file, "r");
+    try {
+      const buf = Buffer.alloc(Math.min(stat.size, CONTEXT_READ_MAX_BYTES));
+      fs.readSync(fd, buf, 0, buf.length, 0);
+      return { ok: true, text: buf.toString("utf8"), name, truncated };
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch (err) {
+    return { ok: false, error: String(err.message || err) };
+  }
+});
+
 // --- Copy text to clipboard (Electron's own module, not navigator.clipboard,
 // to avoid relying on an untested web-permission assumption) ---
 ipcMain.handle("clipboard:write", (_event, text) => {

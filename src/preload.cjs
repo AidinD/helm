@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld("helm", {
   getTranscript: (ids) => ipcRenderer.invoke("transcript:get", ids),
   listSkills: (cwd) => ipcRenderer.invoke("skills:list", cwd),
   openSkill: (opts) => ipcRenderer.invoke("skills:open", opts),
+  readSkill: (opts) => ipcRenderer.invoke("skills:read", opts),
   openGlobalClaudeMd: () => ipcRenderer.invoke("claudeMd:openGlobal"),
   openProjectClaudeMd: (cwd) => ipcRenderer.invoke("claudeMd:openProject", cwd),
   projectClaudeMdExists: (cwd) => ipcRenderer.invoke("claudeMd:projectExists", cwd),

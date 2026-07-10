@@ -8181,8 +8181,20 @@ function skillListEl(title, names, origin, cwd) {
       const chip = document.createElement("button");
       chip.className = "skill-chip";
       chip.textContent = n;
-      chip.title = "Open SKILL.md";
-      chip.addEventListener("click", () => window.helm.openSkill({ name: n, origin, cwd }));
+      chip.title = "Open SKILL.md (right-click to open the file)";
+      const skillRef = { name: n, origin, cwd };
+      chip.addEventListener("click", () =>
+        openDocViewer({
+          label: `${n} · SKILL.md`,
+          read: () => window.helm.readSkill(skillRef),
+          reveal: () => window.helm.openSkill(skillRef),
+          revealLabel: "Open file",
+        })
+      );
+      chip.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        window.helm.openSkill(skillRef);
+      });
       list.append(chip);
     });
     section.append(list);
@@ -8525,16 +8537,20 @@ function renderMarkdown(md) {
   return out.join("\n");
 }
 
-// Open the doc viewer for a context-file reference (kind[, name]); main reads
-// the file from a guarded path and we render its markdown as HTML.
-function openDocViewer(ref, label) {
+// Open the doc viewer for any markdown file. `read` returns a Promise for the
+// file's raw text ({ ok, text, truncated }); `reveal` opens/reveals it in the
+// OS. Kept source-agnostic so both context files and skill SKILL.md files
+// share the exact same readable-HTML rendering.
+function openDocViewer({ label, read, reveal, revealLabel = "Reveal" }) {
   const overlay = document.getElementById("docViewer");
   const body = document.getElementById("docvBody");
-  document.getElementById("docvTitle").textContent = label || ref.name || "Document";
-  document.getElementById("docvReveal").onclick = () => window.helm.openContext(ref);
+  document.getElementById("docvTitle").textContent = label || "Document";
+  const revealBtn = document.getElementById("docvReveal");
+  revealBtn.textContent = revealLabel;
+  revealBtn.onclick = () => reveal && reveal();
   body.innerHTML = '<div class="cmdk-empty">Loading…</div>';
   overlay.classList.remove("hidden");
-  window.helm.readContext(ref).then((res) => {
+  read().then((res) => {
     if (!res || !res.ok) {
       body.innerHTML = "";
       const e = document.createElement("div");
@@ -8547,7 +8563,7 @@ function openDocViewer(ref, label) {
     if (res.truncated) {
       const t = document.createElement("div");
       t.className = "md-truncated";
-      t.textContent = "File truncated for display (over 1 MB) - use Reveal to open the full file.";
+      t.textContent = `File truncated for display (over 1 MB) - use ${revealLabel} to open the full file.`;
       body.append(t);
     }
     body.scrollTop = 0;
@@ -8589,7 +8605,9 @@ function contextFilesEl(context, cwd) {
     chip.disabled = !c.exists;
     chip.title = c.exists ? "Open (right-click to reveal in Explorer)" : "Not present";
     const ref = { cwd, kind: c.kind };
-    chip.addEventListener("click", () => openDocViewer(ref, c.label));
+    chip.addEventListener("click", () =>
+      openDocViewer({ label: c.label, read: () => window.helm.readContext(ref), reveal: () => window.helm.openContext(ref) })
+    );
     chip.addEventListener("contextmenu", (e) => {
       e.preventDefault();
       window.helm.openContext(ref);
@@ -8606,7 +8624,9 @@ function contextFilesEl(context, cwd) {
     chip.disabled = !d.exists;
     chip.title = d.exists ? "Open (does not auto-load · right-click to reveal in Explorer)" : "Not present";
     const ref = { cwd, kind: "projectDoc", name: d.name };
-    chip.addEventListener("click", () => openDocViewer(ref, d.name));
+    chip.addEventListener("click", () =>
+      openDocViewer({ label: d.name, read: () => window.helm.readContext(ref), reveal: () => window.helm.openContext(ref) })
+    );
     chip.addEventListener("contextmenu", (e) => {
       e.preventDefault();
       window.helm.openContext(ref);
@@ -8637,7 +8657,9 @@ function contextFilesEl(context, cwd) {
       chip.textContent = f.name;
       chip.title = "Open (right-click to reveal in Explorer)";
       const ref = { cwd, kind: "memory", name: f.name };
-      chip.addEventListener("click", () => openDocViewer(ref, f.name));
+      chip.addEventListener("click", () =>
+        openDocViewer({ label: f.name, read: () => window.helm.readContext(ref), reveal: () => window.helm.openContext(ref) })
+      );
       chip.addEventListener("contextmenu", (e) => {
         e.preventDefault();
         window.helm.openContext(ref);
