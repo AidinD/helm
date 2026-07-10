@@ -1,5 +1,13 @@
 # Decisions
 
+## 2026-07-10 - Autopilot reframed intent-first (C1 of the rework)
+
+Built the small pass (C1) of the Autopilot rework (proposal: docs/autopilot-rework-proposal.md), after the captain approved the direction. The page now leads with INTENT - goal + project folder - and the crew knobs (max iterations, model/effort, verify command, escalate) moved into a collapsed "Advanced" section you only open to override. Verify is auto-detected from the project (existing suggestVerifyCommand, on folder change). Start no longer fires immediately: it shows a one-line approve-summary of the derived config ("Run autopilot in X - verify: …; up to N iterations; model: …; escalate: … Start?") via customConfirm, so the captain approves the "how" before the crew run. The raw primitive is unchanged underneath; only its framing moved.
+
+C2 (a project-aware second-mate step that reads the repo + goal to propose the config, plus session-spawns the dispatch with report-back, per orchestration-model phases 1-3) is the follow-on, not built here.
+
+Verified via CDP: intent-first form, knobs under a collapsed Advanced, Start shows the approve-summary without running; 0 console errors.
+
 ## 2026-07-10 - Helm owns + runs its routines (not a read-only mirror)
 
 The Routines page was a read-only mirror of Claude Desktop's scheduled tasks (name/description only). The rich data (cron, next/last run, enabled) lives in the Desktop app's private internal store, reachable only via its built-in scheduled-tasks MCP - i.e. only from an agent context, not a file Helm can read (verified: the task folder has just SKILL.md; the state isn't in any readable file, and the direct store is opaque/overlay-trapped/locked). So "see + manage from Helm" was blocked.
