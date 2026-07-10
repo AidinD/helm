@@ -129,6 +129,9 @@ contextBridge.exposeInMainWorld("helm", {
   // on success, drops the persisted history record too.
   openGoalWorktree: (worktreePath) => ipcRenderer.invoke("goal:openWorktree", { worktreePath }),
   deleteGoalWorktree: (opts) => ipcRenderer.invoke("goal:deleteWorktree", opts),
+  // Report-back "Done + clean up": remove the worktree + delete the branch only
+  // if it's merged (unmerged branches are kept). Keeps the run record.
+  cleanupGoalRun: (opts) => ipcRenderer.invoke("goal:cleanupRun", opts),
   onGoalEvent: (handler) => {
     const listener = (_event, payload) => handler(payload);
     ipcRenderer.on("goal:event", listener);

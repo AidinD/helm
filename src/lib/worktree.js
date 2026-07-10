@@ -359,3 +359,73 @@ export function removeWorktree(projectPath, worktreePath, options = {}) {
     throw new Error(`git worktree remove failed for ${resolvedWorktree}: ${err.message}`);
   }
 }
+
+/**
+ * The repo's primary/integration branch name. Prefers origin/HEAD's target
+ * (the remote's default branch), then a local `main`/`master` if present,
+ * falling back to "main". Used by `isBranchMerged` so the merged-check gates
+ * on the branch a Helm goal branch would actually be integrated into, without
+ * assuming which of main/master a given repo uses.
+ */
+export function primaryBranch(projectPath) {
+  const resolved = path.resolve(projectPath);
+  try {
+    const ref = runGit(resolved, ["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"]).trim();
+    const m = ref.match(/refs\/remotes\/origin\/(.+)$/);
+    if (m) {
+      return m[1];
+    }
+  } catch {
+    // no origin/HEAD configured - fall through to local-branch probing
+  }
+  for (const cand of ["main", "master"]) {
+    try {
+      // rev-parse --verify --quiet exits non-zero (throws here) when absent.
+      runGit(resolved, ["rev-parse", "--verify", "--quiet", `refs/heads/${cand}`]);
+      return cand;
+    } catch {
+      // not this one
+    }
+  }
+  return "main";
+}
+
+/**
+ * True when `branchName`'s tip is already contained in `base` (fully merged),
+ * so deleting the branch would lose no commits. This is the GATE for automatic
+ * branch deletion on run cleanup - an unmerged branch is kept, never dropped.
+ * `base` defaults to `primaryBranch(projectPath)`.
+ *
+ * Uses `git merge-base --is-ancestor <branch> <base>` (exit 0 = ancestor =
+ * merged). Returns false on any error (missing ref, etc.) so the caller
+ * fails safe toward KEEPING the branch.
+ */
+export function isBranchMerged(projectPath, branchName, base) {
+  const resolved = path.resolve(projectPath);
+  const target = base || primaryBranch(resolved);
+  try {
+    execFileSync("git", ["-C", resolved, "merge-base", "--is-ancestor", branchName, target], {
+      windowsHide: true,
+      stdio: "ignore",
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Deletes a local branch. Defaults to git's own safe delete (`-d`), which
+ * refuses to drop a branch that isn't merged; pass `{ force: true }` for `-D`.
+ * Callers that want the "merged to the integration branch" gate should check
+ * `isBranchMerged` first (git's `-d` checks merged-to-HEAD/upstream, which is
+ * not the same question).
+ */
+export function deleteBranch(projectPath, branchName, options = {}) {
+  const flag = options.force ? "-D" : "-d";
+  try {
+    runGit(path.resolve(projectPath), ["branch", flag, branchName]);
+  } catch (err) {
+    throw new Error(`git branch ${flag} failed for ${branchName}: ${err.message}`);
+  }
+}

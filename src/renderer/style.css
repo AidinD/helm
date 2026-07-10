@@ -3758,6 +3758,25 @@ button.primary {
   overflow-wrap: anywhere;
 }
 
+/* "Done" control on a report row - marks the run done (acknowledge + optional
+   worktree cleanup). Quiet by default, accent on hover, so it doesn't compete
+   with the row's own needs-you signal. */
+.dash-report-done {
+  flex: none;
+  align-self: center;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-size: 11px;
+  padding: 3px 9px;
+  cursor: pointer;
+}
+.dash-report-done:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 /* A first mate's report-back roll-up under its card: a collapsed one-line count
    that expands to the crew runs it dispatched (tiered report-back). */
 .fleet-report-rollup {

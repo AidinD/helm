@@ -22,6 +22,14 @@ const DEFAULT_CONFIG = {
   manualHelmSessions: [], // sessionIds tagged "◆ Helm" by hand, independent of Jot category matching
   theme: "dark", // active app theme id; matches a :root[data-theme="<id>"] block in style.css
   hiddenSessions: [], // sessionIds removed from Helm's view (restore by editing this array)
+  // Terminal goal/Autopilot runs the captain has marked "done" from a
+  // report-back row. Non-destructive (the run stays in goal-run-history + the
+  // Goal page) - it only removes the run from the report-back glance surfaces
+  // (Dashboard report-back + a first mate's card roll-up). Mirrors
+  // acknowledgedSessions' "I'm done looking at this" for a run instead of a
+  // session. Array of goalRunIds; restore by removing the id. See tiered
+  // report-back in docs/orchestration-model.md.
+  acknowledgedGoalRuns: [],
   // Helm's OWN archive overlay: sessionIds Helm has archived. Applied in
   // readAllSessions (forces isArchived=true). Authoritative because it lives
   // here on D:\, NOT in the desktop app's local_*.json - that app owns and
