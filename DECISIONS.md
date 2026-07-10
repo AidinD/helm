@@ -1,5 +1,15 @@
 # Decisions
 
+## 2026-07-10 - Archive is Helm-owned (fix: "archive keeps coming back")
+
+A Direct session kept reappearing no matter how many times it was archived. Diagnosed with the `diagnosing-bugs` skill: the archive CODE was correct (reproduced green in an isolated instance - the flag stuck), so the bug was environmental. Root cause: for a Desktop session, archive wrote `isArchived` into the desktop app's own `local_*.json` under `%APPDATA%\Claude` - a file the (MSIX-packaged) Claude app owns and rewrites, dropping Helm's flag. Writing a flag into another app's live state could never hold (exactly the fragility the "hard-won gotchas" section warns about).
+
+Fix: archive is now **Helm-owned**, same pattern as the session index. A new `config.archivedSessions` list on D:\ is the authoritative overlay: `readAllSessions` forces `isArchived=true` for any listed id (applied to the meta BEFORE buildSession so derived status is `archived` too), and it can't be reverted by another app. `session:archive` adds/removes the id there; it still best-effort mirrors into the helmSessions index or the desktop file so other views stay consistent, but the overlay is what holds the line. Unarchive removes the id.
+
+Honest note on the loop: the external revert itself was NOT reproducible in the harness (a fresh instance archives cleanly), so the desktop-rewrite root cause is strongly indicated, not proven red. The fix is robust regardless of the exact revert trigger - it removes the dependency on a file another app owns.
+
+Distinct from `hiddenSessions` (a permanent "remove from Helm's view"); archived sessions stay listed on the Archive page and are restorable. Latent inconsistency spotted in passing (not fixed here): the Fleet Direct derivation filters only `isArchived`, while the sidebar also honors `hiddenSessions` - flagged separately.
+
 ## 2026-07-10 - Slash-command menu in the composer
 
 The composer never had a `/` menu (typing `/` did nothing - a missing feature, not a regression). Added an autocomplete that opens when the composer text is a bare `/token`, listing the skills + custom commands available to the pane (global `~/.claude` + project `cwd/.claude`, project overriding global). Arrow/Enter/Tab select, Esc closes; selecting inserts `/name ` so args can follow before send.

@@ -72,13 +72,35 @@ export function readAllSessions(options = {}) {
   } catch (err) {
     return { error: `Failed to read sessions dir: ${err.message}`, sessions: [] };
   }
+  // Helm-owned archive overlay: sessionIds Helm has archived, kept in its own
+  // config on D:\ (NOT the desktop app's local_*.json, which that app owns and
+  // rewrites - dropping an isArchived we'd written there = the "archive keeps
+  // coming back" bug). A listed id is archived no matter what the desktop file
+  // says. Applied to `meta` BEFORE buildSession so the derived status reflects
+  // it too. options.archivedSessions lets tests inject without real config.
+  let archivedList = options.archivedSessions;
+  if (!archivedList) {
+    try {
+      archivedList = loadConfig().archivedSessions || [];
+    } catch {
+      archivedList = [];
+    }
+  }
+  const archivedSet = new Set(archivedList);
+  const applyArchiveOverlay = (meta) => {
+    if (archivedSet.has(meta.sessionId) || (meta.cliSessionId && archivedSet.has(meta.cliSessionId))) {
+      meta.isArchived = true;
+    }
+    return meta;
+  };
+
   const sessions = [];
   for (const file of files) {
     const meta = readMeta(path.join(dir, file));
     if (!meta || !meta.sessionId) {
       continue;
     }
-    sessions.push(buildSession(meta, attentionWindowMs));
+    sessions.push(buildSession(applyArchiveOverlay(meta), attentionWindowMs));
   }
 
   // Merge Helm-owned sessions. launcher.js starts every Helm session via a
@@ -111,7 +133,7 @@ export function readAllSessions(options = {}) {
     if (seenIds.has(meta.sessionId) || (meta.cliSessionId && seenIds.has(meta.cliSessionId))) {
       continue;
     }
-    sessions.push(buildSession(meta, attentionWindowMs));
+    sessions.push(buildSession(applyArchiveOverlay(meta), attentionWindowMs));
   }
 
   return { error: null, sessions };

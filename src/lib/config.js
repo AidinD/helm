@@ -17,6 +17,14 @@ const DEFAULT_CONFIG = {
   titleOverrides: {}, // { "<sessionId>": "Custom title" }
   manualHelmSessions: [], // sessionIds tagged "◆ Helm" by hand, independent of Jot category matching
   hiddenSessions: [], // sessionIds removed from Helm's view (restore by editing this array)
+  // Helm's OWN archive overlay: sessionIds Helm has archived. Applied in
+  // readAllSessions (forces isArchived=true). Authoritative because it lives
+  // here on D:\, NOT in the desktop app's local_*.json - that app owns and
+  // rewrites those files, dropping an isArchived Helm wrote there (the "archive
+  // keeps coming back" bug). Unarchive removes the id. Distinct from
+  // hiddenSessions (a permanent "remove from view"); archived stays listed on
+  // the Archive page and is restorable.
+  archivedSessions: [],
   // Helm's OWN session index, for sessions Helm CREATES via launcher.js. The
   // headless `claude -p` variant launcher.js uses never writes a Desktop
   // local_*.json (verified), so these sessions were structurally invisible to
