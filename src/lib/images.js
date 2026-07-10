@@ -4,7 +4,9 @@ import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const imagesDir = path.join(__dirname, "..", "..", "pasted-images");
+// HELM_IMAGES_DIR is a test/packaged-app seam (see main.js's packagedPaths.js);
+// production/dev leaves it unset and uses the plain folder beside the app.
+const imagesDir = process.env.HELM_IMAGES_DIR || path.join(__dirname, "..", "..", "pasted-images");
 
 const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // pasted screenshots are throwaway context, not archives
 

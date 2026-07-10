@@ -1,3 +1,9 @@
+// Must be the very first import: it redirects every store lib's HELM_*_PATH
+// env-var seam to Electron's writable userData dir when packaged, and has to
+// run before any of those libs (imported below, some transitively - e.g.
+// sessions.js imports config.js) evaluate their own path constant. See
+// lib/packagedPaths.js for the full rationale.
+import "./lib/packagedPaths.js";
 import { app, BrowserWindow, ipcMain, dialog, shell, Notification, clipboard, utilityProcess } from "electron";
 import path from "node:path";
 import os from "node:os";

@@ -12,7 +12,10 @@ import { fileURLToPath } from "node:url";
 // JSON-file-next-to-config.json pattern rather than inventing a new storage
 // location (e.g. Electron's userData dir, which nothing else here uses).
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const historyPath = path.join(__dirname, "..", "..", "goal-run-history.json");
+// HELM_GOAL_RUN_HISTORY_PATH is a test/packaged-app seam (see main.js's
+// packagedPaths.js); production/dev leaves it unset and uses the plain JSON
+// file beside the app.
+const historyPath = process.env.HELM_GOAL_RUN_HISTORY_PATH || path.join(__dirname, "..", "..", "goal-run-history.json");
 
 const MAX_RECORDS = 200; // compact records are tiny; this is a generous cap, not a rolling window tuned for size
 
