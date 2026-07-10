@@ -1551,6 +1551,63 @@ body.advanced .row-jot {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  position: relative;
+}
+
+/* Slash-command menu: floats above the composer, anchored to the shell. */
+.slash-menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 6px);
+  max-height: 300px;
+  overflow-y: auto;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  padding: 5px;
+  z-index: 2500;
+}
+.slash-menu.hidden {
+  display: none;
+}
+.slash-item {
+  padding: 6px 9px;
+  border-radius: 7px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.slash-item.is-selected {
+  background: var(--bg);
+}
+.slash-item-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.slash-item-name {
+  font-family: ui-monospace, "Cascadia Code", "Consolas", monospace;
+  font-size: 12.5px;
+  color: var(--text);
+}
+.slash-item-tag {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+}
+.slash-item-desc {
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.slash-item.is-selected .slash-item-name {
+  color: var(--accent);
 }
 
 .composer-shell textarea {

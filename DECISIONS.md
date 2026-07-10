@@ -1,5 +1,13 @@
 # Decisions
 
+## 2026-07-10 - Slash-command menu in the composer
+
+The composer never had a `/` menu (typing `/` did nothing - a missing feature, not a regression). Added an autocomplete that opens when the composer text is a bare `/token`, listing the skills + custom commands available to the pane (global `~/.claude` + project `cwd/.claude`, project overriding global). Arrow/Enter/Tab select, Esc closes; selecting inserts `/name ` so args can follow before send.
+
+Key decision - what to list: **skills + custom commands only, NOT built-in TUI commands.** Verified empirically (throwaway command -> `PINGPONG_OK`, throwaway skill -> `SKILL_PONG_OK`) that `claude -p "/name"` DOES execute both - which is what makes the menu real rather than cosmetic, since Helm sends the prompt through `claude -p`. Built-ins (`/clear`, `/compact`, `/model`, ...) are interactive-only and no-op through `-p`, so listing them would be a trap.
+
+Implementation notes: `src/lib/slashCommands.js` reads name/description from each item's frontmatter; the renderer's slash keydown handler is registered BEFORE the Enter-to-send handler and calls `stopImmediatePropagation()` while the menu is open, so Enter selects instead of sending. Found + fixed using the `diagnosing-bugs` skill (build a red-capable loop before theorising): the loop here was the two `claude -p` probes that proved slash execution works headless.
+
 ## 2026-07-10 - Mate personas: a per-spawn temperament overlay
 
 A first mate can now carry an optional persona - a temperament overlay appended to the base operating manual at launch: architect (critical, stress-tests the plan), teacher (pedagogical), red-team (adversarial).
