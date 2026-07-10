@@ -35,10 +35,14 @@ try {
   // Dashboard queue shows the two attention runs as needs-you rows.
   await app.eval(`(() => { navigateToPage("dashboard"); return true; })()`);
   await app.waitForSelector("#dashboardPage .dash-queue-row", 8000);
-  const queueText = await app.eval(`document.querySelector("#dashboardPage").innerText`);
+  // Scope the "needs-you queue" assertions to the queue slot itself. The clean
+  // done run legitimately appears elsewhere on the Dashboard now (the Report-back
+  // section - see test-report-back.mjs), so checking against the whole page would
+  // conflate the two. The point of THIS test is the queue slot's contents.
+  const queueText = await app.eval(`document.querySelector("#dashQueueSlot").innerText`);
   assert(/Goal run "Broken build goal" — failed/.test(queueText), "errored run shows a 'failed' needs-you row in the dashboard queue");
   assert(/Goal run "Ambiguous goal" — paused, needs you/.test(queueText), "escalated run shows a 'paused, needs you' row");
-  assert(!/Finished fine/.test(queueText.split("Goals")[0] || queueText), "the clean done run is NOT in the needs-you queue");
+  assert(!/Finished fine/.test(queueText), "the clean done run is NOT in the needs-you queue");
 
   // Clicking a goal-run row navigates to the Goal facet.
   const clicked = await app.eval(`(() => {
