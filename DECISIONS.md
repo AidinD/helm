@@ -1,5 +1,16 @@
 # Decisions
 
+## 2026-07-10 - A theme carries identity (icons + mate names), not just colors
+
+Review feedback on the theme system: add more themes (a "space" theme), and have the theme also swap the ICONS - and Aidin chose to swap the mate NAMES too. So a theme is now an identity, not only a palette:
+- **Colors:** `:root[data-theme="space"]` - dark cosmic (deep blue-black ground, nebula-violet accent, starlight highlights).
+- **Icons:** a per-theme icon set in the renderer (`THEMES[].icons`): nautical (dark/brass) keep the ship's-wheel logo asset + ⚓ anchor; space uses a 🛰️ logo glyph + 🚀 anchor. The header brand logo swaps img<->glyph in `applyTheme`; fleet cards read `themeIcons()` at render.
+- **Names:** `mates.js` has per-family name pools (nautical vs space) and picks from the active theme's pool for new/respawned mates. On a theme switch that crosses families, `rethemeMateNames(from,to)` renames the active mates from the new pool, preserving id/slot/session/persona. Within a family (dark<->brass) it's a no-op, so toggling light/dark never clobbers a name (including a manual rename).
+
+Also fixed the Settings layout per the same review: `.settings-columns` was an auto-fit grid that packed a short group (Appearance) under a taller one; switched to flex-wrap so each group heading tops its own column and wraps cleanly.
+
+Verified: 6/6 retheme unit assertions (family swap vs no-op, id/persona preserved) + the existing mate tests still green; CDP live - space swaps --bg/--accent + logo glyph (🛰️) + fleet anchor (🚀) and reverts to nautical; 0 console errors.
+
 ## 2026-07-10 - "Removed from Helm" honored consistently across all derivations
 
 Follow-up to the archive fix below, which flagged that the Fleet Direct derivation filtered only `isArchived` while the sidebar also honored `hiddenSessions` - so a session "removed from Helm" still showed as a Direct card (and, it turned out, leaked into more places).

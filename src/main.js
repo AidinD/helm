@@ -23,7 +23,7 @@ import { runGoal } from "./lib/goalOrchestrator.js";
 import { loadGoalRunHistory, upsertGoalRunRecord, removeGoalRunRecord } from "./lib/goalRunHistory.js";
 import { removeWorktree } from "./lib/worktree.js";
 import { loadDomains, registerDomain, removeDomain } from "./lib/domains.js";
-import { ensureMates, activeMates, findMateById, loadMates, renameMate, retireAndRespawn, bindMateSession, consumeMateHandoff, setMatePersona } from "./lib/mates.js";
+import { ensureMates, activeMates, findMateById, loadMates, renameMate, retireAndRespawn, bindMateSession, consumeMateHandoff, setMatePersona, rethemeMateNames } from "./lib/mates.js";
 import { personaOverlay, PERSONAS } from "./lib/personas.js";
 import { listSlashItems } from "./lib/slashCommands.js";
 import { trackHelmUsage, summarizeHelmUsage } from "./lib/helmUsage.js";
@@ -1161,6 +1161,15 @@ ipcMain.handle("mates:retire", (_event, { mateId, handoff, persona }) => {
 // text stays server-side, injected at launch). Single source of truth is
 // personas.js; the renderer can't import an ES module, so it fetches this.
 ipcMain.handle("personas:list", () => PERSONAS.map(({ key, label, blurb }) => ({ key, label, blurb })));
+// Re-theme active mates' names when the theme's identity family changes
+// (nautical <-> space). No-op within a family (dark <-> brass).
+ipcMain.handle("mates:retheme", (_event, { fromTheme, toTheme }) => {
+  try {
+    return { ok: true, active: rethemeMateNames(fromTheme, toTheme) };
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err) };
+  }
+});
 ipcMain.handle("mates:setPersona", (_event, { mateId, persona }) => {
   try {
     const mate = setMatePersona(mateId, persona || null);

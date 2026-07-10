@@ -67,6 +67,35 @@
   --on-danger: #fdeae6;
 }
 
+/* Space - a dark cosmic theme (deep blue-black ground, nebula violet accent,
+   starlight highlights). Swaps the nautical identity for a spacefaring one:
+   its icons (rocket/satellite) and mate name pool change with it. */
+:root[data-theme="space"] {
+  color-scheme: dark;
+  --bg: #0c0e1a;
+  --bg-sidebar: #0a0b14;
+  --bg-card: #14162a;
+  --bg-card-hover: #1d2040;
+  --bg-inset: #080910;
+  --border: rgba(150, 168, 255, 0.14);
+  --text: #e7e9f8;
+  --text-dim: #9aa0c8;
+  --text-faint: #61668f;
+  --accent: #9d7cff;
+  --accent-hover: #b39dff;
+  --accent-active: #7d5ce0;
+  --on-accent: #0c0e1a;
+  --waiting: #ffcf5c;
+  --active: #4dd0e1;
+  --idle: #5f6488;
+  --good: #5ad19a;
+  --good-bright: #7fe6b5;
+  --danger: #ff5c7a;
+  --danger-hover: #ff7a92;
+  --danger-active: #d94060;
+  --on-danger: #1a0c12;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -107,6 +136,15 @@ header {
   height: 18px;
   object-fit: contain;
   flex: none;
+}
+
+/* Glyph (emoji) logo for themes without an image asset (e.g. space) - same
+   18px box as the img so the header layout doesn't shift. */
+span.logo {
+  font-size: 15px;
+  line-height: 18px;
+  text-align: center;
+  display: inline-block;
 }
 
 h1 {
@@ -3147,13 +3185,18 @@ button.primary {
    media query needed. align-items:start so a short group's column doesn't
    stretch to match a tall one. */
 .settings-columns {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  display: flex;
+  flex-wrap: wrap;
   gap: 28px;
-  align-items: start;
+  align-items: flex-start;
 }
 
+/* Each group is its OWN column (its heading tops it), wrapping to a new row on
+   a narrow window - rather than an auto-fit grid that packs a short group in
+   under a taller one. */
 .settings-group {
+  flex: 1 1 240px;
+  min-width: 240px;
   margin-bottom: 20px;
 }
 
