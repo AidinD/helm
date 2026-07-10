@@ -6,6 +6,12 @@ let state = { sessions: [], config: { groups: [], viewMode: "simple" }, quota: n
 // mate" (see isOrchestratorSession) - being rooted at the meta-home is not
 // enough on its own.
 let mateSessionIds = new Set();
+// App-level view history (Dashboard/Analysis/Archive/Chat/...), driven by the
+// mouse side buttons so back/forward navigate across the WHOLE app - distinct
+// from paneNavHistory, which is per-pane chat-session history on the ←/→ header
+// arrows. navigateToPage pushes here; appNavigateView walks it.
+let viewNavStack = [];
+let viewNavIndex = -1;
 let searchTerm = "";
 let archiveSearchTerm = ""; // filters the Archive page's two lists by title/folder
 let selectedGoalId = null; // Focus page: which goal's breakdown is expanded
@@ -1099,19 +1105,37 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-// Mouse side buttons (back = button 3, forward = button 4) drive the focused
-// pane's chat history the same as the ←/→ header buttons — the captain asked for
-// the physical back/forward buttons to work too. Uses mouseup (fires for
-// these buttons in Chromium) and guards focusedPaneIndex being a live pane.
+// Mouse side buttons (back = button 3, forward = button 4) navigate the WHOLE
+// app's view history (Dashboard/Analysis/Chat/...), not just chat-session
+// history - the captain asked for the physical back/forward buttons to move across
+// the app. The ←/→ header buttons stay on the focused pane's chat-session
+// history. Uses mouseup (fires for these buttons in Chromium).
 document.addEventListener("mouseup", (e) => {
   if (e.button !== 3 && e.button !== 4) {
     return;
   }
   e.preventDefault();
-  if (!panes[focusedPaneIndex]) {
+  appNavigateView(e.button === 3 ? -1 : 1);
+});
+
+// Quick keyboard nav to the primary views - the captain asked for a fast key to the
+// dashboard. Ctrl+1 Dashboard, Ctrl+2 Analysis, Ctrl+3 Archive (mirrors the
+// header tabs). Plain Ctrl+digit only; skipped while the command palette is
+// open so it doesn't fight the palette's own keys.
+document.addEventListener("keydown", (e) => {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) {
     return;
   }
-  navigateHistory(focusedPaneIndex, e.button === 3 ? -1 : 1);
+  const page = { 1: "dashboard", 2: "analysis", 3: "archive" }[e.key];
+  if (!page) {
+    return;
+  }
+  const palette = document.getElementById("commandPalette");
+  if (palette && !palette.classList.contains("hidden")) {
+    return;
+  }
+  e.preventDefault();
+  navigateToPage(page);
 });
 
 // ============================== Category CRUD ==============================
@@ -8068,7 +8092,17 @@ const DASHBOARD_FACET_PAGES = ["dashboard", "goal", "routines", "focus"];
 // Single source of truth for page navigation. Everything (the primary bar,
 // the gear, the sub-nav, and every programmatic jump) routes through here, so
 // navigation no longer depends on a button physically existing in #pageToggle.
-function navigateToPage(page) {
+// Walk the app-level view history (dir -1 back, +1 forward). No-op at an end.
+function appNavigateView(dir) {
+  const next = viewNavIndex + dir;
+  if (next < 0 || next >= viewNavStack.length) {
+    return;
+  }
+  viewNavIndex = next;
+  navigateToPage(viewNavStack[next], { fromHistory: true });
+}
+
+function navigateToPage(page, opts = {}) {
   // Local, content-free usage analytics: record the view visit so the Analysis
   // page can show which views + navigation paths you actually use. Fire-and-
   // forget; never let analytics affect navigation.
@@ -8076,6 +8110,13 @@ function navigateToPage(page) {
     window.helm.trackUsage({ type: "nav", page });
   } catch {
     // best-effort
+  }
+  // App-level view history for the mouse back/forward buttons (see the mouseup
+  // handler). Skip when THIS call is itself a history nav, and collapse repeats.
+  if (!opts.fromHistory && viewNavStack[viewNavIndex] !== page) {
+    viewNavStack = viewNavStack.slice(0, viewNavIndex + 1);
+    viewNavStack.push(page);
+    viewNavIndex = viewNavStack.length - 1;
   }
   document.getElementById("chatPage").classList.toggle("hidden", page !== "chat");
   document.getElementById("dashboardPage").classList.toggle("hidden", page !== "dashboard");

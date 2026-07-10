@@ -1,5 +1,12 @@
 # Decisions
 
+## 2026-07-10 - Mouse back/forward = app view history; Ctrl+1/2/3 quick nav
+
+Two navigation asks. The mouse side buttons (back/forward) previously drove only the FOCUSED pane's chat-session history and did nothing off the chat view. The captain wanted them to navigate across the WHOLE app. Added an app-level view-history stack (`viewNavStack`/`viewNavIndex`) that `navigateToPage` pushes to (collapsing repeats, truncating the forward branch on a new nav); the mouse buttons now walk that. The ←/→ header arrows keep the per-pane chat-session history (`paneNavHistory`) - two deliberately separate axes: mouse = whole-app views, header arrows = within-conversation.
+Also added Ctrl+1/2/3 = Dashboard/Analysis/Archive quick nav (mirrors the header tabs), the "fast key to the dashboard" he asked for; skipped while the command palette is open.
+
+Verified via CDP: mouse back walks archive→analysis→dashboard and forward returns; Ctrl+1/2 navigate; 0 console errors.
+
 ## 2026-07-10 - "First mate" = bound to a mate, not just rooted at the meta-home
 
 A personal chat rooted in the meta-home dir (the Claude rules folder) - e.g. "Träning och kost (Hevy)" - was wrongly tagged "◆ Helm" and shown the "first mate X% full - hand off" nudge, because `isOrchestratorSession` keyed purely on `cwd === orchestratorHome`. That was the original (pre-named-mates) signal; it over-matches now that the captain also keeps personal chats in that dir.
