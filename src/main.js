@@ -416,40 +416,29 @@ ipcMain.handle("context:list", (_event, cwd) => {
   return out;
 });
 
-// --- Reveal a context file in Explorer. The path is recomputed server-side
-// from a (kind[, name]) reference rather than trusting a renderer-supplied
-// absolute path; a memory `name` is guarded to a bare .md filename so it can't
-// escape the memory dir. ---
-ipcMain.handle("context:open", (_event, { cwd, kind, name } = {}) => {
+// --- Resolve a context-file reference to an absolute path, server-side. The
+// path is recomputed from a (kind[, name]) reference rather than trusting a
+// renderer-supplied absolute path; a memory `name` is guarded to a bare .md
+// filename so it can't escape the memory dir. Shared by context:open (reveal)
+// and context:read (render), so both enforce the exact same guards. ---
+function resolveContextFile({ cwd, kind, name } = {}) {
   if (kind === "globalClaude") {
     const g = resolveCanonicalGlobalClaudeMd();
-    if (!g.ok) {
-      return g;
-    }
-    shell.showItemInFolder(g.file);
-    return { ok: true };
+    return g.ok ? { ok: true, file: g.file } : g;
   }
   if (kind === "projectClaude") {
     if (!cwd) {
       return { ok: false, error: "No project folder for this session" };
     }
     const file = path.join(cwd, "CLAUDE.md");
-    if (!fs.existsSync(file)) {
-      return { ok: false, error: "No CLAUDE.md in " + cwd };
-    }
-    shell.showItemInFolder(file);
-    return { ok: true };
+    return fs.existsSync(file) ? { ok: true, file } : { ok: false, error: "No CLAUDE.md in " + cwd };
   }
   if (kind === "memory") {
     if (!cwd || !name || name.includes("/") || name.includes("\\") || !name.endsWith(".md")) {
       return { ok: false, error: "Invalid memory file" };
     }
     const file = path.join(memoryDirFor(cwd), name);
-    if (!fs.existsSync(file)) {
-      return { ok: false, error: "Memory file not found" };
-    }
-    shell.showItemInFolder(file);
-    return { ok: true };
+    return fs.existsSync(file) ? { ok: true, file } : { ok: false, error: "Memory file not found" };
   }
   if (kind === "projectDoc") {
     // Guarded to the known durable-doc names in the session's own cwd.
@@ -457,13 +446,45 @@ ipcMain.handle("context:open", (_event, { cwd, kind, name } = {}) => {
       return { ok: false, error: "Invalid project doc" };
     }
     const file = path.join(cwd, name);
-    if (!fs.existsSync(file)) {
-      return { ok: false, error: name + " not found" };
-    }
-    shell.showItemInFolder(file);
-    return { ok: true };
+    return fs.existsSync(file) ? { ok: true, file } : { ok: false, error: name + " not found" };
   }
   return { ok: false, error: "Unknown context kind" };
+}
+
+// --- Reveal a context file in Explorer. ---
+ipcMain.handle("context:open", (_event, ref = {}) => {
+  const r = resolveContextFile(ref);
+  if (!r.ok) {
+    return r;
+  }
+  shell.showItemInFolder(r.file);
+  return { ok: true };
+});
+
+// --- Read a context file's raw markdown for the in-app rendered viewer (task
+// "md filer presenterade som html-sidor för bättre readability"). Rendering to
+// HTML happens in the renderer; main only hands back trusted text from a
+// guarded path. Capped so a pathological file can't wedge the IPC/renderer. ---
+const CONTEXT_READ_MAX_BYTES = 1024 * 1024;
+ipcMain.handle("context:read", (_event, ref = {}) => {
+  const r = resolveContextFile(ref);
+  if (!r.ok) {
+    return r;
+  }
+  try {
+    const stat = fs.statSync(r.file);
+    const truncated = stat.size > CONTEXT_READ_MAX_BYTES;
+    const fd = fs.openSync(r.file, "r");
+    try {
+      const buf = Buffer.alloc(Math.min(stat.size, CONTEXT_READ_MAX_BYTES));
+      fs.readSync(fd, buf, 0, buf.length, 0);
+      return { ok: true, text: buf.toString("utf8"), name: path.basename(r.file), truncated };
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch (err) {
+    return { ok: false, error: String(err.message || err) };
+  }
 });
 
 // --- One-click "capture on the go": append a dated note to the session's own
