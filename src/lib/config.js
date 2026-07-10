@@ -16,6 +16,7 @@ const DEFAULT_CONFIG = {
   // own session files, so "renaming a chat" can't corrupt live app state.
   titleOverrides: {}, // { "<sessionId>": "Custom title" }
   manualHelmSessions: [], // sessionIds tagged "◆ Helm" by hand, independent of Jot category matching
+  theme: "dark", // active app theme id; matches a :root[data-theme="<id>"] block in style.css
   hiddenSessions: [], // sessionIds removed from Helm's view (restore by editing this array)
   // Helm's OWN archive overlay: sessionIds Helm has archived. Applied in
   // readAllSessions (forces isArchived=true). Authoritative because it lives
