@@ -1087,6 +1087,67 @@ ipcMain.handle("routines:runNow", (_event, { id }) => {
   return { ok: true };
 });
 
+// --- Autopilot C2: a quick project-rooted claude pass that reads the repo + the
+// goal and PROPOSES the crew config (a lightweight "second mate" translating
+// the captain's intent), so verify/iterations aren't hand-set. Returns a config
+// object; falls back to deterministic defaults if the model output can't be
+// parsed. Best-effort - never throws into the renderer. ---
+ipcMain.handle("autopilot:proposeConfig", async (_event, { projectPath, goal } = {}) => {
+  const fallback = { verifyCommand: "", maxIterations: 5, model: "", effort: "", escalate: false, rationale: "" };
+  if (!projectPath || !goal) {
+    return { ok: true, config: fallback };
+  }
+  const prompt =
+    "You are setting up an autonomous coding run (\"autopilot\") in THIS project for the goal below. " +
+    "Read only as much of the repo as you need (package.json, obvious config) to decide - do NOT start doing the work. " +
+    "Output ONLY a single JSON object, no prose, with keys: " +
+    "verifyCommand (a shell command that verifies a change like \"npm test\" or \"npm run build\", or \"\" if none is obvious), " +
+    "maxIterations (integer 1-15, sized to the goal), " +
+    "model (\"claude-sonnet-5\" | \"claude-opus-4-8\" | \"\" for auto), " +
+    "effort (\"low\"|\"medium\"|\"high\"|\"\"), " +
+    "escalate (boolean - pause the run on repeated trouble), " +
+    "rationale (one short sentence explaining the choices).\n\nGoal:\n" +
+    goal;
+  let text = "";
+  try {
+    const { done } = startSession({
+      cwd: projectPath,
+      prompt,
+      model: "claude-sonnet-5",
+      effort: "low",
+      permissionMode: "default",
+      onEvent: (evt) => {
+        if (evt.kind === "assistant" && evt.text) {
+          text = evt.text;
+        }
+      },
+    });
+    await done;
+  } catch (err) {
+    return { ok: true, config: { ...fallback, rationale: "Proposal failed: " + (err?.message || String(err)) } };
+  }
+  const match = text && text.match(/\{[\s\S]*\}/);
+  if (!match) {
+    return { ok: true, config: fallback };
+  }
+  try {
+    const p = JSON.parse(match[0]);
+    return {
+      ok: true,
+      config: {
+        verifyCommand: typeof p.verifyCommand === "string" ? p.verifyCommand : "",
+        maxIterations: Number.isInteger(p.maxIterations) ? Math.min(15, Math.max(1, p.maxIterations)) : 5,
+        model: ["claude-sonnet-5", "claude-opus-4-8", "claude-haiku-4-5-20251001"].includes(p.model) ? p.model : "",
+        effort: ["low", "medium", "high", "xhigh", "max"].includes(p.effort) ? p.effort : "",
+        escalate: p.escalate === true,
+        rationale: typeof p.rationale === "string" ? p.rationale.slice(0, 240) : "",
+      },
+    };
+  } catch {
+    return { ok: true, config: fallback };
+  }
+});
+
 // --- Pick or create the folder for a new non-repo domain project ---
 ipcMain.handle("dialog:pickDomainFolder", async () => {
   const result = await dialog.showOpenDialog(mainWindow, {

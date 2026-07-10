@@ -141,4 +141,5 @@ contextBridge.exposeInMainWorld("helm", {
   updateRoutine: (id, patch) => ipcRenderer.invoke("routines:update", { id, patch }),
   removeRoutine: (id) => ipcRenderer.invoke("routines:remove", { id }),
   runRoutineNow: (id) => ipcRenderer.invoke("routines:runNow", { id }),
+  proposeAutopilotConfig: (projectPath, goal) => ipcRenderer.invoke("autopilot:proposeConfig", { projectPath, goal }),
 });

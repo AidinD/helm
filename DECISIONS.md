@@ -1,5 +1,13 @@
 # Decisions
 
+## 2026-07-10 - Autopilot C2 part 1: project-aware config proposal
+
+Built the smart translate step on top of C1. The Autopilot button is now "Set up run": clicking it fires a quick project-rooted `claude -p` (sonnet/low, `autopilot:proposeConfig` in main) that reads the repo + the goal and PROPOSES the crew config - verifyCommand, maxIterations (sized to the goal), model/effort, escalate, and a one-line rationale - instead of C1's deterministic defaults. It populates the Advanced fields (a manual Advanced override still wins) and shows the plan + config in the approve-summary before the run. Output is parsed as JSON with a defaults fallback if unparseable; best-effort, never blocks.
+
+Proven live: for "add a doc comment to package.json", it proposed verify = `node -e "JSON.parse(...package.json...)"` (reasoning that JSON has no comments so validity is the right check), 1 iteration (trivial goal), sonnet/low - i.e. a genuinely project+goal-aware config, not a template.
+
+C2 part 2 - session-spawns-dispatch + structured report-back (a mate launching these runs itself and streaming results back; orchestration-model phases 1-3) - is the remaining big follow-on, NOT built.
+
 ## 2026-07-10 - Autopilot reframed intent-first (C1 of the rework)
 
 Built the small pass (C1) of the Autopilot rework (proposal: docs/autopilot-rework-proposal.md), after the captain approved the direction. The page now leads with INTENT - goal + project folder - and the crew knobs (max iterations, model/effort, verify command, escalate) moved into a collapsed "Advanced" section you only open to override. Verify is auto-detected from the project (existing suggestVerifyCommand, on folder change). Start no longer fires immediately: it shows a one-line approve-summary of the derived config ("Run autopilot in X - verify: …; up to N iterations; model: …; escalate: … Start?") via customConfirm, so the captain approves the "how" before the crew run. The raw primitive is unchanged underneath; only its framing moved.

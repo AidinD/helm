@@ -6836,18 +6836,10 @@ function renderGoalPage() {
   actionRow.className = "goal-action-row";
   const startBtn = document.createElement("button");
   startBtn.className = "goal-start-btn";
-  startBtn.textContent = "Start goal run";
+  startBtn.textContent = "Set up run";
   startBtn.addEventListener("click", async () => {
     const goal = goalInput.value.trim();
     const projectPath = cwdInput.value.trim();
-    const maxIterations = parseInt(iterInput.value, 10) || 5;
-    const verifyCommand = verifyInput.value.trim();
-    const model = modelDD.value === "auto" ? undefined : modelDD.value;
-    const effort = effortDD.value === "auto" ? undefined : effortDD.value;
-    // `{}` (not `true`) enables escalation with goalOrchestrator.js's own
-    // Phase-0 defaults; unchecked sends `undefined`, keeping the pre-existing
-    // no-escalation behavior exactly (mirrors verifyCommand's opt-in shape).
-    const escalationConfig = escalateCheckbox.checked ? {} : undefined;
     err.textContent = "";
     if (!goal) {
       err.textContent = "Enter a goal first.";
@@ -6857,11 +6849,49 @@ function renderGoalPage() {
       err.textContent = "Pick a project folder first.";
       return;
     }
-    // Approve-first: show the derived crew config for a one-click OK before the
-    // run starts - the captain gives intent (goal + folder); this is the
-    // "here's how I'll run it - go?" checkpoint. Overrides live under Advanced.
+    // C2: a project-rooted pass reads the repo + the goal and PROPOSES the crew
+    // config (a lightweight "second mate" translating intent), so verify /
+    // iterations aren't hand-set. It populates the (Advanced) fields; a manual
+    // Advanced override still wins below.
+    const busy = showBusyToast("Reading the project to set up the run…");
+    startBtn.disabled = true;
+    let rationale = "";
+    let proposedModel = "";
+    let proposedEffort = "";
+    try {
+      const res = await window.helm.proposeAutopilotConfig(projectPath, goal);
+      const c = res && res.ok ? res.config : null;
+      if (c) {
+        if (c.verifyCommand && !verifyInput.value.trim()) {
+          verifyInput.value = c.verifyCommand;
+        }
+        if (c.maxIterations) {
+          iterInput.value = c.maxIterations;
+        }
+        escalateCheckbox.checked = !!c.escalate;
+        goalEscalateOnTrouble = !!c.escalate;
+        rationale = c.rationale || "";
+        proposedModel = c.model || "";
+        proposedEffort = c.effort || "";
+      }
+    } catch {
+      // fall through to defaults - the run can still start
+    }
+    busy.done();
+    startBtn.disabled = false;
+
+    // Read the (now-populated) config; a manual Advanced pick wins over the proposal.
+    const maxIterations = parseInt(iterInput.value, 10) || 5;
+    const verifyCommand = verifyInput.value.trim();
+    const model = modelDD.value !== "auto" ? modelDD.value : proposedModel || undefined;
+    const effort = effortDD.value !== "auto" ? effortDD.value : proposedEffort || undefined;
+    const escalationConfig = escalateCheckbox.checked ? {} : undefined;
+
+    // Approve-first: show the proposed plan + config for a one-click OK before
+    // the run starts. Overrides live under Advanced.
     const proj = projectPath.split(/[\\/]/).filter(Boolean).pop() || projectPath;
     const summary =
+      (rationale ? `Plan: ${rationale}  ` : "") +
       `Run autopilot in "${proj}" — verify: ${verifyCommand || "none"}; up to ${maxIterations} iteration(s); ` +
       `model: ${model || "auto"}${effort ? " / " + effort : ""}; escalate on trouble: ${escalationConfig ? "yes" : "no"}. ` +
       `Runs in an isolated worktree and never pushes. Start?`;
