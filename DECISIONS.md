@@ -1,5 +1,12 @@
 # Decisions
 
+## 2026-07-10 - "First mate" = bound to a mate, not just rooted at the meta-home
+
+A personal chat rooted in the meta-home dir (the Claude rules folder) - e.g. "Träning och kost (Hevy)" - was wrongly tagged "◆ Helm" and shown the "first mate X% full - hand off" nudge, because `isOrchestratorSession` keyed purely on `cwd === orchestratorHome`. That was the original (pre-named-mates) signal; it over-matches now that the captain also keeps personal chats in that dir.
+Refined it to: a session is a first mate iff it's BOUND to an active mate (its cli/session id is in some `mate.sessionId`). refresh() now fetches active mates each poll into `mateSessionIds`. A brand-new mate session binds on its first turn; until then the pane carries `isOrchestrator` via paneOverrides, so the composer nudge still works during that window. `manualHelmSessions` in config was already dormant (unused), so nothing else depended on the old signal.
+
+Verified: CDP - the real Hevy session (at meta-home) no longer classifies as orchestrator; a synthetic meta-home session classifies only when its id is in `mateSessionIds`; 0 console errors.
+
 ## 2026-07-10 - A theme carries identity (icons + mate names), not just colors
 
 Review feedback on the theme system: add more themes (a "space" theme), and have the theme also swap the ICONS - and the captain chose to swap the mate NAMES too. So a theme is now an identity, not only a palette:
