@@ -985,6 +985,21 @@ body.advanced .row-jot {
   }
 }
 
+/* A fleet card while its retire/archive handoff is saving - dimmed + a spinner
+   row, so the busy state shows ON the card, not only in the bottom toast. */
+.card-handoff-busy {
+  opacity: 0.6;
+  pointer-events: none;
+}
+.card-handoff-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
 /* --- Workspace: 1 or 2 conversation panes --- */
 .workspace {
   display: grid;
