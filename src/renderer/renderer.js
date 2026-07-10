@@ -1,6 +1,11 @@
 const STATUS_LABEL = { waiting: "Needs you", active: "Working", idle: "Idle", archived: "Archived" };
 
 let state = { sessions: [], config: { groups: [], viewMode: "simple" }, quota: null, orchestratorHome: "" };
+// The CLI session ids currently bound to an active first mate (mate.sessionId).
+// Refreshed each poll in refresh(); the signal for "is this session a first
+// mate" (see isOrchestratorSession) - being rooted at the meta-home is not
+// enough on its own.
+let mateSessionIds = new Set();
 let searchTerm = "";
 let archiveSearchTerm = ""; // filters the Archive page's two lists by title/folder
 let selectedGoalId = null; // Focus page: which goal's breakdown is expanded
@@ -756,8 +761,16 @@ function samePath(a, b) {
 // orchestrator is how you START a session (fresh, pointed at the meta-home),
 // not a durable flag you toggle on a chat. state.orchestratorHome is fetched
 // once at startup (falls back to "" until then, so nothing tags early).
+// A first-mate (orchestrator) session is one BOUND to an active mate, not
+// merely one rooted at the meta-home: the captain can keep personal chats in
+// the meta-home dir too, and those must not read as first mates. A brand-new
+// mate session binds on its first turn (bindMateSession); until then its pane
+// carries isOrchestrator via paneOverrides, so the composer nudge still works.
 function isOrchestratorSession(session) {
-  return samePath(session.cwd, state.orchestratorHome);
+  if (!session) {
+    return false;
+  }
+  return mateSessionIds.has(session.cliSessionId) || mateSessionIds.has(session.sessionId);
 }
 
 // "Delete" a session from Helm's own view — never touches the desktop
@@ -4157,7 +4170,16 @@ function computeSidebarFingerprint(sessions, config) {
 let lastSidebarFingerprint = null;
 
 async function refresh() {
-  const data = await window.helm.getSessions();
+  const [data, matesResult] = await Promise.all([window.helm.getSessions(), window.helm.listMates()]);
+  // Which sessions are ACTUALLY a first mate: the ones bound to an active mate
+  // (mate.sessionId), not merely rooted at the meta-home. A personal chat the
+  // captain happens to root in the meta-home dir (e.g. the Claude rules folder)
+  // is NOT a first mate - keying off cwd alone wrongly tagged it "◆ Helm" and
+  // showed the "first mate X% full" nudge on it. (Bug: "vissa sessioner i
+  // direct verkar klassas som first mate".)
+  mateSessionIds = new Set(
+    (matesResult?.ok ? matesResult.active : []).map((m) => m.sessionId).filter(Boolean)
+  );
   // Detect sessions newly transitioning INTO "waiting" (not already waiting
   // before this poll) for away-from-desk attention delivery - fire once per
   // transition, not on every poll tick a session happens to still be waiting.
