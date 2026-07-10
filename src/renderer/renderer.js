@@ -4343,7 +4343,10 @@ function pruneStaleBackgroundTasks() {
 // asset or an emoji glyph.
 const NAUTICAL_ICONS = { anchor: "⚓", logo: { asset: "assets/helm-wheel.png" } };
 const THEMES = [
-  { id: "dark", label: "Default (dark)", icons: NAUTICAL_ICONS },
+  // `id` stays "dark"/"brass" (persisted in config.theme, CSS [data-theme], the
+  // nautical name-pool set) - only the human label changes. dark + brass are
+  // both the nautical family; space is its own.
+  { id: "dark", label: "Nautical (dark)", icons: NAUTICAL_ICONS },
   { id: "brass", label: "Brass (light)", icons: NAUTICAL_ICONS },
   { id: "space", label: "Space (dark)", icons: { anchor: "🚀", logo: { glyph: "🛰️" } } },
 ];
