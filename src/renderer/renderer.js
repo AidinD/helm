@@ -7,9 +7,8 @@ let state = { sessions: [], config: { groups: [], viewMode: "simple" }, quota: n
 // enough on its own.
 let mateSessionIds = new Set();
 // App-level view history (Dashboard/Analysis/Archive/Chat/...), driven by the
-// mouse side buttons so back/forward navigate across the WHOLE app - distinct
-// from paneNavHistory, which is per-pane chat-session history on the ←/→ header
-// arrows. navigateToPage pushes here; appNavigateView walks it.
+// mouse side buttons so back/forward navigate across the WHOLE app.
+// navigateToPage pushes here; appNavigateView walks it.
 let viewNavStack = [];
 let viewNavIndex = -1;
 // Ids (mateId or sessionId) whose retire/archive handoff-summarize is in flight,
@@ -100,12 +99,6 @@ const BACKGROUND_TASK_MAX_AGE_MS = 60 * 60 * 1000;
 // session's summary reply without it needing to occupy a visible pane.
 const pendingLaunchCallbacks = new Map();
 
-// Browser-style back/forward between chats opened in a given pane SLOT.
-// Keyed by pane index, not stored on the pane object itself — openSessionInPane
-// replaces the whole pane object on every navigation, which would wipe
-// history stored there. { stack: [sessionId, ...], position: number }.
-const paneNavHistory = new Map();
-
 // Each pane: { sessionId, cliSessionId, cwd, title, turns, hiddenCount, loading,
 //              busy, currentLaunchId, isOrchestrator, pendingAttachments }
 let panes = [freshPane()];
@@ -139,7 +132,7 @@ function freshPane() {
 // tid," i.e. it doesn't count up): a plain per-second interval reading
 // pane.runStartedAt/pane.liveTokens (already updated live by the "usage"
 // event case below) is the simplest thing that reads as "ticking," no need
-// for anything fancier. Keyed by pane INDEX (mirrors paneNavHistory) since
+// for anything fancier. Keyed by pane INDEX (not the pane object) since
 // the pane object gets replaced wholesale on reset/new-chat — the ticker
 // looks up panes[index] fresh on every tick rather than closing over a
 // specific pane object, so it naturally goes inert once that slot no longer
@@ -847,7 +840,14 @@ async function archiveSession(session) {
 async function archiveWithHandoff(session) {
   const busy = showBusyToast(`Saving handoff for "${session.title}"…`);
   setPaneBusyUIRaw(focusedPaneIndex, `Saving handoff for "${session.title}"…`);
-  handoffBusyIds.add(session.sessionId);
+  // Key the busy flag on the SAME id the fleet/direct node checks against - the
+  // node model's sessionId is `cliSessionId || sessionId` (see fleet branch
+  // builder), not the raw Helm sessionId. Keying by session.sessionId meant the
+  // on-card spinner never lit for a second mate whose cliSessionId differs from
+  // its sessionId (it did for a first-mate retire, which keys by mateId on both
+  // sides) - exactly the "no spinner on the card when archiving a 2nd mate" bug.
+  const busyKey = session.cliSessionId || session.sessionId;
+  handoffBusyIds.add(busyKey);
   refreshDashboardIfVisible();
   let saved = false;
   try {
@@ -866,7 +866,7 @@ async function archiveWithHandoff(session) {
   }
   setPaneBusyUIRaw(focusedPaneIndex, "");
   busy.done();
-  handoffBusyIds.delete(session.sessionId);
+  handoffBusyIds.delete(busyKey);
   if (saved) {
     showToast(`Handoff saved to DECISIONS.md; archiving "${session.title}".`);
   }
@@ -1114,10 +1114,9 @@ document.addEventListener("keydown", (e) => {
 });
 
 // Mouse side buttons (back = button 3, forward = button 4) navigate the WHOLE
-// app's view history (Dashboard/Analysis/Chat/...), not just chat-session
-// history - Aidin asked for the physical back/forward buttons to move across
-// the app. The ←/→ header buttons stay on the focused pane's chat-session
-// history. Uses mouseup (fires for these buttons in Chromium).
+// app's view history (Dashboard/Analysis/Chat/...) - Aidin asked for the
+// physical back/forward buttons to move across the app. Uses mouseup (fires
+// for these buttons in Chromium).
 document.addEventListener("mouseup", (e) => {
   if (e.button !== 3 && e.button !== 4) {
     return;
@@ -1823,13 +1822,9 @@ function setPaneBusyUIRaw(index, statusText) {
   }
 }
 
-// fromHistoryNav is true only when THIS call originated from clicking the
-// back/forward buttons — it skips the history push below so navigating
-// backward doesn't itself get recorded as a new forward step.
 // paneIndex is always 0 since split view was removed; the 3rd param is a vestige
-// of the old forceSplit and is ignored. fromHistoryNav is true only when THIS
-// call came from the back/forward buttons - it skips the history push.
-function openSessionInPane(session, paneIndex, _ignored, fromHistoryNav) {
+// of the old forceSplit and is ignored.
+function openSessionInPane(session, paneIndex, _ignored) {
   focusedPaneIndex = paneIndex;
   selectedSessionId = session.sessionId;
   // Re-opening the session ALREADY showing in this exact pane (e.g. navigating
@@ -1849,60 +1844,23 @@ function openSessionInPane(session, paneIndex, _ignored, fromHistoryNav) {
       isOrchestrator: isOrchestratorSession(session),
     };
   }
-  if (!fromHistoryNav) {
-    pushNavHistory(paneIndex, session.sessionId);
-  }
   renderSinglePane(paneIndex);
   renderSidebar();
   loadTranscriptInto(paneIndex);
-}
-
-function pushNavHistory(paneIndex, sessionId) {
-  let entry = paneNavHistory.get(paneIndex);
-  if (!entry) {
-    entry = { stack: [], position: -1 };
-    paneNavHistory.set(paneIndex, entry);
+  // Clicking into a session is an intent to write in it — put the cursor in
+  // the composer so you can type immediately without a second click (Aidin's
+  // ask). renderSinglePane built the composer synchronously just above;
+  // loadTranscriptInto is async and only fills the scroll area + gauge, so it
+  // won't rebuild the textarea out from under this focus. Cursor goes to the
+  // end so a preserved draft (the alreadyOpenHere case) stays editable.
+  const promptEl = document
+    .querySelector(`.pane[data-pane="${paneIndex}"]`)
+    ?.querySelector(".pane-composer textarea");
+  if (promptEl) {
+    promptEl.focus();
+    const end = promptEl.value.length;
+    promptEl.setSelectionRange(end, end);
   }
-  // Same as a browser tab: navigating to something new after having gone
-  // back drops whatever forward history existed past this point.
-  entry.stack = entry.stack.slice(0, entry.position + 1);
-  entry.stack.push(sessionId);
-  entry.position = entry.stack.length - 1;
-}
-
-function canNavigateHistory(paneIndex, delta) {
-  const entry = paneNavHistory.get(paneIndex);
-  if (!entry) {
-    return false;
-  }
-  const target = entry.position + delta;
-  return target >= 0 && target < entry.stack.length;
-}
-
-function navigateHistory(paneIndex, delta) {
-  const entry = paneNavHistory.get(paneIndex);
-  if (!entry) {
-    return;
-  }
-  // Walk in the requested direction until a still-existing session is
-  // found, rather than committing to the first entry regardless — a
-  // session in history can have been archived/removed since. Committing
-  // `position` on a dead entry before confirming it exists left the
-  // pointer silently advanced with nothing opened, desyncing the ←/→
-  // buttons' disabled state from what was actually still navigable.
-  let candidate = entry.position + delta;
-  while (candidate >= 0 && candidate < entry.stack.length) {
-    const session = sessionById(entry.stack[candidate]);
-    if (session) {
-      entry.position = candidate;
-      openSessionInPane(session, paneIndex, false, true);
-      return;
-    }
-    candidate += delta;
-  }
-  // Nothing valid in that direction — re-render so the buttons reflect
-  // reality even though nothing changed.
-  renderSinglePane(paneIndex);
 }
 
 async function loadTranscriptInto(paneIndex) {
@@ -3071,22 +3029,6 @@ function paneHeaderEl(index) {
   const header = document.createElement("div");
   header.className = "pane-header";
 
-  const navBack = document.createElement("button");
-  navBack.className = "icon-btn";
-  navBack.textContent = "←";
-  navBack.title = "Previous chat in this pane";
-  navBack.disabled = !canNavigateHistory(index, -1);
-  navBack.addEventListener("click", () => navigateHistory(index, -1));
-
-  const navForward = document.createElement("button");
-  navForward.className = "icon-btn";
-  navForward.textContent = "→";
-  navForward.title = "Next chat in this pane";
-  navForward.disabled = !canNavigateHistory(index, 1);
-  navForward.addEventListener("click", () => navigateHistory(index, 1));
-
-  header.append(navBack, navForward);
-
   const title = document.createElement("span");
   title.textContent = pane.title || "New session";
   header.append(title);
@@ -3113,9 +3055,6 @@ function paneHeaderEl(index) {
     resetBtn.title = "Start a new chat in this pane";
     resetBtn.addEventListener("click", () => {
       panes[index] = freshPane();
-      // Same reasoning as the sidebar's "+ New chat" button — a fresh chat
-      // is a new browsing context for this slot.
-      paneNavHistory.delete(index);
       stopLiveStatsTicker(index);
       if (selectedSessionId === pane.sessionId) {
         selectedSessionId = null;
@@ -4559,12 +4498,6 @@ document.getElementById("collapseAll").addEventListener("click", async () => {
 
 document.getElementById("newChat").addEventListener("click", () => {
   panes[focusedPaneIndex] = freshPane();
-  // A brand-new chat is a new browsing context for this slot — without
-  // this, ← immediately after "New chat" navigated back into whatever
-  // session used to be here, which is exactly the inconsistency the
-  // split-close handler already guards against for slot 1 (found in
-  // review, was previously missing here and on the pane-header reset).
-  paneNavHistory.delete(focusedPaneIndex);
   stopLiveStatsTicker(focusedPaneIndex);
   selectedSessionId = null;
   renderSinglePane(focusedPaneIndex);
