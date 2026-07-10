@@ -1,5 +1,23 @@
 # Decisions
 
+## 2026-07-10 - Mate personas: a per-spawn temperament overlay
+
+A first mate can now carry an optional persona - a temperament overlay appended to the base operating manual at launch: architect (critical, stress-tests the plan), teacher (pedagogical), red-team (adversarial).
+The base manual defines HOW a mate operates in Helm (dispatch tools, handoff discipline); a persona colours the temperament it brings to coordination, so the two layers stay cleanly separate.
+
+Key decisions:
+- **Per-spawn, not per-slot.** A persona belongs to the task, not the name - the same slot can be an architect today and a teacher tomorrow. Stored on the mate record (`persona`, default null = plain coordinator), reset to null on an ordinary retire.
+- **First mate only for now** (second-mate personas deferred until the form is proven).
+- **Switching a RUNNING mate's persona goes through retire-with-handoff + respawn**, never an in-place edit - a system prompt can't change mid-session. This reuses the faithful-transfer machinery (2026-07-08): `retireAndRespawn(mateId, handoff, persona)` respawns into the new persona with the outgoing session's handoff seeded. A fresh mate (no session) just sets the persona directly. The UI enforces this fresh-vs-running split; the picker shows a read-only-ish "switch retires + respawns" confirm for a running mate.
+- **Overlays are short and point at the matching global skill** (`grill-me` / `teach`, curated 2026-07-10) rather than restating their discipline - honouring "integrate, don't rebuild". This is also why those skills were pulled: architect ~ grill-me, teacher ~ teach.
+- **Catalog is data-driven** (`src/lib/personas.js`, single source of truth) and reaches the classic-script renderer via a `personas:list` IPC (key/label/blurb only; overlay text stays server-side, injected at launch).
+
+Alternatives rejected: persona locked to a slot (less flexible, and fights the per-task framing); editing a running session's persona in place (impossible - overlay already in context); duplicating the persona catalog into the renderer (drift risk).
+
+## 2026-07-10 - Context .md + skill SKILL.md rendered as HTML in Analysis
+
+Context-file and skill chips in the Analysis view now render their markdown as readable HTML in an overlay (click), keeping reveal-in-Explorer / open-file on right-click. One source-agnostic `openDocViewer({ label, read, reveal })` serves both; a small escape-first dependency-free Markdown->HTML renderer (CSP blocks a CDN lib) escapes all text and emits only our own tags, so a file can't inject markup. Paths resolved server-side via the shared `resolveContextFile` / `skillMdPath` guards (1 MB cap).
+
 ## 2026-07-08 - Retire + archive run a last-effort handoff (wire the transfer into the actions)
 
 The renewal ACTIONS (retire a mate, archive a session) previously discarded without running any transfer - the WHY/decisions lived only in the transcript, unextracted. Now they make a last effort to save it, closing the loop the session-renewal strategy opened (we had the transfer MECHANISM + producer discipline, but the actions didn't invoke it).

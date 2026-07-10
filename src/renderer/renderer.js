@@ -1691,7 +1691,11 @@ async function summarizeAndCarryOver(session) {
 // new name (planned renewal = faithful transfer, see DECISIONS.md
 // "Session-renewal strategy"). A missing session or a failed summary never
 // blocks retiring - it just respawns without a handoff.
-async function retireMateWithCarryOver(mate) {
+// persona (optional) = a deliberate persona SWITCH: the fresh mate respawns
+// into it. Omitted = an ordinary retire (fresh mate resets to plain
+// coordinator). Either way the outgoing session's handoff is saved first so the
+// thread survives the transfer.
+async function retireMateWithCarryOver(mate, persona = null) {
   let handoff = null;
   if (mate.sessionId) {
     setPaneBusyUIRaw(focusedPaneIndex, `Retiring ${mate.name} - saving handoff…`);
@@ -1705,7 +1709,7 @@ async function retireMateWithCarryOver(mate) {
     }
     setPaneBusyUIRaw(focusedPaneIndex, "");
   }
-  await window.helm.retireMate(mate.mateId, handoff);
+  await window.helm.retireMate(mate.mateId, handoff, persona || null);
   fillDashboardSections({ force: true });
 }
 
@@ -4518,6 +4522,80 @@ function augmentSecondMatesWithSessions(secondMates) {
   return list;
 }
 
+// Persona catalog (personas.js, fetched via IPC) - loaded once and cached. The
+// renderer is a classic script and can't import the ES module, so it pulls
+// key/label/blurb for the picker; the overlay text stays server-side.
+let personaCatalog = null;
+async function ensurePersonaCatalog() {
+  if (personaCatalog === null) {
+    try {
+      personaCatalog = await window.helm.listPersonas();
+    } catch {
+      personaCatalog = [];
+    }
+  }
+  return personaCatalog;
+}
+function personaLabel(key) {
+  if (!key) {
+    return "Coordinator";
+  }
+  const p = (personaCatalog || []).find((x) => x.key === key);
+  return p ? p.label : key;
+}
+
+// Persona control on a first-mate card. Fresh mate (no session) -> set the
+// persona directly. Running mate -> switching means the overlay is already in
+// its context, so it routes through retire-with-handoff + respawn into the new
+// persona (the same faithful-transfer path as a normal retire).
+function fleetPersonaEl(mate) {
+  const running = !!mate.sessionId;
+  const cur = mate.persona || null;
+  const row = document.createElement("div");
+  row.className = "fleet-persona";
+  row.addEventListener("click", (e) => e.stopPropagation());
+
+  const tag = document.createElement("span");
+  tag.className = "fleet-persona-tag";
+  tag.textContent = "persona";
+
+  const btn = document.createElement("button");
+  btn.className = "fleet-persona-btn" + (cur ? " is-set" : "");
+  btn.title = running
+    ? "Switch persona (retires this mate with a handoff and respawns a fresh one)"
+    : "Choose this mate's persona";
+  btn.textContent = personaLabel(cur) + " ▾";
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const options = [{ key: null, label: "Coordinator" }, ...(personaCatalog || [])];
+    const items = options.map((p) => ({
+      label: (p.key === cur ? "✓ " : "") + p.label,
+      onClick: () => choosePersona(mate, p.key, running),
+    }));
+    showContextMenu(e.clientX, e.clientY, items);
+  });
+  row.append(tag, btn);
+  return row;
+}
+
+function choosePersona(mate, key, running) {
+  const cur = mate.persona || null;
+  const next = key || null;
+  if (cur === next) {
+    return;
+  }
+  if (!running) {
+    window.helm.setMatePersona(mate.mateId, next).then(() => fillDashboardSections({ force: true }));
+    return;
+  }
+  const label = personaLabel(next);
+  customConfirm(
+    `Switch ${mate.name} to ${label}? This retires the current mate (saving a handoff) and respawns a fresh ${label} in its place.`,
+    "Switch persona",
+    () => retireMateWithCarryOver(mate, next)
+  );
+}
+
 function dashboardFleetSection(mates = [], secondMates = [], boardSummary = {}) {
   const section = document.createElement("section");
   section.className = "dash-board dash-fleet";
@@ -4636,6 +4714,9 @@ function fleetMateCardEl(mate, sms, boardSummary = {}) {
   actions.append(renameBtn, retireBtn);
   top.append(anchor, idBox, actions);
   card.append(top);
+
+  // Persona control: the temperament this mate brings to coordination.
+  card.append(fleetPersonaEl(mate));
 
   // Context gauge - only when this mate's session is open in a pane (that's the
   // only place we know its context usage).
@@ -5059,6 +5140,9 @@ async function fillDashboardSections({ force = false } = {}) {
     }
     return;
   }
+  // Persona catalog for the Fleet cards' picker - loaded once, before the
+  // (synchronous) fleet render below reads it.
+  await ensurePersonaCatalog();
 
   const goalsResult = await window.helm.getJotGoals();
   const inMotion = dashboardInMotionRows();
