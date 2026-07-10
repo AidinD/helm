@@ -74,10 +74,64 @@ const SPACE_NAMES = [
   "Sally Ride",
   "Nyota Uhura", // Star Trek
 ];
-// Themes that keep the nautical identity; anything else uses the space pool.
-const NAUTICAL_THEMES = new Set(["dark", "brass"]);
+const ADVENTURE_NAMES = [
+  "Indiana Jones",
+  "Lara Croft",
+  "Nathan Drake", // Uncharted
+  "Rick O'Connell", // The Mummy
+  "Allan Quatermain",
+  "Amelia Earhart",
+  "Ernest Shackleton",
+  "Percy Fawcett",
+  "Dora Marquez",
+  "Bilbo Baggins",
+  "Phileas Fogg",
+  "Marco Polo",
+  "Sacagawea",
+  "Roald Amundsen",
+];
+const ANIME_NAMES = [
+  "Spike Spiegel", // Cowboy Bebop
+  "Faye Valentine", // Cowboy Bebop
+  "Motoko Kusanagi", // Ghost in the Shell
+  "Edward Elric", // Fullmetal Alchemist
+  "Levi Ackerman", // Attack on Titan
+  "Mikasa Ackerman",
+  "Vash the Stampede", // Trigun
+  "Guts", // Berserk
+  "Asuka Langley", // Evangelion
+  "Kenshin Himura",
+  "Roronoa Zoro", // One Piece
+  "Nico Robin", // One Piece
+  "Yusuke Urameshi", // Yu Yu Hakusho
+  "Kusuo Saiki",
+];
+const GAME_NAMES = [
+  "Master Chief", // Halo
+  "Samus Aran", // Metroid
+  "Lara Croft", // Tomb Raider
+  "Gordon Freeman", // Half-Life
+  "Kratos", // God of War
+  "Geralt of Rivia", // The Witcher
+  "Aloy", // Horizon
+  "Solid Snake", // Metal Gear
+  "Cloud Strife", // Final Fantasy VII
+  "Link", // Zelda
+  "Chell", // Portal
+  "Jill Valentine", // Resident Evil
+  "Ezio Auditore", // Assassin's Creed
+  "2B", // NieR: Automata
+];
+// Each theme's name pool. Themes not listed (dark, brass) keep the nautical
+// identity. Switching theme across pools re-themes the mates (rethemeMateNames).
+const NAME_POOLS = {
+  space: SPACE_NAMES,
+  adventure: ADVENTURE_NAMES,
+  anime: ANIME_NAMES,
+  game: GAME_NAMES,
+};
 function namePoolForTheme(theme) {
-  return theme === "space" ? SPACE_NAMES : NAUTICAL_NAMES;
+  return NAME_POOLS[theme] || NAUTICAL_NAMES;
 }
 // Best-effort read of the active theme from config (defaults to nautical). Kept
 // local so name-picking follows the theme without threading it through every

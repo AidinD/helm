@@ -96,6 +96,89 @@
   --on-danger: #1a0c12;
 }
 
+/* Adventure - warm jungle/expedition: deep earth ground, treasure-gold accent,
+   compass/map icons. */
+:root[data-theme="adventure"] {
+  color-scheme: dark;
+  --bg: #17130c;
+  --bg-sidebar: #120f09;
+  --bg-card: #211b11;
+  --bg-card-hover: #2c2416;
+  --bg-inset: #0d0a06;
+  --border: rgba(212, 162, 78, 0.16);
+  --text: #efe6d2;
+  --text-dim: #b6a482;
+  --text-faint: #7c6f52;
+  --accent: #d4a24e;
+  --accent-hover: #e6b662;
+  --accent-active: #b0842f;
+  --on-accent: #17130c;
+  --waiting: #e0b341;
+  --active: #5a9e6f;
+  --idle: #6f6449;
+  --good: #6faf62;
+  --good-bright: #8fce80;
+  --danger: #cf5a3a;
+  --danger-hover: #e06f4e;
+  --danger-active: #a8452a;
+  --on-danger: #1a0c07;
+}
+
+/* Anime - vivid, playful: deep violet ground, hot-pink accent, cyan/gold
+   support. */
+:root[data-theme="anime"] {
+  color-scheme: dark;
+  --bg: #16121f;
+  --bg-sidebar: #120e19;
+  --bg-card: #201a2e;
+  --bg-card-hover: #2b2340;
+  --bg-inset: #0f0b16;
+  --border: rgba(255, 122, 190, 0.18);
+  --text: #f2e9f7;
+  --text-dim: #b9a8c8;
+  --text-faint: #7d6e8e;
+  --accent: #ff5fa2;
+  --accent-hover: #ff7db5;
+  --accent-active: #e03d84;
+  --on-accent: #1a0c14;
+  --waiting: #ffd166;
+  --active: #4dd6e6;
+  --idle: #6f6480;
+  --good: #5fe0b0;
+  --good-bright: #82f0c6;
+  --danger: #ff5566;
+  --danger-hover: #ff7381;
+  --danger-active: #d93b4c;
+  --on-danger: #1a0b0d;
+}
+
+/* Game - retro arcade: near-black ground, neon-green accent, cyan support. */
+:root[data-theme="game"] {
+  color-scheme: dark;
+  --bg: #0b0f0c;
+  --bg-sidebar: #080b09;
+  --bg-card: #111812;
+  --bg-card-hover: #18211a;
+  --bg-inset: #060806;
+  --border: rgba(57, 255, 120, 0.16);
+  --text: #e4f5e8;
+  --text-dim: #92b39c;
+  --text-faint: #566b5d;
+  --accent: #39e678;
+  --accent-hover: #57f28f;
+  --accent-active: #26bd5f;
+  --on-accent: #06120a;
+  --waiting: #ffd93d;
+  --active: #2fd0e0;
+  --idle: #566b5d;
+  --good: #39e678;
+  --good-bright: #6ff2a0;
+  --danger: #ff5470;
+  --danger-hover: #ff7387;
+  --danger-active: #db3a55;
+  --on-danger: #14060a;
+}
+
 * {
   box-sizing: border-box;
 }
