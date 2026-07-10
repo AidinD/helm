@@ -1,5 +1,12 @@
 # Decisions
 
+## 2026-07-10 - First mate: look up Jot before asking, dispatch per project
+
+The first mate, asked "I have a logo task for beatdrop, jot and loom, fix all three", asked the captain to re-explain what the logo task was - instead of reading the tasks that were already in Jot, and instead of dispatching one per project.
+The base instructions already said "read the Jot board" and "dispatch to second mates", but not concretely enough to override the reflex to interrogate.
+Added a "Look it up before you ask" section to first-mate-instructions.md: when the captain references work by name, read the matching Jot task(s) (text/description/images in D:\Dropbox\jot\todos.json, jot-task-tracking skill for the mechanics) BEFORE asking; only ask when the detail genuinely isn't there. And a multi-project request is a dispatch-per-project instruction, not one session doing all three inline (that's the hands-on work this tier must not do).
+Prompt-only change; no code path affected.
+
 ## 2026-07-10 - Archive is Helm-owned (fix: "archive keeps coming back")
 
 A Direct session kept reappearing no matter how many times it was archived. Diagnosed with the `diagnosing-bugs` skill: the archive CODE was correct (reproduced green in an isolated instance - the flag stuck), so the bug was environmental. Root cause: for a Desktop session, archive wrote `isArchived` into the desktop app's own `local_*.json` under `%APPDATA%\Claude` - a file the (MSIX-packaged) Claude app owns and rewrites, dropping Helm's flag. Writing a flag into another app's live state could never hold (exactly the fragility the "hard-won gotchas" section warns about).
