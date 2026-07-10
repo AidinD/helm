@@ -4916,6 +4916,43 @@ function markCardHandoffBusy(el) {
   el.append(badge);
 }
 
+// A first mate's report-back roll-up: the crew runs IT dispatched that have
+// finished, collected under its card. The mate is the first responder for its
+// own crew (docs/orchestration-model.md "Tiered report-back") - the captain's
+// board only carries the ones a mate escalates. Compact by default: a one-line
+// count that expands to the individual report rows for drill-down. Runs that
+// need the captain also bubble up to the Dashboard Report-back, but they stay
+// here too so the mate's own view of its crew is complete.
+function fleetMateReportRollupEl(mate) {
+  const runs = terminalRunsBy(mate.mateId);
+  if (runs.length === 0) {
+    return null;
+  }
+  const needs = runs.filter(runNeedsCaptain).length;
+  const wrap = document.createElement("div");
+  wrap.className = "fleet-report-rollup" + (needs > 0 ? " has-needs" : "");
+  // Clicks inside the roll-up must not bubble to the card's jump-in handler.
+  wrap.addEventListener("click", (e) => e.stopPropagation());
+
+  const head = document.createElement("div");
+  head.className = "fleet-report-rollup-head";
+  const chev = document.createElement("span");
+  chev.className = "fleet-chev";
+  chev.textContent = "▶";
+  const label = document.createElement("span");
+  label.className = "fleet-report-rollup-label";
+  const clear = needs > 0 ? ` · ${needs} need${needs === 1 ? "s" : ""} you` : " · all clear";
+  label.textContent = `Crew reported back: ${runs.length}${clear}`;
+  head.append(chev, label);
+  head.addEventListener("click", () => wrap.classList.toggle("open"));
+
+  const rows = document.createElement("div");
+  rows.className = "fleet-report-rows";
+  runs.slice(0, REPORT_BACK_LIMIT).forEach((r) => rows.append(dashReportRowEl(r)));
+  wrap.append(head, rows);
+  return wrap;
+}
+
 function fleetMateCardEl(mate, sms, boardSummary = {}) {
   const card = document.createElement("div");
   card.className = "fleet-mate-card";
@@ -5055,6 +5092,10 @@ function fleetMateCardEl(mate, sms, boardSummary = {}) {
     }
   }
   card.append(list);
+  const rollup = fleetMateReportRollupEl(mate);
+  if (rollup) {
+    card.append(rollup);
+  }
   if (handoffBusyIds.has(mate.mateId)) {
     markCardHandoffBusy(card);
   }
@@ -6111,20 +6152,46 @@ function goalRunReport(run) {
   return { status: "done", changed, needsCaptain, commitCount, branchName };
 }
 
+// A run has reached a terminal state (its outcome is final, ready to report).
+function isTerminalRun(r) {
+  return r.status === "done" || r.status === "error" || r.status === "interrupted";
+}
+// Does this terminal run need the captain personally? (commits to review, an
+// escalation/pause, an error, or an interrupted run of unknown outcome). This
+// is the signal that bubbles a mate-dispatched run UP to the captain's board.
+function runNeedsCaptain(r) {
+  return !!goalRunReport(r).needsCaptain;
+}
+// Terminal runs dispatched by a given owner, newest-first. ownerId === null
+// means captain/Autopilot-initiated (no dispatching mate).
+function terminalRunsBy(ownerId) {
+  return [...goalRuns.values()]
+    .filter(isTerminalRun)
+    .filter((r) => (ownerId === null ? !r.dispatchedBy : r.dispatchedBy === ownerId))
+    .sort((a, b) => (b.ordinal || 0) - (a.ordinal || 0));
+}
+
 // Terminal runs, newest first, capped so the section stays a compact glance
 // rather than an ever-growing history (the Goal page is the full log). "Newest"
 // = highest ordinal (assigned in run order, live + rehydrated).
+//
+// TIERED (2026-07-11): the captain's board shows only runs the captain owns -
+// Autopilot/captain-initiated runs (no dispatcher) PLUS any mate-dispatched run
+// that needs the captain (escalated up). Handled mate-dispatched runs stay under
+// their mate's card (fleetMateReportRollupEl), off the captain's board. See
+// docs/orchestration-model.md "Tiered report-back".
 const REPORT_BACK_LIMIT = 6;
 function dashboardReportBackRuns() {
   return [...goalRuns.values()]
-    .filter((r) => r.status === "done" || r.status === "error" || r.status === "interrupted")
+    .filter(isTerminalRun)
+    .filter((r) => !r.dispatchedBy || runNeedsCaptain(r))
     .sort((a, b) => (b.ordinal || 0) - (a.ordinal || 0))
     .slice(0, REPORT_BACK_LIMIT);
 }
 
 function dashboardReportFingerprint() {
   return dashboardReportBackRuns()
-    .map((r) => `${r.goalRunId}:${r.status}:${r.escalation ? 1 : 0}:${crewCommitCount(r)}:${r.iterations?.length || 0}`)
+    .map((r) => `${r.goalRunId}:${r.dispatchedBy || "-"}:${r.status}:${r.escalation ? 1 : 0}:${crewCommitCount(r)}:${r.iterations?.length || 0}`)
     .join("|");
 }
 
@@ -6136,7 +6203,7 @@ function dashboardReportBackSection() {
   const section = document.createElement("section");
   section.className = "dash-board";
   section.append(
-    dashBoardHead("Report-back", countLabel, "What your dispatched & autopilot runs came back with - no need to open each one", {
+    dashBoardHead("Report-back", countLabel, "Your own Autopilot runs + anything a mate escalated - handled crew stays under its mate", {
       urgent: needsCount > 0,
     })
   );
@@ -6144,12 +6211,16 @@ function dashboardReportBackSection() {
   const body = document.createElement("div");
   body.className = "dash-board-body";
   if (runs.length === 0) {
-    body.append(dashEmpty("No finished runs yet - dispatched and autopilot runs report their results here when they wrap up."));
+    body.append(dashEmpty("Nothing needs you here - your Autopilot runs and anything a mate escalates will surface here."));
   } else {
-    const list = document.createElement("div");
-    list.className = "dash-queue-list";
-    runs.forEach((run) => list.append(dashReportRowEl(run)));
-    body.append(list);
+    // Grid, not a stacked list: report rows are a glance-and-move-on surface, so
+    // lay them across the width (~2-3 responsive columns) rather than one full-
+    // width row each (Aidin's "bygg dessa på bredden"). The needs-you queue above
+    // stays a single priority-ordered column - order carries meaning there.
+    const grid = document.createElement("div");
+    grid.className = "dash-report-grid";
+    runs.forEach((run) => grid.append(dashReportRowEl(run)));
+    body.append(grid);
   }
   section.append(body);
   return section;
