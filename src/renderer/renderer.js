@@ -4429,6 +4429,9 @@ const THEMES = [
   { id: "dark", label: "Nautical (dark)", icons: NAUTICAL_ICONS },
   { id: "brass", label: "Brass (light)", icons: NAUTICAL_ICONS },
   { id: "space", label: "Space (dark)", icons: { anchor: "🚀", logo: { glyph: "🛰️" } } },
+  { id: "adventure", label: "Adventure (dark)", icons: { anchor: "🧭", logo: { glyph: "🗺️" } } },
+  { id: "anime", label: "Anime (dark)", icons: { anchor: "🌸", logo: { glyph: "⭐" } } },
+  { id: "game", label: "Game (dark)", icons: { anchor: "🎮", logo: { glyph: "🕹️" } } },
 ];
 function themeById(id) {
   return THEMES.find((t) => t.id === id) || THEMES[0];
