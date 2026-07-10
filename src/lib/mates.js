@@ -3,6 +3,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { isValidPersonaKey } from "./personas.js";
+import { loadConfig } from "./config.js";
 
 // First-mate identity (docs/first-mate-tier-design.md section 3 + the "named
 // mates" refinement). A first mate is a NAMED coordination context the captain
@@ -31,9 +32,11 @@ const matesPath = process.env.HELM_MATES_PATH || path.join(__dirname, "..", ".."
 // Exactly two first-mate slots always exist.
 export const MATE_SLOT_COUNT = 2;
 
-// Sea-captain / pirate names from film, games, and literature - fitting for a
-// "first mate". A newborn mate takes one not currently held by a live mate.
-const NAME_POOL = [
+// Mate name pools, per theme identity. A newborn mate takes one not currently
+// held by a live mate. The nautical pool backs the default/brass (Helm) themes;
+// the space pool backs the space theme - so switching theme also re-themes who
+// the mates ARE, not just the colors (the captain's call, 2026-07-10).
+const NAUTICAL_NAMES = [
   "Jack Sparrow",
   "Hector Barbossa",
   "Davy Jones",
@@ -47,14 +50,45 @@ const NAME_POOL = [
   "LeChuck", // Monkey Island
   "Edward Kenway", // Assassin's Creed: Black Flag
   "Adewale", // Assassin's Creed: Black Flag
-  "Han Solo",
-  "Jean-Luc Picard",
-  "James Kirk",
   "Corto Maltese",
   "Sinbad",
   "Captain Haddock", // Tintin
   "Calico Jack",
 ];
+const SPACE_NAMES = [
+  "Ellen Ripley", // Alien
+  "Carl Sagan",
+  "Dave Bowman", // 2001
+  "Cooper", // Interstellar
+  "James Holden", // The Expanse
+  "Malcolm Reynolds", // Firefly
+  "Kathryn Janeway", // Star Trek: Voyager
+  "Jean-Luc Picard", // Star Trek
+  "James Kirk", // Star Trek
+  "Han Solo", // Star Wars
+  "Leia Organa", // Star Wars
+  "Poe Dameron", // Star Wars
+  "Commander Shepard", // Mass Effect
+  "Yuri Gagarin",
+  "Neil Armstrong",
+  "Sally Ride",
+  "Nyota Uhura", // Star Trek
+];
+// Themes that keep the nautical identity; anything else uses the space pool.
+const NAUTICAL_THEMES = new Set(["dark", "brass"]);
+function namePoolForTheme(theme) {
+  return theme === "space" ? SPACE_NAMES : NAUTICAL_NAMES;
+}
+// Best-effort read of the active theme from config (defaults to nautical). Kept
+// local so name-picking follows the theme without threading it through every
+// caller; a missing/unreadable config just yields the nautical pool.
+function currentTheme() {
+  try {
+    return loadConfig().theme || "dark";
+  } catch {
+    return "dark";
+  }
+}
 
 export function matesFilePath() {
   return matesPath;
@@ -92,9 +126,9 @@ function writeState(state) {
  * mate count) - otherwise a retire whose active set is unchanged would keep
  * choosing the same index and respawn the SAME name, making retire look broken.
  */
-function pickName(taken, seed = 0) {
+function pickName(taken, seed = 0, pool = NAUTICAL_NAMES) {
   const used = new Set(taken);
-  const free = NAME_POOL.filter((n) => !used.has(n));
+  const free = pool.filter((n) => !used.has(n));
   if (free.length > 0) {
     return free[((seed % free.length) + free.length) % free.length];
   }
@@ -126,6 +160,7 @@ export function ensureMates(root) {
   }
   const resolvedRoot = path.resolve(root);
   const state = readState();
+  const pool = namePoolForTheme(currentTheme());
   let changed = false;
   for (let slot = 0; slot < MATE_SLOT_COUNT; slot++) {
     const held = state.mates.find((m) => m.status === "active" && m.slot === slot);
@@ -135,8 +170,8 @@ export function ensureMates(root) {
         mateId: `mate_${crypto.randomUUID()}`,
         slot,
         // Seed by the ever-growing total so the two initial slots (and any later
-        // respawn) get distinct, advancing names.
-        name: pickName(takenNames, state.mates.length),
+        // respawn) get distinct, advancing names. Pool follows the active theme.
+        name: pickName(takenNames, state.mates.length, pool),
         root: resolvedRoot,
         status: "active",
         // Optional temperament overlay (personas.js) chosen per-spawn; null =
@@ -223,7 +258,7 @@ export function retireAndRespawn(mateId, pendingHandoff = null, persona = null) 
   const fresh = {
     mateId: `mate_${crypto.randomUUID()}`,
     slot: targetSlot,
-    name: pickName(takenNames, state.mates.length),
+    name: pickName(takenNames, state.mates.length, namePoolForTheme(currentTheme())),
     root: root ? path.resolve(root) : null,
     status: "active",
     // Persona for the fresh mate. A respawn normally resets to the plain
@@ -264,6 +299,30 @@ export function setMatePersona(mateId, persona) {
   mate.persona = persona || null;
   writeState(state);
   return mate;
+}
+
+/**
+ * Re-themes the ACTIVE mates' names when the theme's identity changes (e.g.
+ * nautical <-> space), preserving each mate's id/slot/session/persona - only
+ * the display name changes. No-op when the two themes share a name pool (e.g.
+ * dark <-> brass are both nautical), so toggling light/dark never clobbers a
+ * name (including one the captain set manually). Returns the active mates.
+ */
+export function rethemeMateNames(fromTheme, toTheme) {
+  const toPool = namePoolForTheme(toTheme);
+  if (namePoolForTheme(fromTheme) === toPool) {
+    return activeMates();
+  }
+  const state = readState();
+  const active = activeMatesFrom(state.mates).sort((a, b) => (a.slot ?? 0) - (b.slot ?? 0));
+  const taken = [];
+  active.forEach((mate, i) => {
+    const name = pickName(taken, i, toPool);
+    mate.name = name;
+    taken.push(name);
+  });
+  writeState(state);
+  return active;
 }
 
 /**

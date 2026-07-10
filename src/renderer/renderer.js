@@ -4336,13 +4336,52 @@ function pruneStaleBackgroundTasks() {
 // in style.css; applyTheme just stamps the id on <html>. Add a theme by adding
 // a CSS block + an entry here. The app picks its theme explicitly (persisted in
 // config.theme), not from prefers-color-scheme.
+// A theme carries not just a color map (the :root[data-theme] block in
+// style.css) but an IDENTITY: its icons here, and its mate name pool in
+// mates.js. The nautical themes (dark/brass) share the ship's-wheel logo +
+// anchor; space swaps them for a satellite + rocket. `logo` is either an image
+// asset or an emoji glyph.
+const NAUTICAL_ICONS = { anchor: "⚓", logo: { asset: "assets/helm-wheel.png" } };
 const THEMES = [
-  { id: "dark", label: "Default (dark)" },
-  { id: "brass", label: "Brass (light)" },
+  { id: "dark", label: "Default (dark)", icons: NAUTICAL_ICONS },
+  { id: "brass", label: "Brass (light)", icons: NAUTICAL_ICONS },
+  { id: "space", label: "Space (dark)", icons: { anchor: "🚀", logo: { glyph: "🛰️" } } },
 ];
+function themeById(id) {
+  return THEMES.find((t) => t.id === id) || THEMES[0];
+}
+function currentThemeId() {
+  return document.documentElement.dataset.theme || state.config?.theme || "dark";
+}
+function themeIcons() {
+  return themeById(currentThemeId()).icons;
+}
 function applyTheme(themeId) {
   const id = THEMES.some((t) => t.id === themeId) ? themeId : "dark";
   document.documentElement.dataset.theme = id;
+  updateBrandLogo(id);
+}
+// The header brand logo follows the theme: an <img> for asset logos (the
+// helm-wheel), a glyph <span> for emoji logos (space). Swaps the element in
+// place, keeping the .logo class so CSS sizing applies to both.
+function updateBrandLogo(id) {
+  const brand = document.querySelector(".brand");
+  const existing = brand && brand.querySelector(".logo");
+  if (!existing) {
+    return;
+  }
+  const logo = themeById(id).icons.logo;
+  let node;
+  if (logo.asset) {
+    node = document.createElement("img");
+    node.src = logo.asset;
+    node.alt = "Helm";
+  } else {
+    node = document.createElement("span");
+    node.textContent = logo.glyph;
+  }
+  node.className = "logo";
+  existing.replaceWith(node);
 }
 
 function applyViewMode() {
@@ -4807,7 +4846,7 @@ function fleetMateCardEl(mate, sms, boardSummary = {}) {
   top.className = "fleet-mate-top";
   const anchor = document.createElement("span");
   anchor.className = "fleet-anchor";
-  anchor.textContent = "⚓";
+  anchor.textContent = themeIcons().anchor;
   const idBox = document.createElement("div");
   idBox.className = "fleet-mate-idbox";
   const name = document.createElement("div");
@@ -5193,12 +5232,18 @@ function fleetDirectCardEl(sms) {
   top.className = "fleet-mate-top";
   const anchor = document.createElement("span");
   anchor.className = "fleet-anchor direct";
-  // The Helm wheel, not the compass - the captain steers the fleet from here.
-  const anchorImg = document.createElement("img");
-  anchorImg.className = "fleet-anchor-img";
-  anchorImg.src = "assets/helm-wheel.png";
-  anchorImg.alt = "";
-  anchor.append(anchorImg);
+  // The captain's home mark - follows the theme (nautical wheel asset, or the
+  // space theme's satellite glyph).
+  const logo = themeIcons().logo;
+  if (logo.asset) {
+    const anchorImg = document.createElement("img");
+    anchorImg.className = "fleet-anchor-img";
+    anchorImg.src = logo.asset;
+    anchorImg.alt = "";
+    anchor.append(anchorImg);
+  } else {
+    anchor.textContent = logo.glyph;
+  }
   const idBox = document.createElement("div");
   idBox.className = "fleet-mate-idbox";
   const name = document.createElement("div");
@@ -8423,8 +8468,14 @@ function renderSettingsPage() {
     state.config?.theme || "dark",
     THEMES.map((t) => ({ value: t.id, label: t.label })),
     async (value) => {
+      const prev = state.config?.theme || "dark";
       applyTheme(value); // instant, before the round-trip
       state.config = await window.helm.setConfig({ theme: value });
+      // Re-theme the mates' identity (names) if the theme family changed
+      // (nautical <-> space); no-op within a family. Then repaint the fleet so
+      // the new names + icons show.
+      await window.helm.rethemeMates(prev, value);
+      fillDashboardSections({ force: true });
     }
   );
   themeRow.append(themeLabel, themeDD.el);
