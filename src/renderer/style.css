@@ -3737,6 +3737,61 @@ button.primary {
   border-left: 3px solid var(--waiting);
 }
 
+/* Report-back rows laid across the width (~2-3 responsive columns) rather than
+   one full-width row each - a glance-and-move-on surface (the captain's "bygg dessa
+   på bredden"). The needs-you queue above deliberately stays one column: its
+   order is priority, which a grid would scramble. */
+.dash-report-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 8px;
+}
+.dash-report-grid .dash-queue-row {
+  align-items: flex-start;
+  min-width: 0;
+  cursor: pointer;
+}
+.dash-report-grid .dash-q-body {
+  min-width: 0;
+}
+.dash-report-grid .dash-q-why {
+  overflow-wrap: anywhere;
+}
+
+/* A first mate's report-back roll-up under its card: a collapsed one-line count
+   that expands to the crew runs it dispatched (tiered report-back). */
+.fleet-report-rollup {
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+.fleet-report-rollup-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+.fleet-report-rollup.has-needs .fleet-report-rollup-head {
+  color: var(--waiting);
+}
+.fleet-report-rollup-head:hover {
+  color: var(--text);
+}
+.fleet-report-rollup.open .fleet-chev {
+  transform: rotate(90deg);
+}
+.fleet-report-rows {
+  display: none;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+.fleet-report-rollup.open .fleet-report-rows {
+  display: flex;
+}
+
 .dash-pulse-dot {
   width: 6px;
   height: 6px;
