@@ -1,5 +1,22 @@
 # Decisions
 
+## 2026-07-11 - Tiered report-back phases 1+2 shipped (routing + grid + mark-done/cleanup)
+
+Built the first two phases of the tiered report-back design (see the 2026-07-11 design entry + docs/orchestration-model.md).
+
+Phase 1 (commit 888bda6): a terminal run now reports to whoever dispatched it.
+The Captain Dashboard report-back carries only captain/Autopilot-initiated runs (dispatchedBy null) plus mate-dispatched runs that need the captain (commits-ready / escalated / failed) - the escalate-up path.
+Handled mate runs collect under their first mate's card in a collapsed roll-up ("Crew reported back: N - M need you") that expands to the rows.
+The Dashboard report list became a responsive grid (~2-3 columns) instead of one full-width row each (the captain's "bygg dessa på bredden"); the needs-you queue stays a single priority-ordered column.
+
+Phase 2 (commit 45b0f1e): a "Done" control on every report row.
+Done is a soft acknowledge (config.acknowledgedGoalRuns, mirroring acknowledgedSessions) - the run leaves the report-back glance surfaces but stays in history + on the Goal page.
+A run with a worktree offers "Done + clean up worktree" (removes the worktree, and deletes the branch ONLY if merged into the repo's primary branch - unmerged branches are kept) or "Done, keep the worktree".
+New lib/worktree.js helpers primaryBranch/isBranchMerged/deleteBranch; IPC goal:cleanupRun.
+
+Phase 3 (feed a mate-dispatched run's result back INTO the mate's session so the mate can triage) is deliberately NOT built yet - it touches the session/launcher layer and has an open design fork (delivery mechanism + how the mate acts on the reports).
+Left for an explicit decision with the captain rather than picking a shape unilaterally.
+
 ## 2026-07-11 - Report-back is tiered: runs roll up under their dispatcher, escalate up, and are markable-done with cleanup
 
 The shipped flat Dashboard REPORT-BACK section (task 70390331) dumped every terminal run onto the Captain's dashboard regardless of who dispatched it.
