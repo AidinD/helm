@@ -1,5 +1,19 @@
 # Decisions
 
+## 2026-07-10 - Helm owns + runs its routines (not a read-only mirror)
+
+The Routines page was a read-only mirror of Claude Desktop's scheduled tasks (name/description only). The rich data (cron, next/last run, enabled) lives in the Desktop app's private internal store, reachable only via its built-in scheduled-tasks MCP - i.e. only from an agent context, not a file Helm can read (verified: the task folder has just SKILL.md; the state isn't in any readable file, and the direct store is opaque/overlay-trapped/locked). So "see + manage from Helm" was blocked.
+
+The captain's reframe (chosen over an ugly `claude -p` MCP-harvest): Helm should OWN routines in its own format, same as it owns the session index + archive overlay. And Helm is fundamentally a session-launcher, so "run this `claude -p` on a cron" is native.
+- `src/lib/cron.js`: dependency-free standard 5-field cron evaluator (minute-stepping; local time; dom/dow OR-semantics). Chosen over a library since Helm had no cron dep and correctness here is unit-testable.
+- `src/lib/helmRoutines.js`: routines.json on D:\ (readable/manageable), full CRUD, nextRunAt via cron, dueRoutines/markRoutineFired.
+- main.js: `fireRoutine` launches the prompt via the normal launcher (bypasses the session:start HANDLER, so a routine at the meta-home is a plain session, never a first mate) and records it as a "⏰ <name>" session. Scheduler = a 1-min interval + a catch-up pass at startup (advance-then-fire, so a routine that missed slots while Helm was down fires ONCE).
+- Routines page: full CRUD (see schedule/next/last/enabled, toggle, run-now, edit, delete, add). Old read-only `lib/routines.js` deleted.
+
+Accepted trade-off (the captain's call): a routine only fires while Helm is running; missed ones fire once on next startup - in exchange for full control + visibility + it living in Helm. Migration: the two Desktop scheduled tasks were recreated as Helm routines (enabled); the Desktop copies were left untouched (a safety net until the wall-clock timer is trusted), so they may double-fire until the captain disables/deletes the Desktop ones. NOT auto-deleted - no destructive action on another app's store while he was away.
+
+Verified: 20/20 cron+store unit assertions; CDP - the 2 migrated routines render with next-run, CRUD round-trips, invalid cron rejected, 0 console errors. NOT yet verified: an actual wall-clock timer fire in production (logic/wiring tested, not a real-time fire).
+
 ## 2026-07-10 - Mouse back/forward = app view history; Ctrl+1/2/3 quick nav
 
 Two navigation asks. The mouse side buttons (back/forward) previously drove only the FOCUSED pane's chat-session history and did nothing off the chat view. The captain wanted them to navigate across the WHOLE app. Added an app-level view-history stack (`viewNavStack`/`viewNavIndex`) that `navigateToPage` pushes to (collapsing repeats, truncating the forward branch on a new nav); the mouse buttons now walk that. The ←/→ header arrows keep the per-pane chat-session history (`paneNavHistory`) - two deliberately separate axes: mouse = whole-app views, header arrows = within-conversation.

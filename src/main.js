@@ -42,7 +42,7 @@ import {
 import { recordsNeedingReport, buildReportFromRecord } from "./lib/dispatchReconcile.js";
 import { assembleFleetState } from "./lib/fleetState.js";
 import { widthCapExceeded, depthCapExceeded } from "./lib/dispatchCaps.js";
-import { listScheduledTasks } from "./lib/routines.js";
+import { listRoutines, createRoutine, updateRoutine, removeRoutine, dueRoutines, markRoutineFired } from "./lib/helmRoutines.js";
 import { buildArtifactSrcdoc, formatAnnotationsAsPrompt } from "./lib/lavishSdk.js";
 import { isAvailable as whisperStreamAvailable, startStream as startWhisperStream, stopStream as stopWhisperStream } from "./lib/whisperStream.js";
 
@@ -1052,9 +1052,38 @@ ipcMain.handle("domains:remove", (_event, id) => removeDomain(id));
 // ~/.claude/scheduled-tasks/. Helm does not run a scheduler of its own -
 // this just surfaces what already exists on disk. Async so a large or slow
 // folder read never blocks the main event loop. ---
-ipcMain.handle("routines:list", async () => {
-  const tasks = await listScheduledTasks();
-  return { ok: true, tasks };
+// --- Helm-owned routines: recurring claude -p launches Helm schedules + fires
+// itself (helmRoutines.js). Replaces the old read-only mirror of Claude
+// Desktop's private scheduler - Helm owns the format, so it can fully see +
+// manage them. See fireRoutine + the scheduler in app.whenReady. ---
+ipcMain.handle("routines:list", () => {
+  return { ok: true, routines: listRoutines() };
+});
+ipcMain.handle("routines:create", (_event, spec) => {
+  try {
+    return { ok: true, routine: createRoutine(spec || {}) };
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err) };
+  }
+});
+ipcMain.handle("routines:update", (_event, { id, patch }) => {
+  try {
+    const r = updateRoutine(id, patch || {});
+    return r ? { ok: true, routine: r } : { ok: false, error: "unknown routine" };
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err) };
+  }
+});
+ipcMain.handle("routines:remove", (_event, { id }) => {
+  return { ok: removeRoutine(id) };
+});
+ipcMain.handle("routines:runNow", (_event, { id }) => {
+  const routine = listRoutines().find((r) => r.id === id);
+  if (!routine) {
+    return { ok: false, error: "unknown routine" };
+  }
+  fireRoutine(routine); // does not advance the schedule - this is an ad-hoc extra run
+  return { ok: true };
 });
 
 // --- Pick or create the folder for a new non-repo domain project ---
@@ -2359,12 +2388,86 @@ function writeFleetStateSnapshot(metaHome) {
   }
 }
 
+// Fire a routine: launch its prompt as a headless claude -p session (the same
+// launcher every session uses), rooted at its cwd (falling back to the meta
+// home). Streams events to the renderer under a fresh launchId and records the
+// run in Helm's session index so it shows up like any other session, titled
+// "⏰ <name>". Deliberately does NOT go through the session:start HANDLER, so a
+// routine at the meta home is a plain session, never a first mate. Best-effort:
+// a routine that fails to launch must not crash the scheduler.
+function fireRoutine(routine) {
+  try {
+    const cwd = routine.cwd || resolveMetaHome();
+    const launchId = crypto.randomUUID();
+    const send = (payload) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("session:event", { launchId, ...payload });
+      }
+    };
+    let recorded = false;
+    const { child, done } = startSession({
+      cwd,
+      prompt: routine.prompt,
+      model: routine.model || undefined,
+      effort: routine.effort || undefined,
+      permissionMode: "default",
+      onEvent: (evt) => {
+        if (evt.kind === "session" && evt.sessionId && !recorded) {
+          recorded = true;
+          recordHelmSession(evt.sessionId, {
+            cwd,
+            model: routine.model || "",
+            effort: routine.effort || "",
+            permissionMode: "default",
+            title: `⏰ ${routine.name}`,
+            createIfAbsent: true,
+          });
+        }
+        if (evt.kind === "quota" && evt.quota) {
+          latestQuota = evt.quota;
+        }
+        send(evt);
+      },
+    });
+    liveChildren.set(launchId, child);
+    done
+      .then((summary) => {
+        liveChildren.delete(launchId);
+        send({ kind: "done", summary });
+        if (summary.sessionId) {
+          recordHelmSession(summary.sessionId, { createIfAbsent: false });
+        }
+        if (loadConfig().notifyOnComplete !== false && summary.sawResult && Notification.isSupported()) {
+          new Notification({ title: "Helm — routine ran", body: routine.name, silent: false }).show();
+        }
+      })
+      .catch(() => liveChildren.delete(launchId));
+  } catch (err) {
+    console.error("[helm] failed to fire routine:", routine?.name, err);
+  }
+}
+
+// Fire every routine whose schedule is due. Advances the schedule (markRoutine-
+// Fired) BEFORE firing so a slow run can't be re-fired on the next tick, and so
+// a routine that missed several occurrences while Helm was down fires exactly
+// one catch-up run. Run on an interval and once at startup (the catch-up pass).
+function runDueRoutines() {
+  for (const routine of dueRoutines(Date.now())) {
+    markRoutineFired(routine.id, Date.now());
+    fireRoutine(routine);
+  }
+}
+
 app.whenReady().then(() => {
   prunePastedImages();
   createWindow();
   setInterval(runOrchestratorSweep, ORCHESTRATOR_SWEEP_INTERVAL_MS);
   setInterval(runStaleBuildCheck, STALE_BUILD_CHECK_INTERVAL_MS);
   startDispatchWatcher();
+  // Helm-owned routines scheduler: a catch-up pass now (fires anything missed
+  // while Helm was closed), then a check every minute.
+  runDueRoutines();
+  setInterval(runDueRoutines, 60 * 1000);
 });
 
 // Without this, quitting Helm while any prompt is still running leaves

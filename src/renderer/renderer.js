@@ -7982,12 +7982,12 @@ async function renderRoutinesPage() {
   const intro = document.createElement("div");
   intro.className = "analysis-totals";
   intro.textContent =
-    "Claude Code's own scheduled tasks (~/.claude/scheduled-tasks/) - read-only. Helm doesn't run a scheduler of its own; this just shows what's already there.";
+    "Recurring claude -p launches Helm schedules and fires itself. They run while Helm is open; any missed while it was closed fire once on the next startup.";
   page.append(intro);
 
   const board = document.createElement("section");
   board.className = "dash-board";
-  board.append(dashBoardHead("Scheduled tasks", null, "Each one is a Claude Code SKILL.md task folder"));
+  board.append(dashBoardHead("Scheduled routines", null, "Helm-owned · stored in routines.json"));
 
   const body = document.createElement("div");
   body.className = "dash-board-body";
@@ -8000,33 +8000,40 @@ async function renderRoutinesPage() {
   if (page.classList.contains("hidden")) {
     return;
   }
-  body.innerHTML = "";
-
-  if (!res || !res.ok || !Array.isArray(res.tasks) || res.tasks.length === 0) {
-    body.append(dashEmpty("No scheduled tasks found under ~/.claude/scheduled-tasks/."));
+  const routines = res && res.ok ? res.routines : [];
+  if (!routines.length) {
+    body.append(dashEmpty("No routines yet - add one below."));
   } else {
     const list = document.createElement("div");
     list.className = "dash-queue-list";
-    res.tasks.forEach((task) => list.append(routineRowEl(task)));
+    routines.forEach((r) => list.append(routineRowEl(r)));
     body.append(list);
   }
 
-  const later = document.createElement("div");
-  later.className = "later-note";
-  later.textContent =
-    "(coming) A Helm-native routine type - defined and run from inside Helm itself, alongside these Claude-native ones - is not built in this pass.";
-  page.append(later);
+  // Always-present "add a routine" form below the list.
+  page.append(routineFormEl(null));
 }
 
-function routineRowEl(task) {
-  const row = document.createElement("div");
-  row.className = "dash-queue-row";
+function routineNextLabel(ts) {
+  if (!ts) {
+    return "not scheduled";
+  }
+  return new Date(ts).toLocaleString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
 
-  // A scheduled task is a static definition, not running work - use a neutral
-  // clock glyph, not the pulsing "working" dot (which implies live activity).
+function routineRowEl(routine) {
+  const row = document.createElement("div");
+  row.className = "dash-queue-row" + (routine.enabled ? "" : " routine-disabled");
+
   const ic = document.createElement("div");
   ic.className = "dash-state-ic";
-  ic.textContent = "🕒";
+  ic.textContent = "⏰";
   row.append(ic);
 
   const qbody = document.createElement("div");
@@ -8035,32 +8042,147 @@ function routineRowEl(task) {
   top.className = "dash-q-top";
   const title = document.createElement("span");
   title.className = "dash-q-title";
-  title.textContent = task.name;
+  title.textContent = routine.name;
   const tag = document.createElement("span");
   tag.className = "dash-goal-tag";
-  tag.textContent = "claude scheduled-task";
+  tag.textContent = routine.cron;
   top.append(title, tag);
   qbody.append(top);
 
   const why = document.createElement("div");
   why.className = "dash-q-why";
-  why.textContent = task.schedule ? `${task.schedule} · ${task.description || ""}` : task.description || task.taskId;
+  why.textContent = routine.enabled
+    ? `next ${routineNextLabel(routine.nextRunAt)}${routine.lastRunAt ? ` · last ${relTime(routine.lastRunAt)}` : ""}`
+    : "disabled";
   qbody.append(why);
   row.append(qbody);
 
-  const openBtn = document.createElement("button");
-  openBtn.className = "text-btn";
-  openBtn.textContent = "Copy path";
-  openBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    window.helm.copyToClipboard(task.skillPath);
-  });
   const actions = document.createElement("div");
   actions.className = "dash-queue-actions";
-  actions.append(openBtn);
-  row.append(actions);
 
+  const toggle = document.createElement("button");
+  toggle.className = "text-btn";
+  toggle.textContent = routine.enabled ? "Disable" : "Enable";
+  toggle.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    await window.helm.updateRoutine(routine.id, { enabled: !routine.enabled });
+    renderRoutinesPage();
+  });
+
+  const runBtn = document.createElement("button");
+  runBtn.className = "text-btn";
+  runBtn.textContent = "Run now";
+  runBtn.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    await window.helm.runRoutineNow(routine.id);
+    showToast(`Running "${routine.name}"…`);
+  });
+
+  const editBtn = document.createElement("button");
+  editBtn.className = "text-btn";
+  editBtn.textContent = "Edit";
+  editBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    row.replaceWith(routineFormEl(routine));
+  });
+
+  const delBtn = document.createElement("button");
+  delBtn.className = "text-btn danger";
+  delBtn.textContent = "Delete";
+  delBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    customConfirm(`Delete routine "${routine.name}"?`, "Delete", async () => {
+      await window.helm.removeRoutine(routine.id);
+      renderRoutinesPage();
+    });
+  });
+
+  actions.append(toggle, runBtn, editBtn, delBtn);
+  row.append(actions);
   return row;
+}
+
+// Add/edit form for a routine. `routine` null -> create; else edit in place.
+function routineFormEl(routine) {
+  const isEdit = !!routine;
+  const form = document.createElement("div");
+  form.className = "routine-form";
+
+  const heading = document.createElement("div");
+  heading.className = "routine-form-title";
+  heading.textContent = isEdit ? `Edit "${routine.name}"` : "Add a routine";
+  form.append(heading);
+
+  const field = (label, el) => {
+    const wrap = document.createElement("label");
+    wrap.className = "routine-field";
+    const lab = document.createElement("span");
+    lab.textContent = label;
+    wrap.append(lab, el);
+    return wrap;
+  };
+  const nameIn = document.createElement("input");
+  nameIn.type = "text";
+  nameIn.value = routine?.name || "";
+  nameIn.placeholder = "Weekly health check";
+  const cronIn = document.createElement("input");
+  cronIn.type = "text";
+  cronIn.value = routine?.cron || "";
+  cronIn.placeholder = "0 8 * * 1   (min hour day-of-month month day-of-week)";
+  const cwdIn = document.createElement("input");
+  cwdIn.type = "text";
+  cwdIn.value = routine?.cwd || "";
+  cwdIn.placeholder = "Repo folder (optional; defaults to the meta-home)";
+  const promptIn = document.createElement("textarea");
+  promptIn.rows = 3;
+  promptIn.value = routine?.prompt || "";
+  promptIn.placeholder = "What to run, e.g. /health-coach";
+
+  form.append(
+    field("Name", nameIn),
+    field("Schedule (cron)", cronIn),
+    field("Folder", cwdIn),
+    field("Prompt", promptIn)
+  );
+
+  const err = document.createElement("div");
+  err.className = "routine-form-err";
+  form.append(err);
+
+  const actions = document.createElement("div");
+  actions.className = "routine-form-actions";
+  const save = document.createElement("button");
+  save.className = "primary";
+  save.textContent = isEdit ? "Save" : "Add routine";
+  save.addEventListener("click", async () => {
+    err.textContent = "";
+    const spec = {
+      name: nameIn.value.trim(),
+      cron: cronIn.value.trim(),
+      cwd: cwdIn.value.trim(),
+      prompt: promptIn.value.trim(),
+    };
+    if (!spec.name || !spec.cron || !spec.prompt) {
+      err.textContent = "Name, schedule and prompt are all required.";
+      return;
+    }
+    const res = isEdit ? await window.helm.updateRoutine(routine.id, spec) : await window.helm.createRoutine(spec);
+    if (!res || !res.ok) {
+      err.textContent = res?.error || "Could not save (check the cron format).";
+      return;
+    }
+    renderRoutinesPage();
+  });
+  actions.append(save);
+  if (isEdit) {
+    const cancel = document.createElement("button");
+    cancel.className = "text-btn";
+    cancel.textContent = "Cancel";
+    cancel.addEventListener("click", () => renderRoutinesPage());
+    actions.append(cancel);
+  }
+  form.append(actions);
+  return form;
 }
 
 // ============================== Analysis page ==============================
