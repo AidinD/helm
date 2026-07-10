@@ -12,6 +12,11 @@ let mateSessionIds = new Set();
 // arrows. navigateToPage pushes here; appNavigateView walks it.
 let viewNavStack = [];
 let viewNavIndex = -1;
+// Ids (mateId or sessionId) whose retire/archive handoff-summarize is in flight,
+// so the specific fleet card shows a busy state (not just the bottom toast) -
+// the "visa på rutan" half of the retire/archive-spinner ask. Cleared when the
+// op's final re-render runs.
+let handoffBusyIds = new Set();
 let searchTerm = "";
 let archiveSearchTerm = ""; // filters the Archive page's two lists by title/folder
 let selectedGoalId = null; // Focus page: which goal's breakdown is expanded
@@ -842,6 +847,8 @@ async function archiveSession(session) {
 async function archiveWithHandoff(session) {
   const busy = showBusyToast(`Saving handoff for "${session.title}"…`);
   setPaneBusyUIRaw(focusedPaneIndex, `Saving handoff for "${session.title}"…`);
+  handoffBusyIds.add(session.sessionId);
+  refreshDashboardIfVisible();
   let saved = false;
   try {
     const res = await summarizeSession(session);
@@ -859,6 +866,7 @@ async function archiveWithHandoff(session) {
   }
   setPaneBusyUIRaw(focusedPaneIndex, "");
   busy.done();
+  handoffBusyIds.delete(session.sessionId);
   if (saved) {
     showToast(`Handoff saved to DECISIONS.md; archiving "${session.title}".`);
   }
@@ -1118,15 +1126,20 @@ document.addEventListener("mouseup", (e) => {
   appNavigateView(e.button === 3 ? -1 : 1);
 });
 
-// Quick keyboard nav to the primary views - the captain asked for a fast key to the
-// dashboard. Ctrl+1 Dashboard, Ctrl+2 Analysis, Ctrl+3 Archive (mirrors the
-// header tabs). Plain Ctrl+digit only; skipped while the command palette is
-// open so it doesn't fight the palette's own keys.
+// Quick keyboard nav to the primary views. Ctrl+Space = Dashboard (the fast
+// key the captain wanted, simpler than a digit); Ctrl+1/2/3 = Plan/Analysis/Archive,
+// mirroring the header tab order (Dashboard is on Space, so the digits start at
+// Plan). Skipped while the command palette is open so it doesn't fight its keys.
 document.addEventListener("keydown", (e) => {
   if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) {
     return;
   }
-  const page = { 1: "dashboard", 2: "analysis", 3: "archive" }[e.key];
+  let page = null;
+  if (e.code === "Space" || e.key === " ") {
+    page = "dashboard";
+  } else {
+    page = { 1: "lavish", 2: "analysis", 3: "archive" }[e.key]; // lavish = the "Plan" tab
+  }
   if (!page) {
     return;
   }
@@ -1775,9 +1788,11 @@ async function retireMateWithCarryOver(mate, persona = null) {
   if (mate.sessionId) {
     // The summarize is multi-second and usually triggered from the dashboard,
     // where the per-pane status isn't visible - so show a persistent spinner
-    // toast too, or the click reads as "nothing happened".
+    // toast AND a busy state on the mate's own card ("på rutan").
     busy = showBusyToast(`Retiring ${mate.name} - saving handoff…`);
     setPaneBusyUIRaw(focusedPaneIndex, `Retiring ${mate.name} - saving handoff…`);
+    handoffBusyIds.add(mate.mateId);
+    fillDashboardSections({ force: true });
     try {
       const res = await summarizeSession({ cwd: mate.root || state.orchestratorHome, cliSessionId: mate.sessionId, sessionId: mate.sessionId, title: mate.name });
       if (res && res.text) {
@@ -1792,6 +1807,7 @@ async function retireMateWithCarryOver(mate, persona = null) {
   if (busy) {
     busy.done();
   }
+  handoffBusyIds.delete(mate.mateId);
   fillDashboardSections({ force: true });
 }
 
@@ -4923,6 +4939,18 @@ function fleetColumnEl(label, cardEl, isDirect) {
 // A first-mate card: anchor + name (+ rename/retire), context gauge if its
 // session is open, a dual-trigger retire nudge (saturated OR work wrapped), and
 // its second mates.
+// Dims a fleet card and adds a "Saving handoff…" spinner row while its
+// retire/archive handoff-summarize is in flight (handoffBusyIds).
+function markCardHandoffBusy(el) {
+  el.classList.add("card-handoff-busy");
+  const badge = document.createElement("div");
+  badge.className = "card-handoff-badge";
+  const spin = document.createElement("span");
+  spin.className = "toast-spin";
+  badge.append(spin, document.createTextNode("Saving handoff…"));
+  el.append(badge);
+}
+
 function fleetMateCardEl(mate, sms, boardSummary = {}) {
   const card = document.createElement("div");
   card.className = "fleet-mate-card";
@@ -5062,6 +5090,9 @@ function fleetMateCardEl(mate, sms, boardSummary = {}) {
     }
   }
   card.append(list);
+  if (handoffBusyIds.has(mate.mateId)) {
+    markCardHandoffBusy(card);
+  }
   return card;
 }
 
@@ -5257,6 +5288,9 @@ function fleetSecondMateEl(sm) {
     crewWrap.append(fleetCrewItemEl(r));
   }
   branch.append(crewWrap);
+  if (sm.sessionId && handoffBusyIds.has(sm.sessionId)) {
+    markCardHandoffBusy(branch);
+  }
   return branch;
 }
 
