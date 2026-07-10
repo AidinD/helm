@@ -3721,6 +3721,22 @@ button.primary {
   border: 1px solid var(--border);
 }
 
+/* Report-back (dashReportRowEl): a finished run that came back clean gets the
+   calm "good" check; one still needing the captain reuses .dash-state-needs. */
+.dash-state-done {
+  background: var(--bg);
+  color: var(--good);
+  border: 1px solid var(--good);
+}
+
+/* A report row whose run still needs the captain (commits to review, paused,
+   errored) gets a subtle left accent so it reads apart from a clean-done row,
+   matching the amber attention treatment used elsewhere (.goal-run-detail-
+   attention). */
+.dash-queue-row.dash-report-needs {
+  border-left: 3px solid var(--waiting);
+}
+
 .dash-pulse-dot {
   width: 6px;
   height: 6px;
