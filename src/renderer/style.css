@@ -2810,6 +2810,32 @@ button.primary {
   margin-bottom: 24px;
 }
 
+/* Advanced (crew-knob overrides) - collapsed by default; the fields inside keep
+   their own styling, this just frames the disclosure. */
+.goal-advanced {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px 10px;
+  margin: 4px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.goal-advanced > summary {
+  cursor: pointer;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  font-weight: 600;
+  padding: 5px 0;
+  list-style: revert;
+}
+.goal-advanced[open] > summary {
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
 .goal-field-label {
   font-size: 11px;
   text-transform: uppercase;

@@ -6689,7 +6689,7 @@ function renderGoalPage() {
   const intro = document.createElement("div");
   intro.className = "analysis-totals";
   intro.textContent =
-    "Draft / first pass. Runs a goal to partial completion via fresh autonomous claude iterations in an isolated git worktree. Each successful iteration is committed. It never pushes or merges — the work is left in a worktree for you to review. Several runs can go at once; each launches in its own worktree and shows below.";
+    "Describe what you want done and in which project - the crew settings (how to verify, how many iterations, model) are filled in for you, and you approve before it runs (open Advanced to override any of them). It works through fresh autonomous claude iterations in an isolated git worktree, commits each successful step, and never pushes or merges - the work is left for you to review. Several runs can go at once.";
   page.append(intro);
 
   // ---- Launcher form: starts a NEW run (several may run concurrently) ----
@@ -6857,41 +6857,57 @@ function renderGoalPage() {
       err.textContent = "Pick a project folder first.";
       return;
     }
-    const res = await window.helm.runGoal({ projectPath, goal, maxIterations, model, effort, verifyCommand, escalationConfig });
-    if (!res || !res.ok) {
-      err.textContent = "Failed to start: " + (res?.error || "unknown error");
-      return;
-    }
-    goalRuns.set(res.goalRunId, {
-      goalRunId: res.goalRunId,
-      ordinal: ++goalRunSeq,
-      goal,
-      projectPath,
-      maxIterations,
-      model,
-      effort,
-      verifyCommand,
-      escalationConfig,
-      status: "running",
-      iterations: [],
-      result: null,
-      error: null,
-      escalation: null,
-      latestPlan: null,
+    // Approve-first: show the derived crew config for a one-click OK before the
+    // run starts - the captain gives intent (goal + folder); this is the
+    // "here's how I'll run it - go?" checkpoint. Overrides live under Advanced.
+    const proj = projectPath.split(/[\\/]/).filter(Boolean).pop() || projectPath;
+    const summary =
+      `Run autopilot in "${proj}" — verify: ${verifyCommand || "none"}; up to ${maxIterations} iteration(s); ` +
+      `model: ${model || "auto"}${effort ? " / " + effort : ""}; escalate on trouble: ${escalationConfig ? "yes" : "no"}. ` +
+      `Runs in an isolated worktree and never pushes. Start?`;
+    customConfirm(summary, "Start run", async () => {
+      const res = await window.helm.runGoal({ projectPath, goal, maxIterations, model, effort, verifyCommand, escalationConfig });
+      if (!res || !res.ok) {
+        err.textContent = "Failed to start: " + (res?.error || "unknown error");
+        return;
+      }
+      goalRuns.set(res.goalRunId, {
+        goalRunId: res.goalRunId,
+        ordinal: ++goalRunSeq,
+        goal,
+        projectPath,
+        maxIterations,
+        model,
+        effort,
+        verifyCommand,
+        escalationConfig,
+        status: "running",
+        iterations: [],
+        result: null,
+        error: null,
+        escalation: null,
+        latestPlan: null,
+      });
+      // Clear only the goal field so the launcher is ready for the next run;
+      // folder / verify / model picks usually carry over between runs.
+      goalInput.value = "";
+      updateRunningIndicator();
+      renderGoalPage();
     });
-    // Clear only the goal field so the launcher is ready for the next run;
-    // folder / verify / model picks usually carry over between runs.
-    goalInput.value = "";
-    updateRunningIndicator();
-    renderGoalPage();
   });
   actionRow.append(startBtn);
 
-  form.append(
-    goalLabel,
-    goalInput,
-    cwdLabel,
-    cwdRow,
+  // Intent-first (C1 rework): the captain gives WHAT + WHERE (goal + folder);
+  // the crew knobs (verify, iterations, model, escalation) are auto-derived
+  // (verify is detected from the project) and tucked into an "Advanced" section,
+  // collapsed by default - you only open it to override. Start shows the derived
+  // config for a one-click approve before the run (see the click handler).
+  const advanced = document.createElement("details");
+  advanced.className = "goal-advanced";
+  const advSummary = document.createElement("summary");
+  advSummary.textContent = "Advanced - override verify, iterations, model, escalation";
+  advanced.append(
+    advSummary,
     iterLabel,
     iterInput,
     modelEffortLabel,
@@ -6899,10 +6915,10 @@ function renderGoalPage() {
     verifyLabel,
     verifyInput,
     verifyHint,
-    escalateRow,
-    err,
-    actionRow
+    escalateRow
   );
+
+  form.append(goalLabel, goalInput, cwdLabel, cwdRow, advanced, err, actionRow);
   page.append(form);
 
   // ---- Runs (newest first) ----
