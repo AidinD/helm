@@ -2,6 +2,7 @@ node_modules/
 config.json
 domains.json
 usage-log.jsonl
+helm-usage.jsonl
 goal-run-history.json
 mates.json
 pasted-images/

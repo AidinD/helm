@@ -26,6 +26,7 @@ import { loadDomains, registerDomain, removeDomain } from "./lib/domains.js";
 import { ensureMates, activeMates, findMateById, loadMates, renameMate, retireAndRespawn, bindMateSession, consumeMateHandoff, setMatePersona } from "./lib/mates.js";
 import { personaOverlay, PERSONAS } from "./lib/personas.js";
 import { listSlashItems } from "./lib/slashCommands.js";
+import { trackHelmUsage, summarizeHelmUsage } from "./lib/helmUsage.js";
 import { deriveSecondMates, bindSecondMateSession, renameSecondMate } from "./lib/secondMates.js";
 import {
   ensureDispatchDirs,
@@ -775,6 +776,15 @@ ipcMain.handle("voice:streamStop", (_event, { streamId }) => {
 
 // --- Aggregate usage summary (models + tools most used) ---
 ipcMain.handle("usage:summary", () => readUsageSummary());
+
+// --- Helm's OWN usage analytics (which views/paths the captain takes; distinct from
+// the model/cost usage above). Content-free, local. track appends an event;
+// helmSummary aggregates. ---
+ipcMain.handle("usage:track", (_event, event) => {
+  trackHelmUsage({ ...(event || {}), at: Date.now() });
+  return { ok: true };
+});
+ipcMain.handle("usage:helmSummary", () => summarizeHelmUsage());
 
 // --- App version, same scheme as Skiff/Jot: major.minor (hand-bumped in
 // package.json) + a commit count since that bump, so the last number resets
