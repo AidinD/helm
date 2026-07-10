@@ -1,5 +1,24 @@
 # Decisions
 
+## 2026-07-11 - Report-back is tiered: runs roll up under their dispatcher, escalate up, and are markable-done with cleanup
+
+The shipped flat Dashboard REPORT-BACK section (task 70390331) dumped every terminal run onto the Captain's dashboard regardless of who dispatched it.
+Aidin flagged that this collapses the orchestration tiers - the captain becomes first responder for every crew run, which is exactly what the tiers exist to avoid.
+
+Decision: a run reports back to whoever dispatched it (`dispatchedBy` is already on the run object).
+Mate-dispatched runs collect as rows UNDER that mate's DIRECT card (the card is the roll-up + expandable for drill-down); captain/Autopilot-initiated runs (dispatchedBy null) stay on the Dashboard.
+"Both, not either" (Aidin's words): the dispatcher compiles/summarizes AND the individual runs stay openable for micro-analysis.
+Runs that need the captain (failed/escalated/commits-ready) still escalate UP to the Dashboard even when a mate dispatched them; the handled ones stay under the mate.
+
+Alternatives rejected: (a) keep it flat on the Dashboard - rejected, it's the tier-collapse Aidin objected to; (b) escalate-only, nothing under the mate - rejected, he wants the dispatcher to be the collection point AND retain drill-down, not just a filtered captain view.
+
+Also required: a Done action per row.
+Baseline = acknowledge (non-destructive, clears from needs-you, modeled on acknowledgedSessions).
+If the run used a worktree/branch, Done also cleans it up via `git worktree remove --force` (never `rm -rf` a worktree with a node_modules junction), then branch deletion GATED on a merged-to-main check + confirm (worktree removal is safe; dropping unmerged commits is not).
+
+Honest scoping: view-routing (group rows by dispatcher) is the easy half; feeding a mate-dispatched run's result back INTO that mate's session so the mate can actually triage is the hard half and the real point - today the dispatching session learns nothing when its run finishes.
+Full design in docs/orchestration-model.md "Tiered report-back". Tracked as a Jot task extending 70390331.
+
 ## 2026-07-10 - Autopilot C2 part 1: project-aware config proposal
 
 Built the smart translate step on top of C1. The Autopilot button is now "Set up run": clicking it fires a quick project-rooted `claude -p` (sonnet/low, `autopilot:proposeConfig` in main) that reads the repo + the goal and PROPOSES the crew config - verifyCommand, maxIterations (sized to the goal), model/effort, escalate, and a one-line rationale - instead of C1's deterministic defaults. It populates the Advanced fields (a manual Advanced override still wins) and shows the plan + config in the approve-summary before the run. Output is parsed as JSON with a defaults fallback if unparseable; best-effort, never blocks.

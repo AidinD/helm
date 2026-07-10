@@ -112,3 +112,52 @@ Everything else already exists: rooting = tier, Autopilot crew, Jot as shared me
 6. **Tree/fleet view.** The Dashboard shows the two named first mates as roots with their second-mate branches and each branch's crew; a branch is one click to go direct. This is how the model becomes *visible* - it depends on the relationship-tracking from steps 2-3, so it comes with them, not before.
 
 **Cross-cutting:** model-per-tier by judgment (first mate Sonnet, second mate Opus, crew by complexity); bounded by design - a known small set of tiers with explicit dispatch, never the unbounded recursive agent fan-out that was rejected earlier (that burned quota with no ceiling).
+
+## Tiered report-back (settled with Aidin 2026-07-11)
+
+A goal/Autopilot run reports its outcome back to **whoever dispatched it**, not
+onto one flat global list. The run object already carries `dispatchedBy`, so the
+routing data exists - this section is about using it.
+
+- **Mate-dispatched run** -> its report-back row **collects under that mate's
+  card** in the DIRECT view. The card is the roll-up: a one-line summary
+  ("2 back, 1 needs you") that expands to the individual rows. The dispatching
+  mate is the first responder and triages its own crew's output.
+- **Captain / Autopilot-initiated run** (`dispatchedBy: null`) -> stays on the
+  **Captain Dashboard** REPORT-BACK directly. These have no mate owner.
+- **Both, not either** (Aidin's call): the dispatcher **compiles/summarizes**
+  the results AND every individual run stays openable, so the captain can drill
+  in and micro-analyze when a summary isn't enough.
+- **Escalate up:** runs that genuinely need the captain (failed / escalated /
+  commits-ready-for-review) **bubble up** to the Dashboard REPORT-BACK even when
+  a mate dispatched them. The calm/handled ones stay under the mate. This is the
+  "faculty, not a room" rule applied to results: the captain sees what mates
+  lift to them, not the whole crew's raw output.
+
+### Mark-as-done + cleanup (required, Aidin 2026-07-11)
+
+- Every report-back row needs a **Done** action. Baseline semantics =
+  **acknowledge**: clears the row from the needs-you surfaces, non-destructive,
+  modeled on `acknowledgedSessions` (keyed so new activity un-acknowledges it).
+- If the run used a **worktree/branch**, Done should also **clean it up**:
+  `git worktree remove --force` (NEVER `rm -rf` a worktree that has a
+  `node_modules` junction - that follows the junction into the shared package),
+  then delete the branch.
+- **Gate branch deletion** on a merged-to-main check + explicit confirm. Removing
+  the worktree is safe; deleting a branch that still holds unmerged commits loses
+  work, so that step is the one destructive action and must be confirmed, never
+  automatic.
+
+### The two halves - be honest about which is which
+
+- **Easy half - view routing.** Filter/group the existing report-back rows by
+  `dispatchedBy` so they render under the right card + the escalated subset on
+  the Dashboard. Pure presentation over data that already exists.
+- **Hard half - feed the result back into the mate's session.** Today a
+  dispatching session learns *nothing* when its run finishes; the result lives
+  only in Helm's `goalRuns`/UI. For a mate to actually triage (not just for the
+  UI to group rows under its card), the terminal run's structured result has to
+  be delivered back into that mate session's context. This is what makes the
+  tiers real rather than cosmetic, and it's the substantive piece of the work.
+
+Tracked as a Jot task extending the shipped flat report-back slice.
