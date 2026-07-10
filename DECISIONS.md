@@ -1,5 +1,15 @@
 # Decisions
 
+## 2026-07-10 - Theme system (tokenized colors + selectable themes)
+
+Turned the app's colors into a real theme system instead of a one-off palette. Two parts:
+- **Groundwork:** tokenized the ~20 distinct hardcoded hex/rgba values that lived OUTSIDE :root into semantic tokens - added `--on-accent`, `--accent-hover/-active`, `--danger/-hover/-active`, `--on-danger`, `--bg-inset`; folded near-duplicates into existing tokens (`--waiting`, `--good-bright`, `--bg-sidebar`, `--bg-card-hover`); rewrote accent-tinted rgba as `color-mix(... var(--accent) ...)`. Without this a theme wouldn't bite everywhere.
+- **Themes:** `:root` (+ `:root[data-theme="dark"]`) is the default dark map; `:root[data-theme="brass"]` is a warm light theme. A theme is a full var-map swap, room for more by adding a CSS block + a `THEMES` entry. Selector in Settings > Appearance, persisted as `config.theme`, applied on `<html>` via `applyTheme` on boot and every refresh. The app picks its theme explicitly (NOT prefers-color-scheme) so light/dark is a deliberate choice; `color-scheme` is set per theme so native controls follow.
+
+Scope call: left the pure-black `rgba(0,0,0,x)` box-shadows and modal backdrops as-is - shadows and a modal's page-dimming backdrop are conventionally black-based in both light and dark themes, so tinting them warm would look wrong. `.lavish-frame`'s `#fff` also stays (it's a mockup preview canvas, deliberately white).
+
+Verified: computed-style swap (full token map + color-scheme flips dark<->brass), the Settings selector renders, 0 console errors. (Couldn't capture a screenshot - the CDP harness's screenshot call was timing out this session; token-level computed-style checks are the more reliable proof anyway.)
+
 ## 2026-07-10 - First mate: look up Jot before asking, dispatch per project
 
 The first mate, asked "I have a logo task for beatdrop, jot and loom, fix all three", asked the captain to re-explain what the logo task was - instead of reading the tasks that were already in Jot, and instead of dispatching one per project.

@@ -4161,6 +4161,7 @@ async function refresh() {
   state.quota = data.quota;
   updateAttentionTaskbarCount();
   applyViewMode();
+  applyTheme(state.config?.theme);
   // Don't rebuild the sidebar out from under an in-progress category drag —
   // innerHTML="" would destroy the dragged header and the drag-collapse
   // mid-gesture (jarring layout jump). State above is still refreshed; the
@@ -4313,6 +4314,19 @@ function pruneStaleBackgroundTasks() {
       backgroundTasks.delete(taskId);
     }
   }
+}
+
+// Selectable app themes. Each id has a matching :root[data-theme="<id>"] var-map
+// in style.css; applyTheme just stamps the id on <html>. Add a theme by adding
+// a CSS block + an entry here. The app picks its theme explicitly (persisted in
+// config.theme), not from prefers-color-scheme.
+const THEMES = [
+  { id: "dark", label: "Default (dark)" },
+  { id: "brass", label: "Brass (light)" },
+];
+function applyTheme(themeId) {
+  const id = THEMES.some((t) => t.id === themeId) ? themeId : "dark";
+  document.documentElement.dataset.theme = id;
 }
 
 function applyViewMode() {
@@ -8361,13 +8375,39 @@ function renderSettingsPage() {
   languageRow.append(languageLabel, settingsLanguageDD.el);
   voiceGroup.append(languageRow);
 
+  // Appearance: the app theme (a full CSS var-map swap, applied instantly).
+  const appearanceGroup = document.createElement("div");
+  appearanceGroup.className = "settings-group";
+  appearanceGroup.append(settingsGroupHeading("Appearance"));
+  const themeRow = document.createElement("div");
+  themeRow.className = "settings-select-row";
+  const themeLabel = document.createElement("div");
+  themeLabel.className = "settings-toggle-text";
+  const themeTitle = document.createElement("div");
+  themeTitle.textContent = "Theme";
+  themeTitle.className = "settings-toggle-title";
+  const themeDesc = document.createElement("div");
+  themeDesc.className = "settings-toggle-desc";
+  themeDesc.textContent = "The app's color theme. Applies instantly and is remembered. \"Brass\" is a warm light theme; \"Default\" is the dark one.";
+  themeLabel.append(themeTitle, themeDesc);
+  const themeDD = dropdownPill(
+    state.config?.theme || "dark",
+    THEMES.map((t) => ({ value: t.id, label: t.label })),
+    async (value) => {
+      applyTheme(value); // instant, before the round-trip
+      state.config = await window.helm.setConfig({ theme: value });
+    }
+  );
+  themeRow.append(themeLabel, themeDD.el);
+  appearanceGroup.append(themeRow);
+
   // Each group gets its OWN column (auto-fit grid) so every heading tops its
   // own column, instead of the shorter groups being stacked awkwardly under
   // one another. Auto-fit collapses to fewer columns on a narrow window (see
   // .settings-columns CSS).
   const columns = document.createElement("div");
   columns.className = "settings-columns";
-  columns.append(passiveGroup, activeGroup, voiceGroup);
+  columns.append(passiveGroup, activeGroup, voiceGroup, appearanceGroup);
   block.append(columns);
 
   page.append(block);
