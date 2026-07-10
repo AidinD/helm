@@ -98,6 +98,23 @@
       </div>
     </div>
 
+    <!-- Doc viewer: renders a context .md file (CLAUDE.md / DECISIONS.md /
+         memory) as readable HTML instead of raw markdown. Same static-overlay
+         pattern as #commandPalette; body is populated per open. -->
+    <div id="docViewer" class="docv hidden">
+      <div class="docv-backdrop" id="docvBackdrop"></div>
+      <div class="docv-modal" role="dialog" aria-label="Document viewer">
+        <div class="docv-head">
+          <span class="docv-title" id="docvTitle"></span>
+          <div class="docv-actions">
+            <button type="button" id="docvReveal" class="docv-btn" title="Reveal in Explorer">Reveal</button>
+            <button type="button" id="docvClose" class="docv-btn" title="Close (Esc)">Close</button>
+          </div>
+        </div>
+        <div class="docv-body md-body" id="docvBody"></div>
+      </div>
+    </div>
+
     <script src="renderer.js"></script>
   </body>
 </html>

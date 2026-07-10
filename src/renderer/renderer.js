@@ -8386,11 +8386,193 @@ async function renderAnalysisPage() {
   page.append(grid);
 }
 
+// ---- Minimal, safe Markdown → HTML for the context doc viewer. ------------
+// These files are the user's own (CLAUDE.md/DECISIONS.md/memory), but we still
+// escape ALL text first and only ever emit our own tags, so nothing inside a
+// file can inject markup. No external dependency (the CSP would block a CDN
+// markdown lib anyway). Covers the constructs these docs actually use:
+// headings, lists, fenced + inline code, blockquotes, tables, hr, links,
+// bold/italic, and [[wiki]] memory cross-refs.
+function mdEscape(s) {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+// Inline formatting on an already-escaped string.
+function mdInline(escaped) {
+  let s = escaped;
+  // Inline code first so its content isn't further formatted.
+  const codes = [];
+  s = s.replace(/`([^`]+)`/g, (_m, c) => {
+    codes.push(c);
+    return " C" + (codes.length - 1) + " ";
+  });
+  // Links [text](url) - only safe schemes; anything else renders as plain text.
+  // (url is already escaped, so &amp; etc. are valid inside the attribute.)
+  s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_m, text, url) => {
+    if (/^(https?:\/\/|mailto:|#)/i.test(url)) {
+      return `<a href="${url}" target="_blank" rel="noopener noreferrer">${text}</a>`;
+    }
+    return text;
+  });
+  // [[wiki]] memory cross-links have no navigable target - subtle emphasis.
+  s = s.replace(/\[\[([^\]]+)\]\]/g, (_m, t) => `<em>${t}</em>`);
+  s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  s = s.replace(/(^|[^*])\*([^*\s][^*]*?)\*/g, "$1<em>$2</em>");
+  s = s.replace(/ C(\d+) /g, (_m, i) => `<code>${codes[Number(i)]}</code>`);
+  return s;
+}
+
+function renderMarkdown(md) {
+  const raw = String(md || "").replace(/\r\n/g, "\n");
+  // Pull fenced code blocks out first so their bodies escape the block parser.
+  const fences = [];
+  const withoutFences = raw.replace(/```[^\n]*\n([\s\S]*?)```/g, (_m, code) => {
+    fences.push(code.replace(/\n$/, ""));
+    return "\n F" + (fences.length - 1) + " \n";
+  });
+  const lines = withoutFences.split("\n");
+  const out = [];
+  let para = [];
+  const flushPara = () => {
+    if (para.length) {
+      out.push(`<p>${mdInline(mdEscape(para.join(" ")))}</p>`);
+      para = [];
+    }
+  };
+  const isTableSep = (l) => /^\s*\|?[\s:]*-{2,}[\s:|-]*$/.test(l) && l.includes("-");
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const fence = line.match(/^ F(\d+) $/);
+    if (fence) {
+      flushPara();
+      out.push(`<pre><code>${mdEscape(fences[Number(fence[1])])}</code></pre>`);
+      continue;
+    }
+    if (!line.trim()) {
+      flushPara();
+      continue;
+    }
+    const heading = line.match(/^(#{1,6})\s+(.*)$/);
+    if (heading) {
+      flushPara();
+      const level = Math.min(heading[1].length, 4);
+      out.push(`<h${level}>${mdInline(mdEscape(heading[2].trim()))}</h${level}>`);
+      continue;
+    }
+    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) {
+      flushPara();
+      out.push("<hr>");
+      continue;
+    }
+    // Blockquote: consume consecutive `>` lines.
+    if (/^\s*>\s?/.test(line)) {
+      flushPara();
+      const quote = [];
+      while (i < lines.length && /^\s*>\s?/.test(lines[i])) {
+        quote.push(lines[i].replace(/^\s*>\s?/, ""));
+        i++;
+      }
+      i--;
+      out.push(`<blockquote>${mdInline(mdEscape(quote.join(" ")))}</blockquote>`);
+      continue;
+    }
+    // Table: header row of `|` cells followed by a `---` separator row.
+    if (line.includes("|") && i + 1 < lines.length && isTableSep(lines[i + 1])) {
+      flushPara();
+      const cells = (l) =>
+        l.replace(/^\s*\|/, "").replace(/\|\s*$/, "").split("|").map((c) => mdInline(mdEscape(c.trim())));
+      const header = cells(line);
+      i += 2;
+      const rows = [];
+      while (i < lines.length && lines[i].includes("|") && lines[i].trim()) {
+        rows.push(cells(lines[i]));
+        i++;
+      }
+      i--;
+      const thead = `<thead><tr>${header.map((c) => `<th>${c}</th>`).join("")}</tr></thead>`;
+      const tbody = `<tbody>${rows.map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join("")}</tr>`).join("")}</tbody>`;
+      out.push(`<table>${thead}${tbody}</table>`);
+      continue;
+    }
+    // Lists: consume consecutive items of the same kind.
+    const ulItem = line.match(/^\s*[-*+]\s+(.*)$/);
+    const olItem = line.match(/^\s*\d+\.\s+(.*)$/);
+    if (ulItem || olItem) {
+      flushPara();
+      const ordered = !!olItem;
+      const items = [];
+      const re = ordered ? /^\s*\d+\.\s+(.*)$/ : /^\s*[-*+]\s+(.*)$/;
+      while (i < lines.length) {
+        const m = lines[i].match(re);
+        if (!m) {
+          break;
+        }
+        items.push(`<li>${mdInline(mdEscape(m[1]))}</li>`);
+        i++;
+      }
+      i--;
+      out.push(`<${ordered ? "ol" : "ul"}>${items.join("")}</${ordered ? "ol" : "ul"}>`);
+      continue;
+    }
+    para.push(line.trim());
+  }
+  flushPara();
+  return out.join("\n");
+}
+
+// Open the doc viewer for a context-file reference (kind[, name]); main reads
+// the file from a guarded path and we render its markdown as HTML.
+function openDocViewer(ref, label) {
+  const overlay = document.getElementById("docViewer");
+  const body = document.getElementById("docvBody");
+  document.getElementById("docvTitle").textContent = label || ref.name || "Document";
+  document.getElementById("docvReveal").onclick = () => window.helm.openContext(ref);
+  body.innerHTML = '<div class="cmdk-empty">Loading…</div>';
+  overlay.classList.remove("hidden");
+  window.helm.readContext(ref).then((res) => {
+    if (!res || !res.ok) {
+      body.innerHTML = "";
+      const e = document.createElement("div");
+      e.className = "cmdk-empty";
+      e.textContent = (res && res.error) || "Could not read file";
+      body.append(e);
+      return;
+    }
+    body.innerHTML = renderMarkdown(res.text);
+    if (res.truncated) {
+      const t = document.createElement("div");
+      t.className = "md-truncated";
+      t.textContent = "File truncated for display (over 1 MB) - use Reveal to open the full file.";
+      body.append(t);
+    }
+    body.scrollTop = 0;
+  });
+}
+
+function closeDocViewer() {
+  document.getElementById("docViewer").classList.add("hidden");
+}
+
+document.getElementById("docvClose").addEventListener("click", closeDocViewer);
+document.getElementById("docvBackdrop").addEventListener("click", closeDocViewer);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !document.getElementById("docViewer").classList.contains("hidden")) {
+    e.stopPropagation();
+    closeDocViewer();
+  }
+});
+
 // The context files that actually shape a session: the CLAUDE.md(s) that
 // auto-load and the auto-memory files for the focused pane's cwd. Surfacing
 // them here makes "what's in the room" visible - the point the 2026-07-08
 // session-renewal work turns on (load-bearing knowledge belongs on the
-// always-loaded surface). Click reveals the file in Explorer.
+// always-loaded surface). Click renders the file as readable HTML;
+// right-click reveals it in Explorer.
 function contextFilesEl(context, cwd) {
   const section = document.createElement("div");
   section.className = "analysis-block";
@@ -8405,8 +8587,13 @@ function contextFilesEl(context, cwd) {
     chip.className = "skill-chip";
     chip.textContent = c.label + (c.exists ? "" : " (none)");
     chip.disabled = !c.exists;
-    chip.title = c.exists ? "Reveal in Explorer" : "Not present";
-    chip.addEventListener("click", () => window.helm.openContext({ cwd, kind: c.kind }));
+    chip.title = c.exists ? "Open (right-click to reveal in Explorer)" : "Not present";
+    const ref = { cwd, kind: c.kind };
+    chip.addEventListener("click", () => openDocViewer(ref, c.label));
+    chip.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      window.helm.openContext(ref);
+    });
     list.append(chip);
   }
   // Durable project docs (DECISIONS.md/PLAN.md) - the "etc": they do NOT
@@ -8417,8 +8604,13 @@ function contextFilesEl(context, cwd) {
     chip.className = "skill-chip";
     chip.textContent = d.name + (d.exists ? "" : " (none)");
     chip.disabled = !d.exists;
-    chip.title = d.exists ? "Reveal in Explorer (does not auto-load)" : "Not present";
-    chip.addEventListener("click", () => window.helm.openContext({ cwd, kind: "projectDoc", name: d.name }));
+    chip.title = d.exists ? "Open (does not auto-load · right-click to reveal in Explorer)" : "Not present";
+    const ref = { cwd, kind: "projectDoc", name: d.name };
+    chip.addEventListener("click", () => openDocViewer(ref, d.name));
+    chip.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      window.helm.openContext(ref);
+    });
     list.append(chip);
   }
   section.append(list);
@@ -8443,8 +8635,13 @@ function contextFilesEl(context, cwd) {
       const chip = document.createElement("button");
       chip.className = "skill-chip";
       chip.textContent = f.name;
-      chip.title = "Reveal in Explorer";
-      chip.addEventListener("click", () => window.helm.openContext({ cwd, kind: "memory", name: f.name }));
+      chip.title = "Open (right-click to reveal in Explorer)";
+      const ref = { cwd, kind: "memory", name: f.name };
+      chip.addEventListener("click", () => openDocViewer(ref, f.name));
+      chip.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        window.helm.openContext(ref);
+      });
       memList.append(chip);
     }
     section.append(memList);
