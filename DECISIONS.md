@@ -1,5 +1,13 @@
 # Decisions
 
+## 2026-07-10 - Helm usage analytics (local, content-free)
+
+Instrument Helm's OWN usage - which views Aidin visits and the navigation paths he takes - to inform later UX calls (e.g. "is the chat list needed", the Autopilot-as-primitive rework). Deliberately separate from usage-log.jsonl (that's per-prompt model/effort/cost, already surfaced on the Analysis page); this is app-interaction telemetry.
+- `src/lib/helmUsage.js`: append-only `helm-usage.jsonl` beside the app's other stores (D:\, gitignored, NOT %APPDATA%). `trackHelmUsage(event)` + `summarizeHelmUsage()` (per-view counts, A→B transitions within a sitting, action counts, time span). HELM_USAGE_PATH test seam.
+- Content-free by construction: only view names / action ids + timestamps, never session content. Single-user, local - no upload, no consent surface needed.
+- Instrumented at the single nav chokepoint (`navigateToPage`), fire-and-forget so analytics can never break navigation. Transitions reset across a >30 min gap so separate sittings don't fabricate an A→B move.
+- Surfaced as two Analysis-page blocks ("Your Helm views", "Top navigation paths"). v1 is nav-only; per-action events are supported by the schema (`type:"action"`) but not yet emitted at call sites.
+
 ## 2026-07-10 - Theme system (tokenized colors + selectable themes)
 
 Turned the app's colors into a real theme system instead of a one-off palette. Two parts:

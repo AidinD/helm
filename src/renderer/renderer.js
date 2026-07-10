@@ -7944,6 +7944,14 @@ const DASHBOARD_FACET_PAGES = ["dashboard", "goal", "routines", "focus"];
 // the gear, the sub-nav, and every programmatic jump) routes through here, so
 // navigation no longer depends on a button physically existing in #pageToggle.
 function navigateToPage(page) {
+  // Local, content-free usage analytics: record the view visit so the Analysis
+  // page can show which views + navigation paths you actually use. Fire-and-
+  // forget; never let analytics affect navigation.
+  try {
+    window.helm.trackUsage({ type: "nav", page });
+  } catch {
+    // best-effort
+  }
   document.getElementById("chatPage").classList.toggle("hidden", page !== "chat");
   document.getElementById("dashboardPage").classList.toggle("hidden", page !== "dashboard");
   document.getElementById("focusPage").classList.toggle("hidden", page !== "focus");
@@ -8484,10 +8492,11 @@ async function renderAnalysisPage() {
   page.innerHTML = "";
 
   const cwd = panes[focusedPaneIndex]?.cwd || "";
-  const [{ global, project }, summary, context] = await Promise.all([
+  const [{ global, project }, summary, context, helmUsage] = await Promise.all([
     window.helm.listSkills(cwd),
     window.helm.getUsageSummary(),
     window.helm.listContext(cwd),
+    window.helm.getHelmUsage(),
   ]);
 
   const header = document.createElement("h2");
@@ -8658,7 +8667,42 @@ async function renderAnalysisPage() {
     }
   }
 
-  grid.append(modelBlock, toolBlock, skillUsageBlock, fitBlock, accuracyBlock);
+  // Helm's OWN usage (distinct from the model/cost blocks above): which views
+  // you visit and your common navigation paths - local + content-free.
+  const usageBlock = document.createElement("div");
+  usageBlock.className = "analysis-block";
+  const usageH = document.createElement("h3");
+  usageH.textContent = "Your Helm views";
+  usageH.title = "Which app views you navigate to. Local and content-free — only view names + timestamps.";
+  usageBlock.append(usageH);
+  const viewMax = helmUsage.views.length ? helmUsage.views[0].count : 0;
+  if (!helmUsage.views.length) {
+    const empty = document.createElement("div");
+    empty.className = "pane-empty";
+    empty.textContent = "No data yet — navigation logs as you move around Helm.";
+    usageBlock.append(empty);
+  } else {
+    helmUsage.views.forEach((v) => usageBlock.append(barRow(v.page, v.count, viewMax)));
+  }
+
+  const pathsBlock = document.createElement("div");
+  pathsBlock.className = "analysis-block";
+  const pathsH = document.createElement("h3");
+  pathsH.textContent = "Top navigation paths";
+  pathsH.title = "Most common view-to-view moves within a sitting (A → B).";
+  pathsBlock.append(pathsH);
+  const pathList = helmUsage.transitions.slice(0, 10);
+  const pathMax = pathList.length ? pathList[0].count : 0;
+  if (!pathList.length) {
+    const empty = document.createElement("div");
+    empty.className = "pane-empty";
+    empty.textContent = "No paths yet.";
+    pathsBlock.append(empty);
+  } else {
+    pathList.forEach((t) => pathsBlock.append(barRow(t.path, t.count, pathMax)));
+  }
+
+  grid.append(modelBlock, toolBlock, skillUsageBlock, fitBlock, accuracyBlock, usageBlock, pathsBlock);
   grid.append(
     skillListEl("Global skills (~/.claude/skills)", global, "global", cwd),
     skillListEl(`This pane's project skills${cwd ? "" : " (no folder set on the focused pane)"}`, project, "project", cwd)
