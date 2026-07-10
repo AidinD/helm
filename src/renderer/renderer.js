@@ -6156,6 +6156,11 @@ function goalRunReport(run) {
 function isTerminalRun(r) {
   return r.status === "done" || r.status === "error" || r.status === "interrupted";
 }
+// The captain has marked this run "done" from a report-back row - it drops off
+// the report-back glance surfaces (but stays in history + on the Goal page).
+function isGoalRunAcknowledged(id) {
+  return (state.config?.acknowledgedGoalRuns || []).includes(id);
+}
 // Does this terminal run need the captain personally? (commits to review, an
 // escalation/pause, an error, or an interrupted run of unknown outcome). This
 // is the signal that bubbles a mate-dispatched run UP to the captain's board.
@@ -6167,6 +6172,7 @@ function runNeedsCaptain(r) {
 function terminalRunsBy(ownerId) {
   return [...goalRuns.values()]
     .filter(isTerminalRun)
+    .filter((r) => !isGoalRunAcknowledged(r.goalRunId))
     .filter((r) => (ownerId === null ? !r.dispatchedBy : r.dispatchedBy === ownerId))
     .sort((a, b) => (b.ordinal || 0) - (a.ordinal || 0));
 }
@@ -6184,6 +6190,7 @@ const REPORT_BACK_LIMIT = 6;
 function dashboardReportBackRuns() {
   return [...goalRuns.values()]
     .filter(isTerminalRun)
+    .filter((r) => !isGoalRunAcknowledged(r.goalRunId))
     .filter((r) => !r.dispatchedBy || runNeedsCaptain(r))
     .sort((a, b) => (b.ordinal || 0) - (a.ordinal || 0))
     .slice(0, REPORT_BACK_LIMIT);
@@ -6230,6 +6237,70 @@ function dashboardReportBackSection() {
 // part of the same Dashboard system. Clicking jumps to the Goal page (same as a
 // queue goal-run row), where goalRunDetailEl renders the full run + worktree
 // actions.
+// Mark a run "done" from a report-back row: soft-acknowledge it (drops it from
+// the report-back glance surfaces, keeps it in history + on the Goal page).
+// Mirrors acknowledgedSessions. Force-refresh so BOTH the Dashboard report and
+// the fleet card roll-up repaint (the fleet fingerprint doesn't track ack
+// state, so a plain refresh wouldn't rebuild the roll-up).
+async function acknowledgeGoalRun(goalRunId) {
+  const acked = [...new Set([...(state.config.acknowledgedGoalRuns || []), goalRunId])];
+  state.config = await window.helm.setConfig({ acknowledgedGoalRuns: acked });
+  await fillDashboardSections({ force: true });
+}
+
+// "Done + clean up": remove the run's worktree and delete its branch, but only
+// when the branch is merged (unmerged branches are kept - see goal:cleanupRun).
+async function cleanupGoalRunWorktree(run) {
+  const res = await window.helm.cleanupGoalRun({
+    projectPath: run.projectPath,
+    worktreePath: run.result?.worktreePath || null,
+    branchName: run.result?.branchName || null,
+  });
+  if (!res || !res.ok) {
+    showToast(`Cleanup failed: ${res?.error || "unknown error"}`);
+    return;
+  }
+  if (res.note) {
+    showToast(res.note);
+  } else if (res.branchDeleted) {
+    showToast(`Cleaned up the worktree + deleted merged branch "${run.result?.branchName}".`);
+  } else if (res.worktreeRemoved) {
+    showToast("Cleaned up the worktree.");
+  }
+}
+
+// The report-row "Done" control. No worktree -> a plain acknowledge. With a
+// worktree -> a small choice: acknowledge + clean up (worktree + gated branch
+// delete), or acknowledge and keep the worktree. Never a native dialog.
+function reportRowDoneBtn(run) {
+  const btn = document.createElement("button");
+  btn.className = "dash-report-done";
+  btn.textContent = "Done";
+  btn.title = "Mark this run done (removes it from report-back)";
+  const worktreePath = run.result?.worktreePath || null;
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (!worktreePath) {
+      acknowledgeGoalRun(run.goalRunId);
+      return;
+    }
+    showContextMenu(e.clientX, e.clientY, [
+      {
+        label: "Done + clean up worktree",
+        onClick: async () => {
+          await cleanupGoalRunWorktree(run);
+          await acknowledgeGoalRun(run.goalRunId);
+        },
+      },
+      {
+        label: "Done, keep the worktree",
+        onClick: () => acknowledgeGoalRun(run.goalRunId),
+      },
+    ]);
+  });
+  return btn;
+}
+
 function dashReportRowEl(run) {
   const report = goalRunReport(run);
   const row = document.createElement("div");
@@ -6271,6 +6342,8 @@ function dashReportRowEl(run) {
   meta.className = "dash-q-meta";
   meta.textContent = report.needsCaptain ? "needs you" : report.commitCount > 0 ? `${report.commitCount} commit${report.commitCount === 1 ? "" : "s"}` : "done";
   row.append(meta);
+
+  row.append(reportRowDoneBtn(run));
 
   return row;
 }

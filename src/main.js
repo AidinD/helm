@@ -27,7 +27,7 @@ import { savePastedImage, prunePastedImages } from "./lib/images.js";
 import { computeVersionString, captureRunningBuildIdentity, checkForNewerBuild } from "./lib/version.js";
 import { runGoal } from "./lib/goalOrchestrator.js";
 import { loadGoalRunHistory, upsertGoalRunRecord, removeGoalRunRecord } from "./lib/goalRunHistory.js";
-import { removeWorktree } from "./lib/worktree.js";
+import { removeWorktree, isBranchMerged, deleteBranch } from "./lib/worktree.js";
 import { loadDomains, registerDomain, removeDomain } from "./lib/domains.js";
 import { ensureMates, activeMates, findMateById, loadMates, renameMate, retireAndRespawn, bindMateSession, consumeMateHandoff, setMatePersona, rethemeMateNames } from "./lib/mates.js";
 import { personaOverlay, PERSONAS } from "./lib/personas.js";
@@ -1924,6 +1924,52 @@ ipcMain.handle("goal:deleteWorktree", (_event, { goalRunId, projectPath, worktre
     removeGoalRunRecord(goalRunId);
   }
   return { ok: true };
+});
+
+// Report-back "Done + clean up" cleanup: remove the run's worktree AND delete
+// its branch, but ONLY when the branch is fully merged into the repo's primary
+// branch (isBranchMerged) - an unmerged branch is KEPT so committed work is
+// never silently dropped (the merged-to-main gate from the tiered report-back
+// design). Unlike goal:deleteWorktree this does NOT remove the run record - the
+// report-row "Done" acknowledges the run separately (soft, reversible), and the
+// full run stays on the Goal page. Worktree removal is non-force (fail-closed on
+// uncommitted changes), matching removeWorktree's own contract.
+ipcMain.handle("goal:cleanupRun", (_event, { projectPath, worktreePath, branchName }) => {
+  if (!projectPath) {
+    return { ok: false, error: "projectPath is required" };
+  }
+  const result = { ok: true, worktreeRemoved: false, branchDeleted: false, branchKept: null, note: null };
+
+  if (worktreePath) {
+    if (!fs.existsSync(worktreePath)) {
+      result.worktreeRemoved = true; // already gone from disk
+    } else {
+      try {
+        removeWorktree(projectPath, worktreePath);
+        result.worktreeRemoved = true;
+      } catch (err) {
+        return { ok: false, error: err?.message || String(err) };
+      }
+    }
+  }
+
+  // Branch deletion must run AFTER the worktree is gone (git refuses to delete a
+  // branch that's checked out in a worktree) and only when merged.
+  if (branchName) {
+    try {
+      if (isBranchMerged(projectPath, branchName)) {
+        deleteBranch(projectPath, branchName);
+        result.branchDeleted = true;
+      } else {
+        result.branchKept = branchName;
+        result.note = `Branch "${branchName}" has unmerged commits - kept it (delete by hand if unwanted).`;
+      }
+    } catch (err) {
+      result.branchKept = branchName;
+      result.note = `Kept branch "${branchName}" - couldn't delete it: ${err?.message || String(err)}`;
+    }
+  }
+  return result;
 });
 
 function truncateForNotification(text) {
