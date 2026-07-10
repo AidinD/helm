@@ -4617,9 +4617,19 @@ function customConfirm(message, confirmLabel, onConfirm) {
 // sessions included. Sessions already bound to a first mate's second mate are
 // skipped (they show under that mate). The run-derived Direct nodes (autonomous
 // runs with commits to review) are kept as-is alongside.
-function augmentSecondMatesWithSessions(secondMates) {
+function augmentSecondMatesWithSessions(secondMates, mates = []) {
   const list = [...secondMates];
   const boundIds = new Set(list.map((s) => s.sessionId).filter(Boolean));
+  // A first mate's OWN session IS that mate (its card's "jump in" resumes it),
+  // not a piece of Direct work - so exclude it, or a session started while
+  // inside a first mate (e.g. jumping into Sinbad and typing a prompt) wrongly
+  // shows a second time under Captain/Direct. (Bug: "sessioner startade i 1st
+  // mate hamnar under direct".)
+  for (const m of mates) {
+    if (m.sessionId) {
+      boundIds.add(m.sessionId);
+    }
+  }
   const sessions = state.sessions
     .filter((s) => s.cwd && !s.isArchived)
     .sort((a, b) => (b.lastActivityAt || 0) - (a.lastActivityAt || 0));
@@ -5029,6 +5039,21 @@ function fleetSecondMateEl(sm) {
   // Archive: only for a second mate backed by a real session.
   const backingSession = sess;
   if (backingSession) {
+    // Rename: display-only title override (same mechanism as the sidebar), so
+    // a second-mate session can be renamed from the Fleet too. (Bug: "kan inte
+    // döpa om second mate sessioner".) Editing swaps the name for an input.
+    const renameBtn = document.createElement("button");
+    renameBtn.className = "fleet-btn";
+    renameBtn.title = "Rename this session";
+    renameBtn.textContent = "✎";
+    renameBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      makeInlineEditable(proj, sm.name, async (v) => {
+        await renameSessionTo(backingSession, v);
+        refreshDashboardIfVisible();
+      });
+    });
+    head.append(renameBtn);
     const archiveBtn = document.createElement("button");
     archiveBtn.className = "fleet-btn fleet-archive-btn";
     archiveBtn.title = "Archive this session";
@@ -5287,7 +5312,7 @@ async function fillDashboardSections({ force = false } = {}) {
 
   const [matesResult, secondMatesResult] = await Promise.all([window.helm.listMates(), window.helm.listSecondMates()]);
   const activeMatesList = matesResult?.ok ? matesResult.active : [];
-  const secondMatesList = augmentSecondMatesWithSessions(secondMatesResult?.ok ? secondMatesResult.secondMates : []);
+  const secondMatesList = augmentSecondMatesWithSessions(secondMatesResult?.ok ? secondMatesResult.secondMates : [], activeMatesList);
   // Trigger layer 3: the Jot board state of the projects the mates work, so the
   // retire nudge can strengthen (boards clear) or dampen (urgent task queued).
   const projectPaths = [...new Set(secondMatesList.map((s) => s.projectPath).filter(Boolean))];
