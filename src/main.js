@@ -572,22 +572,43 @@ ipcMain.handle("context:capture", (_event, { cwd, text } = {}) => {
   }
 });
 
-// --- Archive/unarchive a session in the desktop app's own state. Always a
-// direct response to an explicit click in the renderer (manual "Archive", or
-// approving an orchestrator-proposed suggestion) — never called on a timer or
-// any other unattended trigger. ---
+// --- Archive/unarchive a session. Always a direct response to an explicit
+// click in the renderer (manual "Archive", or approving an orchestrator-
+// proposed suggestion) — never called on a timer or any other unattended
+// trigger.
+//
+// Authoritative store is Helm's OWN `config.archivedSessions` on D:\, applied
+// as an overlay in readAllSessions. This is the fix for "archive keeps coming
+// back": a Desktop session's local_*.json is owned by the (MSIX-packaged)
+// Claude app, which rewrites that file and drops the isArchived flag Helm had
+// written into it - so writing there could never hold. The overlay can't be
+// reverted by another app. We still mirror the flag into whichever store the
+// session lives in (best-effort) so views stay consistent, but the overlay is
+// what actually holds the line. ---
 ipcMain.handle("session:archive", (_event, { sessionId, archived }) => {
-  // A Helm-created session has no Desktop local_*.json for setSessionArchived
-  // to patch (it lives in config.helmSessions), so route its archive flag to
-  // our own index. Desktop sessions still patch their own file as before.
+  const shouldArchive = archived !== false;
   const cfg = loadConfig();
+  const set = new Set(cfg.archivedSessions || []);
+  if (shouldArchive) {
+    set.add(sessionId);
+  } else {
+    set.delete(sessionId);
+  }
+  const nextCfg = { ...cfg, archivedSessions: [...set] };
+  // Mirror into the Helm-owned session index if this is a Helm-created session
+  // (no Desktop file to patch), and persist the overlay in the same write.
   if (cfg.helmSessions && cfg.helmSessions[sessionId]) {
     const map = { ...cfg.helmSessions };
-    map[sessionId] = { ...map[sessionId], isArchived: archived !== false };
-    writeConfig({ ...cfg, helmSessions: map });
+    map[sessionId] = { ...map[sessionId], isArchived: shouldArchive };
+    nextCfg.helmSessions = map;
+    writeConfig(nextCfg);
     return { ok: true };
   }
-  return setSessionArchived(sessionId, archived !== false);
+  writeConfig(nextCfg);
+  // Best-effort mirror into the Desktop file too; if the Claude app later
+  // reverts it, the overlay above still keeps the session archived in Helm.
+  const mirror = setSessionArchived(sessionId, shouldArchive);
+  return { ok: true, desktopMirror: mirror.ok };
 });
 
 // --- "Rewind to here": fork a session's transcript, truncated to just before
