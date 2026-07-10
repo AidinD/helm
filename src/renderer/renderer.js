@@ -3204,6 +3204,126 @@ function paneComposerEl(index) {
   promptEl.placeholder = pane.sessionId ? `Continue "${pane.title}"…` : "What should this session do?";
   shell.append(promptEl);
 
+  // ---- Slash-command menu -------------------------------------------------
+  // Typing `/name` at the very start of the composer opens an autocomplete of
+  // the skills + custom commands available to this pane (via slash:list). These
+  // DO run through `claude -p "/name"` (verified 2026-07-10), so picking one and
+  // sending actually invokes it. Built-in TUI commands are intentionally absent
+  // (they no-op through -p). The menu only shows while the text is a bare
+  // `/token` with no space yet - once you type args (or a space) it closes.
+  const slashMenu = document.createElement("div");
+  slashMenu.className = "slash-menu hidden";
+  shell.append(slashMenu);
+  const slash = { open: false, items: null, itemsCwd: undefined, filtered: [], index: 0 };
+
+  const slashQuery = () => {
+    const m = promptEl.value.match(/^\/([\w:-]*)$/);
+    return m ? m[1] : null;
+  };
+  const closeSlashMenu = () => {
+    slash.open = false;
+    slashMenu.classList.add("hidden");
+  };
+  const renderSlashMenu = () => {
+    slashMenu.replaceChildren();
+    if (!slash.filtered.length) {
+      closeSlashMenu();
+      return;
+    }
+    slash.index = Math.max(0, Math.min(slash.index, slash.filtered.length - 1));
+    slash.filtered.forEach((item, i) => {
+      const row = document.createElement("div");
+      row.className = "slash-item" + (i === slash.index ? " is-selected" : "");
+      const nm = document.createElement("span");
+      nm.className = "slash-item-name";
+      nm.textContent = "/" + item.name;
+      const tag = document.createElement("span");
+      tag.className = "slash-item-tag";
+      tag.textContent = item.kind === "command" ? "command" : item.origin === "project" ? "project skill" : "skill";
+      const desc = document.createElement("span");
+      desc.className = "slash-item-desc";
+      desc.textContent = item.description || "";
+      const head = document.createElement("div");
+      head.className = "slash-item-head";
+      head.append(nm, tag);
+      row.append(head, desc);
+      row.addEventListener("mouseenter", () => {
+        slash.index = i;
+        [...slashMenu.children].forEach((c, j) => c.classList.toggle("is-selected", j === i));
+      });
+      // mousedown (not click) + preventDefault keeps the textarea focused so the
+      // blur-close below doesn't fire before selection lands.
+      row.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        selectSlash(item);
+      });
+      slashMenu.append(row);
+    });
+    slashMenu.classList.remove("hidden");
+    slash.open = true;
+  };
+  const selectSlash = (item) => {
+    promptEl.value = "/" + item.name + " ";
+    closeSlashMenu();
+    promptEl.focus();
+    promptEl.selectionStart = promptEl.selectionEnd = promptEl.value.length;
+    promptEl.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+  const updateSlashMenu = async () => {
+    const q = slashQuery();
+    if (q === null) {
+      closeSlashMenu();
+      return;
+    }
+    if (slash.items === null || slash.itemsCwd !== pane.cwd) {
+      const res = await window.helm.listSlashItems(pane.cwd);
+      slash.items = res && res.ok ? res.items : [];
+      slash.itemsCwd = pane.cwd;
+    }
+    const ql = q.toLowerCase();
+    const matches = slash.items.filter((it) => it.name.toLowerCase().includes(ql));
+    // Prefix matches first, then substring, each alphabetical (already sorted).
+    matches.sort((a, b) => {
+      const ap = a.name.toLowerCase().startsWith(ql) ? 0 : 1;
+      const bp = b.name.toLowerCase().startsWith(ql) ? 0 : 1;
+      return ap - bp || a.name.localeCompare(b.name);
+    });
+    slash.filtered = matches;
+    slash.index = 0;
+    renderSlashMenu();
+  };
+  // Registered BEFORE the Enter-to-send keydown below so, while the menu is
+  // open, nav/select/escape here run first and stopImmediatePropagation keeps
+  // the send handler from firing.
+  promptEl.addEventListener("keydown", (e) => {
+    if (!slash.open) {
+      return;
+    }
+    if (e.key === "ArrowDown") {
+      slash.index = Math.min(slash.index + 1, slash.filtered.length - 1);
+      renderSlashMenu();
+    } else if (e.key === "ArrowUp") {
+      slash.index = Math.max(slash.index - 1, 0);
+      renderSlashMenu();
+    } else if (e.key === "Enter" || e.key === "Tab") {
+      const item = slash.filtered[slash.index];
+      if (item) {
+        selectSlash(item);
+      }
+    } else if (e.key === "Escape") {
+      closeSlashMenu();
+    } else {
+      return;
+    }
+    e.preventDefault();
+    e.stopImmediatePropagation();
+  });
+  promptEl.addEventListener("input", () => {
+    updateSlashMenu();
+  });
+  // Clicking away closes the menu; small delay lets an item mousedown land.
+  promptEl.addEventListener("blur", () => setTimeout(closeSlashMenu, 120));
+
   // Attachment chips (pasted images + picked files), shown between the
   // textarea and the control row. Cleared on send.
   const attachmentsEl = document.createElement("div");

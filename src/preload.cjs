@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld("helm", {
   addJotSubtask: (parentId, text) => ipcRenderer.invoke("jot:addSubtask", { parentId, text }),
   getTranscript: (ids) => ipcRenderer.invoke("transcript:get", ids),
   listSkills: (cwd) => ipcRenderer.invoke("skills:list", cwd),
+  listSlashItems: (cwd) => ipcRenderer.invoke("slash:list", cwd),
   openSkill: (opts) => ipcRenderer.invoke("skills:open", opts),
   readSkill: (opts) => ipcRenderer.invoke("skills:read", opts),
   openGlobalClaudeMd: () => ipcRenderer.invoke("claudeMd:openGlobal"),

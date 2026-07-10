@@ -25,6 +25,7 @@ import { removeWorktree } from "./lib/worktree.js";
 import { loadDomains, registerDomain, removeDomain } from "./lib/domains.js";
 import { ensureMates, activeMates, findMateById, loadMates, renameMate, retireAndRespawn, bindMateSession, consumeMateHandoff, setMatePersona } from "./lib/mates.js";
 import { personaOverlay, PERSONAS } from "./lib/personas.js";
+import { listSlashItems } from "./lib/slashCommands.js";
 import { deriveSecondMates, bindSecondMateSession, renameSecondMate } from "./lib/secondMates.js";
 import {
   ensureDispatchDirs,
@@ -293,6 +294,17 @@ ipcMain.handle("jot:addSubtask", (_event, { parentId, text }) => {
 
 // --- Skills available to a pane, split global vs project-specific ---
 ipcMain.handle("skills:list", (_event, cwd) => listSkills(cwd));
+
+// --- Slash-invokable items (skills + custom commands) for the composer menu.
+// Both scopes; project overrides global. Excludes built-in TUI commands (they
+// don't run through `claude -p`). ---
+ipcMain.handle("slash:list", (_event, cwd) => {
+  try {
+    return { ok: true, items: listSlashItems(cwd) };
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err), items: [] };
+  }
+});
 
 // --- Open a skill's SKILL.md in the OS default app (from an Analysis-page chip) ---
 ipcMain.handle("skills:open", (_event, { name, origin, cwd }) => {
