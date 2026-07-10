@@ -4365,8 +4365,8 @@ button.primary {
 }
 
 /* ===== Routines page =====
-   Read-only list over Claude Code's own ~/.claude/scheduled-tasks/ folder
-   (see lib/routines.js + renderRoutinesPage in renderer.js). Reuses the same
+   Helm-owned recurring routines (see lib/helmRoutines.js + renderRoutinesPage
+   in renderer.js). Reuses the same
    .dash-queue-row/.dash-q-* row shell as the Dashboard's "Needs you & in
    motion" list rather than the standalone card style from the design mock,
    so it matches the rest of the app instead of introducing a second visual
@@ -4379,4 +4379,56 @@ button.primary {
   padding: 10px 14px;
   color: var(--text-faint);
   font-size: 12px;
+}
+
+/* Routines: the add/edit form + disabled-row dimming. */
+.routine-form {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 620px;
+}
+.routine-form-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+.routine-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.routine-field input,
+.routine-field textarea {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 9px;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+.routine-field textarea {
+  resize: vertical;
+}
+.routine-form-err:not(:empty) {
+  color: var(--danger);
+  font-size: 12px;
+}
+.routine-form-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.routine-disabled {
+  opacity: 0.55;
+}
+.dash-queue-actions .text-btn.danger {
+  color: var(--danger);
 }

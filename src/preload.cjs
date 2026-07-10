@@ -137,4 +137,8 @@ contextBridge.exposeInMainWorld("helm", {
   // Routines page (read-only) - lists Claude Code's own scheduled tasks from
   // ~/.claude/scheduled-tasks/. No scheduler lives in Helm; this just reads.
   listRoutines: () => ipcRenderer.invoke("routines:list"),
+  createRoutine: (spec) => ipcRenderer.invoke("routines:create", spec),
+  updateRoutine: (id, patch) => ipcRenderer.invoke("routines:update", { id, patch }),
+  removeRoutine: (id) => ipcRenderer.invoke("routines:remove", { id }),
+  runRoutineNow: (id) => ipcRenderer.invoke("routines:runNow", { id }),
 });

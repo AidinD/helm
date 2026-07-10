@@ -5,6 +5,7 @@ usage-log.jsonl
 helm-usage.jsonl
 goal-run-history.json
 mates.json
+routines.json
 pasted-images/
 # whisper.cpp CUDA binary + GGML model for voice transcription (see
 # src/lib/whisperCpp.js and docs/transcription-research.md) — ~1.5GB of
