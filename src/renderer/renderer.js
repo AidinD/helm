@@ -1125,6 +1125,38 @@ document.addEventListener("mouseup", (e) => {
   appNavigateView(e.button === 3 ? -1 : 1);
 });
 
+// A dashboard section re-render swaps whole slots via replaceChildren. If one
+// fires while you're pressing a card, the card node is torn out from under the
+// pointer and the click never lands — the reported "sometimes clicks on first
+// mates don't register, when switching between them" (jumping into a mate flips
+// its status, which changes the fleet fingerprint, so the very next click races
+// that re-render; the 30s poll and streamed session events add more chances).
+// Fix: while the pointer is held down on the dashboard, defer non-forced
+// refreshes, then run the latest one AFTER the click has resolved. Forced
+// refreshes are user actions that only fire on `click` (after release), so
+// they're never mid-press and don't need deferring.
+let dashPointerHeld = false;
+let dashRefreshQueued = false;
+document.addEventListener("pointerdown", (e) => {
+  if (isDashboardVisible() && e.target.closest?.("#dashboardPage")) {
+    dashPointerHeld = true;
+  }
+});
+function releaseDashPointer() {
+  if (!dashPointerHeld) {
+    return;
+  }
+  dashPointerHeld = false;
+  if (dashRefreshQueued) {
+    dashRefreshQueued = false;
+    // Defer past the `click` event that fires immediately after pointerup, so
+    // the click lands on the still-present card before we replace the slot.
+    setTimeout(() => fillDashboardSections(), 0);
+  }
+}
+document.addEventListener("pointerup", releaseDashPointer);
+document.addEventListener("pointercancel", releaseDashPointer);
+
 // Quick keyboard nav to the primary views. Ctrl+Space = Dashboard (the fast
 // key Aidin wanted, simpler than a digit); Ctrl+1/2/3 = Plan/Analysis/Archive,
 // mirroring the header tab order (Dashboard is on Space, so the digits start at
@@ -5407,6 +5439,14 @@ function jumpIntoSecondMate(sm) {
 // sections (and the whole page when nothing changed) stay put. A full rebuild
 // (renderDashboardPage) only happens on navigation or when the shell is missing.
 async function fillDashboardSections({ force = false } = {}) {
+  // Don't swap slots out from under a pressed pointer (see the pointer-held
+  // guard near the mouse-nav handler) — queue the refresh for after release so
+  // an in-flight click on a card isn't lost. Forced refreshes are user actions
+  // that fire after release, so they pass through.
+  if (dashPointerHeld && !force) {
+    dashRefreshQueued = true;
+    return;
+  }
   if (!document.getElementById("dashQueueSlot")) {
     if (isDashboardVisible()) {
       await renderDashboardPage();
