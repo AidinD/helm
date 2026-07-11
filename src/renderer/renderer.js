@@ -5645,12 +5645,22 @@ function jumpIntoSecondMate(sm) {
 // sections (and the whole page when nothing changed) stay put. A full rebuild
 // (renderDashboardPage) only happens on navigation or when the shell is missing.
 async function fillDashboardSections({ force = false } = {}) {
-  // Don't swap slots out from under a pressed pointer (see the pointer-held
-  // guard near the mouse-nav handler) — queue the refresh for after release so
-  // an in-flight click on a card isn't lost. Forced refreshes are user actions
-  // that fire after release, so they pass through.
-  if (dashPointerHeld && !force) {
-    dashRefreshQueued = true;
+  // Don't swap a slot out from under a pressed pointer (see the pointer-held
+  // guard near the mouse-nav handler) - it tears the card out from under an
+  // in-flight click. This function is ASYNC (awaits several IPCs), so it's not
+  // enough to check once at entry: a refresh that started BEFORE a press can
+  // reach a replaceChildren mid-press when its awaits resolve. So re-check
+  // before EVERY slot mutation and bail (queuing a fresh refresh for release)
+  // if the pointer went down meanwhile. Forced refreshes are user actions that
+  // fire after release, so they always pass.
+  const bailIfPressed = () => {
+    if (dashPointerHeld && !force) {
+      dashRefreshQueued = true;
+      return true;
+    }
+    return false;
+  };
+  if (bailIfPressed()) {
     return;
   }
   if (!document.getElementById("dashQueueSlot")) {
@@ -5667,6 +5677,9 @@ async function fillDashboardSections({ force = false } = {}) {
   const inMotion = dashboardInMotionRows();
   const isColdStart = inMotion.length === 0 && (!goalsResult.ok || goalsResult.goals.length === 0);
 
+  if (bailIfPressed()) {
+    return;
+  }
   const onboardingFp = String(isColdStart);
   if (force || onboardingFp !== dashSectionFingerprints.onboarding) {
     dashSectionFingerprints.onboarding = onboardingFp;
@@ -5711,6 +5724,9 @@ async function fillDashboardSections({ force = false } = {}) {
       sm.crew = (saMap[sess.sessionId] || []).map((a) => ({ isSubAgent: true, id: a.id, goal: a.description, status: "running" }));
     }
   }
+  if (bailIfPressed()) {
+    return;
+  }
   const fleetFp = dashboardFleetFingerprint(activeMatesList, secondMatesList, boardSummary);
   if (force || fleetFp !== dashSectionFingerprints.fleet) {
     dashSectionFingerprints.fleet = fleetFp;
@@ -5718,12 +5734,18 @@ async function fillDashboardSections({ force = false } = {}) {
     document.getElementById("dashFleetSlot").replaceChildren(...(fleet ? [fleet] : []));
   }
 
+  if (bailIfPressed()) {
+    return;
+  }
   const goalsFp = dashboardGoalsFingerprint(goalsResult);
   if (force || goalsFp !== dashSectionFingerprints.goals) {
     dashSectionFingerprints.goals = goalsFp;
     document.getElementById("dashGoalsSlot").replaceChildren(await dashboardGoalsSection(goalsResult));
   }
 
+  if (bailIfPressed()) {
+    return;
+  }
   const newSessionFp = dashboardNewSessionFingerprint();
   if (force || newSessionFp !== dashSectionFingerprints.newSession) {
     dashSectionFingerprints.newSession = newSessionFp;
