@@ -58,6 +58,8 @@ const res = continueOnMobile(
 assert(res.ok === true, "continueOnMobile returns ok on win32 with a real cwd");
 assert(spawned && spawned.cmd === "cmd.exe", "spawns cmd.exe");
 assert(spawned.argv[0] === "/c" && spawned.argv.includes("start"), "uses `cmd /c start` to open a NEW window");
+assert(spawned.argv.includes("/min"), "opens the window MINIMIZED (/min) so it doesn't pop over your work");
+assert(spawned.argv.indexOf("/min") === spawned.argv.indexOf("start") + 1, "`/min` comes right after `start` (before the title)");
 assert(spawned.opts && spawned.opts.detached === true, "spawns detached (survives Helm)");
 assert(res.scriptPath && fs.existsSync(res.scriptPath), "wrote the launcher .cmd to disk");
 const written = fs.readFileSync(res.scriptPath, "utf8");
