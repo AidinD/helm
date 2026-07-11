@@ -16,6 +16,15 @@ export async function initAutoUpdate() {
     return;
   }
   started = true;
+  // Auto-update is PARKED until a GitHub token is embedded (AidinD/helm is
+  // private, so electron-updater can't read releases without one - Jot 5cb774a5).
+  // Without a token, checkForUpdates just fails on every launch, which logged a
+  // scary "auto-update init failed" line in the packaged app. Skip cleanly until
+  // the token is wired here (or provided via GH_TOKEN).
+  if (!process.env.GH_TOKEN) {
+    console.info("[helm] auto-update parked (no GitHub token configured); skipping.");
+    return;
+  }
   try {
     // electron-updater is CommonJS; under Node's ESM interop a named import
     // (`{ autoUpdater }`) resolves to undefined in a packaged build, so reach it
