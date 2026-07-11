@@ -799,6 +799,14 @@ ipcMain.handle("usage:helmSummary", () => summarizeHelmUsage());
 // to 0 on every version bump instead of growing forever. ---
 ipcMain.handle("app:version", () => computeVersionString());
 
+// True for an unpackaged dev run (npm start), false for the installed build.
+// The renderer uses this to badge the dev window UNMISTAKABLY - dev and the
+// installed daily driver read different data dirs (repo root vs ~/.helm), so
+// their fleet/sessions legitimately differ; the badge is what keeps you from
+// mistaking one window for the other (the captain 2026-07-11: deliberately separate,
+// clearly marked).
+ipcMain.handle("app:isDev", () => !app.isPackaged);
+
 // --- Orchestrator info: the paths needed to start a fresh orchestrator
 // session from the Dashboard (PLAN.md's orchestrator-lifespan redesign).
 // There is no privileged, always-present orchestrator session anymore — this
