@@ -830,6 +830,28 @@ async function archiveSession(session) {
   refresh();
 }
 
+// Below this many transcript turns, a session is too thin to have durable
+// cross-session knowledge worth a handoff - archiving one anyway just spends a
+// summarize call and drops a "no task work was done" entry into DECISIONS.md
+// (the captain caught a test session polluting it that way). ~2 exchanges.
+const HANDOFF_MIN_TURNS = 4;
+
+// Total turns in a session's transcript (shown + older hidden), or 0 when it
+// can't be read. Its own function so the thin-session handoff guard is testable
+// (window.helm.* bridge methods aren't reassignable in a test; a top-level fn
+// is). 0 means "unknown" - callers fail open.
+async function sessionTurnCount(session) {
+  try {
+    const t = await window.helm.getTranscript({
+      cliSessionId: session.cliSessionId || session.sessionId,
+      sessionId: session.sessionId,
+    });
+    return (t?.turns?.length || 0) + (t?.hiddenCount || 0);
+  } catch {
+    return 0;
+  }
+}
+
 // Archive WITH a last-effort handoff: give the session one final turn to
 // summarize itself, save that to its project's DECISIONS.md (a durable store,
 // where a future session will actually read it), THEN archive. Unlike retire
@@ -838,6 +860,16 @@ async function archiveSession(session) {
 // summary still archives - the save is best-effort, never a blocker. Only
 // offered when the session has a project cwd to write the handoff into.
 async function archiveWithHandoff(session) {
+  // Thin-session guard: skip the whole handoff (no summarize call, no
+  // DECISIONS.md write) for a throwaway/test session. FAIL OPEN - a 0 (unknown)
+  // count falls through and summarizes as before rather than dropping a real
+  // handoff.
+  const turnCount = await sessionTurnCount(session);
+  if (turnCount > 0 && turnCount < HANDOFF_MIN_TURNS) {
+    showToast(`"${session.title}" was too short for a handoff - archived without one.`);
+    archiveSession(session);
+    return;
+  }
   const busy = showBusyToast(`Saving handoff for "${session.title}"…`);
   setPaneBusyUIRaw(focusedPaneIndex, `Saving handoff for "${session.title}"…`);
   // Key the busy flag on the SAME id the fleet/direct node checks against - the
