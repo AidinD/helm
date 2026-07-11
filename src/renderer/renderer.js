@@ -6,6 +6,11 @@ let state = { sessions: [], config: { groups: [], viewMode: "simple" }, quota: n
 // mate" (see isOrchestratorSession) - being rooted at the meta-home is not
 // enough on its own.
 let mateSessionIds = new Set();
+// sessionId (both cliSessionId and sessionId forms) -> the active first mate it
+// belongs to. Lets any session surface (the needs-you queue especially) show
+// "this is first mate X" instead of the cryptic prompt-derived title a
+// first-mate session gets after its first turn. Rebuilt each refresh().
+let mateBySessionId = new Map();
 // App-level view history (Dashboard/Analysis/Archive/Chat/...), driven by the
 // mouse side buttons so back/forward navigate across the WHOLE app.
 // navigateToPage pushes here; appNavigateView walks it.
@@ -775,6 +780,17 @@ function isOrchestratorSession(session) {
     return false;
   }
   return mateSessionIds.has(session.cliSessionId) || mateSessionIds.has(session.sessionId);
+}
+
+// The active first mate a session is bound to, or null. Used to show a session
+// as its mate ("first mate X") instead of the prompt-derived title it picks up
+// after the first turn - the reason a first-mate session was unrecognizable in
+// the needs-you queue.
+function firstMateForSession(session) {
+  if (!session) {
+    return null;
+  }
+  return mateBySessionId.get(session.cliSessionId) || mateBySessionId.get(session.sessionId) || null;
 }
 
 // "Delete" a session from Helm's own view — never touches the desktop
@@ -4305,9 +4321,9 @@ async function refresh() {
   // is NOT a first mate - keying off cwd alone wrongly tagged it "◆ Helm" and
   // showed the "first mate X% full" nudge on it. (Bug: "vissa sessioner i
   // direct verkar klassas som first mate".)
-  mateSessionIds = new Set(
-    (matesResult?.ok ? matesResult.active : []).map((m) => m.sessionId).filter(Boolean)
-  );
+  const activeMatesForBinding = (matesResult?.ok ? matesResult.active : []).filter((m) => m.sessionId);
+  mateSessionIds = new Set(activeMatesForBinding.map((m) => m.sessionId));
+  mateBySessionId = new Map(activeMatesForBinding.map((m) => [m.sessionId, m]));
   // Detect sessions newly transitioning INTO "waiting" (not already waiting
   // before this poll) for away-from-desk attention delivery - fire once per
   // transition, not on every poll tick a session happens to still be waiting.
@@ -4749,7 +4765,12 @@ function dashboardFleetFingerprint(mates = [], secondMates = [], boardSummary = 
   const matesFp = mates
     .map((m) => {
       const p = panes.find((pane) => pane && pane.cliSessionId && pane.cliSessionId === m.sessionId);
-      return `${m.mateId}:${m.name}:${m.sessionId || "-"}:${p?.contextTokens || 0}`;
+      // Include the mate's bound-session status so the card repaints its
+      // "needs you" / "working" badge + accent when the mate transitions.
+      const st = m.sessionId
+        ? state.sessions.find((s) => (s.cliSessionId || s.sessionId) === m.sessionId)?.status || "-"
+        : "-";
+      return `${m.mateId}:${m.name}:${m.sessionId || "-"}:${st}:${p?.contextTokens || 0}`;
     })
     .join(",");
   const smFp = secondMates.map((s) => `${s.secondMateId}:${s.name}:${s.sessionId || "-"}:${s.crew.length}`).join(",");
@@ -5057,13 +5078,30 @@ function fleetMateCardEl(mate, sms, boardSummary = {}) {
   const name = document.createElement("div");
   name.className = "fleet-mate-name";
   name.textContent = mate.name;
+  // The mate's OWN session status (its bound session). Previously the card never
+  // reflected this - it only showed the second-mate count or "idle", so a first
+  // mate WAITING on you had no marker at all. Show a "needs you" / "working"
+  // badge and accent the card when it needs you.
+  const boundSession = mate.sessionId
+    ? state.sessions.find((s) => (s.cliSessionId || s.sessionId) === mate.sessionId)
+    : null;
+  const mateStatus = boundSession?.status;
   const kind = document.createElement("span");
   kind.className = "fleet-kind session";
   kind.textContent = "💬 session";
   const role = document.createElement("div");
   role.className = "fleet-mate-role";
+  if (mateStatus === "waiting" || mateStatus === "active") {
+    const badge = document.createElement("span");
+    badge.className = "fleet-badge " + (mateStatus === "waiting" ? "need" : "run");
+    badge.textContent = mateStatus === "waiting" ? "needs you" : "working";
+    role.append(badge);
+  }
   role.append(kind, document.createTextNode(sms.length ? ` ${sms.length} second mate${sms.length === 1 ? "" : "s"}` : " idle"));
   idBox.append(name, role);
+  if (mateStatus === "waiting") {
+    card.classList.add("fleet-mate-needs");
+  }
   const actions = document.createElement("div");
   actions.className = "fleet-mate-actions";
   // Rename = inline edit (window.prompt is disabled in Electron + the captain never
@@ -6139,7 +6177,16 @@ function dashSessionRowEl(session) {
   qbody.className = "dash-q-body";
   const top = document.createElement("div");
   top.className = "dash-q-top";
-  if (session.jot?.category) {
+  // A first-mate session is named after its first prompt once it runs, which is
+  // unrecognizable in this queue. Show it as the mate ("1st mate · <name>")
+  // instead, and keep the prompt title as context on the why line below.
+  const mate = firstMateForSession(session);
+  if (mate) {
+    const tag = document.createElement("span");
+    tag.className = "dash-goal-tag";
+    tag.textContent = "1st mate";
+    top.append(tag);
+  } else if (session.jot?.category) {
     const tag = document.createElement("span");
     tag.className = "dash-goal-tag";
     tag.textContent = session.jot.category;
@@ -6147,7 +6194,7 @@ function dashSessionRowEl(session) {
   }
   const title = document.createElement("span");
   title.className = "dash-q-title";
-  title.textContent = session.title;
+  title.textContent = mate ? mate.name : session.title;
   top.append(title);
   qbody.append(top);
 
@@ -6156,7 +6203,10 @@ function dashSessionRowEl(session) {
   const bits = [session.model ? session.model.replace("claude-", "") : "model unknown", relTime(session.lastActivityAt)];
   // Note: context-budget + worktree path are intentionally omitted until that
   // telemetry is actually wired - a placeholder suffix here read as clutter.
-  why.textContent = (session.status === "waiting" ? "Waiting on you · " : "") + bits.join(" · ");
+  // For a first-mate session, keep the prompt-derived title as context here so
+  // its identity (title above) and topic (here) are both legible.
+  const contextTitle = mate && session.title && session.title !== mate.name ? `${session.title} · ` : "";
+  why.textContent = (session.status === "waiting" ? "Waiting on you · " : "") + contextTitle + bits.join(" · ");
   qbody.append(why);
   row.append(qbody);
 
