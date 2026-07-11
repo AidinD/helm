@@ -1492,12 +1492,16 @@ function rowEl(session) {
   // helper has actually READ and concluded are genuinely done skip the wait
   // for the window to expire into "idle" — this is what "replaces the idle
   // proxy with something that's actually read the content" (PLAN.md) means
-  // in practice. Orchestrator sessions are suggested for archiving like any
-  // other now — under the ephemeral model they're the common case, so
-  // excluding them would just let finished ones pile up unsuggested.
+  // in practice. Ephemeral PROJECT sessions are the common suggest case, but a
+  // FIRST MATE (a session bound to an active mate) is NEVER suggested for
+  // archiving - a first mate is a persistent coordination role you RETIRE (with
+  // a handoff), not archive. It showed up here (with its prompt-derived name) as
+  // an "Archive?" proposal, which is wrong (Aidin 2026-07-11; supersedes the old
+  // "orchestrator sessions suggested like any other" note).
   const classifierSaysDone = session.orchestratorTag?.statusTag === "done_not_archived";
   if (
     state.config.archiveSuggestions?.enabled === true &&
+    !isOrchestratorSession(session) &&
     (session.status === "idle" || classifierSaysDone) &&
     !hasOpenJotWork &&
     !isArchiveProposalDismissed(session)
@@ -5924,6 +5928,9 @@ function dashboardProposalSessions() {
     (s) =>
       !s.isArchived &&
       !isHiddenFromHelm(s) &&
+      // A first mate is retired (with a handoff), never archived - keep it out
+      // of the archive-suggestion pile entirely (Aidin 2026-07-11).
+      !isOrchestratorSession(s) &&
       (s.status === "idle" || classifierSaysDone(s)) &&
       !hasOpenJotWork(s) &&
       !isArchiveProposalDismissed(s)
