@@ -452,6 +452,31 @@ h1 {
   border-color: var(--text-dim);
 }
 
+/* Dev-build marker. Unlike the quiet neutral pills above, this is MEANT to
+   stand out: dev (npm start) and the installed daily driver read separate data
+   dirs, so their fleet/sessions differ by design, and the whole point of the
+   badge is that the two windows can never be confused. A dedicated violet
+   (distinct from the terracotta --accent, which stays reserved for active
+   states) reads instantly as "debug/dev". Paired with a header accent stripe
+   below so the dev window is recognisable even peripherally. Shown only when
+   the renderer confirms an unpackaged run (body.dev-build). */
+.dev-badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: #7c5cff;
+  color: #fff;
+  white-space: nowrap;
+  cursor: default;
+}
+
+body.dev-build header {
+  border-top: 2px solid #7c5cff;
+  padding-top: 8px; /* keep header height stable against the 2px stripe */
+}
+
 .header-controls {
   display: flex;
   align-items: center;

@@ -10383,6 +10383,17 @@ window.helm.getVersion().then((v) => {
   document.getElementById("appVersion").textContent = v;
 });
 
+// Dev-build marker: dev (npm start) and the installed app read different data
+// dirs (repo root vs ~/.helm), so their fleet/sessions differ by design. Badge
+// the dev window unmistakably (a filled DEV pill + a header accent stripe via
+// body.dev-build) so the two windows are never confused (Aidin 2026-07-11).
+window.helm.isDevBuild().then((dev) => {
+  if (dev) {
+    document.getElementById("devBadge").classList.remove("hidden");
+    document.body.classList.add("dev-build");
+  }
+});
+
 // Stale-build indicator: shows the pill when main.js's periodic on-disk
 // check (see runStaleBuildCheck) finds the git HEAD has moved past what this
 // running instance booted with — i.e. the source on disk changed (a pull, an

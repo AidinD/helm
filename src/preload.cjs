@@ -50,6 +50,7 @@ contextBridge.exposeInMainWorld("helm", {
     ipcRenderer.invoke("session:switchRootFolder", { cliSessionId, sessionId, newCwd }),
   getUsageSummary: () => ipcRenderer.invoke("usage:summary"),
   getVersion: () => ipcRenderer.invoke("app:version"),
+  isDevBuild: () => ipcRenderer.invoke("app:isDev"),
   getOrchestratorInfo: () => ipcRenderer.invoke("orchestrator:info"),
   // Stale-build indicator: getBuildStatus() returns the running build's own
   // identity plus whatever the last periodic on-disk check found; onBuildStaleUpdate
