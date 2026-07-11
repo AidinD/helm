@@ -11,7 +11,7 @@
 // Pass --stamp-only to just write build-version.json (used by tests) without
 // running the (slow) electron-builder pack. Pass --publish to release.
 import { execFileSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { writeFileSync, existsSync, readdirSync, unlinkSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { computeVersionString } from "../src/lib/version.js";
@@ -35,6 +35,23 @@ console.log(`[build] stamped version ${version}${commit ? ` (${commit})` : ""}`)
 
 if (process.argv.includes("--stamp-only")) {
   process.exit(0);
+}
+
+// Clean stale installer artifacts from a previous build so old versions don't
+// pile up in dist/ (the captain's standing ask: clear old setup files each time new
+// ones are made). electron-builder writes the fresh ones right below.
+const distDir = path.join(repoRoot, "dist");
+if (existsSync(distDir)) {
+  for (const f of readdirSync(distDir)) {
+    if (/\.exe$|\.exe\.blockmap$/.test(f)) {
+      try {
+        unlinkSync(path.join(distDir, f));
+        console.log(`[build] removed stale artifact dist/${f}`);
+      } catch {
+        // best-effort - a locked/running exe just stays; the fresh build still writes its own
+      }
+    }
+  }
 }
 
 const args = ["electron-builder", `--config.extraMetadata.version=${version}`];
