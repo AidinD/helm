@@ -4062,6 +4062,13 @@ button.primary {
 .fleet-mate-card:hover {
   border-color: var(--accent);
 }
+/* First mate whose session is waiting on you: an attention accent (left edge +
+   soft border) so a needs-you first mate is spottable in the Fleet at a glance,
+   matching the --waiting family used elsewhere for "needs you". */
+.fleet-mate-card.fleet-mate-needs {
+  border-color: color-mix(in srgb, var(--waiting) 55%, var(--border));
+  box-shadow: inset 3px 0 0 var(--waiting);
+}
 .fleet-mate-card.direct {
   cursor: default;
 }
