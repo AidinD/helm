@@ -14,29 +14,30 @@ const repoRoot = path.join(__dirname, "..", "..");
  * time; Helm has no bundler (plain `electron .`), so this runs once at
  * app startup in the main process instead — same formula, different trigger.
  */
-export function computeVersionString() {
-  let majorMinor = "0.0";
+function majorMinorFromPkg() {
   try {
     const pkg = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8"));
-    majorMinor = pkg.version.split(".").slice(0, 2).join(".");
+    return pkg.version.split(".").slice(0, 2).join(".");
   } catch {
-    return "v0.0.0";
+    return null;
   }
+}
 
+// The full "vX.Y.Z" from git (dev checkout), or null if git can't give us a
+// definitive answer (not on PATH, not a repo, or no commit introduced this
+// exact major.minor). Returning null - rather than a partial "vX.Y" - lets the
+// caller fall back to the build-stamped version in a packaged build.
+function versionFromGit(majorMinor) {
   try {
     // Trailing "." anchors this to an exact major.minor — without it,
     // searching for "0.1" would also match "0.10", "0.11", "0.1.5", etc.
-    // (found in review before this shipped).
     const bumpCommit = execFileSync(
       "git",
       ["log", "-1", "--format=%H", "-S", `"version": "${majorMinor}.`, "--", "package.json"],
       { cwd: repoRoot, encoding: "utf8" }
     ).trim();
     if (!bumpCommit) {
-      // No commit found that introduced this exact major.minor (e.g. it was
-      // hand-edited without a matching commit yet) — patch has no
-      // meaningful "since" point, so it's just not shown rather than guessed.
-      return `v${majorMinor}`;
+      return null;
     }
     const patch = execFileSync("git", ["rev-list", "--count", `${bumpCommit}..HEAD`], {
       cwd: repoRoot,
@@ -44,11 +45,41 @@ export function computeVersionString() {
     }).trim();
     return `v${majorMinor}.${patch}`;
   } catch {
-    // git not on PATH, not a git repo, or some other failure — the version
-    // number is a nice-to-have display, not something worth surfacing an
-    // error for.
-    return `v${majorMinor}`;
+    return null;
   }
+}
+
+// The version stamped into the build at package time (scripts/build.mjs writes
+// src/lib/build-version.json). Only present in a packaged build - the SAME
+// major.minor.commitcount computed from git at build time, so a packaged app
+// and its installer report the exact version dev showed when it was built
+// (fixing "installer version doesn't match the app's"). Absent in a dev
+// checkout, where git is authoritative.
+function readBuildVersion() {
+  try {
+    const baked = JSON.parse(readFileSync(path.join(__dirname, "build-version.json"), "utf8"));
+    return typeof baked.version === "string" ? baked.version : null;
+  } catch {
+    return null;
+  }
+}
+
+export function computeVersionString() {
+  const majorMinor = majorMinorFromPkg();
+  if (!majorMinor) {
+    return "v0.0.0";
+  }
+  // Dev: live from git (commit count moves as you work).
+  const fromGit = versionFromGit(majorMinor);
+  if (fromGit) {
+    return fromGit;
+  }
+  // Packaged (no .git): the version baked in at build time.
+  const baked = readBuildVersion();
+  if (baked) {
+    return `v${baked}`;
+  }
+  return `v${majorMinor}`;
 }
 
 /**
