@@ -4474,6 +4474,11 @@ const THEMES = [
   { id: "adventure", label: "Adventure (dark)", icons: { anchor: "🧭", logo: { glyph: "🗺️" } } },
   { id: "anime", label: "Anime (dark)", icons: { anchor: "🌸", logo: { glyph: "⭐" } } },
   { id: "game", label: "Game (dark)", icons: { anchor: "🎮", logo: { glyph: "🕹️" } } },
+  { id: "fantasy", label: "Fantasy (dark)", icons: { anchor: "🗡️", logo: { glyph: "🐉" } } },
+  { id: "superhero", label: "Superhero (dark)", icons: { anchor: "🛡️", logo: { glyph: "🦸" } } },
+  { id: "cyberpunk", label: "Cyberpunk (dark)", icons: { anchor: "⚡", logo: { glyph: "🤖" } } },
+  { id: "western", label: "Western (dark)", icons: { anchor: "🐎", logo: { glyph: "🤠" } } },
+  { id: "noir", label: "Noir (dark)", icons: { anchor: "🔍", logo: { glyph: "🕵️" } } },
 ];
 function themeById(id) {
   return THEMES.find((t) => t.id === id) || THEMES[0];

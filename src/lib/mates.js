@@ -122,6 +122,88 @@ const GAME_NAMES = [
   "Ezio Auditore", // Assassin's Creed
   "2B", // NieR: Automata
 ];
+const FANTASY_NAMES = [
+  "Gandalf",
+  "Aragorn",
+  "Legolas",
+  "Galadriel",
+  "Merlin",
+  "Arwen",
+  "Frodo",
+  "Elrond",
+  "Daenerys",
+  "Jon Snow",
+  "Ciri", // The Witcher
+  "Yennefer", // The Witcher
+  "Radagast",
+  "Eowyn",
+  "Gimli",
+  "Elric", // Elric of Melnibone
+];
+const SUPERHERO_NAMES = [
+  "Clark Kent", // Superman
+  "Bruce Wayne", // Batman
+  "Diana Prince", // Wonder Woman
+  "Peter Parker", // Spider-Man
+  "Tony Stark", // Iron Man
+  "Steve Rogers", // Captain America
+  "Natasha Romanoff", // Black Widow
+  "Carol Danvers", // Captain Marvel
+  "Barry Allen", // The Flash
+  "Hal Jordan", // Green Lantern
+  "Selina Kyle", // Catwoman
+  "Wanda Maximoff", // Scarlet Witch
+  "Stephen Strange", // Doctor Strange
+  "Matt Murdock", // Daredevil
+];
+const CYBERPUNK_NAMES = [
+  "Case", // Neuromancer
+  "Molly Millions", // Neuromancer
+  "Johnny Silverhand", // Cyberpunk 2077
+  "Neo", // The Matrix
+  "Trinity", // The Matrix
+  "Morpheus", // The Matrix
+  "Hiro Protagonist", // Snow Crash
+  "Rick Deckard", // Blade Runner
+  "Roy Batty", // Blade Runner
+  "Pris", // Blade Runner
+  "Adam Jensen", // Deus Ex
+  "Panam", // Cyberpunk 2077
+  "Rachael", // Blade Runner
+  "Y.T.", // Snow Crash
+];
+const WESTERN_NAMES = [
+  "Doc Holliday",
+  "Wyatt Earp",
+  "Calamity Jane",
+  "Jesse James",
+  "Django",
+  "Rooster Cogburn", // True Grit
+  "Butch Cassidy",
+  "Sundance Kid",
+  "Annie Oakley",
+  "Billy the Kid",
+  "Wild Bill",
+  "Josey Wales",
+  "Cole Younger",
+  "Belle Starr",
+];
+const NOIR_NAMES = [
+  "Philip Marlowe",
+  "Sam Spade",
+  "Jake Gittes", // Chinatown
+  "Dick Tracy",
+  "Nick Charles", // The Thin Man
+  "Hercule Poirot",
+  "Sherlock Holmes",
+  "Miss Marple",
+  "Columbo",
+  "Jessica Jones",
+  "Veronica Mars",
+  "Rust Cohle", // True Detective
+  "Nora Charles", // The Thin Man
+  "Perry Mason",
+];
 // Each theme's name pool. Themes not listed (dark, brass) keep the nautical
 // identity. Switching theme across pools re-themes the mates (rethemeMateNames).
 const NAME_POOLS = {
@@ -129,6 +211,11 @@ const NAME_POOLS = {
   adventure: ADVENTURE_NAMES,
   anime: ANIME_NAMES,
   game: GAME_NAMES,
+  fantasy: FANTASY_NAMES,
+  superhero: SUPERHERO_NAMES,
+  cyberpunk: CYBERPUNK_NAMES,
+  western: WESTERN_NAMES,
+  noir: NOIR_NAMES,
 };
 function namePoolForTheme(theme) {
   return NAME_POOLS[theme] || NAUTICAL_NAMES;
