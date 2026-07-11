@@ -1188,12 +1188,22 @@ document.addEventListener("mouseup", (e) => {
 // mates don't register, when switching between them" (jumping into a mate flips
 // its status, which changes the fleet fingerprint, so the very next click races
 // that re-render; the 30s poll and streamed session events add more chances).
-// Fix: while the pointer is held down on the dashboard, defer non-forced
-// refreshes, then run the latest one AFTER the click has resolved. Forced
-// refreshes are user actions that only fire on `click` (after release), so
-// they're never mid-press and don't need deferring.
+// Fix: while the pointer is held down on the dashboard, defer refreshes, then
+// run the latest one AFTER the click has resolved.
+//
+// This guard covers FORCED refreshes too. `force` means "bypass the section
+// fingerprints and rebuild anyway" — it is orthogonal to the pointer guard, and
+// conflating the two was the bug behind the recurring regression: navigating
+// back to the Dashboard (navigateToPage -> renderDashboardPage) fires an ASYNC
+// forced fill, which can still be resolving when you press the next mate card,
+// so the forced fleet swap eats that click. A diagnostic (diag-fleet-click-race)
+// confirmed a forced swap mid-press ate 8/8 clicks while a non-forced swap ate
+// none. So defer forced refreshes as well, and carry the force flag through to
+// the deferred flush so a force-only repaint (archive spinner, rename restore —
+// state the fingerprints don't track) still happens after release.
 let dashPointerHeld = false;
 let dashRefreshQueued = false;
+let dashQueuedForce = false;
 document.addEventListener("pointerdown", (e) => {
   if (isDashboardVisible() && e.target.closest?.("#dashboardPage")) {
     dashPointerHeld = true;
@@ -1206,9 +1216,11 @@ function releaseDashPointer() {
   dashPointerHeld = false;
   if (dashRefreshQueued) {
     dashRefreshQueued = false;
+    const force = dashQueuedForce;
+    dashQueuedForce = false;
     // Defer past the `click` event that fires immediately after pointerup, so
     // the click lands on the still-present card before we replace the slot.
-    setTimeout(() => fillDashboardSections(), 0);
+    setTimeout(() => fillDashboardSections({ force }), 0);
   }
 }
 document.addEventListener("pointerup", releaseDashPointer);
@@ -5655,11 +5667,16 @@ async function fillDashboardSections({ force = false } = {}) {
   // enough to check once at entry: a refresh that started BEFORE a press can
   // reach a replaceChildren mid-press when its awaits resolve. So re-check
   // before EVERY slot mutation and bail (queuing a fresh refresh for release)
-  // if the pointer went down meanwhile. Forced refreshes are user actions that
-  // fire after release, so they always pass.
+  // if the pointer went down meanwhile. This applies to FORCED refreshes too:
+  // the async forced fill from navigating back to the Dashboard can still be
+  // resolving when the next card is pressed (see the guard's header comment).
+  // A deferred forced refresh keeps its force through the flush (dashQueuedForce).
   const bailIfPressed = () => {
-    if (dashPointerHeld && !force) {
+    if (dashPointerHeld) {
       dashRefreshQueued = true;
+      if (force) {
+        dashQueuedForce = true;
+      }
       return true;
     }
     return false;
