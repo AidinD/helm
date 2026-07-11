@@ -319,6 +319,34 @@
   --on-danger: #f6ecec;
 }
 
+/* Evil - menacing: near-black blood-tinted ground, blood-red accent, an occult
+   violet for the "in motion" state, skull/devil icons. */
+:root[data-theme="evil"] {
+  color-scheme: dark;
+  --bg: #100909;
+  --bg-sidebar: #0b0606;
+  --bg-card: #1a0e0e;
+  --bg-card-hover: #271515;
+  --bg-inset: #070303;
+  --border: rgba(255, 70, 70, 0.16);
+  --text: #f1dede;
+  --text-dim: #bf9898;
+  --text-faint: #7d5a5a;
+  --accent: #b3121b;
+  --accent-hover: #d11f28;
+  --accent-active: #8c0c14;
+  --on-accent: #f6e2e2;
+  --waiting: #d98c1f;
+  --active: #8a3fd0;
+  --idle: #6a5252;
+  --good: #6fa03f;
+  --good-bright: #8cc05c;
+  --danger: #ff3b3b;
+  --danger-hover: #ff5a5a;
+  --danger-active: #d81f1f;
+  --on-danger: #1a0707;
+}
+
 * {
   box-sizing: border-box;
 }

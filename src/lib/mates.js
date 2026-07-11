@@ -204,6 +204,24 @@ const NOIR_NAMES = [
   "Nora Charles", // The Thin Man
   "Perry Mason",
 ];
+const EVIL_NAMES = [
+  "Darth Vader", // Star Wars
+  "Sauron", // LOTR
+  "Voldemort", // Harry Potter
+  "Thanos", // Marvel
+  "The Joker", // DC
+  "Hannibal Lecter",
+  "Maleficent",
+  "Palpatine", // Star Wars
+  "Loki", // Marvel
+  "Scar", // The Lion King
+  "Ganondorf", // Zelda
+  "Sephiroth", // Final Fantasy VII
+  "Dracula",
+  "Agent Smith", // The Matrix
+  "Cruella", // 101 Dalmatians
+  "Bowser", // Mario
+];
 // Each theme's name pool. Themes not listed (dark, brass) keep the nautical
 // identity. Switching theme across pools re-themes the mates (rethemeMateNames).
 const NAME_POOLS = {
@@ -216,6 +234,7 @@ const NAME_POOLS = {
   cyberpunk: CYBERPUNK_NAMES,
   western: WESTERN_NAMES,
   noir: NOIR_NAMES,
+  evil: EVIL_NAMES,
 };
 function namePoolForTheme(theme) {
   return NAME_POOLS[theme] || NAUTICAL_NAMES;

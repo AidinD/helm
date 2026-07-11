@@ -4479,6 +4479,7 @@ const THEMES = [
   { id: "cyberpunk", label: "Cyberpunk (dark)", icons: { anchor: "⚡", logo: { glyph: "🤖" } } },
   { id: "western", label: "Western (dark)", icons: { anchor: "🐎", logo: { glyph: "🤠" } } },
   { id: "noir", label: "Noir (dark)", icons: { anchor: "🔍", logo: { glyph: "🕵️" } } },
+  { id: "evil", label: "Evil (dark)", icons: { anchor: "💀", logo: { glyph: "😈" } } },
 ];
 function themeById(id) {
   return THEMES.find((t) => t.id === id) || THEMES[0];

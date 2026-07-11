@@ -26,6 +26,7 @@ const EXPECT = {
   cyberpunk: ["#ff2fb0", "🤖"],
   western: ["#cf6b3a", "🤠"],
   noir: ["#c0454f", "🕵️"],
+  evil: ["#b3121b", "😈"],
 };
 
 try {
