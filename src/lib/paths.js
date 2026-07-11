@@ -7,11 +7,46 @@ import fs from "node:fs";
  * session metadata and transcripts. All read-only.
  */
 
-const APPDATA = process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming");
-const CLAUDE_ROOT = path.join(APPDATA, "Claude");
+// The Claude desktop app is MSIX-packaged, so it writes its Roaming\Claude data
+// (session metadata + desktop config) into its package's virtualized store, NOT
+// the real %APPDATA%\Claude. A process running INSIDE Claude's sandbox (e.g. a
+// dev Helm launched by Claude Code) sees %APPDATA%\Claude via the overlay and
+// finds it populated; a STANDALONE installed Helm sees the real %APPDATA%\Claude
+// which does not even exist, so it found zero sessions. Resolve the real root by
+// preferring %APPDATA%\Claude when it actually has the sessions dir, else the
+// physical MSIX location under %LOCALAPPDATA%\Packages\Claude_*\LocalCache\
+// Roaming\Claude (globbed so it's agnostic to the package-hash suffix). Verified
+// 2026-07-11: the standalone path is Claude_pzs8sxrjxfjjc\LocalCache\Roaming\
+// Claude, holding 65 real sessions.
+function resolveClaudeRoot() {
+  const candidates = [];
+  const appData = process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming");
+  candidates.push(path.join(appData, "Claude"));
+  const localAppData = process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local");
+  const pkgRoot = path.join(localAppData, "Packages");
+  try {
+    for (const entry of fs.readdirSync(pkgRoot)) {
+      if (/^Claude_/i.test(entry)) {
+        candidates.push(path.join(pkgRoot, entry, "LocalCache", "Roaming", "Claude"));
+      }
+    }
+  } catch {
+    // no Packages dir (non-Windows / no MSIX apps) - the %APPDATA% candidate stands
+  }
+  for (const c of candidates) {
+    if (fs.existsSync(path.join(c, "claude-code-sessions"))) {
+      return c;
+    }
+  }
+  return candidates[0];
+}
+const CLAUDE_ROOT = resolveClaudeRoot();
 
 export const desktopConfigPath = path.join(CLAUDE_ROOT, "claude_desktop_config.json");
 export const sessionsRoot = path.join(CLAUDE_ROOT, "claude-code-sessions");
+// Transcripts live at the REAL ~/.claude/projects (written by the CLI, not the
+// MSIX desktop app), which a standalone process can read directly - no
+// virtualization fallback needed here (verified 2026-07-11).
 export const projectsRoot = path.join(os.homedir(), ".claude", "projects");
 
 /**
