@@ -14,12 +14,12 @@ import { execFileSync } from "node:child_process";
 import { writeFileSync, existsSync, readdirSync, unlinkSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { computeVersionString } from "../src/lib/version.js";
+import { gitVersionString } from "../src/lib/version.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.join(__dirname, "..");
 
-const version = computeVersionString().replace(/^v/, ""); // "v0.1.305" -> "0.1.305"
+const version = gitVersionString().replace(/^v/, ""); // live git count -> "0.1.305"
 let commit = null;
 try {
   commit = execFileSync("git", ["rev-parse", "--short", "HEAD"], { cwd: repoRoot, encoding: "utf8" }).trim();

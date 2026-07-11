@@ -64,22 +64,37 @@ function readBuildVersion() {
   }
 }
 
-export function computeVersionString() {
+// The LIVE git-derived version (major.minor.commitcount). Used by
+// scripts/build.mjs to compute what to STAMP at build time. Kept separate from
+// computeVersionString (below) on purpose: the display path reads the stamp, so
+// if build.mjs also read the stamp it would re-stamp its own old value forever
+// and never advance.
+export function gitVersionString() {
   const majorMinor = majorMinorFromPkg();
   if (!majorMinor) {
     return "v0.0.0";
   }
-  // Dev: live from git (commit count moves as you work).
-  const fromGit = versionFromGit(majorMinor);
-  if (fromGit) {
-    return fromGit;
-  }
-  // Packaged (no .git): the version baked in at build time.
+  return versionFromGit(majorMinor) || `v${majorMinor}`;
+}
+
+// The version the APP DISPLAYS. Reads the build stamp FIRST so the running app
+// (dev AND packaged) always reports the version of the last build - i.e. it
+// equals the installer, always, and only changes when you rebuild (the captain's ask:
+// "de borde alltid vara synkade"). It deliberately does NOT track live git in
+// dev (that drifted ahead of the installer on every commit). git is only a
+// fallback for a checkout that has never been built; the stale-build pill (see
+// checkForNewerBuild) is what tells you dev code has moved past the running
+// build.
+export function computeVersionString() {
   const baked = readBuildVersion();
   if (baked) {
     return `v${baked}`;
   }
-  return `v${majorMinor}`;
+  const majorMinor = majorMinorFromPkg();
+  if (!majorMinor) {
+    return "v0.0.0";
+  }
+  return versionFromGit(majorMinor) || `v${majorMinor}`;
 }
 
 /**
