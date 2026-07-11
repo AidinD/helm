@@ -132,6 +132,9 @@ contextBridge.exposeInMainWorld("helm", {
   // Report-back "Done + clean up": remove the worktree + delete the branch only
   // if it's merged (unmerged branches are kept). Keeps the run record.
   cleanupGoalRun: (opts) => ipcRenderer.invoke("goal:cleanupRun", opts),
+  // Coach: commits since a project's PLAN.md/DECISIONS.md were last touched
+  // (pane-header staleness nudge).
+  docsStaleness: (cwd) => ipcRenderer.invoke("docs:staleness", { cwd }),
   onGoalEvent: (handler) => {
     const listener = (_event, payload) => handler(payload);
     ipcRenderer.on("goal:event", listener);

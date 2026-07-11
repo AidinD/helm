@@ -1203,6 +1203,20 @@ body.advanced .row-jot {
   font-size: 11px;
 }
 
+/* Coach nudge: PLAN.md/DECISIONS.md have drifted behind the code. Subtle amber
+   attention pill (same --waiting family the app uses for "needs you"), quiet
+   enough to sit in the header without competing with the session title. */
+.docs-stale-pill {
+  font-size: 10.5px;
+  color: var(--waiting);
+  background: color-mix(in srgb, var(--waiting) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--waiting) 30%, transparent);
+  border-radius: 999px;
+  padding: 1px 8px;
+  cursor: default;
+  white-space: nowrap;
+}
+
 /* "Open CLAUDE.md" links next to the pane header's folder path — reuses
    .icon-btn (same class the ←/→ nav and "+"/"✕" buttons in this header use)
    but sized down to fit inline with the 11px .pane-sub text instead of the

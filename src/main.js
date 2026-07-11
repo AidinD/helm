@@ -28,6 +28,7 @@ import { computeVersionString, captureRunningBuildIdentity, checkForNewerBuild }
 import { runGoal } from "./lib/goalOrchestrator.js";
 import { loadGoalRunHistory, upsertGoalRunRecord, removeGoalRunRecord } from "./lib/goalRunHistory.js";
 import { removeWorktree, isBranchMerged, deleteBranch } from "./lib/worktree.js";
+import { docsStaleness } from "./lib/docsStaleness.js";
 import { loadDomains, registerDomain, removeDomain } from "./lib/domains.js";
 import { ensureMates, activeMates, findMateById, loadMates, renameMate, retireAndRespawn, bindMateSession, consumeMateHandoff, setMatePersona, rethemeMateNames } from "./lib/mates.js";
 import { personaOverlay, PERSONAS } from "./lib/personas.js";
@@ -1970,6 +1971,18 @@ ipcMain.handle("goal:cleanupRun", (_event, { projectPath, worktreePath, branchNa
     }
   }
   return result;
+});
+
+// Coach signal: how far a project's PLAN.md/DECISIONS.md have drifted behind
+// the code (commits since a doc was last touched). Read-only; the renderer
+// shows a pane-header nudge when stale so state-of-play gets reconciled on the
+// commit cadence instead of going stale under a work flurry. See docsStaleness.
+ipcMain.handle("docs:staleness", (_event, { cwd }) => {
+  try {
+    return { ok: true, ...docsStaleness(cwd) };
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err) };
+  }
 });
 
 function truncateForNotification(text) {

@@ -3068,6 +3068,33 @@ function updatePaneSubText(index, cwd) {
 // folder, typing one, a root-folder switch), same trigger points
 // updatePaneSubText already reacts to — a stale project link pointing at the
 // PREVIOUS folder would be worse than not showing one.
+// Coach nudge in the pane header: when a project's PLAN.md/DECISIONS.md have
+// drifted well behind the code (commits since either was last touched), show a
+// subtle "docs N behind" pill so the state-of-play gets reconciled on the commit
+// cadence rather than going stale under a work flurry (the gap that let PLAN/
+// DECISIONS go stale mid-session). Async + best-effort: appends nothing on error
+// or when not stale, so it never blocks or clutters the header.
+async function maybeShowDocsStaleness(header, cwd) {
+  header.querySelector(".docs-stale-pill")?.remove();
+  if (!cwd) {
+    return;
+  }
+  let res;
+  try {
+    res = await window.helm.docsStaleness(cwd);
+  } catch {
+    return;
+  }
+  if (!res || !res.ok || !res.stale) {
+    return;
+  }
+  const pill = document.createElement("span");
+  pill.className = "docs-stale-pill";
+  pill.textContent = `⚠ docs ${res.commitsSince} behind`;
+  pill.title = `${res.commitsSince} commits since PLAN.md/DECISIONS.md were last updated - reconcile the state-of-play so this session stays archivable.`;
+  header.append(pill);
+}
+
 function updateClaudeMdLinks(header, cwd) {
   header.querySelector(".claude-md-links")?.remove();
   const links = document.createElement("span");
@@ -3133,6 +3160,7 @@ function paneHeaderEl(index) {
     header.append(sub);
   }
   updateClaudeMdLinks(header, pane.cwd);
+  maybeShowDocsStaleness(header, pane.cwd);
   const actions = document.createElement("span");
   actions.className = "pane-actions";
   if (pane.sessionId) {
