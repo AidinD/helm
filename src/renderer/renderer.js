@@ -2255,7 +2255,15 @@ function renderSidebar() {
   // Exclude sessions already shown in the pinned "Needs your attention" section
   // so a needs-attention, uncategorized session doesn't render twice (review).
   const unsorted = visible.filter((s) => !grouped.has(s.sessionId) && !attentionIds.has(s.sessionId));
-  body.append(sectionEl({ label: "Unsorted", sessions: unsorted, collapsed: false, droppable: "unsorted" }));
+  body.append(
+    sectionEl({
+      label: "Unsorted",
+      sessions: unsorted,
+      collapsed: false,
+      droppable: "unsorted",
+      emptyHint: "Nothing unsorted — every session is in a group or needs you.",
+    })
+  );
 }
 
 // ============================== Workspace (panes) ==============================
