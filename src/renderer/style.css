@@ -3336,16 +3336,18 @@ button.primary {
    stretch to match a tall one. */
 .settings-columns {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 28px;
   align-items: flex-start;
+  overflow-x: auto;
 }
 
-/* Each group is its OWN column (its heading tops it), wrapping to a new row on
-   a narrow window - rather than an auto-fit grid that packs a short group in
-   under a taller one. */
+/* Every group ALWAYS tops its own column - never wrap-stacked under another
+   (the captain: "varje ny titel i settings ska ha sin egen kolumn"). nowrap keeps
+   them in one row; on a narrow window they scroll horizontally rather than a
+   short group dropping under a taller one. */
 .settings-group {
-  flex: 1 1 240px;
+  flex: 1 0 240px;
   min-width: 240px;
   margin-bottom: 20px;
 }
