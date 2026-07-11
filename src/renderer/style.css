@@ -383,17 +383,17 @@ header {
 }
 
 .logo {
-  width: 18px;
-  height: 18px;
+  width: 24px;
+  height: 24px;
   object-fit: contain;
   flex: none;
 }
 
 /* Glyph (emoji) logo for themes without an image asset (e.g. space) - same
-   18px box as the img so the header layout doesn't shift. */
+   24px box as the img so the header layout doesn't shift. */
 span.logo {
-  font-size: 15px;
-  line-height: 18px;
+  font-size: 19px;
+  line-height: 24px;
   text-align: center;
   display: inline-block;
 }
@@ -3490,9 +3490,11 @@ button.primary {
 }
 
 .settings-block {
-  /* Wider than the old single-column 480px so the group columns below have
-     room to breathe (each needs ~240px for readable toggle descriptions). */
-  max-width: 900px;
+  /* Wide enough that every group column tops its own column on one row without
+     clipping (the 900px cap made the nowrap .settings-columns overflow +
+     horizontally scroll, hiding the last column). Each column needs ~240px;
+     this fits ~5 across before the window itself becomes the limit. */
+  max-width: 1400px;
 }
 
 .settings-toggle-row {
