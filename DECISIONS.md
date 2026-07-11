@@ -1,5 +1,25 @@
 # Decisions
 
+## 2026-07-12 - Click-eat root cause, dev/installed separation, Continue-on-mobile
+
+Fleet click-instability (recurring "clicks between first mates don't register") root cause finally pinned with REAL mouse input (Input.dispatchMouseEvent, not synthetic el.click - synthetic can't reproduce it): a FORCED dashboard refresh mid-press eats the click, a non-forced one doesn't.
+`force` (bypass section fingerprints) had been conflated with "ignore the pointer-held guard"; navigating back to the Dashboard fires an async forced fill that can swap the fleet slot while you press the next card.
+Fix: the pointer guard now defers forced refreshes too, carrying the force flag through the deferred flush (so the archive spinner / rename restore, whose state the fingerprints don't track, aren't lost).
+Lesson reinforced: a UI-race E2E must inject REAL input; the earlier synthetic tests were green while the bug was live.
+
+Dev vs installed data dirs: kept DELIBERATELY SEPARATE (the captain's call) rather than shared.
+Dev (npm start) reads store files from the repo root; installed reads ~/.helm - so their Helm-own overlay (mates, helmSessions, archive/hide) differs, which read as a bug when the two windows looked identical.
+Rejected sharing one JSON store because the captain runs both apps concurrently and two writers race (last-write-wins corruption).
+Instead the dev build is now marked unmistakably: app:isDev IPC -> a filled violet DEV pill + a violet header stripe (body.dev-build), shown only when !app.isPackaged.
+NOTE on Claude Code sessions (verified): those ARE shared - both apps read the same claude-code-sessions store (dev via the MSIX overlay at %APPDATA%\Claude, installed via the globbed package LocalCache), plus the same ~/.claude/projects transcripts; only Helm's own overlay diverges. Helm never writes Claude sessions, so no corruption risk there.
+
+Researcher persona added (4th, alongside Architect/Teacher/Red team): investigative temperament - evidence from sources, verified-vs-assumed, cites, surfaces gaps.
+
+"Continue on mobile" (hand a Helm session to Remote Control): a per-card 📱 button spawns a NEW terminal running `claude --resume <cliSessionId> --remote-control --name <title>` in the session cwd (lib/remoteControl.js).
+KEY finding (verified 2026-07-12): Remote Control needs a real TTY - `claude --remote-control` with non-TTY stdin falls back to --print and errors, so Helm's headless `claude -p` launcher CANNOT host RC; it must open a real terminal window (which also surfaces the session URL/QR + any RC eligibility error directly to the user).
+Covered by a pure unit test (arg/script/guards) + a UI test (button renders on bound-session cards); the final real click (opens a terminal, scan QR on mobile) is left to the captain since it needs his account + phone.
+All of today's items are in Jot "review", not blessed to done.
+
 ## 2026-07-11 (late) - Report-back reworked + the day's other decisions & lessons
 
 CORRECTION to the "Tiered report-back phases 1+2 shipped" entry below.
