@@ -122,14 +122,17 @@ export function continueOnMobile({ cwd, cliSessionId, title }, deps = {}) {
   }
 
   try {
-    // `start "TITLE" cmd /k "<script>"`: `start` opens a NEW console window;
-    // the first quoted token is its title (given explicitly so start doesn't
-    // mistake the quoted script path for the title). `/k` keeps the window open
-    // after the script returns, so an immediate RC eligibility error stays
-    // readable instead of the window vanishing.
+    // `start /min "TITLE" cmd /k "<script>"`: `start` opens a NEW console
+    // window; `/min` opens it MINIMIZED to the taskbar so it doesn't pop up over
+    // your work (Remote Control still needs a real TTY, which the console
+    // provides even when minimized - you find the session on mobile by its
+    // --name, or restore the window for the QR/URL). The first quoted token is
+    // the window title (given explicitly so start doesn't mistake the quoted
+    // script path for the title). `/k` keeps the window open after the script
+    // returns, so an immediate RC eligibility error stays readable.
     const child = spawnFn(
       "cmd.exe",
-      ["/c", "start", "Helm - Continue on mobile", "cmd", "/k", scriptPath],
+      ["/c", "start", "/min", "Helm - Continue on mobile", "cmd", "/k", scriptPath],
       { detached: true, stdio: "ignore", windowsHide: false }
     );
     child.unref?.();
