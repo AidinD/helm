@@ -4455,7 +4455,7 @@ function pruneStaleBackgroundTasks() {
 // mates.js. The nautical themes (dark/brass) share the ship's-wheel logo +
 // anchor; space swaps them for a satellite + rocket. `logo` is either an image
 // asset or an emoji glyph.
-const NAUTICAL_ICONS = { anchor: "⚓", logo: { asset: "assets/helm-wheel.png" } };
+const NAUTICAL_ICONS = { anchor: "⚓", logo: { asset: "assets/helm-logo.png" } };
 const THEMES = [
   // `id` stays "dark"/"brass" (persisted in config.theme, CSS [data-theme], the
   // nautical name-pool set) - only the human label changes. dark + brass are
@@ -4482,7 +4482,7 @@ function applyTheme(themeId) {
   updateBrandLogo(id);
 }
 // The header brand logo follows the theme: an <img> for asset logos (the
-// helm-wheel), a glyph <span> for emoji logos (space). Swaps the element in
+// helm wheel), a glyph <span> for emoji logos (space). Swaps the element in
 // place, keeping the .logo class so CSS sizing applies to both.
 function updateBrandLogo(id) {
   const brand = document.querySelector(".brand");
