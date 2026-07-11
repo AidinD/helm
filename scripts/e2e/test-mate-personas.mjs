@@ -24,9 +24,11 @@ function assert(cond, msg) {
 
 try {
   // ---- personas.js ----
-  assert(personas.PERSONAS.length === 3, "catalog has the three seeded personas");
+  assert(personas.PERSONAS.length === 4, "catalog has the four seeded personas");
   assert(personas.PERSONAS.every((p) => p.key && p.label && p.blurb && p.overlay), "each persona has key/label/blurb/overlay");
   assert(personas.getPersona("architect")?.label === "Architect", "getPersona resolves a known key");
+  assert(personas.getPersona("researcher")?.label === "Researcher", "getPersona resolves the researcher persona");
+  assert(personas.personaOverlay("researcher").includes("Researcher"), "researcher overlay carries its persona text");
   assert(personas.getPersona("nope") === null, "getPersona returns null for unknown key");
   assert(personas.getPersona(null) === null, "getPersona(null) is null (plain coordinator)");
   assert(personas.personaOverlay("architect").includes("Architect"), "personaOverlay returns the overlay text");
