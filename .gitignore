@@ -1,5 +1,8 @@
 node_modules/
 dist/
+# Written by scripts/build.mjs at package time (the git-computed version baked
+# into the packaged app); regenerated on every build, never committed.
+src/lib/build-version.json
 config.json
 domains.json
 usage-log.jsonl

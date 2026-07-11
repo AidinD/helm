@@ -7,8 +7,8 @@
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder",
-    "release": "electron-builder --publish always"
+    "dist": "node scripts/build.mjs",
+    "release": "node scripts/build.mjs --publish"
   },
   "build": {
     "appId": "com.aidin.helm",
@@ -34,7 +34,7 @@
     ],
     "win": {
       "target": ["nsis", "portable"],
-      "icon": "src/renderer/assets/helm-wheel.png"
+      "icon": "src/renderer/assets/helm-logo.png"
     },
     "nsis": {
       "oneClick": false,
