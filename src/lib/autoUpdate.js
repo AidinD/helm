@@ -17,7 +17,16 @@ export async function initAutoUpdate() {
   }
   started = true;
   try {
-    const { autoUpdater } = await import("electron-updater");
+    // electron-updater is CommonJS; under Node's ESM interop a named import
+    // (`{ autoUpdater }`) resolves to undefined in a packaged build, so reach it
+    // via the default export (this path only runs packaged, so dev never hit the
+    // bug - the "Cannot set properties of undefined (autoDownload)" error).
+    const updaterMod = await import("electron-updater");
+    const autoUpdater = updaterMod.autoUpdater ?? updaterMod.default?.autoUpdater ?? updaterMod.default;
+    if (!autoUpdater || typeof autoUpdater.checkForUpdates !== "function") {
+      console.warn("[helm] auto-update unavailable (electron-updater export shape); skipping.");
+      return;
+    }
     autoUpdater.autoDownload = true;
     autoUpdater.on("update-downloaded", async (info) => {
       const res = await dialog.showMessageBox({
