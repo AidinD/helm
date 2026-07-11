@@ -3737,25 +3737,29 @@ button.primary {
   border-left: 3px solid var(--waiting);
 }
 
-/* Report-back rows laid across the width (~2-3 responsive columns) rather than
-   one full-width row each - a glance-and-move-on surface (Aidin's "bygg dessa
-   på bredden"). The needs-you queue above deliberately stays one column: its
-   order is priority, which a grid would scramble. */
-.dash-report-grid {
+/* Needs-you queue laid across the width (~2-3 responsive columns) instead of
+   one full-width row each (Aidin's "kolumnformat för needs you"). The archive-
+   proposal nudge spans all columns - it's a wide, expandable actionable block,
+   not a glance card (Aidin: "behåll arkiveringsnudgen som horisontell"). Also
+   used by the first-mate card's report-back roll-up rows. */
+.dash-queue-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
   gap: 8px;
 }
-.dash-report-grid .dash-queue-row {
+.dash-queue-grid .dash-queue-row {
   align-items: flex-start;
   min-width: 0;
   cursor: pointer;
 }
-.dash-report-grid .dash-q-body {
+.dash-queue-grid .dash-q-body {
   min-width: 0;
 }
-.dash-report-grid .dash-q-why {
+.dash-queue-grid .dash-q-why {
   overflow-wrap: anywhere;
+}
+.dash-queue-grid .dash-queue-fullspan {
+  grid-column: 1 / -1;
 }
 
 /* "Done" control on a report row - marks the run done (acknowledge + optional

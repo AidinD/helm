@@ -4635,7 +4635,7 @@ function refreshDashboardIfVisible(opts = {}) {
 
 // Per-section fingerprints so fillDashboardSections can skip sections whose
 // source data is unchanged. Reset on each full renderDashboardPage.
-let dashSectionFingerprints = { onboarding: null, queue: null, report: null, fleet: null, goals: null, newSession: null };
+let dashSectionFingerprints = { onboarding: null, queue: null, fleet: null, goals: null, newSession: null };
 
 function dashboardQueueFingerprint(inMotion) {
   const rows = (inMotion || dashboardInMotionRows())
@@ -5572,11 +5572,10 @@ async function fillDashboardSections({ force = false } = {}) {
     document.getElementById("dashQueueSlot").replaceChildren(dashboardQueueSection());
   }
 
-  const reportFp = dashboardReportFingerprint();
-  if (force || reportFp !== dashSectionFingerprints.report) {
-    dashSectionFingerprints.report = reportFp;
-    document.getElementById("dashReportSlot").replaceChildren(dashboardReportBackSection());
-  }
+  // No separate captain Report-back section: terminal runs report back UNDER
+  // their dispatcher (the first-mate card roll-up), and anything that needs the
+  // captain surfaces in the Needs-you queue above (Aidin 2026-07-11 - "faculty
+  // not a room"). See fleetMateReportRollupEl.
 
   const [matesResult, secondMatesResult] = await Promise.all([window.helm.listMates(), window.helm.listSecondMates()]);
   const activeMatesList = matesResult?.ok ? matesResult.active : [];
@@ -5654,7 +5653,6 @@ async function renderDashboardPage() {
   page.append(
     mkSlot("dashOnboardingSlot"),
     mkSlot("dashQueueSlot"),
-    mkSlot("dashReportSlot"),
     mkSlot("dashFleetSlot"),
     mkSlot("dashGoalsSlot"),
     mkSlot("dashNewSessionSlot")
@@ -5870,13 +5868,19 @@ function dashboardQueueSection() {
       )
     );
   } else {
-    const list = document.createElement("div");
-    list.className = "dash-queue-list";
+    // Grid so the in-motion rows lay across the width (Aidin's "kolumnformat för
+    // needs you"). The archive-proposal nudge stays a full-width row (spans all
+    // columns) - it's a wide, expandable actionable block, not a glance card
+    // (Aidin: "behåll arkiveringsnudgen som horisontell").
+    const grid = document.createElement("div");
+    grid.className = "dash-queue-grid";
     if (proposalSessions.length > 0) {
-      list.append(dashArchiveGroupEl(proposalSessions));
+      const group = dashArchiveGroupEl(proposalSessions);
+      group.classList.add("dash-queue-fullspan");
+      grid.append(group);
     }
-    inMotion.forEach((row) => list.append(row.kind === "goalRun" ? dashGoalRunRowEl(row.run) : dashSessionRowEl(row.session)));
-    body.append(list);
+    inMotion.forEach((row) => grid.append(row.kind === "goalRun" ? dashGoalRunRowEl(row.run) : dashSessionRowEl(row.session)));
+    body.append(grid);
   }
   section.append(body);
   return section;
@@ -6230,61 +6234,12 @@ function terminalRunsBy(ownerId) {
     .sort((a, b) => (b.ordinal || 0) - (a.ordinal || 0));
 }
 
-// Terminal runs, newest first, capped so the section stays a compact glance
-// rather than an ever-growing history (the Goal page is the full log). "Newest"
-// = highest ordinal (assigned in run order, live + rehydrated).
-//
-// TIERED (2026-07-11): the captain's board shows only runs the captain owns -
-// Autopilot/captain-initiated runs (no dispatcher) PLUS any mate-dispatched run
-// that needs the captain (escalated up). Handled mate-dispatched runs stay under
-// their mate's card (fleetMateReportRollupEl), off the captain's board. See
-// docs/orchestration-model.md "Tiered report-back".
+// Terminal-run report rows are capped so a mate's roll-up stays a compact
+// glance rather than an ever-growing history (the Goal page is the full log).
+// Also reused by pendingTriageNudge. There is no separate captain Report-back
+// section anymore - reports live under their dispatcher (fleetMateReportRollupEl)
+// and escalations surface in the Needs-you queue (Aidin 2026-07-11).
 const REPORT_BACK_LIMIT = 6;
-function dashboardReportBackRuns() {
-  return [...goalRuns.values()]
-    .filter(isTerminalRun)
-    .filter((r) => !isGoalRunAcknowledged(r.goalRunId))
-    .filter((r) => !r.dispatchedBy || runNeedsCaptain(r))
-    .sort((a, b) => (b.ordinal || 0) - (a.ordinal || 0))
-    .slice(0, REPORT_BACK_LIMIT);
-}
-
-function dashboardReportFingerprint() {
-  return dashboardReportBackRuns()
-    .map((r) => `${r.goalRunId}:${r.dispatchedBy || "-"}:${r.status}:${r.escalation ? 1 : 0}:${crewCommitCount(r)}:${r.iterations?.length || 0}`)
-    .join("|");
-}
-
-function dashboardReportBackSection() {
-  const runs = dashboardReportBackRuns();
-  const needsCount = runs.filter((r) => goalRunReport(r).needsCaptain).length;
-  const countLabel = runs.length === 0 ? null : needsCount > 0 ? `${needsCount} need${needsCount === 1 ? "s" : ""} you` : "all clear";
-
-  const section = document.createElement("section");
-  section.className = "dash-board";
-  section.append(
-    dashBoardHead("Report-back", countLabel, "Your own Autopilot runs + anything a mate escalated - handled crew stays under its mate", {
-      urgent: needsCount > 0,
-    })
-  );
-
-  const body = document.createElement("div");
-  body.className = "dash-board-body";
-  if (runs.length === 0) {
-    body.append(dashEmpty("Nothing needs you here - your Autopilot runs and anything a mate escalates will surface here."));
-  } else {
-    // Grid, not a stacked list: report rows are a glance-and-move-on surface, so
-    // lay them across the width (~2-3 responsive columns) rather than one full-
-    // width row each (Aidin's "bygg dessa på bredden"). The needs-you queue above
-    // stays a single priority-ordered column - order carries meaning there.
-    const grid = document.createElement("div");
-    grid.className = "dash-report-grid";
-    runs.forEach((run) => grid.append(dashReportRowEl(run)));
-    body.append(grid);
-  }
-  section.append(body);
-  return section;
-}
 
 // One compact report row. Reuses the queue-row structure/classes so it reads as
 // part of the same Dashboard system. Clicking jumps to the Goal page (same as a
