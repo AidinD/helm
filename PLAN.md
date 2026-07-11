@@ -5,6 +5,29 @@ context flow, and (later) orchestration — without removing any Claude feature.
 Built by wrapping the real `claude` binary headlessly (stream-json), so all
 skills, CLAUDE.md, settings, permissions, and MCP are preserved.
 
+## Current status (2026-07-11)
+
+Feature-nearly-complete.
+A long session (rooted in the meta-home, not Helm) landed a large batch — see the git log for 2026-07-11 and the Jot "Helm" board's review column.
+The remaining work is DE-RISKING, not building:
+
+1. **Verify the packaged/installed app actually works.**
+   `npm run dist`, install it, run it, and confirm it is NOT blank (your sessions + groups show) and the displayed version matches the installer.
+   This is the gate: Helm's whole point is to be the daily driver as an installed app, and it had a real "installed app is empty on start" bug (Jot bd7bbcec).
+   Packaged-app behavior cannot be verified from inside a session — it needs a real build + run.
+2. **Prove it in real daily use.**
+   Run one real task through the full loop (dispatch → review → archive-with-handoff) — the USING-MAESTRO walkthrough.
+   The workflow only proves out in real use; that is where the remaining rough edges surface.
+
+Everything else is optional/parked: Google Calendar, interactive Plan prototypes, first-mate voice, collapsible settings sections, auto-update token.
+NOTE on auto-update: it is parked, so today every update means a manual rebuild/reinstall — that friction becomes real the moment Helm is your daily driver, so revisit the token then.
+
+Landed 2026-07-11 (in Jot "review", awaiting the captain's bless-to-done): chat/dashboard bug fixes (chat back/forward arrows removed, composer auto-focus on session open, 2nd-mate archive spinner, fleet-card click race); tiered report-back (reports live UNDER their dispatcher — the captain-dashboard report-back section was REMOVED — with Done/acknowledge + merged-gated worktree cleanup + a jump-in triage nudge); needs-you queue became a grid; handoff-thin-skip; new brand logo; version single-sourced from git; settings columns; dead-code cleanup; installed-app shared data dir; and 6 new themes.
+
+Testing discipline (learned the hard way twice this session): an E2E must exercise the REAL trigger path, not a synthetic one.
+A test that force-renders or calls a function directly can pass while the real user path stays broken — the archive spinner and the composer focus both did exactly that.
+The CDP harness is in `scripts/e2e/`.
+
 ## The captain's vision (14 points) → where each lands
 
 | # | Want | Phase |

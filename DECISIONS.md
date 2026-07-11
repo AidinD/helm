@@ -1,5 +1,29 @@
 # Decisions
 
+## 2026-07-11 (late) - Report-back reworked + the day's other decisions & lessons
+
+CORRECTION to the "Tiered report-back phases 1+2 shipped" entry below.
+After the captain reviewed it in the live app, the captain-DASHBOARD report-back section was REMOVED entirely (commit c327e5e).
+Reports now live ONLY under their dispatcher (the first-mate card roll-up); anything that needs the captain surfaces in the needs-you queue, which became a grid (the archive-proposal nudge spans full width).
+Consequence: a clean captain/Autopilot run (no dispatcher) has no dashboard report surface - it shows in needs-you only if it needs action, else on the Autopilot/Goal page.
+So that earlier entry's "Captain Dashboard report-back carries..." no longer holds - this supersedes it.
+
+Other decisions/changes today (all in Jot "review", not yet blessed to done):
+- Installed app shares a data dir (commit 54694b0): packaged stores resolve to HELM_DATA_DIR || ~/.helm, NOT the per-install userData.
+  This REVERSES the earlier "deliberately independent userData" decision (see the older packagedPaths entry) - independent userData is what made the installed app start blank.
+  UNVERIFIED on a real packaged build; needs a rebuild + run to confirm (and if sessions specifically are still missing, that's a separate packaged-runtime bug).
+- Archive-with-handoff skips the handoff for thin sessions (<4 transcript turns, commit 706c79b): a throwaway test session had polluted DECISIONS.md with a "no task work was done" handoff. Fail-open on an unknown turn count.
+- Version single-sourced from git (commit f9c37d4): scripts/build.mjs (the new dist/release entrypoint) stamps major.minor.commitcount into BOTH the packaged app (src/lib/build-version.json, read when git is absent) and the installer (electron-builder extraMetadata), so app + installer + dev all agree.
+- New brand logo (commit ff805de): terracotta ship's wheel, cream background keyed out by orange-ness (R-B), tight-cropped; assets/helm-logo.png.
+- Settings: every section always tops its own column (nowrap + horizontal scroll), not wrap-stacked.
+- 6 new themes (fantasy, superhero, cyberpunk, western, noir, evil) - full var-map + icons + mate name pool each.
+
+Process decisions:
+- Completed-task workflow: finished work goes to Jot "review"; the captain blesses "done" jointly after reviewing (auto-marking done removes his oversight). Saved as a memory.
+- Testing discipline: an E2E must drive the REAL trigger path, not a synthetic/forced one - synthetic tests passed while the real behavior stayed broken TWICE this session (the archive spinner and the composer focus).
+
+State-of-play + what remains is in PLAN.md "Current status (2026-07-11)": feature-nearly-complete; remaining is de-risking (verify the packaged app; a real daily-use dry run), not building.
+
 ## 2026-07-11 - Tiered report-back phases 1+2 shipped (routing + grid + mark-done/cleanup)
 
 Built the first two phases of the tiered report-back design (see the 2026-07-11 design entry + docs/orchestration-model.md).
