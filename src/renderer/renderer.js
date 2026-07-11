@@ -1156,6 +1156,11 @@ function releaseDashPointer() {
 }
 document.addEventListener("pointerup", releaseDashPointer);
 document.addEventListener("pointercancel", releaseDashPointer);
+// Heal immediately if focus leaves the window mid-press (Alt+Tab, or a release
+// outside the window that never delivers a pointerup/pointercancel) - otherwise
+// dashPointerHeld could stay true until the next in-window click, needlessly
+// deferring refreshes in the meantime.
+window.addEventListener("blur", releaseDashPointer);
 
 // Quick keyboard nav to the primary views. Ctrl+Space = Dashboard (the fast
 // key the captain wanted, simpler than a digit); Ctrl+1/2/3 = Plan/Analysis/Archive,
@@ -6283,6 +6288,10 @@ async function acknowledgeGoalRun(goalRunId) {
 
 // "Done + clean up": remove the run's worktree and delete its branch, but only
 // when the branch is merged (unmerged branches are kept - see goal:cleanupRun).
+// Returns true when cleanup succeeded (fully, or as far as it safely could -
+// e.g. an unmerged branch kept is still a success). Returns false on a hard
+// failure (e.g. worktree removal refused on uncommitted changes) so the caller
+// can leave the row in place for a retry instead of acknowledging a no-op.
 async function cleanupGoalRunWorktree(run) {
   const res = await window.helm.cleanupGoalRun({
     projectPath: run.projectPath,
@@ -6291,7 +6300,7 @@ async function cleanupGoalRunWorktree(run) {
   });
   if (!res || !res.ok) {
     showToast(`Cleanup failed: ${res?.error || "unknown error"}`);
-    return;
+    return false;
   }
   if (res.note) {
     showToast(res.note);
@@ -6300,6 +6309,7 @@ async function cleanupGoalRunWorktree(run) {
   } else if (res.worktreeRemoved) {
     showToast("Cleaned up the worktree.");
   }
+  return true;
 }
 
 // The report-row "Done" control. No worktree -> a plain acknowledge. With a
@@ -6321,8 +6331,13 @@ function reportRowDoneBtn(run) {
       {
         label: "Done + clean up worktree",
         onClick: async () => {
-          await cleanupGoalRunWorktree(run);
-          await acknowledgeGoalRun(run.goalRunId);
+          // Only mark done if the cleanup actually succeeded - otherwise leave
+          // the row so the failure is visible and retryable, rather than hiding
+          // a no-op behind an acknowledge.
+          const ok = await cleanupGoalRunWorktree(run);
+          if (ok) {
+            await acknowledgeGoalRun(run.goalRunId);
+          }
         },
       },
       {
