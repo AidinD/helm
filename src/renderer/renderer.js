@@ -848,7 +848,12 @@ async function archiveWithHandoff(session) {
   // sides) - exactly the "no spinner on the card when archiving a 2nd mate" bug.
   const busyKey = session.cliSessionId || session.sessionId;
   handoffBusyIds.add(busyKey);
-  refreshDashboardIfVisible();
+  // FORCE the repaint: handoffBusyIds is not part of dashboardFleetFingerprint,
+  // so a plain (fingerprint-gated) refresh sees "nothing changed" and never
+  // rebuilds the fleet slot - the card's markCardHandoffBusy would never run
+  // and the on-card spinner never appears. (First-mate retire already forces
+  // its refresh, which is why it showed a spinner and archive didn't.)
+  refreshDashboardIfVisible({ force: true });
   let saved = false;
   try {
     const res = await summarizeSession(session);
@@ -867,6 +872,10 @@ async function archiveWithHandoff(session) {
   setPaneBusyUIRaw(focusedPaneIndex, "");
   busy.done();
   handoffBusyIds.delete(busyKey);
+  // Force a repaint so the spinner clears even if the archive below no-ops or
+  // fails (same fingerprint-gap reason as the add above - the busy id isn't in
+  // the fleet fingerprint).
+  refreshDashboardIfVisible({ force: true });
   if (saved) {
     showToast(`Handoff saved to DECISIONS.md; archiving "${session.title}".`);
   }
@@ -1886,10 +1895,11 @@ function openSessionInPane(session, paneIndex, _ignored) {
   loadTranscriptInto(paneIndex);
   // Clicking into a session is an intent to write in it — put the cursor in
   // the composer so you can type immediately without a second click (the captain's
-  // ask). renderSinglePane built the composer synchronously just above;
-  // loadTranscriptInto is async and only fills the scroll area + gauge, so it
-  // won't rebuild the textarea out from under this focus. Cursor goes to the
-  // end so a preserved draft (the alreadyOpenHere case) stays editable.
+  // ask). focus() is a no-op on a textarea inside a hidden (#chatPage.hidden)
+  // ancestor, so this only works when chat is already visible. Every caller
+  // that could open while chat is hidden (the Fleet jump-ins) navigates to chat
+  // FIRST now, so by here the pane is always visible - see jumpIntoFirstMate /
+  // jumpIntoSecondMate.
   const promptEl = document
     .querySelector(`.pane[data-pane="${paneIndex}"]`)
     ?.querySelector(".pane-composer textarea");
@@ -4617,9 +4627,9 @@ function isDashboardVisible() {
 // place via fillDashboardSections, re-rendering only the sections whose data
 // changed - so an idle tick repaints nothing and a single session's status
 // change repaints just the queue. A no-op when the page isn't open.
-function refreshDashboardIfVisible() {
+function refreshDashboardIfVisible(opts = {}) {
   if (isDashboardVisible()) {
-    fillDashboardSections();
+    fillDashboardSections(opts);
   }
 }
 
@@ -5451,6 +5461,10 @@ function pendingTriageNudge(mate) {
 }
 
 function jumpIntoFirstMate(mate) {
+  // Navigate to chat FIRST, before opening: openSessionInPane / openFreshDraftInPane
+  // focus the composer, and focus() no-ops while #chatPage is still hidden. Doing
+  // this before the open guarantees the pane is visible when the focus runs.
+  navigateToPage("chat");
   const existing = mate.sessionId ? state.sessions.find((s) => (s.cliSessionId || s.sessionId) === mate.sessionId) : null;
   if (existing) {
     // Always land in the primary pane (0), overwriting it - never split. Jumping
@@ -5478,7 +5492,6 @@ function jumpIntoFirstMate(mate) {
       paneOverrides: { isOrchestrator: true, modelDefault: "claude-sonnet-5", mateId: mate.mateId, title: mate.name },
     });
   }
-  navigateToPage("chat");
 }
 
 // The most recently active non-archived session rooted at a project path, or
@@ -5500,6 +5513,9 @@ function mostRecentSessionForCwd(cwd) {
 // mates, whose sessionId was never bound - they used to always open fresh);
 // else start a fresh one rooted in the project (Opus, tagged so it binds back).
 function jumpIntoSecondMate(sm) {
+  // Navigate to chat FIRST (see jumpIntoFirstMate) - the composer focus in
+  // openSessionInPane / openFreshDraftInPane no-ops while chat is hidden.
+  navigateToPage("chat");
   const bound = sm.sessionId ? state.sessions.find((s) => (s.cliSessionId || s.sessionId) === sm.sessionId) : null;
   const existing = bound || mostRecentSessionForCwd(sm.projectPath);
   if (existing) {
@@ -5510,7 +5526,6 @@ function jumpIntoSecondMate(sm) {
       paneOverrides: { modelDefault: "claude-opus-4-8", secondMateId: sm.secondMateId, title: sm.name },
     });
   }
-  navigateToPage("chat");
 }
 
 // Re-render only the sections whose data changed, into their existing slots.
