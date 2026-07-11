@@ -15,6 +15,7 @@ import { readAllSessions, enrichWithJot, setSessionArchived, forkTranscriptAtUse
 import { loadJot, loadGoals, addSubtask, formatJotSummaryForClassifier, projectBoardSummary } from "./lib/jot.js";
 import { loadConfig, writeConfig } from "./lib/config.js";
 import { startSession } from "./lib/launcher.js";
+import { continueOnMobile } from "./lib/remoteControl.js";
 import { suggestModelEffort } from "./lib/suggest.js";
 import { readTranscript } from "./lib/transcript.js";
 import { liveSubAgents } from "./lib/subAgents.js";
@@ -618,6 +619,18 @@ ipcMain.handle("session:archive", (_event, { sessionId, archived }) => {
   // reverts it, the overlay above still keeps the session archived in Helm.
   const mirror = setSessionArchived(sessionId, shouldArchive);
   return { ok: true, desktopMirror: mirror.ok };
+});
+
+// "Continue on mobile": open a real terminal running an interactive Remote
+// Control session for this conversation, so it can be driven from the Claude
+// mobile app / claude.ai/code. See lib/remoteControl.js for why this needs a
+// terminal (RC requires a TTY; Helm's headless launcher can't host it).
+ipcMain.handle("session:continueOnMobile", (_event, { cwd, cliSessionId, title }) => {
+  try {
+    return continueOnMobile({ cwd, cliSessionId, title });
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err) };
+  }
 });
 
 // --- "Rewind to here": fork a session's transcript, truncated to just before

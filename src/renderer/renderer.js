@@ -5079,6 +5079,38 @@ function fleetMateReportRollupEl(mate) {
   return wrap;
 }
 
+// "Continue on mobile" affordance: hands this conversation off to a Remote
+// Control session in a new terminal so it can be driven from the Claude mobile
+// app / claude.ai/code (see lib/remoteControl.js). Returns a compact icon
+// button that stops propagation so it never triggers the enclosing card/row
+// jump-in. `session` needs { cwd, cliSessionId|sessionId, title }.
+function continueOnMobileBtn(session, { title } = {}) {
+  const btn = document.createElement("button");
+  btn.className = "fleet-btn fleet-mobile-btn";
+  btn.title = "Continue this session on your phone (opens a Remote Control terminal)";
+  btn.textContent = "📱";
+  btn.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    const cwd = session?.cwd || "";
+    const cliSessionId = session?.cliSessionId || session?.sessionId || "";
+    const name = title || session?.title || "Helm session";
+    btn.disabled = true;
+    try {
+      const res = await window.helm.continueOnMobile({ cwd, cliSessionId, title: name });
+      if (res && res.ok) {
+        showToast("Opening a Remote Control terminal - scan the QR / URL there from the Claude app.");
+      } else {
+        showToast(`Couldn't start mobile session: ${res?.error || "unknown error"}`);
+      }
+    } catch (err) {
+      showToast(`Couldn't start mobile session: ${err.message}`);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+  return btn;
+}
+
 function fleetMateCardEl(mate, sms, boardSummary = {}) {
   const card = document.createElement("div");
   card.className = "fleet-mate-card";
@@ -5170,6 +5202,10 @@ function fleetMateCardEl(mate, sms, boardSummary = {}) {
     });
   });
   actions.append(renameBtn, retireBtn);
+  // Continue on mobile: only when this mate has a bound session to hand off.
+  if (boundSession) {
+    actions.append(continueOnMobileBtn(boundSession, { title: mate.name }));
+  }
   top.append(anchor, idBox, actions);
   card.append(top);
 
@@ -5389,6 +5425,7 @@ function fleetSecondMateEl(sm) {
       });
     });
     head.append(renameBtn);
+    head.append(continueOnMobileBtn(backingSession, { title: sm.name }));
     const archiveBtn = document.createElement("button");
     archiveBtn.className = "fleet-btn fleet-archive-btn";
     archiveBtn.title = "Archive this session";
