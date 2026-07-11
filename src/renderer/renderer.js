@@ -5418,6 +5418,33 @@ function fleetDirectCardEl(sms) {
 // Jump into a first mate: resume its bound session if it has one, else start a
 // fresh orchestrator session (meta-home root, Sonnet, tagged with its mateId so
 // session:start attaches the dispatch tools and the session binds back to it).
+// A triage nudge for a first mate that has crew reports waiting. It directs the
+// mate to pull its dispatched runs' reports (helm_collect_reports - the on-disk
+// report inbox already exists, see dispatchQueue.js) and triage them: note the
+// clean ones done, roll up anything that needs the captain into a summary for
+// the captain. This is the tiered report-back's "the mate is first responder for its
+// own crew" made active - the report loop already delivers to the inbox, this
+// just gets the mate to consume + act on it the moment you engage it. Seeded
+// into a FRESH mate session's composer only (mirrors pendingHandoff), so it
+// never clobbers a resumed session's own context or an in-progress draft.
+// Empty when the mate has nothing waiting.
+function pendingTriageNudge(mate) {
+  const runs = terminalRunsBy(mate.mateId);
+  if (runs.length === 0) {
+    return "";
+  }
+  const needs = runs.filter(runNeedsCaptain).length;
+  const lines = runs.slice(0, REPORT_BACK_LIMIT).map((r) => {
+    const rep = goalRunReport(r);
+    return `- "${r.goal}" — ${rep.status}${rep.needsCaptain ? ` (needs you: ${rep.needsCaptain})` : ""}`;
+  });
+  return (
+    `You have ${runs.length} crew report${runs.length === 1 ? "" : "s"} waiting from runs you dispatched` +
+    (needs > 0 ? ` (${needs} need the captain)` : "") +
+    `. Run helm_collect_reports to pull them, then triage: note the clean ones done, and roll up anything that needs the captain into a short summary for him. Waiting:\n${lines.join("\n")}`
+  );
+}
+
 function jumpIntoFirstMate(mate) {
   const existing = mate.sessionId ? state.sessions.find((s) => (s.cliSessionId || s.sessionId) === mate.sessionId) : null;
   if (existing) {
@@ -5432,6 +5459,12 @@ function jumpIntoFirstMate(mate) {
     if (mate.pendingHandoff) {
       seed = `You are ${mate.name}, a fresh first mate taking over from a retired predecessor. Their handoff:\n\n${mate.pendingHandoff}\n\nContinue the cross-project thread from here.`;
       window.helm.consumeMateHandoff(mate.mateId);
+    }
+    // If this mate has crew reports waiting, seed a triage nudge too (see
+    // pendingTriageNudge). Combined with any handoff above.
+    const triage = pendingTriageNudge(mate);
+    if (triage) {
+      seed = seed ? `${seed}\n\n${triage}` : triage;
     }
     openFreshDraftInPane(state.orchestratorHome, seed, {
       forceIndex: 0,
