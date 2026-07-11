@@ -179,6 +179,146 @@
   --on-danger: #14060a;
 }
 
+/* Fantasy - enchanted/wizardly: deep amethyst ground, arcane-gold accent,
+   dragon/sword icons. */
+:root[data-theme="fantasy"] {
+  color-scheme: dark;
+  --bg: #1a1426;
+  --bg-sidebar: #140f20;
+  --bg-card: #251b38;
+  --bg-card-hover: #322449;
+  --bg-inset: #0f0b18;
+  --border: rgba(198, 168, 255, 0.16);
+  --text: #efe8fa;
+  --text-dim: #b4a6d0;
+  --text-faint: #776789;
+  --accent: #e6b23c;
+  --accent-hover: #f2c659;
+  --accent-active: #c8941f;
+  --on-accent: #1a1426;
+  --waiting: #e69138;
+  --active: #58b6d6;
+  --idle: #6a6280;
+  --good: #59c489;
+  --good-bright: #7fdca8;
+  --danger: #e0556e;
+  --danger-hover: #ec6f85;
+  --danger-active: #bc3e55;
+  --on-danger: #1a0c11;
+}
+
+/* Superhero - bold comic primaries: deep navy ground, hero-red accent, gold +
+   blue support, shield/cape icons. */
+:root[data-theme="superhero"] {
+  color-scheme: dark;
+  --bg: #10192e;
+  --bg-sidebar: #0c1425;
+  --bg-card: #172440;
+  --bg-card-hover: #1f2f52;
+  --bg-inset: #0a1120;
+  --border: rgba(120, 160, 255, 0.16);
+  --text: #eaf0ff;
+  --text-dim: #9fb0d6;
+  --text-faint: #5f6f95;
+  --accent: #e63946;
+  --accent-hover: #f25563;
+  --accent-active: #c22633;
+  --on-accent: #fdf0f0;
+  --waiting: #f4c430;
+  --active: #3d8bff;
+  --idle: #5a6480;
+  --good: #3fbf6a;
+  --good-bright: #63d98a;
+  --danger: #ff3b4e;
+  --danger-hover: #ff5a6b;
+  --danger-active: #d92438;
+  --on-danger: #1a0b0d;
+}
+
+/* Cyberpunk - neon on black: near-black ground, neon-magenta accent, cyan
+   support, robot/bolt icons. */
+:root[data-theme="cyberpunk"] {
+  color-scheme: dark;
+  --bg: #0a0b12;
+  --bg-sidebar: #07080e;
+  --bg-card: #12141f;
+  --bg-card-hover: #1a1d2e;
+  --bg-inset: #050609;
+  --border: rgba(255, 60, 172, 0.18);
+  --text: #eafcff;
+  --text-dim: #7f99b3;
+  --text-faint: #4a5b70;
+  --accent: #ff2fb0;
+  --accent-hover: #ff5cc2;
+  --accent-active: #d81f93;
+  --on-accent: #0a0b12;
+  --waiting: #f7d02c;
+  --active: #23e5e5;
+  --idle: #4a5b70;
+  --good: #2ee6a0;
+  --good-bright: #5cf2ba;
+  --danger: #ff2e4d;
+  --danger-hover: #ff506a;
+  --danger-active: #db1d3a;
+  --on-danger: #12060a;
+}
+
+/* Western - dusty frontier: deep leather-brown ground, rust/ember accent, sage
+   + sand support, horse/hat icons. */
+:root[data-theme="western"] {
+  color-scheme: dark;
+  --bg: #201812;
+  --bg-sidebar: #1a130e;
+  --bg-card: #2c211a;
+  --bg-card-hover: #392c22;
+  --bg-inset: #130d09;
+  --border: rgba(214, 150, 90, 0.16);
+  --text: #f0e2d0;
+  --text-dim: #bfa588;
+  --text-faint: #857057;
+  --accent: #cf6b3a;
+  --accent-hover: #e07f4d;
+  --accent-active: #ab5327;
+  --on-accent: #1c1109;
+  --waiting: #dda641;
+  --active: #6a9b74;
+  --idle: #6f5f4c;
+  --good: #7ba85e;
+  --good-bright: #98c47b;
+  --danger: #c0402c;
+  --danger-hover: #d4523c;
+  --danger-active: #9c3020;
+  --on-danger: #1c0a06;
+}
+
+/* Noir - monochrome detective: cool charcoal ground, a single desaturated
+   crimson accent, steel-blue support, magnifier/detective icons. */
+:root[data-theme="noir"] {
+  color-scheme: dark;
+  --bg: #16181a;
+  --bg-sidebar: #121315;
+  --bg-card: #1e2124;
+  --bg-card-hover: #282c30;
+  --bg-inset: #0d0e10;
+  --border: rgba(220, 225, 235, 0.12);
+  --text: #e6e9ee;
+  --text-dim: #9aa0a8;
+  --text-faint: #63686f;
+  --accent: #c0454f;
+  --accent-hover: #d25a63;
+  --accent-active: #9c2f38;
+  --on-accent: #f6ecec;
+  --waiting: #c9a44a;
+  --active: #6f8fb0;
+  --idle: #5a5f66;
+  --good: #5f9e6c;
+  --good-bright: #7bbd88;
+  --danger: #c0454f;
+  --danger-hover: #d25a63;
+  --danger-active: #9c2f38;
+  --on-danger: #f6ecec;
+}
+
 * {
   box-sizing: border-box;
 }
