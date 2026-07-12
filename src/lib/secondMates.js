@@ -90,9 +90,75 @@ export function deriveSecondMates(runHistory, bindings = readBindings()) {
       if (b.sessionId) {
         sm.sessionId = b.sessionId;
       }
+      sm.status = b.status || (b.sessionId ? "created" : "created");
+      sm.brief = b.brief || null;
+      sm.assignments = b.assignments || null;
     }
   }
+  // Union in PROPOSED/created second mates that have no crew runs yet - they
+  // exist only as a binding (Phase-2 Slice 1: lazy creation). A proposed second
+  // mate appears in the Fleet before any dispatch, so the captain can engage it.
+  // Requires the binding to carry its own projectPath (a run-derived one gets it
+  // from the run record instead).
+  for (const [id, b] of Object.entries(bindings)) {
+    if (byId.has(id) || !b || !b.projectPath) {
+      continue;
+    }
+    byId.set(id, {
+      secondMateId: id,
+      firstMateId: b.firstMateId || DIRECT_FIRST_MATE,
+      projectPath: b.projectPath,
+      name: b.name || path.basename(b.projectPath) || b.projectPath,
+      sessionId: b.sessionId || null,
+      status: b.status || "proposed",
+      brief: b.brief || null,
+      assignments: b.assignments || null,
+      crew: [],
+    });
+  }
   return [...byId.values()];
+}
+
+/**
+ * Proposes a second mate for a project WITHOUT spinning up its session yet
+ * (Phase-2 lazy creation): the first mate lays out the assignment, the Opus
+ * session is created only on first engagement (markSecondMateCreated). Persists
+ * the project + firstMate + brief so deriveSecondMates can surface it before any
+ * crew run exists. Idempotent per (firstMateId, projectPath); re-proposing merges
+ * the brief/assignments and never downgrades a "created" one back to "proposed".
+ */
+export function proposeSecondMate(firstMateId, projectPath, { brief = null, assignments = null, name = null } = {}) {
+  if (!projectPath) {
+    throw new Error("proposeSecondMate requires a projectPath");
+  }
+  const id = secondMateId(firstMateId, projectPath);
+  const bindings = readBindings();
+  const existing = bindings[id] || {};
+  bindings[id] = {
+    ...existing,
+    firstMateId: firstMateId || DIRECT_FIRST_MATE,
+    projectPath,
+    name: name || existing.name || path.basename(projectPath) || projectPath,
+    brief: brief ?? existing.brief ?? null,
+    assignments: assignments ?? existing.assignments ?? null,
+    status: existing.status === "created" ? "created" : "proposed",
+    sessionId: existing.sessionId || null,
+  };
+  writeBindings(bindings);
+  return { secondMateId: id, ...bindings[id] };
+}
+
+/** Marks a proposed second mate as CREATED once its session actually spins up. */
+export function markSecondMateCreated(secondMateId, sessionId, model = null) {
+  const bindings = readBindings();
+  bindings[secondMateId] = {
+    ...(bindings[secondMateId] || {}),
+    status: "created",
+    sessionId: sessionId || bindings[secondMateId]?.sessionId || null,
+    model: model || bindings[secondMateId]?.model || null,
+  };
+  writeBindings(bindings);
+  return { secondMateId, ...bindings[secondMateId] };
 }
 
 /**
@@ -109,7 +175,13 @@ export function bindSecondMateSession(secondMateId, sessionId) {
       }
     }
   }
-  bindings[secondMateId] = { ...(bindings[secondMateId] || {}), sessionId: sessionId || null };
+  bindings[secondMateId] = {
+    ...(bindings[secondMateId] || {}),
+    sessionId: sessionId || null,
+    // Binding a live session IS the "first engagement" that turns a proposed
+    // second mate into a created one (Phase-2 Slice 1 lazy creation).
+    status: sessionId ? "created" : bindings[secondMateId]?.status || "proposed",
+  };
   writeBindings(bindings);
   return bindings[secondMateId];
 }

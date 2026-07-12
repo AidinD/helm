@@ -36,7 +36,7 @@ import { personaOverlay, PERSONAS } from "./lib/personas.js";
 import { listSlashItems } from "./lib/slashCommands.js";
 import { trackHelmUsage, summarizeHelmUsage } from "./lib/helmUsage.js";
 import { initAutoUpdate } from "./lib/autoUpdate.js";
-import { deriveSecondMates, bindSecondMateSession, renameSecondMate, readBindings } from "./lib/secondMates.js";
+import { deriveSecondMates, bindSecondMateSession, renameSecondMate, readBindings, proposeSecondMate, markSecondMateCreated } from "./lib/secondMates.js";
 import { addSpend, isOverBudget, isKilled, setKilled, resetBudget, readBudget, setCeiling } from "./lib/orchestrationBudget.js";
 import {
   ensureDispatchDirs,
@@ -1355,6 +1355,20 @@ ipcMain.handle("secondMates:bindSession", (_event, { secondMateId, sessionId }) 
 ipcMain.handle("secondMates:rename", (_event, { secondMateId, name }) => {
   try {
     return { ok: true, binding: renameSecondMate(secondMateId, name) };
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err) };
+  }
+});
+// Phase-2 Slice 1: propose a second mate for a project without spinning its
+// session (lazy). The project is validated the same way a dispatch is, so a
+// proposal always resolves to a real repo path.
+ipcMain.handle("secondMates:propose", (_event, { firstMateId, project, brief, assignments, name }) => {
+  try {
+    const projectPath = resolveDispatchProject(project) || project;
+    if (!projectPath) {
+      return { ok: false, error: `Unknown project "${project}".` };
+    }
+    return { ok: true, secondMate: proposeSecondMate(firstMateId || "direct", projectPath, { brief, assignments, name }) };
   } catch (err) {
     return { ok: false, error: err?.message || String(err) };
   }
