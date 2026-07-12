@@ -3264,6 +3264,31 @@ button.primary {
   margin-bottom: 4px;
 }
 
+/* Live-run indicator (bug 7bacc349): a rotating ring + gently pulsing label so a
+   running autopilot reads as actively working, not hung - especially at "0
+   iterations so far". */
+.goal-status-spin {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  margin-right: 7px;
+  vertical-align: -1px;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--active) 30%, transparent);
+  border-top-color: var(--active);
+}
+.goal-status-working {
+  color: var(--active);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .goal-status-spin {
+    animation: toast-spin-rot 0.9s linear infinite;
+  }
+  .goal-status-working {
+    animation: run-pulse 1.6s ease-in-out infinite;
+  }
+}
+
 .goal-iter-card {
   background: var(--bg-card);
   border: 1px solid var(--border);
