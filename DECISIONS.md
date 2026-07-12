@@ -1,5 +1,13 @@
 # Decisions
 
+## 2026-07-12 (late2) - The REAL "2nd mate empty" + "Done errors on uncommitted"
+
+After the cross-instance fix made the report roll-up surface, two DOWNSTREAM bugs remained (the actual thing the captain meant):
+1. Jumping into a second mate opened a BLANK session (`openFreshDraftInPane` with an empty prompt) - no idea the crew had just landed commits on branches, so no way to actually continue/review.
+   Fix: `pendingSecondMateReviewNudge(sm)` (mirrors the first mate's `pendingTriageNudge`, judgment-tier framing) seeds the fresh session with the project's dispatched/terminal/not-acked runs - branch + commit count + needsCaptain each - and the task "inspect commits, verify the fix holds, merge the solid ones, flag the rest". jumpIntoSecondMate seeds it in the fresh-draft path. Verified in harness (lists the project's branches, excludes other projects, empty when nothing waiting).
+2. The report-row "Done" trapped the run: its menu led with "Done + clean up worktree", which calls removeWorktree NON-force -> fail-closes on a dirty worktree (autopilot left uncommitted files) -> errored AND refused to acknowledge, so the run stayed stuck in the glance ("Done errors because it's uncommitted").
+   Fix: menu now leads with "Done (keep worktree)" (pure acknowledge, no git, never errors); the "Done + remove worktree" option acknowledges REGARDLESS of cleanup success (a dirty-worktree failure keeps the worktree + toasts why, but no longer traps the run - the commits are what matter, the worktree is scratch).
+
 ## 2026-07-12 (late) - Cross-instance dispatch orphaning (2nd mate empty / 1st mate waiting)
 
 Symptom: a first mate dispatched 3 autopilot runs; they completed with commits, but the 2nd mate showed empty and the first mate "waited" with no report-back.
