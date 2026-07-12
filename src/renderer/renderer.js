@@ -7719,9 +7719,19 @@ function goalRunDetailEl(run) {
   const statusLine = document.createElement("div");
   statusLine.className = "goal-status-line";
   if (run.status === "running") {
-    statusLine.textContent = run.escalation
-      ? `Paused · ${run.iterations.length} iteration(s) so far…`
-      : `Running · ${run.iterations.length} iteration(s) so far…`;
+    // A LIVE (not escalated) run gets an animated spinner + pulsing text so it
+    // reads as actively working, not hung - "Running · 0 iteration(s) so far…"
+    // as static text looked stuck (bug 7bacc349).
+    if (!run.escalation) {
+      const spin = document.createElement("span");
+      spin.className = "goal-status-spin";
+      const label = document.createElement("span");
+      label.className = "goal-status-working";
+      label.textContent = `Running · ${run.iterations.length} iteration(s) so far…`;
+      statusLine.append(spin, label);
+    } else {
+      statusLine.textContent = `Paused · ${run.iterations.length} iteration(s) so far…`;
+    }
   } else if (run.status === "done") {
     statusLine.textContent = run.escalation ? "Run paused for you." : "Run finished.";
   } else if (run.status === "error") {
