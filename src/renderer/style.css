@@ -4266,6 +4266,36 @@ button.primary {
 /* Fleet: the orchestration model as three columns (locked mock). Two named
    first mates (sessions) + Direct; second mates (project sessions) branch under
    a first mate; crew (autonomous runs) expand under a second mate. */
+/* Proposals banner at the top of the fleet - surfaces the first mate's laid-out
+   topics so engaging one is a click, not a hunt through a column (flow P2). */
+.fleet-proposals {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-card);
+}
+.fleet-proposals-label {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.fleet-proposal-chip {
+  font-size: 12px;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  border-radius: 999px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+.fleet-proposal-chip:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
 .fleet-cols {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;

@@ -5232,6 +5232,33 @@ function dashboardFleetSection(mates = [], secondMates = [], boardSummary = {}) 
   const liveCount = [...goalRuns.values()].filter((r) => crewRunning(r)).length;
   section.append(dashBoardHead("Fleet", liveCount, "First mates → second mates (project sessions) → crew"));
 
+  // Proposals banner: when the first mate has laid out topics (proposed second
+  // mates not yet engaged), surface them at the TOP of the fleet - right under
+  // the needs-you queue - instead of leaving them buried as a badge in a column
+  // (flow review P2). One click per chip engages that proposal.
+  const proposed = secondMates.filter((s) => s.status === "proposed" && !s.sessionId);
+  if (proposed.length > 0) {
+    const banner = document.createElement("div");
+    banner.className = "fleet-proposals";
+    const label = document.createElement("span");
+    label.className = "fleet-proposals-label";
+    label.textContent = `${proposed.length} topic${proposed.length === 1 ? "" : "s"} proposed - engage one to start:`;
+    banner.append(label);
+    proposed.forEach((sm) => {
+      const chip = document.createElement("button");
+      chip.className = "fleet-proposal-chip";
+      const brief = sm.brief ? ` - ${sm.brief.length > 48 ? sm.brief.slice(0, 48) + "…" : sm.brief}` : "";
+      chip.textContent = sm.name + brief;
+      chip.title = `Engage the proposed second mate for ${sm.name}`;
+      chip.addEventListener("click", (e) => {
+        e.stopPropagation();
+        jumpIntoSecondMate(sm);
+      });
+      banner.append(chip);
+    });
+    section.append(banner);
+  }
+
   const cols = document.createElement("div");
   cols.className = "fleet-cols";
 
@@ -9484,9 +9511,9 @@ document.getElementById("settingsGear").innerHTML = GEAR_ICON;
 
 // Which pages belong to the Dashboard primary tab (the "work" facets). The
 // primary Dashboard button is shown/activated as a group across all of these,
-// not by exact page match. "focus" has no #dashboardSubnav button of its own
-// (it's the click-through detail from a dashboard goal card) but still counts
-// toward the group so the primary tab stays lit while viewing it. Skills
+// not by exact page match. "focus" now has its own #dashboardSubnav button (so
+// the captain can't get stranded there after a goal-card click-through) and
+// counts toward the group so the primary tab stays lit while viewing it. Skills
 // (analysis) and Archive are reached from their own #headerUtilityNav, not
 // the Settings/gear group.
 const DASHBOARD_FACET_PAGES = ["dashboard", "goal", "routines", "focus"];
@@ -9553,9 +9580,8 @@ function navigateToPage(page, opts = {}) {
     .querySelectorAll("#headerUtilityNav button")
     .forEach((b) => b.classList.toggle("active", b.dataset.page === page));
 
-  // Sub-nav: visible only within the Dashboard group; its buttons match exactly.
-  // "focus" has no button here (see DASHBOARD_FACET_PAGES above), so none of
-  // these highlight while on it - only the primary Dashboard tab stays lit.
+  // Sub-nav: visible only within the Dashboard group; its buttons match exactly
+  // (including "focus" now, so it highlights while viewing a goal's focus page).
   const subnav = document.getElementById("dashboardSubnav");
   subnav.classList.toggle("hidden", !inDashboardGroup);
   subnav.querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.dataset.page === page));
