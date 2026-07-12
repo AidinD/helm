@@ -5639,8 +5639,15 @@ function fleetSecondMateEl(sm) {
   const badge = document.createElement("span");
   // A session node reflects the SESSION's own status (matches the "needs you /
   // in motion" list above); a run-derived node reflects its crew.
+  // A PROPOSED second mate (Phase-2 Slice 1): laid out by the first mate but no
+  // session spun up yet - it exists only as a lazy proposal. Distinct calm badge;
+  // jumping in is the "first engagement" that creates it.
+  const isProposed = sm.status === "proposed" && !sm.sessionId && crew.length === 0;
   let badgeKind, badgeText;
-  if (sm.isSessionNode) {
+  if (isProposed) {
+    badgeKind = "ok";
+    badgeText = "proposed";
+  } else if (sm.isSessionNode) {
     const st = sess?.status;
     badgeKind = st === "waiting" ? "need" : st === "active" ? "run" : "ok";
     badgeText = st === "waiting" ? "needs you" : st === "active" ? "working" : "idle";
@@ -5660,7 +5667,9 @@ function fleetSecondMateEl(sm) {
   const now = document.createElement("div");
   now.className = "fleet-branch-now";
   const liveN = crew.filter(crewRunning).length;
-  if (sm.isSessionNode) {
+  if (isProposed) {
+    now.append(document.createTextNode((sm.brief ? `${sm.brief.length > 60 ? sm.brief.slice(0, 60) + "…" : sm.brief} · ` : "") + "proposed - engage to start · "));
+  } else if (sm.isSessionNode) {
     const st = sess?.status;
     if (st === "active") {
       const spin = document.createElement("span");
