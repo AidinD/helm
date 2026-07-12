@@ -59,6 +59,23 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 let mainWindow = null;
 let latestQuota = null;
+// Records the latest quota reading AND persists it (config.lastQuota), so the
+// Dashboard quota chip can show a last-known value immediately - even on a fresh
+// launch with no active turn yet, which is exactly when it was invisible before
+// (6ed0b09e "kan inte se den": latestQuota was null until some turn produced a
+// rate_limit_event). Best-effort persistence; never lets a write failure throw.
+function recordQuota(q) {
+  if (!q) {
+    return;
+  }
+  latestQuota = q;
+  try {
+    const cfg = loadConfig();
+    writeConfig({ ...cfg, lastQuota: q, lastQuotaAt: Date.now() });
+  } catch {
+    // persistence is best-effort - the in-memory value still drives this session
+  }
+}
 // Stale-build indicator: the identity (package.json version + git HEAD short
 // hash) of the build THIS instance is actually running, captured exactly
 // once here at module load (main.js is only evaluated once per app launch).
@@ -234,7 +251,10 @@ ipcMain.handle("sessions:get", () => {
     sessions,
     config,
     jot: { ok: jotIndex.ok, categories: jotIndex.categories },
-    quota: latestQuota,
+    // Fall back to the persisted last-known quota so the Dashboard chip shows a
+    // value even before this launch has run a turn (6ed0b09e).
+    quota: latestQuota || config.lastQuota || null,
+    quotaAt: latestQuota ? Date.now() : config.lastQuotaAt || null,
     generatedAt: Date.now(),
   };
 });
@@ -1468,7 +1488,7 @@ ipcMain.handle(
           });
         }
         if (evt.kind === "quota" && evt.quota) {
-          latestQuota = evt.quota;
+          recordQuota(evt.quota);
         } else if (evt.kind === "tool_use" && evt.toolName) {
           meta.toolsUsed.push(evt.toolName);
         } else if (evt.kind === "assistant" && evt.text) {
@@ -2591,7 +2611,7 @@ function fireRoutine(routine) {
           });
         }
         if (evt.kind === "quota" && evt.quota) {
-          latestQuota = evt.quota;
+          recordQuota(evt.quota);
         }
         send(evt);
       },
