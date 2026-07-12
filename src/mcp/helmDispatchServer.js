@@ -152,6 +152,12 @@ const TOOLS = [
     },
   },
   {
+    name: "helm_resume_fleet",
+    description:
+      "FIRST MATES ONLY: resume ALL of your resumable work (runs stopped on a quota limit or paused/escalated) - your own crew AND your second mates' crew - picking up where each left off in its kept worktree. This is what the captain's 'continue'/'fortsätt' maps to after an interruption or running out of tokens. Each run resumes only if the budget/kill switch allow it. Returns how many were resumed.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
     name: "helm_report_up",
     description:
       "SECOND MATES ONLY: roll up your project's outcome and report it UP to your first mate (who aggregates across projects for the captain). Call this once your assignment is done or needs to pause - after you've validated your crew's work. Give a compact synthesis, not a transcript. This is how the chain closes: first-mate <- you <- crew.",
@@ -358,6 +364,27 @@ async function toolRelay(args) {
   };
 }
 
+// First mate resumes all its resumable work (quota-stopped / escalated). The app
+// cascades resumeFleet across the first mate's own crew + its second mates' crew.
+async function toolResumeFleet() {
+  if (CALLER_TIER !== "first-mate") {
+    return { error: "Only a first mate resumes the fleet." };
+  }
+  if (!META_HOME) {
+    return { error: "HELM_META_HOME not configured; cannot reach the dispatch queue." };
+  }
+  ensureDispatchDirs(META_HOME);
+  const dispatchId = writeRequest(META_HOME, { kind: "resume-fleet", dispatchedBy: MATE_ID, callerTier: CALLER_TIER });
+  const ack = await waitForAck(dispatchId);
+  if (!ack) {
+    return { status: "pending", note: "Resume queued; the app has not acknowledged it yet." };
+  }
+  if (ack.status === "rejected") {
+    return { status: "rejected", reason: ack.reason || "rejected by Helm" };
+  }
+  return { ok: true, resumed: ack.resumed || 0, total: ack.total || 0 };
+}
+
 function callTool(name, args) {
   switch (name) {
     case "helm_dispatch":
@@ -366,6 +393,8 @@ function callTool(name, args) {
       return toolCreateSecondMate(args || {});
     case "helm_relay_to_second_mate":
       return toolRelay(args || {});
+    case "helm_resume_fleet":
+      return toolResumeFleet();
     case "helm_collect_reports":
       return toolCollectReports(args || {});
     case "helm_list_projects":
