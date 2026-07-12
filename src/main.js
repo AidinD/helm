@@ -987,7 +987,7 @@ function resolveDispatchProject(project) {
 // it has no live channel to answer a permission prompt (verified: without this,
 // a real first-mate session replies "TOOL-BLOCKED" and never dispatches - review M3).
 const FIRST_MATE_MCP_SERVER = "helm-dispatch";
-const FIRST_MATE_ALLOWED_TOOLS = ["helm_dispatch", "helm_collect_reports", "helm_list_projects", "helm_fleet_state", "helm_report_up"].map(
+const FIRST_MATE_ALLOWED_TOOLS = ["helm_dispatch", "helm_collect_reports", "helm_list_projects", "helm_fleet_state", "helm_report_up", "helm_create_second_mate"].map(
   (t) => `mcp__${FIRST_MATE_MCP_SERVER}__${t}`
 );
 
@@ -2544,6 +2544,28 @@ function processDispatchRequests(metaHome) {
       const reject = (reason) => {
         writeAck(metaHome, dispatchId, { status: "rejected", reason });
       };
+
+      // Phase-2 Slice 4b: a lightweight "propose a second mate" request from a
+      // first mate (the daily-loop "lay out A/B/C" step). Just registers the lazy
+      // proposal + acks with the id - no run, so it's NOT gated by budget/kill.
+      if (request.kind === "propose-second-mate") {
+        const proposeProject = resolveDispatchProject(request.project) || request.project;
+        if (!proposeProject) {
+          reject(`Unknown project "${request.project}". Call helm_list_projects, or pass an explicit absolute repo path.`);
+          continue;
+        }
+        try {
+          const sm = proposeSecondMate(request.dispatchedBy || "direct", proposeProject, { brief: request.brief });
+          writeAck(metaHome, dispatchId, { status: "accepted", secondMateId: sm.secondMateId });
+          writeFleetStateSnapshot(metaHome);
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send("dispatch:report", { kind: "propose", secondMateId: sm.secondMateId });
+          }
+        } catch (err) {
+          reject(`Failed to propose second mate: ${err?.message || String(err)}`);
+        }
+        continue;
+      }
 
       // Guardrails (Phase-2 Slice 0): a killed or over-budget orchestration
       // accepts no further dispatch. Checked before any work is started.
