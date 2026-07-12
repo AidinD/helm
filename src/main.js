@@ -2339,20 +2339,21 @@ function processDispatchRequests(metaHome) {
   }
   dispatchScanInFlight = true;
   try {
+    // OWNERSHIP scoping (cross-instance orphaning bug, 2026-07-12): the queue
+    // lives under the shared meta-home, so a dev build and the installed build
+    // both watch it - but each has its OWN mate store. Snapshot the mates THIS
+    // instance owns once per scan; a request whose dispatching mate isn't ours
+    // is left in the queue (not claimed) for the instance that owns it. Without
+    // this, whichever instance won the claim race would double-run the goal and
+    // orphan the report under a mateId absent from its store. See
+    // lib/dispatchCaps.js isForeignDispatch.
+    const ownedMateIds = new Set(loadMates().map((m) => m.mateId));
     for (const request of readRequests(metaHome)) {
       const dispatchId = request.dispatchId;
       if (!dispatchId) {
         continue;
       }
-      // OWNERSHIP scoping (cross-instance orphaning bug, 2026-07-12): the queue
-      // lives under the shared meta-home, so a dev build and the installed build
-      // both watch it - but each has its OWN mate store. Only run a request whose
-      // dispatching mate belongs to THIS instance; leave a foreign one in the
-      // queue (do NOT claim) so the instance that owns that mate handles it.
-      // Without this, whichever instance won the claim race would double-run the
-      // goal and orphan the report under a mateId absent from its store. See
-      // lib/dispatchCaps.js isForeignDispatch.
-      if (isForeignDispatch(request, new Set(loadMates().map((m) => m.mateId)))) {
+      if (isForeignDispatch(request, ownedMateIds)) {
         continue;
       }
       // Atomically CLAIM the request before doing anything with it. This closes
