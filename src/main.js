@@ -105,6 +105,14 @@ const liveChildren = new Map(); // launchId -> child process, for the Stop butto
 // inherently tied to the app being open, and a run's real durable output is
 // the worktree/branch/commits it leaves on disk, not this transient handle.
 const liveGoalRuns = new Map();
+// Per-session turn lock (Phase-2 Slice 4, review's #1 hazard): the set of
+// session ids that currently have a turn in flight. Two `claude -p --resume
+// <same id>` running at once interleave and corrupt the transcript, so a second
+// turn on an already-busy session is REFUSED - this is what keeps a first-mate
+// relay and a direct pane turn from driving one second-mate session at once.
+// A fresh session (no resume id) is never locked (it has no prior transcript to
+// race). Released when the turn's `done` resolves (close or error).
+const sessionTurnLocks = new Set();
 // First-mate tier caps (docs/first-mate-tier-design.md sections 3 + 5),
 // enforced at the app - the single dispatch authority - never trusting the
 // caller. WIDTH: at most this many CONCURRENT dispatched runs per mate (design
@@ -1447,6 +1455,20 @@ ipcMain.handle(
     if (!cwd || !prompt) {
       return { ok: false, error: "cwd and prompt are required" };
     }
+    // Per-session turn lock (Slice 4): refuse a concurrent turn on the SAME
+    // resumed session (a relay vs a direct pane turn) - they'd corrupt the
+    // transcript. Check + acquire atomically (this handler is sync up to spawn,
+    // so two calls can't interleave here). Released in done.then below.
+    if (resumeSessionId && sessionTurnLocks.has(resumeSessionId)) {
+      return {
+        ok: false,
+        error: "That session already has a turn in flight - wait for it to finish (a relay and a direct turn can't run on one session at once).",
+        busy: true,
+      };
+    }
+    if (resumeSessionId) {
+      sessionTurnLocks.add(resumeSessionId);
+    }
     // A random id, not an incrementing counter — usage-log.jsonl persists
     // across app restarts but this counter wouldn't, so small reused integers
     // (1, 2, 3...) could join a verdict to the WRONG run from a different
@@ -1603,6 +1625,11 @@ ipcMain.handle(
     const skillMatch = /^\/(\S+)/.exec(prompt.trim());
     done.then((summary) => {
       liveChildren.delete(launchId);
+      // Release the per-session turn lock (Slice 4) now the turn is over, so the
+      // next turn (pane or relay) on this session can proceed.
+      if (resumeSessionId) {
+        sessionTurnLocks.delete(resumeSessionId);
+      }
       // Send "done" FIRST, before any of the bookkeeping below that could
       // throw (a corrupt config.json, a disk-full usage-log write, etc).
       // Previously this came after appendUsageLog — if that threw, the
