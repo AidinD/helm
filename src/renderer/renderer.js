@@ -646,6 +646,41 @@ function toFileUrl(winPath) {
   return "file:///" + encoded;
 }
 
+// Attachment markers embedded in a user turn's text. sendFromPane builds each
+// as `[Attached image: <abspath>]` / `[Attached file: <abspath>]` (one per
+// line, \n-joined) — this regex MUST stay byte-identical to that shape. See
+// sendFromPane (~line 4100) where the literal is constructed.
+const ATTACHMENT_MARKER_RE = /^\[Attached (image|file): (.+)\]$/;
+
+// Splits a user turn's raw text into ordered segments so the transcript
+// renderer can turn `[Attached image: <path>]` marker lines into inline
+// thumbnails instead of literal text. Consecutive non-marker lines are
+// coalesced back into one text segment (line breaks preserved). Pure (no DOM)
+// so it stays unit-testable. Returns [{type:"image"|"file", path}] and
+// {type:"text", text} segments in document order.
+function parseAttachmentLines(text) {
+  const segments = [];
+  const lines = String(text ?? "").split("\n");
+  let textBuf = [];
+  const flushText = () => {
+    if (textBuf.length) {
+      segments.push({ type: "text", text: textBuf.join("\n") });
+      textBuf = [];
+    }
+  };
+  for (const line of lines) {
+    const m = ATTACHMENT_MARKER_RE.exec(line);
+    if (m) {
+      flushText();
+      segments.push({ type: m[1], path: m[2] });
+    } else {
+      textBuf.push(line);
+    }
+  }
+  flushText();
+  return segments;
+}
+
 // Full-size click-to-enlarge view for an attached image — dismissed by
 // clicking anywhere (including the image itself) or pressing Escape.
 function showImageLightbox(fileUrl) {
@@ -2508,6 +2543,49 @@ function inlineFormat(text) {
 const MODEL_FIT_ICON = { too_weak: "⬆", appropriate: "⚖", too_strong: "⬇" };
 const MODEL_FIT_LABEL = { too_weak: "Underpowered", appropriate: "Good fit", too_strong: "Overkill" };
 
+// Renders a user turn's text into `bubble`, turning `[Attached image: <path>]`
+// marker lines into inline thumbnails (click → lightbox) so pasted images show
+// in the transcript instead of the literal marker text. Plain messages (no
+// markers) keep the exact previous behavior (`textContent = text`). Covers both
+// live-sent turns and reloaded-session turns, since both carry the same raw
+// marker in turn.text. DOM is built via createElement/createTextNode (never
+// innerHTML for paths) to avoid injection from odd filenames.
+function renderUserTurnInto(bubble, text) {
+  const segments = parseAttachmentLines(text);
+  const hasAttachment = segments.some((s) => s.type === "image" || s.type === "file");
+  if (!hasAttachment) {
+    bubble.textContent = text;
+    return;
+  }
+  for (const seg of segments) {
+    if (seg.type === "image") {
+      const img = document.createElement("img");
+      img.className = "turn-image";
+      img.src = toFileUrl(seg.path);
+      img.title = "Click to enlarge";
+      img.addEventListener("click", () => showImageLightbox(img.src));
+      bubble.append(img);
+    } else if (seg.type === "file") {
+      const chip = document.createElement("span");
+      chip.className = "turn-file-chip";
+      const clip = document.createElement("span");
+      clip.className = "attachment-clip-icon";
+      clip.innerHTML = PAPERCLIP_ICON;
+      chip.append(clip);
+      const base = seg.path.split(/[\\/]/).pop() || seg.path;
+      chip.append(document.createTextNode(base));
+      bubble.append(chip);
+    } else if (seg.text.trim() !== "") {
+      // Skip whitespace-only text segments (e.g. the blank line the composer
+      // inserts between markers and typed text) so no stray empty node renders.
+      const span = document.createElement("span");
+      span.className = "turn-text";
+      span.textContent = seg.text;
+      bubble.append(span);
+    }
+  }
+}
+
 function turnEl(turn) {
   if (turn.kind === "tool_result") {
     const el = document.createElement("div");
@@ -2528,7 +2606,7 @@ function turnEl(turn) {
   if (turn.role === "assistant") {
     renderMarkdownInto(bubble, turn.text);
   } else {
-    bubble.textContent = turn.text;
+    renderUserTurnInto(bubble, turn.text);
   }
   wrap.append(bubble);
 
