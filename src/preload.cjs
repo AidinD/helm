@@ -53,6 +53,7 @@ contextBridge.exposeInMainWorld("helm", {
   isDevBuild: () => ipcRenderer.invoke("app:isDev"),
   continueOnMobile: (payload) => ipcRenderer.invoke("session:continueOnMobile", payload),
   // Phase-2 orchestration guardrails (Slice 0): kill switch + budget.
+  resumeGoalRun: (goalRunId) => ipcRenderer.invoke("goal:resume", { goalRunId }),
   killOrchestration: () => ipcRenderer.invoke("orchestration:killTree"),
   resumeOrchestration: () => ipcRenderer.invoke("orchestration:resume"),
   getOrchestrationBudget: () => ipcRenderer.invoke("orchestration:budget"),
