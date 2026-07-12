@@ -1357,9 +1357,13 @@ export async function runGoal({
       appendNotes(worktreePath, i, syntheticResult);
       record = { iteration: i, phase: iterationPhase, ok: false, error: outcome.error, committed: false };
       consecutiveFailures += 1;
-      // A rate-limit/quota error is a RESUMABLE stop, not a real failure - flag
-      // it so the loop stops with stoppedReason "quota_exhausted" (below).
-      if (/rate.?limit|quota|usage limit|too many requests|\b429\b/i.test(String(outcome.error || ""))) {
+      // A rate-limit/quota/overload error is a RESUMABLE stop, not a real failure
+      // - flag it so the loop stops with stoppedReason "quota_exhausted" (below).
+      // Includes Anthropic's 529 overloaded_error: it's the transient-capacity
+      // signal most like a rate limit, and "fortsätt" is exactly how it should
+      // recover - without this it's a plain failure and gets auto-cleaned
+      // (ship-review).
+      if (/rate.?limit|quota|usage limit|too many requests|overloaded|\b429\b|\b529\b/i.test(String(outcome.error || ""))) {
         quotaExhausted = true;
       }
     } else if (outcome.result.success === false) {

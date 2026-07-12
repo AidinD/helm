@@ -1557,7 +1557,14 @@ ipcMain.handle(
     } catch (err) {
       console.error("[helm] failed to build first-mate launch config:", err);
     }
-    const { child, done } = startSession({
+    // Wrap the launch so a SYNCHRONOUS throw (e.g. the claude binary can't be
+    // resolved) releases the per-session turn lock instead of wedging that
+    // session as "busy" for the app's lifetime - mirrors runRelayTurn's guard
+    // (ship-review: session:start was the asymmetric path that leaked the lock).
+    let child;
+    let done;
+    try {
+      ({ child, done } = startSession({
       cwd,
       prompt,
       model,
@@ -1616,7 +1623,13 @@ ipcMain.handle(
         }
         send(evt);
       },
-    });
+    }));
+    } catch (err) {
+      if (resumeSessionId) {
+        sessionTurnLocks.delete(resumeSessionId);
+      }
+      throw err;
+    }
     liveChildren.set(launchId, child);
     // Headless -p expands a leading "/skill-name" in the prompt text before
     // running it, so a leading slash-token is a reasonable (if not perfect —
@@ -1885,6 +1898,17 @@ function startGoalRun({
     dispatchedBy: dispatch?.dispatchedBy || null,
     dispatchId: dispatch?.dispatchId || null,
     tier: dispatch?.tier || null,
+    // Run CONFIG, persisted so a resume (goal:resume / resumeFleet) reconstructs
+    // the run faithfully. Without these, a resumed run silently reverts to
+    // runGoal's defaults - most dangerously verifyCommand -> undefined -> the
+    // build/test gate is dropped, so self-reported-success iterations get
+    // committed WITHOUT verification (ship-review HIGH). model/effort/max/
+    // escalationConfig would likewise regress. Stored as the effective values.
+    verifyCommand: verifyCommand || null,
+    model: model || null,
+    effort: effort || null,
+    maxIterations: clampedMax || null,
+    escalationConfig: escalationConfig || null,
     // Which meta-home's dispatch queue this run's report belongs to. The
     // goal-run history is a single GLOBAL file, but reports are per-meta-home;
     // stamping this lets startup reconciliation resurrect a missing report only
@@ -2128,6 +2152,14 @@ function resumeGoalRunById(goalRunId) {
   const started = startGoalRun({
     projectPath: rec.projectPath,
     goal: rec.goal,
+    // Reconstruct the original run config so the resume keeps its verify gate,
+    // model/effort tier, iteration budget, and escalation policy (ship-review
+    // HIGH: these were being dropped, silently reverting to runGoal defaults).
+    verifyCommand: rec.verifyCommand || undefined,
+    model: rec.model || undefined,
+    effort: rec.effort || undefined,
+    maxIterations: rec.maxIterations || undefined,
+    escalationConfig: rec.escalationConfig || undefined,
     dispatch,
     resume,
   });
@@ -2192,6 +2224,19 @@ ipcMain.handle("orchestration:killTree", () => {
       run.currentChild = null;
     }
     cancelled += 1;
+  }
+  // Relay turns (internal Opus second-mate turns) live in liveChildren under a
+  // "relay-" key, NOT in liveGoalRuns, so the loop above misses them. Kill those
+  // too, or an in-flight relay keeps burning tokens after the kill switch
+  // (ship-review). Their done.then still runs on kill - it releases the lock,
+  // drops the child handle, and books the partial spend - so this is clean.
+  // Non-relay children in liveChildren are the captain's own interactive
+  // sessions and must NOT be killed by an orchestration kill.
+  for (const [key, child] of liveChildren) {
+    if (key.startsWith("relay-")) {
+      killChildTree(child);
+      cancelled += 1;
+    }
   }
   return { ok: true, cancelled };
 });
@@ -2697,6 +2742,12 @@ function runRelayTurn(metaHome, { secondMateId: smId, projectPath, message }) {
   sessionTurnLocks.add(lockKey);
   const childKey = "relay-" + smId + "-" + Date.now();
   let relayCostUsd = 0;
+  // For a FRESH relay (no session yet) we hold "sm:<id>", but session:start locks
+  // on the raw session id. When this turn mints + binds its session mid-turn, a
+  // concurrent jump-in on that session wouldn't see the "sm:" key and could
+  // --resume the same live transcript -> corruption. So we ALSO lock the bound
+  // session id and release it with the primary key (ship-review CONFIRMED).
+  let boundSessionKey = null;
   let child;
   let done;
   try {
@@ -2719,6 +2770,14 @@ function runRelayTurn(metaHome, { secondMateId: smId, projectPath, message }) {
             // relay-driven session shows in the session list like a jumped-into
             // one (review PLAUSIBLE #3). Fresh launches only (createIfAbsent).
             bindSecondMateSession(smId, evt.sessionId);
+            // Close the fresh-bind window (see boundSessionKey note above): the
+            // session now appears in the session list, so lock its id too before
+            // a jump-in can race it. Resumed turns already lock on the id via
+            // lockKey, so only fresh launches need this.
+            if (!resumeSessionId && !boundSessionKey) {
+              boundSessionKey = evt.sessionId;
+              sessionTurnLocks.add(evt.sessionId);
+            }
             recordHelmSession(evt.sessionId, {
               cwd: projectPath,
               model: "claude-opus-4-8",
@@ -2738,11 +2797,15 @@ function runRelayTurn(metaHome, { secondMateId: smId, projectPath, message }) {
     return { ok: false, error: `Failed to start the relay turn: ${err?.message || String(err)}` };
   }
   liveChildren.set(childKey, child);
-  // Fire-and-forget: on turn end, release the lock, drop the child handle (review
-  // #2 - no leak), count the turn's own cost against the orchestration budget
-  // (review #3), and refresh the fleet so the report-up surfaces. NOT awaited.
+  // Fire-and-forget: on turn end, release BOTH locks (primary + any bound-session
+  // key), drop the child handle (review #2 - no leak), count the turn's own cost
+  // against the orchestration budget (review #3), and refresh the fleet so the
+  // report-up surfaces. NOT awaited.
   done.then(() => {
     sessionTurnLocks.delete(lockKey);
+    if (boundSessionKey) {
+      sessionTurnLocks.delete(boundSessionKey);
+    }
     liveChildren.delete(childKey);
     addSpend(metaHome, relayCostUsd);
     writeFleetStateSnapshot(metaHome);
@@ -2824,9 +2887,19 @@ function processDispatchRequests(metaHome) {
       // the captain jumping in. Ensure the second mate exists (propose so its
       // parent resolves), then launch an internal second-mate turn fire-and-forget
       // and ack the ACCEPT immediately (the response comes later via report-up).
-      // Gated by kill/budget below? No - handled here, and a relay that spins crew
-      // is itself budget-gated at the crew dispatch, so allow the relay turn.
+      // A relay spins up a real Opus second-mate turn that burns tokens on its
+      // OWN, so it MUST honor the kill switch and budget ceiling (ship-review:
+      // the earlier "allow the relay turn" reasoning only covered the crew it
+      // dispatches, not the relay turn's own cost - a genuine guardrail bypass).
       if (request.kind === "relay") {
+        if (isKilled(metaHome)) {
+          reject("Orchestration stopped by the kill switch. Resume it from the Dashboard before relaying again.");
+          continue;
+        }
+        if (isOverBudget(metaHome)) {
+          reject("Orchestration paused: the token/cost budget ceiling was reached. Raise or reset the budget from the Dashboard.");
+          continue;
+        }
         const relayProject = resolveDispatchProject(request.project);
         if (!relayProject) {
           reject(`Unknown project "${request.project}". Call helm_list_projects, or pass an explicit absolute repo path.`);

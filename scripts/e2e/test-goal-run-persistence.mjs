@@ -57,6 +57,9 @@ try {
   // no Cancel button (only status === "running" gets Cancel).
   await app.eval(`(() => { navigateToPage("goal"); return true; })()`);
   await app.waitForSelector("#goalPage", 8000, { visible: true });
+  // Finished/interrupted runs collapse to a one-line summary by default now, so
+  // force them expanded to assert on the full .goal-run-detail (status line etc).
+  await app.eval(`(() => { for (const id of goalRuns.keys()) { goalRunExpanded.add(id); } renderGoalPage(); return true; })()`);
   const blocks = await app.eval(`document.querySelectorAll("#goalPage .goal-run-detail").length`);
   assert(blocks >= 2, `Goal page renders the rehydrated run blocks (got ${blocks})`);
   const interruptedShown = await app.eval(`/Interrupted by an app restart/.test(document.getElementById("goalPage").innerText)`);
