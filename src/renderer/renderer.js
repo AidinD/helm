@@ -4457,19 +4457,19 @@ async function renderDashOrchestration() {
   label.className = "dash-orch-label";
   if (stopped) {
     chip.classList.add("stopped");
-    label.textContent = "⏸ Orchestration stopped";
+    label.textContent = "⏸ Fleet stopped";
   } else if (over) {
     chip.classList.add("stopped");
     label.textContent = `Budget reached · $${spent.toFixed(2)}`;
   } else {
-    label.textContent = ceiling != null ? `Orch $${spent.toFixed(2)} / $${ceiling.toFixed(0)}` : `Orch $${spent.toFixed(2)}`;
+    label.textContent = ceiling != null ? `Fleet spend $${spent.toFixed(2)} / $${ceiling.toFixed(0)}` : `Fleet spend $${spent.toFixed(2)}`;
   }
   chip.append(label);
   const btn = document.createElement("button");
   btn.className = "dash-orch-btn";
   if (stopped || over) {
     btn.textContent = "Resume";
-    btn.title = "Clear the stop + reset spend so dispatch can resume (keeps the ceiling)";
+    btn.title = "Clear the stop + reset spend so new work can start (keeps the ceiling)";
     btn.addEventListener("click", async () => {
       btn.disabled = true;
       await window.helm.resumeOrchestration();
@@ -4477,11 +4477,11 @@ async function renderDashOrchestration() {
     });
   } else {
     btn.textContent = "Stop";
-    btn.title = "Kill switch: stop the whole orchestration tree (cancels live runs; blocks new dispatch)";
+    btn.title = "Stop everything: halt the whole fleet (cancels live runs; blocks new work from starting)";
     btn.addEventListener("click", async () => {
       btn.disabled = true;
       const res = await window.helm.killOrchestration();
-      showToast(res && res.ok ? `Orchestration stopped (${res.cancelled} live run${res.cancelled === 1 ? "" : "s"} cancelled).` : "Couldn't stop orchestration.");
+      showToast(res && res.ok ? `Fleet stopped (${res.cancelled} live run${res.cancelled === 1 ? "" : "s"} cancelled).` : "Couldn't stop the fleet - try again.");
       renderDashOrchestration();
     });
   }
@@ -5192,7 +5192,7 @@ function fleetPersonaEl(mate) {
   const btn = document.createElement("button");
   btn.className = "fleet-persona-btn" + (cur ? " is-set" : "");
   btn.title = running
-    ? "Switch persona (retires this mate with a handoff and respawns a fresh one)"
+    ? "Switch persona (retires this mate with a handoff and hands off to a fresh one)"
     : "Choose this mate's persona";
   btn.textContent = personaLabel(cur) + " ▾";
   btn.addEventListener("click", (e) => {
@@ -5220,7 +5220,7 @@ function choosePersona(mate, key, running) {
   }
   const label = personaLabel(next);
   customConfirm(
-    `Switch ${mate.name} to ${label}? This retires the current mate (saving a handoff) and respawns a fresh ${label} in its place.`,
+    `Switch ${mate.name} to ${label}? This retires the current mate (saving a handoff) and hands off to a fresh ${label} in its place.`,
     "Switch persona",
     () => retireMateWithCarryOver(mate, next)
   );
@@ -5402,10 +5402,10 @@ function continueOnMobileBtn(session, { title } = {}) {
       if (res && res.ok) {
         showToast("Opening a Remote Control terminal - scan the QR / URL there from the Claude app.");
       } else {
-        showToast(`Couldn't start mobile session: ${res?.error || "unknown error"}`);
+        showToast(`Couldn't open the Remote Control terminal: ${res?.error || "unknown error"}`);
       }
     } catch (err) {
-      showToast(`Couldn't start mobile session: ${err.message}`);
+      showToast(`Couldn't open the Remote Control terminal: ${err.message}`);
     } finally {
       btn.disabled = false;
     }
@@ -5526,7 +5526,7 @@ function fleetMateCardEl(mate, sms, boardSummary = {}) {
   // Retire = custom inline confirm (no native window.confirm).
   const retireBtn = document.createElement("button");
   retireBtn.className = "fleet-btn";
-  retireBtn.title = "Retire this mate & respawn a fresh one";
+  retireBtn.title = "Retire this mate and hand off to a fresh one";
   retireBtn.textContent = "↻";
   retireBtn.addEventListener("click", (e) => {
     e.stopPropagation();
@@ -5596,7 +5596,7 @@ function fleetMateCardEl(mate, sms, boardSummary = {}) {
   if (sms.length === 0) {
     const empty = document.createElement("div");
     empty.className = "fleet-empty";
-    empty.textContent = "No second mates yet - dispatch work to a project and it appears here.";
+    empty.textContent = "No second mates yet - hand a project some work and it shows up here.";
     list.append(empty);
   } else {
     for (const sm of sms) {
@@ -5643,7 +5643,7 @@ function fleetNudgeEl(mate, kind, opts = {}) {
   if (offerRetire) {
     const btn = document.createElement("button");
     btn.className = "fleet-btn fleet-btn-accent";
-    btn.textContent = "Retire & respawn";
+    btn.textContent = "Retire and hand off";
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
       // Same guarded path as the header retire icon - was firing with no confirm.
@@ -6776,10 +6776,10 @@ function dashGoalRunRowEl(run) {
   const title = document.createElement("span");
   title.className = "dash-q-title";
   title.textContent = isRunning
-    ? `Autopilot: "${goalSnippet}" — working`
+    ? `Autopilot run "${goalSnippet}" - working`
     : run.status === "error"
-      ? `Goal run "${goalSnippet}" — failed`
-      : `Goal run "${goalSnippet}" — paused, needs you`;
+      ? `Autopilot run "${goalSnippet}" - failed`
+      : `Autopilot run "${goalSnippet}" - paused, needs you`;
   top.append(title);
   qbody.append(top);
 
@@ -6941,7 +6941,7 @@ async function cleanupGoalRunWorktree(run) {
     branchName: run.result?.branchName || null,
   });
   if (!res || !res.ok) {
-    showToast(`Cleanup failed: ${res?.error || "unknown error"}`);
+    showToast(`Cleanup failed: ${res?.error || "unknown error"}. The worktree was kept - remove it by hand if needed.`);
     return false;
   }
   if (res.note) {
@@ -7066,7 +7066,7 @@ async function dashboardGoalsSection(preloadedResult) {
   const body = document.createElement("div");
   body.className = "dash-board-body";
   if (!result.ok) {
-    body.append(dashEmpty("Jot data unavailable — check Settings."));
+    body.append(dashEmpty("Jot data unavailable - check Settings."));
   } else if (result.goals.length === 0) {
     body.append(dashEmpty("No active goals in Jot right now."));
   } else {
@@ -7874,7 +7874,7 @@ function renderGoalPage() {
   actionRow.className = "goal-action-row";
   const startBtn = document.createElement("button");
   startBtn.className = "goal-start-btn";
-  startBtn.textContent = "Set up run";
+  startBtn.textContent = "Start Autopilot run";
   startBtn.addEventListener("click", async () => {
     const goal = goalInput.value.trim();
     const projectPath = cwdInput.value.trim();
@@ -8692,7 +8692,7 @@ window.helm.onGoalEvent((evt) => {
     // a run erroring while the user is on Chat/Plan would otherwise sit
     // silently until they happen to check the Goal page.
     unseenGoalAttention.add(run.goalRunId);
-    showToast(`Goal run "${run.goal}" failed: ${run.error}`);
+    showToast(`Autopilot run "${run.goal}" failed: ${run.error} - open Autopilot to see its worktree.`);
     updateGoalAttentionBadge();
     window.helm.notifyAttention({ title: "Helm - a goal run failed", body: run.goal });
   } else if (evt.kind === "escalation") {
@@ -8702,7 +8702,7 @@ window.helm.onGoalEvent((evt) => {
     // promise to resolve and send "done" with the same info.
     run.escalation = evt.escalation;
     unseenGoalAttention.add(run.goalRunId);
-    showToast(`Goal run "${run.goal}" paused - needs you`);
+    showToast(`Autopilot run "${run.goal}" paused - needs you (Resume it from Autopilot)`);
     updateGoalAttentionBadge();
     window.helm.notifyAttention({ title: "Helm - a run needs you", body: run.goal });
   }
@@ -9449,7 +9449,7 @@ function routineFormEl(routine) {
   const cwdIn = document.createElement("input");
   cwdIn.type = "text";
   cwdIn.value = routine?.cwd || "";
-  cwdIn.placeholder = "Repo folder (optional; defaults to the meta-home)";
+  cwdIn.placeholder = "Repo folder (optional; defaults to your first mate's home base)";
   const promptIn = document.createElement("textarea");
   promptIn.rows = 3;
   promptIn.value = routine?.prompt || "";
