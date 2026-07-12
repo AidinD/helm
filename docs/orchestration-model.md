@@ -56,12 +56,14 @@ Small quick things skip the chain - the captain goes straight to a second mate o
 This is the canonical intended workflow - the target the phased build (below) is heading for.
 
 1. **Start the day in the first mate.** Prompt it: "what should I work on today? I want to work on A, B and C."
-2. **The first mate creates one second mate per topic** - a real project-rooted session (Opus) for A, for B, for C. Not just a dispatched headless run; an actual second-mate session that exists and is jumpable.
+2. **The first mate PROPOSES one assignment per topic and creates the second mate LAZILY.** It lays out A, B, C as per-project assignments; the actual project-rooted Opus session is spun up only when you first ENGAGE that topic (jump in or dispatch), not all three up front. (Refinement 2026-07-12: eager creation would leave two untouched Opus sessions burning context on a day you only work A - lazy creation is the token-honest default, same UX for you.)
+   - **Granularity is per PROJECT, not per arbitrary task.** A second mate is keyed by (first mate, project). So "one second mate per topic" holds when A/B/C are different projects; three tasks in the SAME project are one second mate holding three assignments (they'd collide on the repo/worktree otherwise).
 3. **Two ways to proceed, the captain's choice** (this dual mode is essential):
    - **Orchestrate via the first mate** - stay in the first mate and drive the second mates through it. Simpler, more orchestratory - but the first mate stays active and relays, so it costs more tokens.
    - **Jump into a second mate and work there directly** - hands-on in the project session. Preferred token-wise: the first mate goes dormant (bills nothing) while you work in the one Opus session that matters.
-   Either mode must work; the captain switches freely.
+   Either mode must work; the captain switches freely. **Both modes operate on the SAME second-mate session** (one canonical secondMateId -> sessionId binding) - never two parallel contexts for one topic, or the first mate's view and your direct work diverge.
 4. **Ask the first mate for a summary when done.** Go back to the first mate; it aggregates across the second mates into one cross-project wrap-up.
+   - This depends on the second mates having **externalized** their state (a report / DECISIONS.md / Jot). In the cheap direct-work mode the first mate is dormant and has NO memory of what you did there - it reconstructs the summary from files, so a second mate that left no durable trace is un-summarizable. Every second mate must leave a trace before retire.
 5. **Retire.** The second mates are ephemeral (their continuity is the project's own files); the first mate is a durable role, dormant until tomorrow.
 
 The current build stands at Phase 1 of the phased path (below): the first mate dispatches Autopilot *runs* directly and "second mate" is a derived VIEW, not yet a created session.

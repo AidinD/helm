@@ -30,12 +30,13 @@ Guardrails first, because this is the tier that can run away (the rejected unbou
 - **A token budget ceiling** per orchestration + a visible **kill switch** (stop the whole tree).
 - Bounded, explicit dispatch only - never recursive self-spawn.
 
-Then:
-1. **`helm_create_second_mate(project, brief)`** - a first-mate tool that spawns a project-rooted Opus session, binds it (second-mate binding already exists), and seeds it with the brief. One per A/B/C.
-2. **Second mate dispatches its own crew** - give the second-mate session the crew-dispatch capability (Autopilot runs within its project), depth-capped so crew can't re-dispatch.
-3. **Report UP the chain** - second mate aggregates its crew's reports and reports to the first mate; first mate aggregates across second mates for the captain (step 4). Extends the existing `dispatch:report` + report-queue plumbing one tier.
-4. **First-mate-driven mode** - the relay so the captain can steer a second mate through the first mate (step 3 mode 1), not only by jumping in.
-5. **Model-per-tier wiring** - first mate Sonnet (already), created second mate Opus, crew by complexity.
+Then (incorporating the captain's 4 refinements, 2026-07-12):
+1. **Propose assignments, create the second mate LAZILY.** `helm_propose_assignments` lets the first mate lay out A/B/C as per-project assignments; the project-rooted Opus session is spun up only on first ENGAGEMENT (jump in or dispatch) via `helm_create_second_mate(project, brief)` - not all three up front (no idle Opus sessions burning context). Keyed per PROJECT: three tasks in one project = one second mate with three assignments, not three sessions.
+2. **One canonical session per second mate.** The `secondMateId -> sessionId` binding is authoritative; BOTH the first-mate-driven mode and direct jump-in read/write the SAME session, so the two modes never diverge into parallel contexts for one topic.
+3. **Second mate dispatches its own crew** - give the second-mate session the crew-dispatch capability (Autopilot runs within its project), depth-capped so crew can't re-dispatch.
+4. **Report UP the chain + externalize** - second mate aggregates its crew's reports and reports to the first mate; first mate aggregates across second mates for the captain (step 4). A second mate MUST leave a durable trace (report / DECISIONS.md / Jot) before retire, because in direct-work mode the first mate is dormant and reconstructs the summary from files, not memory. Extends the existing `dispatch:report` + report-queue plumbing one tier.
+5. **First-mate-driven mode** - the relay so the captain can steer a second mate through the first mate (step 3 mode 1), not only by jumping in.
+6. **Model-per-tier wiring** - first mate Sonnet (already), created second mate Opus, crew by complexity.
 
 ## Durability + resume (REQUIRED, cross-cutting - see orchestration-model.md)
 
