@@ -1,7 +1,7 @@
 // Unit test (pure node): ownership scoping of dispatch claiming - the fix for
 // the cross-instance orphaning bug (two Helm builds sharing one meta-home queue
 // but keeping separate mate stores). Run: node scripts/e2e/test-dispatch-ownership.mjs
-import { isForeignDispatch } from "../../src/lib/dispatchCaps.js";
+import { isForeignDispatch, depthCapExceeded } from "../../src/lib/dispatchCaps.js";
 
 let exit = 0;
 function assert(cond, msg) {
@@ -41,6 +41,12 @@ assert(
   isForeignDispatch({ dispatchedBy: "mate_dc2b1d61" }, ["mate_dc2b1d61"]) === false,
   "ownedMateIds may be passed as an array"
 );
+
+// Phase-2 tier depth cap: crew can never dispatch (the only legal chain is
+// first-mate -> second-mate -> crew).
+assert(depthCapExceeded([], { dispatchedBy: "sm_x", callerTier: "crew" }) === true, "a crew-tier caller is depth-capped (crew can't dispatch)");
+assert(depthCapExceeded([], { dispatchedBy: "sm_x", callerTier: "second-mate" }) === false, "a second-mate caller is allowed (it dispatches crew)");
+assert(depthCapExceeded([], { dispatchedBy: "mate_x" }) === false, "a first-mate caller (no tier) is allowed");
 
 console.log(exit === 0 ? "VERIFY OK: dispatch ownership scoping skips foreign mates and runs our own." : "VERIFY FAILED.");
 process.exit(exit);

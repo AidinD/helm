@@ -52,6 +52,11 @@ contextBridge.exposeInMainWorld("helm", {
   getVersion: () => ipcRenderer.invoke("app:version"),
   isDevBuild: () => ipcRenderer.invoke("app:isDev"),
   continueOnMobile: (payload) => ipcRenderer.invoke("session:continueOnMobile", payload),
+  // Phase-2 orchestration guardrails (Slice 0): kill switch + budget.
+  killOrchestration: () => ipcRenderer.invoke("orchestration:killTree"),
+  resumeOrchestration: () => ipcRenderer.invoke("orchestration:resume"),
+  getOrchestrationBudget: () => ipcRenderer.invoke("orchestration:budget"),
+  setOrchestrationCeiling: (ceilingUsd) => ipcRenderer.invoke("orchestration:setCeiling", { ceilingUsd }),
   getOrchestratorInfo: () => ipcRenderer.invoke("orchestrator:info"),
   // Stale-build indicator: getBuildStatus() returns the running build's own
   // identity plus whatever the last periodic on-disk check found; onBuildStaleUpdate
