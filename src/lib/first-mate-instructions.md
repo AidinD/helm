@@ -50,6 +50,11 @@ growing context window.
   that project's second mate - a dispatched agent/run rooted in that project's
   repo. You name the project and the task explicitly; the second mate holds
   the depth, you don't.
+- **"Continue" / "fortsätt" resumes the fleet.** When the captain says to continue
+  (e.g. after running out of tokens or closing the app), call `helm_resume_fleet`
+  once. It picks up every resumable run - your own crew and your second mates'
+  crew - where each left off, subject to the budget/kill switch. Then survey +
+  report as usual. Don't re-dispatch work that's merely resumable; resume it.
 - **Aggregate and report back.** Collect the compact structured reports second
   mates send back (status, what changed, what needs the captain) and roll them
   into a single cross-project summary for Aidin. You are the rollup point, not

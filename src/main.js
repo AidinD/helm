@@ -987,7 +987,7 @@ function resolveDispatchProject(project) {
 // it has no live channel to answer a permission prompt (verified: without this,
 // a real first-mate session replies "TOOL-BLOCKED" and never dispatches - review M3).
 const FIRST_MATE_MCP_SERVER = "helm-dispatch";
-const FIRST_MATE_ALLOWED_TOOLS = ["helm_dispatch", "helm_collect_reports", "helm_list_projects", "helm_fleet_state", "helm_report_up", "helm_create_second_mate", "helm_relay_to_second_mate"].map(
+const FIRST_MATE_ALLOWED_TOOLS = ["helm_dispatch", "helm_collect_reports", "helm_list_projects", "helm_fleet_state", "helm_report_up", "helm_create_second_mate", "helm_relay_to_second_mate", "helm_resume_fleet"].map(
   (t) => `mcp__${FIRST_MATE_MCP_SERVER}__${t}`
 );
 
@@ -2037,7 +2037,7 @@ ipcMain.handle("goal:cancel", (_event, { goalRunId }) => {
 // this safe (see runGoal's resume path). "fortsätt" (Slice 6) drives this.
 // (Resuming an app-RESTART-interrupted run isn't supported yet - the worktree
 // path isn't persisted mid-run; that needs Slice 6's mid-run persistence.)
-ipcMain.handle("goal:resume", (_event, { goalRunId }) => {
+function resumeGoalRunById(goalRunId) {
   const rec = loadGoalRunHistory().find((r) => r.goalRunId === goalRunId);
   if (!rec) {
     return { ok: false, error: "No such run." };
@@ -2098,6 +2098,34 @@ ipcMain.handle("goal:resume", (_event, { goalRunId }) => {
     resume,
   });
   return { ok: true, goalRunId: started.goalRunId };
+}
+ipcMain.handle("goal:resume", (_event, { goalRunId }) => resumeGoalRunById(goalRunId));
+
+// Phase-2 Slice 6: the top-down "fortsätt" cascade. Resumes EVERY resumable run
+// (quota-stopped / escalated) owned by a first mate's tree - its own directly-
+// dispatched crew AND its second mates' crew. Each resume is individually gated
+// (resumable-once, on-disk, kill/budget) by resumeGoalRunById, so this is just a
+// safe fan-out over the owned resumable set - nothing here bypasses a guardrail.
+function resumeFleet(ownerMateId) {
+  const history = loadGoalRunHistory();
+  const ownedSecondMates = new Set(
+    deriveSecondMates(history)
+      .filter((s) => s.firstMateId === ownerMateId)
+      .map((s) => s.secondMateId)
+  );
+  const mine = history.filter(
+    (r) => r.resumable && (r.dispatchedBy === ownerMateId || ownedSecondMates.has(r.dispatchedBy))
+  );
+  let resumed = 0;
+  for (const r of mine) {
+    if (resumeGoalRunById(r.goalRunId).ok) {
+      resumed += 1;
+    }
+  }
+  return { resumed, total: mine.length };
+}
+ipcMain.handle("orchestration:resumeFleet", (_event, { mateId }) => {
+  return { ok: true, ...resumeFleet(mateId || null) };
 });
 
 // Phase-2 guardrail (Slice 0): the KILL SWITCH. Stops the whole orchestration
@@ -2765,6 +2793,14 @@ function processDispatchRequests(metaHome) {
         } else {
           reject(relayRes.error);
         }
+        continue;
+      }
+
+      // Phase-2 Slice 6: "fortsätt" cascade. Resume every resumable run under
+      // this first mate's tree. Each resume is individually guardrail-gated.
+      if (request.kind === "resume-fleet") {
+        const res = resumeFleet(request.dispatchedBy || null);
+        writeAck(metaHome, dispatchId, { status: "accepted", resumed: res.resumed, total: res.total });
         continue;
       }
 
