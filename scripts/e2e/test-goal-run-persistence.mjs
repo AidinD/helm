@@ -62,7 +62,7 @@ try {
   await app.eval(`(() => { for (const id of goalRuns.keys()) { goalRunExpanded.add(id); } renderGoalPage(); return true; })()`);
   const blocks = await app.eval(`document.querySelectorAll("#goalPage .goal-run-detail").length`);
   assert(blocks >= 2, `Goal page renders the rehydrated run blocks (got ${blocks})`);
-  const interruptedShown = await app.eval(`/Interrupted by an app restart/.test(document.getElementById("goalPage").innerText)`);
+  const interruptedShown = await app.eval(`/Interrupted when Helm restarted/.test(document.getElementById("goalPage").innerText)`);
   assert(interruptedShown, "interrupted run shows its explanatory status line");
   const cancelBtns = await app.eval(`document.querySelectorAll("#goalPage .goal-run-detail .goal-cancel-btn").length`);
   assert(cancelBtns === 0, `no Cancel button on non-running rehydrated runs (got ${cancelBtns})`);
