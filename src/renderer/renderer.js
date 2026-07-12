@@ -6424,8 +6424,13 @@ function dashboardGoalAttentionRuns() {
 // Runs actively working right now (not the attention ones above). Previously
 // these had NO Dashboard presence - a run was invisible until it errored or
 // escalated - so there was no "it's running" signal (the captain's task 2dd992c8).
+// DISPATCHED (crew) runs are excluded: they already show as a live crew row
+// under their second mate in the Fleet section right below the queue, so
+// listing them here too was pure duplication (flow review P3). A captain-
+// launched Direct run (no dispatchedBy) has no crew row, so it stays here - the
+// queue is its only live home.
 function dashboardRunningRuns() {
-  return [...goalRuns.values()].filter((r) => r.status === "running" && !r.escalation);
+  return [...goalRuns.values()].filter((r) => r.status === "running" && !r.escalation && !r.dispatchedBy);
 }
 
 function dashboardInMotionRows() {
@@ -6956,8 +6961,13 @@ function reportRowDoneBtn(run) {
   const btn = document.createElement("button");
   btn.className = "dash-report-done";
   btn.textContent = "Done";
-  btn.title = "Mark this run done (removes it from report-back)";
   const worktreePath = run.result?.worktreePath || null;
+  // Set expectations up front (flow review P3): "Done" acknowledges the run and
+  // KEEPS its worktree by default. A run that left a worktree gets an explicit
+  // keep-vs-remove choice on click; one that didn't is a plain acknowledge.
+  btn.title = worktreePath
+    ? "Mark this run done - you'll choose to keep or remove its worktree"
+    : "Mark this run done (clears it from report-back)";
   btn.addEventListener("click", (e) => {
     e.stopPropagation();
     if (!worktreePath) {
