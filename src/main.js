@@ -979,7 +979,7 @@ function resolveDispatchProject(project) {
 // it has no live channel to answer a permission prompt (verified: without this,
 // a real first-mate session replies "TOOL-BLOCKED" and never dispatches - review M3).
 const FIRST_MATE_MCP_SERVER = "helm-dispatch";
-const FIRST_MATE_ALLOWED_TOOLS = ["helm_dispatch", "helm_collect_reports", "helm_list_projects", "helm_fleet_state"].map(
+const FIRST_MATE_ALLOWED_TOOLS = ["helm_dispatch", "helm_collect_reports", "helm_list_projects", "helm_fleet_state", "helm_report_up"].map(
   (t) => `mcp__${FIRST_MATE_MCP_SERVER}__${t}`
 );
 
@@ -1019,7 +1019,7 @@ function secondMateInstructions() {
 // mate (callerTier "second-mate", callerId = its secondMateId). The MCP server
 // stamps every request it writes with this callerId (as dispatchedBy) + tier, so
 // the watcher's ownership + depth caps route it correctly.
-function buildDispatchMcpConfig(metaHome, callerId, callerTier) {
+function buildDispatchMcpConfig(metaHome, callerId, callerTier, parentMateId = null) {
   const serverPath = path.join(__dirname, "mcp", "helmDispatchServer.js");
   const config = {
     mcpServers: {
@@ -1035,6 +1035,10 @@ function buildDispatchMcpConfig(metaHome, callerId, callerTier) {
           HELM_META_HOME: metaHome,
           HELM_MATE_ID: callerId,
           HELM_CALLER_TIER: callerTier,
+          // A second mate's parent first mate, so helm_report_up can address its
+          // roll-up to the first mate (dispatchedBy = this id). Empty for a first
+          // mate (it's the top - it reports to the captain via the Dashboard).
+          HELM_PARENT_MATE_ID: parentMateId || "",
           HELM_PROJECTS: JSON.stringify(knownProjects()),
           HELM_WIDTH_CAP: String(DISPATCH_WIDTH_CAP),
         },
@@ -1510,7 +1514,8 @@ ipcMain.handle(
         effectiveSecondMateId = secondMateId || secondMateIdForSession(resumeSessionId);
         const metaHome = resolveMetaHome();
         ensureDispatchDirs(metaHome);
-        mcpConfig = buildDispatchMcpConfig(metaHome, effectiveSecondMateId, "second-mate");
+        const parentMateId = readBindings()[effectiveSecondMateId]?.firstMateId || null;
+        mcpConfig = buildDispatchMcpConfig(metaHome, effectiveSecondMateId, "second-mate", parentMateId);
         allowedTools = FIRST_MATE_ALLOWED_TOOLS;
         if (!resumeSessionId) {
           appendSystemPrompt = secondMateInstructions();

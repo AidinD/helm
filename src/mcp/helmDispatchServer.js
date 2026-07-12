@@ -30,9 +30,11 @@
 //   HELM_WIDTH_CAP  - max concurrent dispatched runs (default 3)
 
 import process from "node:process";
+import crypto from "node:crypto";
 import {
   ensureDispatchDirs,
   writeRequest,
+  writeReport,
   readAck,
   readReports,
   readFleetState,
@@ -46,6 +48,9 @@ const MATE_ID = process.env.HELM_MATE_ID || null;
 // is a tool-less runGoal, can never dispatch). Defaults to first-mate for the
 // original single-tier behaviour.
 const CALLER_TIER = process.env.HELM_CALLER_TIER || "first-mate";
+// A second mate's parent first mate, so helm_report_up can address the roll-up
+// to it. Empty for a first mate (the top of the chain).
+const PARENT_MATE_ID = process.env.HELM_PARENT_MATE_ID || null;
 const WIDTH_CAP = Number(process.env.HELM_WIDTH_CAP) || 3;
 
 function loadProjects() {
@@ -119,6 +124,20 @@ const TOOLS = [
     description:
       "Survey the WHOLE fleet before deciding today's focus: the active first mates and every mate's recent dispatched work (project, status, whether it awaits the captain), plus live/needs-captain rollups by project. Your helm_collect_reports only shows YOUR OWN dispatches - this shows the OTHER mate's too, so you can avoid overlap and propose COMPLEMENTARY focus (e.g. 'the other mate already has crewline + reinmaker in flight, so I'll take X'). Each dispatched entry is tagged `yours: true/false` relative to you.",
     inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "helm_report_up",
+    description:
+      "SECOND MATES ONLY: roll up your project's outcome and report it UP to your first mate (who aggregates across projects for the captain). Call this once your assignment is done or needs to pause - after you've validated your crew's work. Give a compact synthesis, not a transcript. This is how the chain closes: first-mate <- you <- crew.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        summary: { type: "string", description: "A compact synthesis of what happened in this project (what changed, what holds)." },
+        needsCaptain: { type: "string", description: "What (if anything) needs the captain's decision. Omit or empty if nothing does." },
+        project: { type: "string", description: "The project this report is for (name or path); defaults to your own." },
+      },
+      required: ["summary"],
+    },
   },
 ];
 
@@ -214,6 +233,36 @@ function toolFleetState() {
   };
 }
 
+// Second mate -> first mate roll-up. Writes a report addressed to the parent
+// first mate (dispatchedBy = PARENT_MATE_ID), so the first mate's own
+// helm_collect_reports surfaces it. Tagged fromSecondMate so a retire-trace
+// check (and the Dashboard) can attribute it. Synthetic dispatchId - a roll-up
+// answers no single dispatch.
+function toolReportUp(args) {
+  if (CALLER_TIER !== "second-mate" || !PARENT_MATE_ID) {
+    return { error: "helm_report_up is only for a second mate reporting to its first mate." };
+  }
+  if (!META_HOME) {
+    return { error: "HELM_META_HOME not configured; cannot reach the report inbox." };
+  }
+  const summary = (args?.summary || "").trim();
+  if (!summary) {
+    return { error: "summary is required." };
+  }
+  const dispatchId = "reportup-" + crypto.randomUUID();
+  writeReport(META_HOME, {
+    dispatchId,
+    dispatchedBy: PARENT_MATE_ID,
+    fromSecondMate: MATE_ID,
+    tier: "second-mate",
+    kind: "report-up",
+    project: args?.project || null,
+    summary,
+    needsCaptain: (args?.needsCaptain || "").trim() || null,
+  });
+  return { ok: true, reportedTo: PARENT_MATE_ID };
+}
+
 function callTool(name, args) {
   switch (name) {
     case "helm_dispatch":
@@ -224,6 +273,8 @@ function callTool(name, args) {
       return toolListProjects();
     case "helm_fleet_state":
       return toolFleetState();
+    case "helm_report_up":
+      return toolReportUp(args || {});
     default:
       return { error: `Unknown tool: ${name}` };
   }
