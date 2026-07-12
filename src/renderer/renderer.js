@@ -4370,6 +4370,28 @@ function renderQuota() {
   // intentionally empty — see comment above
 }
 
+// Dashboard token-quota chip (6ed0b09e). Reads state.quota (the same source the
+// context-gauge popover uses) into the topbar chip. No-op when the dashboard
+// isn't rendered; hidden when there's no quota data yet. Live-updated from the
+// poll tick (fillDashboardSections) and the quota stream event.
+function renderDashQuota() {
+  const chip = document.getElementById("dashQuotaChip");
+  if (!chip) {
+    return;
+  }
+  const q = state.quota;
+  if (!q) {
+    chip.textContent = "";
+    chip.title = "";
+    chip.className = "dash-quota-chip";
+    return;
+  }
+  const pct = Math.round((q.utilization || 0) * 100);
+  chip.textContent = `Quota ${pct}%`;
+  chip.title = `${pct}% of your ${q.rateLimitType || "usage"} limit used`;
+  chip.className = "dash-quota-chip" + (pct >= 80 ? " hot" : pct >= 50 ? " warm" : "");
+}
+
 // A cheap summary of exactly the fields renderSidebar()'s output depends on
 // (session identity/status/model/archived + the Jot badge fields it reads,
 // plus the config knobs that affect grouping/visibility). Comparing this
@@ -5902,6 +5924,9 @@ async function fillDashboardSections({ force = false } = {}) {
     }
     return;
   }
+  // Keep the topbar quota chip current on every tick (cheap; no-op if absent).
+  renderDashQuota();
+
   // Persona catalog for the Fleet cards' picker - loaded once, before the
   // (synchronous) fleet render below reads it.
   await ensurePersonaCatalog();
@@ -6003,9 +6028,16 @@ async function renderDashboardPage() {
   heading.append(h2, sub);
   const topbarActions = document.createElement("div");
   topbarActions.className = "dash-topbar-actions";
-  topbarActions.append(focusModeToggleEl());
+  // Token-quota readout on the Dashboard too (6ed0b09e) - previously only in the
+  // per-pane context-gauge popover, invisible when no chat is open. Live-updated
+  // by renderDashQuota (poll tick + quota events).
+  const quotaChip = document.createElement("div");
+  quotaChip.id = "dashQuotaChip";
+  quotaChip.className = "dash-quota-chip";
+  topbarActions.append(quotaChip, focusModeToggleEl());
   topbar.append(heading, topbarActions);
   page.append(topbar);
+  renderDashQuota();
 
   // Each dynamic section lives in its own stable slot so the refresh tick can
   // re-render just the section whose data changed (fillDashboardSections),
@@ -10270,7 +10302,11 @@ window.helm.onSessionEvent((evt) => {
   // App-wide, not tied to any one pane — must never be gated behind a pane
   // lookup (a stale/missing launch entry shouldn't also swallow quota news).
   if (evt.kind === "quota") {
+    if (evt.quota) {
+      state.quota = evt.quota;
+    }
     renderQuota(evt.quota);
+    renderDashQuota(); // keep the dashboard chip live as quota news streams in
     return;
   }
 
