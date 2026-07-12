@@ -2549,7 +2549,11 @@ function processDispatchRequests(metaHome) {
       // first mate (the daily-loop "lay out A/B/C" step). Just registers the lazy
       // proposal + acks with the id - no run, so it's NOT gated by budget/kill.
       if (request.kind === "propose-second-mate") {
-        const proposeProject = resolveDispatchProject(request.project) || request.project;
+        // No `|| request.project` fallback: resolveDispatchProject already
+        // accepts a valid absolute-path escape hatch and returns null for an
+        // unknown name/path - falling back to the raw string would register a
+        // phantom second mate at a bogus path (review CONFIRMED).
+        const proposeProject = resolveDispatchProject(request.project);
         if (!proposeProject) {
           reject(`Unknown project "${request.project}". Call helm_list_projects, or pass an explicit absolute repo path.`);
           continue;

@@ -90,7 +90,7 @@ export function deriveSecondMates(runHistory, bindings = readBindings()) {
       if (b.sessionId) {
         sm.sessionId = b.sessionId;
       }
-      sm.status = b.status || (b.sessionId ? "created" : "created");
+      sm.status = b.status || (b.sessionId ? "created" : "proposed");
       sm.brief = b.brief || null;
       sm.assignments = b.assignments || null;
     }
