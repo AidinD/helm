@@ -388,7 +388,7 @@ async function tryStartVoiceStream(index, micBtn, promptEl, language) {
   });
   micBtn.classList.add("recording");
   micBtn.innerHTML = MIC_ICON_RECORDING;
-  micBtn.title = "Recording — release to stop (live streaming transcription)";
+  micBtn.title = "Recording - release to stop (live streaming transcription)";
   return true;
 }
 
@@ -408,7 +408,7 @@ async function stopVoiceStreamIfActive(index) {
   // has already been continuously transcribing in real time.
   entry.micBtn.classList.remove("recording");
   entry.micBtn.innerHTML = MIC_ICON_IDLE;
-  entry.micBtn.title = "Hold to record voice input (transcribed locally, offline) — or hold Alt in the composer";
+  entry.micBtn.title = "Hold to record voice input (transcribed locally, offline) - or hold Alt in the composer";
   entry.promptEl.focus();
   return true;
 }
@@ -588,7 +588,7 @@ async function startVoiceRecording(index, micBtn, promptEl) {
       micBtn.title = `Transcription failed: ${err.message}`;
     } finally {
       micBtn.disabled = false;
-      micBtn.title = "Hold to record voice input (transcribed locally, offline) — or hold Alt in the composer";
+      micBtn.title = "Hold to record voice input (transcribed locally, offline) - or hold Alt in the composer";
     }
   });
 
@@ -599,7 +599,7 @@ async function startVoiceRecording(index, micBtn, promptEl) {
   entry.rollingTimer = setInterval(rollingTick, VOICE_ROLLING_INTERVAL_MS);
   micBtn.classList.add("recording");
   micBtn.innerHTML = MIC_ICON_RECORDING;
-  micBtn.title = "Recording — release to stop (transcribing live)";
+  micBtn.title = "Recording - release to stop (transcribing live)";
 }
 
 function stopVoiceRecording(index) {
@@ -1100,7 +1100,7 @@ function toggleContextPopover(anchor, pane) {
   } else {
     const none = document.createElement("div");
     none.className = "cpop-empty";
-    none.textContent = "Quota: — (no data yet)";
+    none.textContent = "Quota: - (no data yet)";
     pop.append(none);
   }
 
@@ -1851,7 +1851,7 @@ function openFreshDraftInPane(cwd, draftText, opts = {}) {
     // toast (the app's reliable "something happened" signal, visible wherever
     // you're looking) PLUS an accent flash on the composer shell for when your
     // eyes are already there - for every fresh pane, draft or empty.
-    showToast(draftText ? "Draft loaded — review and press Enter to send" : "New session started");
+    showToast(draftText ? "Draft loaded - review and press Enter to send" : "New session started");
     const shellEl = paneEl.querySelector(".composer-shell");
     if (shellEl) {
       shellEl.classList.remove("composer-shell-draft-flash");
@@ -2794,7 +2794,7 @@ function renderPane(index) {
   if (pane.turns.length === 0 && pane.hiddenCount === 0) {
     const empty = document.createElement("div");
     empty.className = "pane-empty";
-    empty.textContent = "No history yet — start typing below.";
+    empty.textContent = "No history yet - start typing below.";
     scroll.append(empty);
   } else {
     appendTurns(scroll, pane.turns);
@@ -2902,7 +2902,7 @@ function wireEditableUserTurns(index, scroll) {
     if (pane.cliSessionId && !pane.transcriptTruncated) {
       const rewindBtn = document.createElement("button");
       rewindBtn.className = "copy-btn rewind-btn";
-      rewindBtn.title = "Rewind to here — go back to this point, dropping everything after it";
+      rewindBtn.title = "Rewind to here - go back to this point, dropping everything after it";
       rewindBtn.textContent = "⤺";
       rewindBtn.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -2959,7 +2959,7 @@ function wireDoneButtonOnLastReply(index, scroll) {
   let acked = isAcked;
   const applyAckedVisual = () => {
     done.classList.toggle("acked", acked);
-    done.title = acked ? "Marked done — click to undo" : "Nothing left to do here — mark done (comes back automatically if new activity happens).";
+    done.title = acked ? "Marked done - click to undo" : "Nothing left to do here - mark done (comes back automatically if new activity happens).";
   };
   done.className = "copy-btn done-btn";
   done.textContent = "✓";
@@ -3342,7 +3342,7 @@ function openInlineCapture(actions, button, cwd) {
   const input = document.createElement("input");
   input.type = "text";
   input.className = "pane-capture-input";
-  input.placeholder = "Capture to DECISIONS.md — Enter to save, Esc to cancel";
+  input.placeholder = "Capture to DECISIONS.md - Enter to save, Esc to cancel";
   let done = false;
   const close = () => {
     if (done) {
@@ -3831,7 +3831,7 @@ function paneComposerEl(index) {
   micBtn.type = "button";
   micBtn.className = "icon-btn";
   micBtn.innerHTML = MIC_ICON_IDLE;
-  micBtn.title = "Hold to record voice input (transcribed locally, offline) — or hold Alt in the composer";
+  micBtn.title = "Hold to record voice input (transcribed locally, offline) - or hold Alt in the composer";
   micBtn.addEventListener("mousedown", (e) => {
     e.preventDefault(); // don't steal focus from the composer on mousedown
     startVoiceRecording(index, micBtn, promptEl);
@@ -3920,7 +3920,7 @@ function paneComposerEl(index) {
     label.className = "ctx-label";
     label.textContent = `${pct}%`;
     contextGauge.append(bar, label);
-    contextGauge.title = "Context in use for this session — click for detail + quota";
+    contextGauge.title = "Context in use for this session - click for detail + quota";
 
     // First-mate refresh pipe: a first mate stays thin. When this IS a first
     // mate, it's saturating, and it's idle (not mid-task), surface a one-click
@@ -3932,7 +3932,7 @@ function paneComposerEl(index) {
       handoffEl.innerHTML = "";
       const msg = document.createElement("span");
       msg.className = "first-mate-handoff-msg";
-      msg.textContent = `First mate ${pct}% full — `;
+      msg.textContent = `First mate ${pct}% full - `;
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "text-btn";
@@ -6184,7 +6184,7 @@ async function renderDashboardPage() {
   const sub = document.createElement("div");
   sub.className = "analysis-totals";
   sub.style.marginBottom = "0";
-  sub.textContent = "No orchestrator session is open right now — it's a faculty, not a room. Start one fresh whenever you need it.";
+  sub.textContent = "No first mate on watch right now. It's a role you fill when you need it, not a session that stays open - start one fresh whenever you like.";
   heading.append(h2, sub);
   const topbarActions = document.createElement("div");
   topbarActions.className = "dash-topbar-actions";
@@ -6590,7 +6590,7 @@ function dashProposeRowEl(session) {
 
   const why = document.createElement("div");
   why.className = "dash-q-why";
-  why.textContent = session.orchestratorTag?.reason || "No activity, no open Jot work — looks wrapped up.";
+  why.textContent = session.orchestratorTag?.reason || "No activity, no open Jot work - looks wrapped up.";
   qbody.append(why);
   row.append(qbody);
 
@@ -6972,7 +6972,7 @@ function dashReportRowEl(run) {
   const title = document.createElement("span");
   title.className = "dash-q-title";
   const origin = run.dispatchedBy ? "Dispatched" : "Autopilot";
-  title.textContent = `${origin}: "${goalSnippet}" — ${report.status}`;
+  title.textContent = `${origin}: "${goalSnippet}" - ${report.status}`;
   top.append(title);
   qbody.append(top);
 
@@ -7386,7 +7386,7 @@ async function renderFocusPage() {
   if (!result.ok) {
     const empty = document.createElement("div");
     empty.className = "pane-empty";
-    empty.textContent = "Jot data unavailable — check that Jot is enabled and its file exists (Settings).";
+    empty.textContent = "Jot data unavailable - check that Jot is enabled and its file exists (Settings).";
     page.append(empty);
     return;
   }
@@ -7507,7 +7507,7 @@ function focusGoalCard(goal, isTop) {
 
   const score = document.createElement("span");
   score.className = "focus-score";
-  score.title = "Attention score — higher means it deserves your focus sooner";
+  score.title = "Attention score - higher means it deserves your focus sooner";
   score.textContent = String(goal.attentionScore);
   head.append(score);
 
@@ -7532,7 +7532,7 @@ function focusGoalBreakdown(goal) {
 
   const subHead = document.createElement("div");
   subHead.className = "focus-sub-head";
-  subHead.textContent = goal.subtaskTotal > 0 ? "Subtasks" : "No subtasks yet — break this goal down below.";
+  subHead.textContent = goal.subtaskTotal > 0 ? "Subtasks" : "No subtasks yet - break this goal down below.";
   body.append(subHead);
 
   if (goal.subtaskTotal > 0) {
@@ -8070,9 +8070,18 @@ function goalRunDetailEl(run) {
     // Rehydrated from disk (see goalRunHistory.js/goal:history): the run was
     // still "running" when Helm last shut down, so there is no live
     // process behind it anymore - its actual outcome is unknown, not "done".
-    statusLine.textContent = "Interrupted by an app restart - check the worktree/branch on disk for what it left behind.";
+    statusLine.textContent =
+      "Interrupted when Helm restarted. Resume to re-attach to its worktree and continue, or open the worktree to see what it left behind.";
   }
   progress.append(statusLine);
+  // An interrupted run kept its worktree, so it can be resumed straight from
+  // here (goal:resume validates it's actually resumable and toasts if not).
+  if (run.status === "interrupted") {
+    const resumeRow = document.createElement("div");
+    resumeRow.className = "goal-summary-actions goal-interrupted-actions";
+    resumeRow.append(goalResumeButton(run.goalRunId));
+    progress.append(resumeRow);
+  }
 
   // Fresh-context honesty label: each iteration is a separate `claude -p` with
   // no accumulated context - continuity between iterations is carried only via
@@ -8103,7 +8112,7 @@ function goalRunDetailEl(run) {
   // event arrives (it precedes "done"), so a human-gated pause is visible
   // immediately rather than only once the run winds down.
   if (run.escalation) {
-    wrap.append(goalEscalationCard(run.escalation));
+    wrap.append(goalEscalationCard(run.escalation, run.goalRunId));
   }
 
   if (run.status === "done" && run.result && run.result.stoppedReason !== "escalated") {
@@ -8385,7 +8394,7 @@ function goalSummaryCard(result) {
 
   const title = document.createElement("div");
   title.className = "goal-summary-title";
-  title.textContent = "Run complete — review the work in its isolated worktree";
+  title.textContent = "Run complete - review the work in its isolated worktree";
   card.append(title);
 
   const rows = [
@@ -8434,17 +8443,49 @@ const GOAL_ESCALATION_SIGNAL_LABELS = {
 // app already uses for "needs you" states, so it reads as a distinct,
 // attention-worthy pause rather than a normal completion.
 //
-// Resume: goalOrchestrator.js does NOT yet expose a "continue this exact run"
-// entry point - `runGoal` always creates a brand-new worktree/branch. The
-// worktree/branch/notes.md/phase.json ARE preserved on disk (the whole point
-// of pausing rather than aborting), so a one-click resume is architecturally
-// possible, but wiring a NEW runGoal call to an EXISTING worktree instead of
-// creating a fresh one is real orchestrator work, not a renderer-only change.
-// Rather than fake a resume button that silently starts an unrelated new run
-// against the same project, this card surfaces the paused worktree/branch so
-// the user can inspect or continue the work by hand today, and says plainly
-// that one-click resume is a follow-up.
-function goalEscalationCard(escalation) {
+// One-click Resume for a paused/interrupted run. goal:resume (resumeGoalRunById)
+// re-attaches runGoal to the run's EXISTING worktree/branch/baseCommit (Phase 2
+// Slice 5) instead of forking a fresh one, and is gated server-side on
+// resumable + kill switch + budget + width cap. So the button just fires the
+// intent and surfaces whatever the backend decides; the same run then streams
+// its own goal:events as it continues. This is the per-run twin of the first
+// mate's "fortsätt" cascade (resumeFleet) - same engine, captain-initiated from
+// the card instead of from the mate.
+function goalResumeButton(goalRunId) {
+  const btn = document.createElement("button");
+  btn.className = "goal-resume-btn";
+  btn.textContent = "Resume run";
+  btn.title = "Re-attach to this run's existing worktree and continue it";
+  btn.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    btn.disabled = true;
+    btn.textContent = "Resuming…";
+    const res = await window.helm.resumeGoalRun({ goalRunId });
+    if (!res || !res.ok) {
+      // atCap is a soft, expected outcome (the mate is already at its concurrent
+      // cap); everything else is a real reason the run can't resume.
+      showToast(
+        res?.atCap
+          ? "At the concurrent-run cap for this mate - resume again once one finishes."
+          : `Couldn't resume: ${res?.error || "unknown error"}`
+      );
+      btn.disabled = false;
+      btn.textContent = "Resume run";
+      return;
+    }
+    // The resumed run streams into its own (possibly new) goalRunId; drop this
+    // terminal card so the live one takes over on the next render.
+    goalRuns.delete(goalRunId);
+    renderGoalPage();
+  });
+  return btn;
+}
+
+// The paused-run card. A run pauses (escalation) rather than aborting precisely
+// so it can be continued: goal:resume re-attaches to its preserved worktree, so
+// the card offers a one-click Resume alongside the preserved worktree/branch for
+// hand inspection.
+function goalEscalationCard(escalation, goalRunId) {
   const card = document.createElement("div");
   card.className = "goal-summary-card goal-escalation-card";
 
@@ -8483,8 +8524,18 @@ function goalEscalationCard(escalation) {
   const note = document.createElement("div");
   note.className = "goal-summary-note";
   note.textContent =
-    "The run paused here rather than continuing blind - nothing was discarded. Its worktree, branch, notes.md and plan.md are all preserved above for you to inspect, and you can continue the work by hand in that worktree. One-click resume from this card is a planned follow-up, not wired up yet.";
+    "The run paused here rather than continuing blind - nothing was discarded. Its worktree, branch, notes.md and plan.md are all preserved above. Resume to re-attach to that worktree and continue where it left off, or open the worktree to carry on by hand.";
   card.append(note);
+
+  // One-click resume (goal:resume re-attaches to the preserved worktree). Only
+  // when we know the run id (always, on the Goal page; the dashboard queue row
+  // has its own resume affordance).
+  if (goalRunId) {
+    const actions = document.createElement("div");
+    actions.className = "goal-summary-actions";
+    actions.append(goalResumeButton(goalRunId));
+    card.append(actions);
+  }
 
   return card;
 }
@@ -9820,7 +9871,7 @@ function renderSettingsPage() {
   languageTitle.className = "settings-toggle-title";
   const languageDesc = document.createElement("div");
   languageDesc.className = "settings-toggle-desc";
-  languageDesc.textContent = "Same global setting as the mic button's language picker in the composer — changing either one changes both.";
+  languageDesc.textContent = "Same global setting as the mic button's language picker in the composer - changing either one changes both.";
   languageLabel.append(languageTitle, languageDesc);
   const settingsLanguageDD = dropdownPill(
     state.config?.voiceLanguage || "swedish",
@@ -10010,7 +10061,7 @@ async function renderAnalysisPage() {
   if (modelEntries.length === 0) {
     const empty = document.createElement("div");
     empty.className = "pane-empty";
-    empty.textContent = "No data yet — usage logs as you use Helm.";
+    empty.textContent = "No data yet - usage logs as you use Helm.";
     modelBlock.append(empty);
   } else {
     modelEntries.forEach(([m, c]) => modelBlock.append(barRow(m.replace("claude-", ""), c, modelMax)));
@@ -10036,14 +10087,14 @@ async function renderAnalysisPage() {
   skillUsageBlock.className = "analysis-block";
   const skillUsageH = document.createElement("h3");
   skillUsageH.textContent = "Skill usage (best-effort)";
-  skillUsageH.title = 'Guessed from a leading "/skill-name" in the prompt text — not a real event from the CLI, so this misses skills invoked any other way.';
+  skillUsageH.title = 'Guessed from a leading "/skill-name" in the prompt text - not a real event from the CLI, so this misses skills invoked any other way.';
   skillUsageBlock.append(skillUsageH);
   const skillEntries = Object.entries(summary.bySkill).sort((a, b) => b[1] - a[1]);
   const skillMax = skillEntries.length ? skillEntries[0][1] : 0;
   if (skillEntries.length === 0) {
     const empty = document.createElement("div");
     empty.className = "pane-empty";
-    empty.textContent = "No data yet — only counts prompts starting with /skill-name.";
+    empty.textContent = "No data yet - only counts prompts starting with /skill-name.";
     skillUsageBlock.append(empty);
   } else {
     skillEntries.forEach(([s, c]) => skillUsageBlock.append(barRow(s, c, skillMax)));
@@ -10132,13 +10183,13 @@ async function renderAnalysisPage() {
   usageBlock.className = "analysis-block";
   const usageH = document.createElement("h3");
   usageH.textContent = "Your Helm views";
-  usageH.title = "Which app views you navigate to. Local and content-free — only view names + timestamps.";
+  usageH.title = "Which app views you navigate to. Local and content-free - only view names + timestamps.";
   usageBlock.append(usageH);
   const viewMax = helmUsage.views.length ? helmUsage.views[0].count : 0;
   if (!helmUsage.views.length) {
     const empty = document.createElement("div");
     empty.className = "pane-empty";
-    empty.textContent = "No data yet — navigation logs as you move around Helm.";
+    empty.textContent = "No data yet - navigation logs as you move around Helm.";
     usageBlock.append(empty);
   } else {
     helmUsage.views.forEach((v) => usageBlock.append(barRow(v.page, v.count, viewMax)));
