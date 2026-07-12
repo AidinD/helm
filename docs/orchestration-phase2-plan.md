@@ -12,6 +12,11 @@ Grounded in a read of the actual code (dispatch watcher, secondMates, goalOrches
 - Crew = `runGoal` (goalOrchestrator.js): fresh-subprocess-per-iteration in an always-freshly-created worktree; continuity via notes.md/phase.json/plan.md; never uses startSession, so crew has no tools (the current depth cap).
 - Resume today is display-only: `goal:history` relabels a dead `running` record `interrupted`. No path relaunches runGoal against an existing worktree. `--resume` is only for interactive panes.
 
+## Build status (2026-07-12)
+- **Slice 0 - guardrails: DONE + verified + committed.** orchestrationBudget.js (per-meta-home cost ceiling + kill switch, atomic budget.json) + unit test; dispatchCaps depth cap rejects callerTier==='crew'; processDispatchRequests rejects when killed/over-budget + counts costUsd + owns second-mate ids; kill/resume/budget IPC + Dashboard chip.
+- **Slice 1 - lazy proposed/created second mates: DONE + verified + committed.** secondMates.js status/brief/firstMateId/projectPath in bindings; deriveSecondMates unions proposed; proposeSecondMate/markSecondMateCreated; bind flips proposed->created; secondMates:propose IPC; Fleet renders a proposed mate distinctly. Unit test.
+- **Slices 2-6: NOT STARTED.** Next focused pass. Slice 4 (canonical-session mutex) + Slice 5 (worktree reuse) are the flagged hazards - build them with fresh attention, not at a session tail.
+
 ## Slices (build in order)
 
 ### Slice 0 - Guardrails first (pure, unit-testable)
