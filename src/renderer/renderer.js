@@ -4387,22 +4387,42 @@ function renderQuota() {
 // context-gauge popover uses) into the topbar chip. No-op when the dashboard
 // isn't rendered; hidden when there's no quota data yet. Live-updated from the
 // poll tick (fillDashboardSections) and the quota stream event.
-function renderDashQuota() {
+async function renderDashQuota() {
   const chip = document.getElementById("dashQuotaChip");
   if (!chip) {
     return;
   }
   const q = state.quota;
-  if (!q) {
-    chip.textContent = "";
-    chip.title = "";
-    chip.className = "dash-quota-chip";
+  if (q) {
+    // The real subscription quota %, when the API actually reported it (a
+    // rate_limit_event - only arrives intermittently, typically near a limit).
+    const pct = Math.round((q.utilization || 0) * 100);
+    chip.textContent = `Quota ${pct}%`;
+    chip.title = `${pct}% of your ${q.rateLimitType || "usage"} limit used`;
+    chip.className = "dash-quota-chip" + (pct >= 80 ? " hot" : pct >= 50 ? " warm" : "");
     return;
   }
-  const pct = Math.round((q.utilization || 0) * 100);
-  chip.textContent = `Quota ${pct}%`;
-  chip.title = `${pct}% of your ${q.rateLimitType || "usage"} limit used`;
-  chip.className = "dash-quota-chip" + (pct >= 80 ? " hot" : pct >= 50 ? " warm" : "");
+  // Fallback so the chip is never blank (bug 6ed0b09e: "I still don't see it" -
+  // the API quota % is only present near a limit, so for a user with headroom it
+  // was always empty -> hidden). Helm's OWN usage log (readUsageSummary) is
+  // always available: show cumulative tracked spend + run count. Labeled "Usage"
+  // (not "Quota") so it's not mistaken for the subscription %.
+  try {
+    const res = await window.helm.getUsageSummary();
+    const cost = Number(res?.totalCostUsd) || 0;
+    const runs = Number(res?.totalRuns) || 0;
+    if (cost > 0 || runs > 0) {
+      chip.textContent = `Usage $${cost.toFixed(2)}`;
+      chip.title = `Helm-tracked spend across ${runs} run${runs === 1 ? "" : "s"} (your subscription quota % only shows when the API reports it, near a limit).`;
+      chip.className = "dash-quota-chip";
+      return;
+    }
+  } catch {
+    // fall through to empty
+  }
+  chip.textContent = "";
+  chip.title = "";
+  chip.className = "dash-quota-chip";
 }
 
 // Phase-2 orchestration guardrail control (Slice 0): a budget readout + a kill/
@@ -5326,9 +5346,15 @@ function continueOnMobileBtn(session, { title } = {}) {
   const btn = document.createElement("button");
   btn.className = "fleet-btn fleet-mobile-btn";
   btn.title = "Continue this session on your phone (opens a Remote Control terminal)";
-  // Simple monochrome phone glyph matching the other fleet buttons (✎ ↻), not a
-  // colourful emoji (bug ca32567c: "isn't there a simple phone or wifi icon").
-  btn.textContent = "✆";
+  // A clear monochrome WIFI icon (bug ca32567c: the ✆/↗ glyphs were unreadable -
+  // "go with a wifi symbol"). Inline SVG on currentColor so it matches the other
+  // fleet buttons' colour + hover, and is unambiguous at this size.
+  btn.innerHTML =
+    '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">' +
+    '<path d="M4 11a13 13 0 0 1 16 0"/>' +
+    '<path d="M7.5 14.5a8 8 0 0 1 9 0"/>' +
+    '<circle cx="12" cy="18.5" r="1.1" fill="currentColor" stroke="none"/>' +
+    "</svg>";
   btn.addEventListener("click", async (e) => {
     e.stopPropagation();
     const cwd = session?.cwd || "";
@@ -6336,7 +6362,9 @@ function dashboardProposalSessions() {
 // rows are the fix: same needs-you priority as a "waiting" session, clicking
 // one just switches to the Goal facet where goalRunDetailEl renders the run.
 function dashboardGoalAttentionRuns() {
-  return [...goalRuns.values()].filter((r) => r.status === "error" || r.escalation);
+  // Exclude acknowledged runs so marking one Done actually clears it from the
+  // needs-you queue (bug 7328fcba: a failed run stayed as needs-you forever).
+  return [...goalRuns.values()].filter((r) => (r.status === "error" || r.escalation) && !isGoalRunAcknowledged(r.goalRunId));
 }
 
 // Runs actively working right now (not the attention ones above). Previously
@@ -6713,6 +6741,14 @@ function dashGoalRunRowEl(run) {
   meta.textContent = isRunning ? "running" : "needs input";
   row.append(meta);
 
+  // A terminal attention run (errored/escalated) needs a way to be cleared right
+  // here - a failed run with no worktree had no Done affordance on either surface
+  // and got stuck as needs-you (bug 7328fcba). reportRowDoneBtn handles the no-
+  // worktree case as a plain acknowledge; a running run uses Cancel, not Done.
+  if (!isRunning) {
+    row.append(reportRowDoneBtn(run));
+  }
+
   return row;
 }
 
@@ -6825,6 +6861,11 @@ const REPORT_BACK_LIMIT = 6;
 async function acknowledgeGoalRun(goalRunId) {
   const acked = [...new Set([...(state.config.acknowledgedGoalRuns || []), goalRunId])];
   state.config = await window.helm.setConfig({ acknowledgedGoalRuns: acked });
+  // Also drop it from the unseen-attention set + badge, so acknowledging an
+  // errored/escalated run actually clears its "needs you" everywhere, not just
+  // the report glance (bug 7328fcba: a failed run stayed as needs-you).
+  unseenGoalAttention.delete(goalRunId);
+  updateGoalAttentionBadge();
   await fillDashboardSections({ force: true });
 }
 
