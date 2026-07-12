@@ -2077,6 +2077,12 @@ function resumeGoalRunById(goalRunId) {
   if (!rec.worktreePath || !fs.existsSync(rec.worktreePath)) {
     return { ok: false, error: "The run's worktree is no longer on disk - can't resume." };
   }
+  // Require a baseCommit: without it countCommitsOnBranch reads 0, so a resumed
+  // run that added no NEW commit could be auto-deleted despite prior work (the
+  // unborn-repo edge the review flagged). Real git projects always have one.
+  if (!rec.baseCommit) {
+    return { ok: false, error: "This run has no recorded base commit - can't safely resume." };
+  }
   // Respect the Slice-0 guardrails: a resume launches a real autonomous run, so
   // the kill switch + budget ceiling must gate it exactly like a fresh dispatch
   // (review #2 - resume must not be a backdoor around Stop / over-budget).
@@ -2147,8 +2153,15 @@ function resumeFleet(ownerMateId) {
       .filter((s) => s.firstMateId === ownerMateId)
       .map((s) => s.secondMateId)
   );
+  // Exclude still-LIVE runs: they carry resumable:true mid-run (corrected on
+  // completion), but they're running, not resumable now - counting them would
+  // make `total` misleading and could have the mate re-issue fortsätt in a loop
+  // (review PLAUSIBLE).
   const mine = history.filter(
-    (r) => r.resumable && (r.dispatchedBy === ownerMateId || ownedSecondMates.has(r.dispatchedBy))
+    (r) =>
+      r.resumable &&
+      !liveGoalRuns.has(r.goalRunId) &&
+      (r.dispatchedBy === ownerMateId || ownedSecondMates.has(r.dispatchedBy))
   );
   let resumed = 0;
   for (const r of mine) {
