@@ -65,13 +65,23 @@ export function deriveSecondMates(runHistory, bindings = readBindings()) {
     if (!r || !r.projectPath) {
       continue;
     }
-    const firstMateId = r.dispatchedBy || DIRECT_FIRST_MATE;
-    const id = secondMateId(firstMateId, r.projectPath);
+    const dispatcher = r.dispatchedBy || DIRECT_FIRST_MATE;
+    // A crew run dispatched BY A SECOND MATE (Phase 2: second mates dispatch
+    // their own crew) carries that second mate's id in dispatchedBy. Attach the
+    // crew to THAT second mate directly - hashing it as a (firstMate, project)
+    // pair would mint a PHANTOM node whose firstMateId is itself a second mate,
+    // stranding the real crew and breaking report-up parent resolution
+    // (ship-review). Second-mate ids are "sm_<hash>"; first mates are
+    // "mate_<uuid>" or the synthetic "direct".
+    const dispatchedBySecondMate = typeof dispatcher === "string" && dispatcher.startsWith("sm_");
+    const id = dispatchedBySecondMate ? dispatcher : secondMateId(dispatcher, r.projectPath);
     let sm = byId.get(id);
     if (!sm) {
       sm = {
         secondMateId: id,
-        firstMateId,
+        // A first-mate-dispatched run names its own parent (the dispatcher). A
+        // second-mate-dispatched one gets its parent from the binding below.
+        firstMateId: dispatchedBySecondMate ? bindings[id]?.firstMateId || DIRECT_FIRST_MATE : dispatcher,
         projectPath: r.projectPath,
         name: path.basename(r.projectPath) || r.projectPath,
         sessionId: null,
@@ -89,6 +99,12 @@ export function deriveSecondMates(runHistory, bindings = readBindings()) {
       }
       if (b.sessionId) {
         sm.sessionId = b.sessionId;
+      }
+      // Trust the binding's parent when it has one - it's how a second-mate-
+      // dispatched node learns its real first mate (the run record only carries
+      // the dispatching second mate, not the first mate above it).
+      if (b.firstMateId) {
+        sm.firstMateId = b.firstMateId;
       }
       sm.status = b.status || (b.sessionId ? "created" : "proposed");
       sm.brief = b.brief || null;

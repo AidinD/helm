@@ -45,17 +45,28 @@ function writeJsonAtomic(filePath, value) {
   fs.renameSync(tmp, filePath);
 }
 
-/** Tolerant read: a missing/corrupt budget reads as a fresh one (never throws). */
+/**
+ * Tolerant read (never throws). A MISSING file reads as a fresh, not-killed
+ * budget - nothing was ever configured, so there's nothing to stop. But a file
+ * that EXISTS and is CORRUPT fails CLOSED on the kill flag: real state was
+ * written there and we can't trust it, so we must not silently un-kill a fleet
+ * the captain stopped (ship-review). Resume (resetBudget) rewrites a clean file
+ * and clears it.
+ */
 export function readBudget(metaHome) {
+  const p = budgetPath(metaHome);
+  if (!fs.existsSync(p)) {
+    return freshState();
+  }
   try {
-    const parsed = JSON.parse(fs.readFileSync(budgetPath(metaHome), "utf8"));
+    const parsed = JSON.parse(fs.readFileSync(p, "utf8"));
     if (parsed && typeof parsed === "object") {
       return { ...freshState(), ...parsed };
     }
   } catch {
-    // missing/corrupt - fall through to a fresh budget
+    // exists but unreadable - fall through to the fail-closed state below
   }
-  return freshState();
+  return { ...freshState(), killed: true, corrupt: true };
 }
 
 function update(metaHome, patch) {

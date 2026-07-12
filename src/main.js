@@ -1813,6 +1813,47 @@ ipcMain.handle("goal:suggestVerifyCommand", async (_event, { projectPath }) => {
   }
 });
 
+// Cross-instance liveness (ship-review data-safety): the goal-run history is a
+// single GLOBAL file shared by every Helm instance of this build, but
+// liveGoalRuns is per-process. Without a cross-process signal, instance B could
+// resume a run instance A is actively driving -> two runs commit to the same
+// worktree/branch -> git corruption + lost commits. So a live run stamps
+// livePid + a periodically-refreshed liveHeartbeatAt on its record; another
+// instance treats a run with a FRESH foreign heartbeat as owned-elsewhere
+// (won't resume it, keeps showing it "running"), and a STALE one as a dead
+// process's leftover (safe to resume). Heartbeat cadence + staleness window:
+const GOAL_HEARTBEAT_MS = 20000;
+const GOAL_HEARTBEAT_STALE_MS = 70000; // ~3.5x the cadence - tolerates a missed beat or two
+
+// Is this run currently live in ANOTHER Helm instance (fresh foreign heartbeat)?
+function isForeignLiveRun(rec) {
+  return (
+    !!rec &&
+    !!rec.livePid &&
+    rec.livePid !== process.pid &&
+    typeof rec.liveHeartbeatAt === "number" &&
+    Date.now() - rec.liveHeartbeatAt < GOAL_HEARTBEAT_STALE_MS
+  );
+}
+
+// Refresh the heartbeat for every run live in THIS process, so another instance
+// can tell our runs are still alive (vs. a crashed process's stale record).
+// Only touches disk when something is actually live, so an idle Helm writes
+// nothing. Cheap: a live run count is normally 0-3.
+setInterval(() => {
+  if (liveGoalRuns.size === 0) {
+    return;
+  }
+  const now = Date.now();
+  for (const goalRunId of liveGoalRuns.keys()) {
+    try {
+      upsertGoalRunRecord({ goalRunId, liveHeartbeatAt: now, updatedAt: now });
+    } catch {
+      // best-effort; a missed beat is tolerated by GOAL_HEARTBEAT_STALE_MS
+    }
+  }
+}, GOAL_HEARTBEAT_MS);
+
 // --- Fas 3 Point 11: run an autonomous goal to (partial) completion in an
 // isolated worktree, streaming each iteration's result to the renderer. This
 // spawns REAL autonomous `claude -p` subprocesses that make real commits, so
@@ -1895,6 +1936,10 @@ function startGoalRun({
     stoppedReason: null,
     escalation: null,
     error: null,
+    // Cross-instance liveness (see isForeignLiveRun): claim this run for THIS
+    // process + start its heartbeat, so no other Helm instance resumes it.
+    livePid: process.pid,
+    liveHeartbeatAt: Date.now(),
     dispatchedBy: dispatch?.dispatchedBy || null,
     dispatchId: dispatch?.dispatchId || null,
     tier: dispatch?.tier || null,
@@ -1997,6 +2042,9 @@ function startGoalRun({
         // with a cumulative commit count (Phase-2 Slice 5).
         baseCommit: result?.baseCommit || null,
         resumable: !!result?.resumable,
+        // Release the cross-instance claim: the run is no longer live here.
+        livePid: null,
+        liveHeartbeatAt: null,
         updatedAt: Date.now(),
       });
       if (dispatch?.onComplete) {
@@ -2017,6 +2065,9 @@ function startGoalRun({
         // A hard error (runGoal threw) is NOT cleanly resumable - clear the
         // mid-run resumable:true so it isn't offered for a "fortsätt".
         resumable: false,
+        // Release the cross-instance claim: the run is no longer live here.
+        livePid: null,
+        liveHeartbeatAt: null,
         updatedAt: Date.now(),
       });
       if (dispatch?.onComplete) {
@@ -2097,6 +2148,14 @@ function resumeGoalRunById(goalRunId) {
   }
   if (liveGoalRuns.has(goalRunId)) {
     return { ok: false, error: "That run is already live." };
+  }
+  // Cross-instance guard (ship-review): liveGoalRuns.has only sees THIS process.
+  // If another Helm instance is actively driving this run (fresh foreign
+  // heartbeat), resuming here would double-run the same worktree -> git
+  // corruption + lost commits. Refuse until its owner finishes or dies (a stale
+  // heartbeat means the owning process is gone, so it becomes resumable again).
+  if (isForeignLiveRun(rec)) {
+    return { ok: false, error: "That run is live in another Helm instance right now - resume it there, or wait for it to finish." };
   }
   if (!rec.worktreePath || !fs.existsSync(rec.worktreePath)) {
     return { ok: false, error: "The run's worktree is no longer on disk - can't resume." };
@@ -2193,6 +2252,7 @@ function resumeFleet(ownerMateId) {
     (r) =>
       r.resumable &&
       !liveGoalRuns.has(r.goalRunId) &&
+      !isForeignLiveRun(r) && // owned+driven by another instance - leave it be
       (r.dispatchedBy === ownerMateId || ownedSecondMates.has(r.dispatchedBy))
   );
   let resumed = 0;
@@ -2262,11 +2322,19 @@ ipcMain.handle("orchestration:setCeiling", (_event, { ceilingUsd }) => {
 // app was restarted mid-run), so it's downgraded to "interrupted" here
 // rather than left to render as a still-live run with a dead Cancel button.
 ipcMain.handle("goal:history", () => {
-  return loadGoalRunHistory().map((record) =>
-    record.status === "running" && !liveGoalRuns.has(record.goalRunId)
-      ? { ...record, status: "interrupted" }
-      : record
-  );
+  return loadGoalRunHistory().map((record) => {
+    if (record.status !== "running" || liveGoalRuns.has(record.goalRunId)) {
+      return record;
+    }
+    // A "running" record with no live process HERE is interrupted - UNLESS it's
+    // genuinely live in another Helm instance (fresh foreign heartbeat), in
+    // which case keep it "running" so this instance doesn't offer to resume a
+    // run someone else is driving (ship-review cross-instance guard).
+    if (isForeignLiveRun(record)) {
+      return record;
+    }
+    return { ...record, status: "interrupted" };
+  });
 });
 
 // --- Per-run worktree management (Goal page cleanup affordances). A
@@ -3232,9 +3300,17 @@ app.on("before-quit", () => {
   // Without this, quitting mid-goal-run leaves the goal's claude.exe/verify
   // trees orphaned (goal children are tracked in liveGoalRuns, not
   // liveChildren). Synchronous kill for the same teardown-race reason.
-  for (const run of liveGoalRuns.values()) {
+  for (const [goalRunId, run] of liveGoalRuns) {
     if (run.currentChild) {
       killChildTree(run.currentChild, { sync: true });
+    }
+    // Release this run's cross-instance claim on a CLEAN quit, so a restart (or
+    // another instance) can resume it immediately instead of waiting out the
+    // stale-heartbeat window. A crash skips this - that's what the window is for.
+    try {
+      upsertGoalRunRecord({ goalRunId, livePid: null, updatedAt: Date.now() });
+    } catch {
+      // best-effort during teardown
     }
   }
   liveGoalRuns.clear();

@@ -8561,7 +8561,9 @@ function goalResumeButton(goalRunId) {
     e.stopPropagation();
     btn.disabled = true;
     btn.textContent = "Resuming…";
-    const res = await window.helm.resumeGoalRun({ goalRunId });
+    // preload signature is resumeGoalRun(goalRunId) - a BARE id, not an object
+    // (passing { goalRunId } double-wraps it and the handler can't find the run).
+    const res = await window.helm.resumeGoalRun(goalRunId);
     if (!res || !res.ok) {
       // atCap is a soft, expected outcome (the mate is already at its concurrent
       // cap); everything else is a real reason the run can't resume.
