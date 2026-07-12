@@ -1514,7 +1514,17 @@ ipcMain.handle(
         effectiveSecondMateId = secondMateId || secondMateIdForSession(resumeSessionId);
         const metaHome = resolveMetaHome();
         ensureDispatchDirs(metaHome);
-        const parentMateId = readBindings()[effectiveSecondMateId]?.firstMateId || null;
+        // Resolve the parent first mate from the DERIVED second mate, not the raw
+        // binding: firstMateId is only ever written by proposeSecondMate (not
+        // reachable in shipping UI yet), whereas deriveSecondMates derives it from
+        // the run history (a crew run's dispatchedBy IS the first mate) - so this
+        // is where the real parent lives (review CONFIRMED). A "direct" second mate
+        // has no first mate above it (it reports to the captain via the Dashboard,
+        // not up a chain), so it gets no parent -> helm_report_up stays disabled
+        // for it (review PLAUSIBLE: "direct" is top-of-chain, don't dead-letter).
+        const derivedSm = deriveSecondMates(loadGoalRunHistory()).find((s) => s.secondMateId === effectiveSecondMateId);
+        const parentFirstMate = derivedSm?.firstMateId;
+        const parentMateId = parentFirstMate && parentFirstMate !== "direct" ? parentFirstMate : null;
         mcpConfig = buildDispatchMcpConfig(metaHome, effectiveSecondMateId, "second-mate", parentMateId);
         allowedTools = FIRST_MATE_ALLOWED_TOOLS;
         if (!resumeSessionId) {
