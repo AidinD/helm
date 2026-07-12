@@ -7987,6 +7987,21 @@ function goalRunDetailEl(run) {
   const goalSnippet = run.goal.length > 80 ? run.goal.slice(0, 80) + "…" : run.goal;
   title.textContent = `Run ${run.ordinal}: ${goalSnippet}`;
   head.append(title);
+  // Collapse control (bug b72fcd1f: an expanded run couldn't be collapsed again).
+  // Shown only for a run the captain MANUALLY expanded (in goalRunExpanded) - a
+  // live/escalated run is force-expanded and stays that way. Clicking removes it
+  // from the expanded set + re-renders, so it folds back to its one-line summary.
+  if (goalRunExpanded.has(run.goalRunId)) {
+    const collapseBtn = document.createElement("button");
+    collapseBtn.className = "goal-collapse-btn";
+    collapseBtn.textContent = "▾ collapse";
+    collapseBtn.title = "Collapse this run back to a one-line summary";
+    collapseBtn.addEventListener("click", () => {
+      goalRunExpanded.delete(run.goalRunId);
+      renderGoalPage();
+    });
+    head.append(collapseBtn);
+  }
   if (run.status === "running") {
     const cancelBtn = document.createElement("button");
     cancelBtn.className = "goal-cancel-btn";
@@ -8114,17 +8129,17 @@ function goalWorktreeActionsEl(run, worktreePath) {
   const deleteBtn = document.createElement("button");
   deleteBtn.className = "text-btn";
   deleteBtn.textContent = "Delete worktree";
+  deleteBtn.title = worktreePath;
   deleteBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    // removeWorktree only removes the worktree checkout itself, never the
-    // branch ref (see lib/worktree.js doc comment) - the confirm copy must
-    // stay accurate about that rather than imply the branch goes away too.
-    const branchNote = run.result?.branchName
-      ? ` (branch "${run.result.branchName}" is kept - delete it by hand if unwanted)`
-      : "";
+    // Keep the confirm label SHORT (bug 58bb6ca7: the full worktree path + full
+    // branch name made a giant menu item). Reference the run + note the branch is
+    // kept, without dumping the long path/branch (both are on the buttons' title
+    // tooltips + the run detail above). removeWorktree only removes the checkout,
+    // never the branch ref (lib/worktree.js), so the copy must stay accurate.
     showContextMenu(e.clientX, e.clientY, [
       {
-        label: `Confirm delete worktree "${worktreePath}"${branchNote}`,
+        label: `Confirm delete Run ${run.ordinal}'s worktree${run.result?.branchName ? " (branch kept)" : ""}`,
         danger: true,
         onClick: async () => {
           deleteBtn.disabled = true;
