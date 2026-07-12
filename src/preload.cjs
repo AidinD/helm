@@ -142,6 +142,14 @@ contextBridge.exposeInMainWorld("helm", {
     ipcRenderer.on("goal:event", listener);
     return () => ipcRenderer.removeListener("goal:event", listener);
   },
+  // Fires when a dispatched run reports back (main writes the report). Lets the
+  // renderer surface the crew report under its first-mate card immediately,
+  // rather than waiting up to a full poll tick for the fleet section to repaint.
+  onDispatchReport: (handler) => {
+    const listener = (_event, payload) => handler(payload);
+    ipcRenderer.on("dispatch:report", listener);
+    return () => ipcRenderer.removeListener("dispatch:report", listener);
+  },
   // Routines page (read-only) - lists Claude Code's own scheduled tasks from
   // ~/.claude/scheduled-tasks/. No scheduler lives in Helm; this just reads.
   listRoutines: () => ipcRenderer.invoke("routines:list"),

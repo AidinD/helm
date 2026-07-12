@@ -19,6 +19,34 @@
 // flight, which is a WIDTH concern, not depth. Conflating the two wrongly
 // refused a first mate's 2nd concurrent dispatch (caught by the cap test).
 
+/**
+ * OWNERSHIP scoping (the cross-instance orphaning bug, 2026-07-12). A dispatch
+ * request carries `dispatchedBy` = the mateId of the first mate that issued it.
+ * The dispatch queue lives under the META-HOME (the first mate's root), which is
+ * the SAME folder for every Helm instance rooted there - but each instance keeps
+ * its OWN mate store (a dev build and the installed build have separate
+ * mates.json / goal-run-history). If any watching instance claims any request,
+ * an instance that does not own the dispatching mate will run the goal and record
+ * it under a mateId absent from its store: the report has no first-mate card to
+ * surface under (orphaned), and the goal gets double-run by both instances
+ * (observed: identical goal branch names under two different goalRunIds).
+ *
+ * `ownedMateIds` is the set of every mateId in THIS instance's mate store (active
+ * OR retired - once an instance spawned a mate, it owns that mate's dispatches
+ * even after the mate retires). Returns true when the request belongs to another
+ * instance and this one must NOT claim it (leave it in the queue so the owner
+ * can). A request with no `dispatchedBy` is not attributable, so it is treated as
+ * ours (never skipped) to preserve the prior behavior for captain/direct runs.
+ */
+export function isForeignDispatch(request, ownedMateIds) {
+  const caller = request?.dispatchedBy || null;
+  if (!caller) {
+    return false;
+  }
+  const owned = ownedMateIds instanceof Set ? ownedMateIds : new Set(ownedMateIds || []);
+  return !owned.has(caller);
+}
+
 /** Number of a mate's currently-live dispatched runs. */
 export function countLiveDispatchesForMate(liveRuns, mateId) {
   if (!mateId) {
