@@ -4428,7 +4428,14 @@ async function refresh() {
   // poll is honored immediately.
   const hiddenNow = new Set(data.config?.hiddenSessions || []);
   for (const session of data.sessions) {
-    if (session.status === "waiting" && !previouslyWaiting.has(session.sessionId) && !hiddenNow.has(session.sessionId)) {
+    if (
+      session.status === "waiting" &&
+      !previouslyWaiting.has(session.sessionId) &&
+      !hiddenNow.has(session.sessionId) &&
+      // A first mate that ends its turn only to await dispatched crew isn't
+      // waiting on you - don't fire the intrusive "needs input" OS toast for it.
+      !mateHasLiveCrew(firstMateForSession(session))
+    ) {
       window.helm.notifyAttention({ title: "Helm - session needs input", body: session.title });
     }
   }
@@ -4830,7 +4837,12 @@ function dashboardQueueFingerprint(inMotion) {
     .map((r) =>
       r.kind === "goalRun"
         ? `g:${r.run?.goalRunId}:${r.run?.status}:${r.run?.iterations?.length || 0}:${r.run?.error ? 1 : 0}`
-        : `s:${r.session.sessionId}:${r.session.status}:${r.session.title}:${r.session.lastActivityAt}`
+        : // Append a crew-liveness bit: a first mate's session status stays
+          // "waiting" its whole idle life, so without this the "waiting on
+          // crew" -> "needs input" flip (when its last crew run finishes) never
+          // repaints the queue. The card is already covered by runsFp in
+          // dashboardFleetFingerprint; only this per-row fingerprint needs it.
+          `s:${r.session.sessionId}:${r.session.status}:${r.session.title}:${r.session.lastActivityAt}:${mateHasLiveCrew(firstMateForSession(r.session)) ? 1 : 0}`
     )
     .join("|");
   const proposals = dashboardProposalSessions()
@@ -4894,6 +4906,19 @@ function crewNeedsCaptain(r) {
 }
 function crewRunning(r) {
   return r.status === "running" && !r.escalation;
+}
+// A first mate is "waiting on crew" (not on you) when its own turn has ended
+// but it still has >=1 live dispatched crew run in flight. Crew runs carry
+// dispatchedBy === the first mate's mateId (same grouping the crew rows use,
+// see pendingSecondMateReviewNudge / terminalRunsBy); crewRunning() is the
+// exact predicate behind the "N crew working" crew-row badge. Single-source
+// this so the card badge and the top queue agree on when a mate is merely
+// awaiting its own dispatched work vs genuinely waiting on the user.
+function mateHasLiveCrew(mate) {
+  if (!mate || !mate.mateId) {
+    return false;
+  }
+  return [...goalRuns.values()].some((r) => r.dispatchedBy === mate.mateId && crewRunning(r));
 }
 
 // A small themed, centered confirm modal (never the native window.confirm -
@@ -5216,6 +5241,11 @@ function fleetMateCardEl(mate, sms, boardSummary = {}) {
     ? state.sessions.find((s) => (s.cliSessionId || s.sessionId) === mate.sessionId)
     : null;
   const mateStatus = boundSession?.status;
+  // A mate whose turn has ended but that still has live dispatched crew is not
+  // blocked on YOU - it's awaiting its own work and will report back. Show a
+  // distinct, non-alarming "waiting on crew" state (blue "in motion", no amber
+  // accent) instead of "needs you". Reserve "needs you" for a truly idle mate.
+  const waitingOnCrew = mateStatus === "waiting" && mateHasLiveCrew(mate);
   const kind = document.createElement("span");
   kind.className = "fleet-kind session";
   kind.textContent = "💬 session";
@@ -5223,13 +5253,13 @@ function fleetMateCardEl(mate, sms, boardSummary = {}) {
   role.className = "fleet-mate-role";
   if (mateStatus === "waiting" || mateStatus === "active") {
     const badge = document.createElement("span");
-    badge.className = "fleet-badge " + (mateStatus === "waiting" ? "need" : "run");
-    badge.textContent = mateStatus === "waiting" ? "needs you" : "working";
+    badge.className = "fleet-badge " + (waitingOnCrew || mateStatus === "active" ? "run" : "need");
+    badge.textContent = waitingOnCrew ? "waiting on crew" : mateStatus === "waiting" ? "needs you" : "working";
     role.append(badge);
   }
   role.append(kind, document.createTextNode(sms.length ? ` ${sms.length} second mate${sms.length === 1 ? "" : "s"}` : " idle"));
   idBox.append(name, role);
-  if (mateStatus === "waiting") {
+  if (mateStatus === "waiting" && !waitingOnCrew) {
     card.classList.add("fleet-mate-needs");
   }
   const actions = document.createElement("div");
@@ -6127,7 +6157,10 @@ function dashboardInMotionRows() {
   const sessionRows = sortByAttention(inMotionSessions).map((s) => ({
     kind: "session",
     session: s,
-    needsAction: s.status === "waiting",
+    // A first mate waiting only because its dispatched crew is still in flight
+    // isn't a click waiting on you - keep it out of the "N need a click" count
+    // and below the genuine needs-you items (needsAction=false sorts last).
+    needsAction: s.status === "waiting" && !mateHasLiveCrew(firstMateForSession(s)),
   }));
   // Attention goal runs (errored/escalated) need a click; running ones are
   // just visibility ("it's working").
@@ -6400,14 +6433,18 @@ function dashSessionRowEl(session) {
   // For a first-mate session, keep the prompt-derived title as context here so
   // its identity (title above) and topic (here) are both legible.
   const contextTitle = mate && session.title && session.title !== mate.name ? `${session.title} · ` : "";
-  why.textContent = (session.status === "waiting" ? "Waiting on you · " : "") + contextTitle + bits.join(" · ");
+  // A first mate waiting only on its own dispatched crew isn't blocked on you -
+  // drop the alarming "Waiting on you" prefix and read "waiting on crew".
+  const waitingOnCrew = session.status === "waiting" && mateHasLiveCrew(mate);
+  const waitPrefix = session.status === "waiting" ? (waitingOnCrew ? "Waiting on crew · " : "Waiting on you · ") : "";
+  why.textContent = waitPrefix + contextTitle + bits.join(" · ");
   qbody.append(why);
   row.append(qbody);
 
   if (session.status === "waiting") {
     const meta = document.createElement("div");
-    meta.className = "dash-q-meta";
-    meta.textContent = "needs input";
+    meta.className = "dash-q-meta" + (waitingOnCrew ? " crew" : "");
+    meta.textContent = waitingOnCrew ? "waiting on crew" : "needs input";
     row.append(meta);
   }
 
@@ -8159,7 +8196,9 @@ function updateGoalAttentionBadge() {
 // unseen goal-run error/escalation, or a session sitting in "waiting".
 function updateAttentionTaskbarCount() {
   const waitingSessions = state.sessions.filter(
-    (s) => !s.isArchived && !isHiddenFromHelm(s) && s.status === "waiting"
+    // Exclude a first mate that's only waiting on its own dispatched crew, so
+    // the taskbar badge stays consistent with the queue's "N need a click".
+    (s) => !s.isArchived && !isHiddenFromHelm(s) && s.status === "waiting" && !mateHasLiveCrew(firstMateForSession(s))
   ).length;
   window.helm.setAttentionCount(unseenGoalAttention.size + waitingSessions);
 }
