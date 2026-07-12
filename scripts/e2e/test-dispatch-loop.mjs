@@ -33,6 +33,11 @@ const stamp = String(Date.now());
 const tmpBase = path.join(os.tmpdir(), "helm-dispatch-e2e-" + stamp);
 const metaHome = path.join(tmpBase, "meta-home");
 const scratchRepo = path.join(tmpBase, "scratch-repo");
+// Ownership scoping (2026-07-12): the app only claims a dispatch whose
+// dispatchedBy is one of ITS mates. Isolate the mate store to a temp file, let
+// the app populate it, and dispatch as one of those owned mates - a hardcoded
+// mate id is now (correctly) treated as foreign and left unclaimed.
+const matesPath = path.join(tmpBase, "mates.json");
 
 // --- tiny MCP stdio client ---------------------------------------------------
 function makeMcpClient(env) {
@@ -90,15 +95,31 @@ try {
   execSync("git add -A", { cwd: scratchRepo });
   execSync('git commit -m "init"', { cwd: scratchRepo });
 
-  // Point the launched app's dispatch watcher at the temp meta-home.
+  // Point the launched app's dispatch watcher at the temp meta-home + mate store.
   process.env.HELM_META_HOME_OVERRIDE = metaHome;
+  process.env.HELM_MATES_PATH = matesPath;
   app = await launch();
   await app.waitForSelector("#pageToggle", 30000, { visible: true });
+
+  // Read one of the app's owned mates to dispatch as (see ownership note above).
+  let ownedMateId = null;
+  for (let i = 0; i < 40 && !ownedMateId; i++) {
+    try {
+      const state = JSON.parse(fs.readFileSync(matesPath, "utf8"));
+      ownedMateId = (state.mates || []).find((m) => m.status === "active")?.mateId || (state.mates || [])[0]?.mateId || null;
+    } catch {
+      // not written yet
+    }
+    if (!ownedMateId) {
+      await wait(150);
+    }
+  }
+  assert(!!ownedMateId, `the app created an owned mate to dispatch as (got ${ownedMateId})`);
 
   // A first-mate MCP client aimed at the SAME temp meta-home + the scratch repo.
   mcp = makeMcpClient({
     HELM_META_HOME: metaHome,
-    HELM_MATE_ID: "mate-e2e",
+    HELM_MATE_ID: ownedMateId,
     HELM_WIDTH_CAP: "3",
     HELM_PROJECTS: JSON.stringify([{ name: "scratch", path: scratchRepo }]),
   });
@@ -170,5 +191,6 @@ try {
     log("temp cleanup note:", e.message);
   }
   delete process.env.HELM_META_HOME_OVERRIDE;
+  delete process.env.HELM_MATES_PATH;
 }
 process.exit(exitCode);
