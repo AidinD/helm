@@ -2067,6 +2067,14 @@ function resumeGoalRunById(goalRunId) {
   if (isOverBudget(gateHome)) {
     return { ok: false, error: "Orchestration is over its budget ceiling - raise or reset the budget first." };
   }
+  // Respect the per-mate WIDTH cap here too, so a mass "fortsätt" can't launch
+  // more than the cap of concurrent runs for one dispatcher (review CONFIRMED:
+  // resumable runs accumulate past the cap while stopped, so resuming them all
+  // at once would blow it). Checked BEFORE clearing resumable, so an over-cap run
+  // stays resumable and a later resume picks it up once a slot frees.
+  if (rec.dispatchedBy && widthCapExceeded(liveRunSnapshot(), rec.dispatchedBy, DISPATCH_WIDTH_CAP)) {
+    return { ok: false, error: `At the concurrent-run cap (${DISPATCH_WIDTH_CAP}) for this mate - resume again once one finishes.`, atCap: true };
+  }
   // Consume this record so it can't be resumed again (guards #1).
   upsertGoalRunRecord({ goalRunId, resumable: false, updatedAt: Date.now() });
   const resume = { worktreePath: rec.worktreePath, branchName: rec.branchName || null, baseCommit: rec.baseCommit || null };
@@ -2101,12 +2109,18 @@ function resumeGoalRunById(goalRunId) {
 }
 ipcMain.handle("goal:resume", (_event, { goalRunId }) => resumeGoalRunById(goalRunId));
 
-// Phase-2 Slice 6: the top-down "fortsätt" cascade. Resumes EVERY resumable run
+// Phase-2 Slice 6: the top-down "fortsätt" cascade. Resumes the resumable runs
 // (quota-stopped / escalated) owned by a first mate's tree - its own directly-
 // dispatched crew AND its second mates' crew. Each resume is individually gated
-// (resumable-once, on-disk, kill/budget) by resumeGoalRunById, so this is just a
-// safe fan-out over the owned resumable set - nothing here bypasses a guardrail.
+// by resumeGoalRunById (resumable-once, on-disk, kill/budget, AND the per-mate
+// width cap), so a mass resume launches at most the cap of concurrent runs per
+// mate and leaves the rest resumable for a later "fortsätt" - no guardrail is
+// bypassed. A null/empty ownerMateId is a no-op (never "resume all direct runs":
+// review PLAUSIBLE - the || null fallback must not become a wildcard).
 function resumeFleet(ownerMateId) {
+  if (!ownerMateId) {
+    return { resumed: 0, total: 0 };
+  }
   const history = loadGoalRunHistory();
   const ownedSecondMates = new Set(
     deriveSecondMates(history)
