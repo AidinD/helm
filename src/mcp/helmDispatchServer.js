@@ -126,6 +126,19 @@ const TOOLS = [
     inputSchema: { type: "object", properties: {} },
   },
   {
+    name: "helm_create_second_mate",
+    description:
+      "FIRST MATES ONLY: propose a second mate for a project (the daily loop's 'lay out A, B, C' step). This does NOT spin up a session - it lazily registers the assignment so the second mate appears in the Fleet; its Opus session spins up only when the captain first engages it (or you relay to it). Idempotent per project.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project: { type: "string", description: "Project name (see helm_list_projects) or absolute repo path." },
+        brief: { type: "string", description: "What this second mate should own for the project (the assignment)." },
+      },
+      required: ["project"],
+    },
+  },
+  {
     name: "helm_report_up",
     description:
       "SECOND MATES ONLY: roll up your project's outcome and report it UP to your first mate (who aggregates across projects for the captain). Call this once your assignment is done or needs to pause - after you've validated your crew's work. Give a compact synthesis, not a transcript. This is how the chain closes: first-mate <- you <- crew.",
@@ -263,10 +276,43 @@ function toolReportUp(args) {
   return { ok: true, reportedTo: PARENT_MATE_ID };
 }
 
+// First mate proposes a second mate (lazy - no session yet). The app handles the
+// "propose-second-mate" request kind and acks with the secondMateId.
+async function toolCreateSecondMate(args) {
+  if (CALLER_TIER !== "first-mate") {
+    return { error: "Only a first mate proposes second mates." };
+  }
+  if (!META_HOME) {
+    return { error: "HELM_META_HOME not configured; cannot reach the dispatch queue." };
+  }
+  const project = (args?.project || "").trim();
+  if (!project) {
+    return { error: "`project` is required." };
+  }
+  ensureDispatchDirs(META_HOME);
+  const dispatchId = writeRequest(META_HOME, {
+    kind: "propose-second-mate",
+    project,
+    brief: (args?.brief || "").trim() || null,
+    dispatchedBy: MATE_ID,
+    callerTier: CALLER_TIER,
+  });
+  const ack = await waitForAck(dispatchId);
+  if (!ack) {
+    return { status: "pending", note: "Proposal queued; the app has not acknowledged it yet." };
+  }
+  if (ack.status === "rejected") {
+    return { status: "rejected", reason: ack.reason || "rejected by Helm" };
+  }
+  return { ok: true, secondMateId: ack.secondMateId || null, project };
+}
+
 function callTool(name, args) {
   switch (name) {
     case "helm_dispatch":
       return toolDispatch(args || {});
+    case "helm_create_second_mate":
+      return toolCreateSecondMate(args || {});
     case "helm_collect_reports":
       return toolCollectReports(args || {});
     case "helm_list_projects":
