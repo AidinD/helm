@@ -2511,26 +2511,30 @@ function liveRunSnapshot() {
 // resumes the bound session (or starts a fresh one), guarded by the per-session
 // turn lock so it never races a direct pane turn on the same session.
 // Returns { ok } (turn launched) or { ok:false, error } (busy / no parent).
-function runRelayTurn(metaHome, { secondMateId, projectPath, message }) {
-  const binding = readBindings()[secondMateId] || {};
+function runRelayTurn(metaHome, { secondMateId: smId, projectPath, message }) {
+  const binding = readBindings()[smId] || {};
   const resumeSessionId = binding.sessionId || null;
-  if (resumeSessionId && sessionTurnLocks.has(resumeSessionId)) {
+  // Lock per bound session, OR per second mate when there's no session yet - so
+  // two rapid relays to an UNBOUND second mate can't both start a fresh Opus
+  // session in the same repo before the first one binds (review CONFIRMED #1).
+  const lockKey = resumeSessionId || "sm:" + smId;
+  if (sessionTurnLocks.has(lockKey)) {
     return { ok: false, error: "That second mate is busy with a turn right now - try again once it's idle." };
   }
   // Resolve the parent first mate from the derived second mate (same source as
   // the session:start path); "direct" second mates have no first mate to report
   // up to, so a relay to one is refused (a relay only makes sense mate->mate).
-  const derivedSm = deriveSecondMates(loadGoalRunHistory()).find((s) => s.secondMateId === secondMateId);
+  const derivedSm = deriveSecondMates(loadGoalRunHistory()).find((s) => s.secondMateId === smId);
   const parentFirstMate = derivedSm?.firstMateId;
   const parentMateId = parentFirstMate && parentFirstMate !== "direct" ? parentFirstMate : null;
   if (!parentMateId) {
     return { ok: false, error: "No parent first mate for this second mate - relay only works first-mate -> second-mate." };
   }
   ensureDispatchDirs(metaHome);
-  const mcpConfig = buildDispatchMcpConfig(metaHome, secondMateId, "second-mate", parentMateId);
-  if (resumeSessionId) {
-    sessionTurnLocks.add(resumeSessionId);
-  }
+  const mcpConfig = buildDispatchMcpConfig(metaHome, smId, "second-mate", parentMateId);
+  sessionTurnLocks.add(lockKey);
+  const childKey = "relay-" + smId + "-" + Date.now();
+  let relayCostUsd = 0;
   let child;
   let done;
   try {
@@ -2546,35 +2550,42 @@ function runRelayTurn(metaHome, { secondMateId, projectPath, message }) {
       strictMcpConfig: false,
       resumeSessionId,
       onEvent: (evt) => {
-        // Bind the session id the moment it appears so the second mate owns its
-        // own crew dispatches + a later relay/jump-in resumes the SAME session.
         if (evt.kind === "session" && evt.sessionId) {
           try {
-            bindSecondMateSession(secondMateId, evt.sessionId);
+            // Bind so the second mate owns its crew dispatches + a later
+            // relay/jump-in resumes the SAME session, and index it so the
+            // relay-driven session shows in the session list like a jumped-into
+            // one (review PLAUSIBLE #3). Fresh launches only (createIfAbsent).
+            bindSecondMateSession(smId, evt.sessionId);
+            recordHelmSession(evt.sessionId, {
+              cwd: projectPath,
+              model: "claude-opus-4-8",
+              title: message.trim().split("\n")[0].slice(0, 80) || "(second mate)",
+              createIfAbsent: !resumeSessionId,
+            });
           } catch {
             // best effort
           }
+        } else if (evt.kind === "result") {
+          relayCostUsd = evt.costUsd || 0;
         }
       },
     }));
   } catch (err) {
-    if (resumeSessionId) {
-      sessionTurnLocks.delete(resumeSessionId);
-    }
+    sessionTurnLocks.delete(lockKey);
     return { ok: false, error: `Failed to start the relay turn: ${err?.message || String(err)}` };
   }
-  if (child) {
-    liveChildren.set("relay-" + secondMateId + "-" + Date.now(), child);
-  }
-  // Fire-and-forget: release the lock when the turn ends + refresh the fleet so
-  // the second mate's report-up surfaces. We do NOT await this (async relay).
+  liveChildren.set(childKey, child);
+  // Fire-and-forget: on turn end, release the lock, drop the child handle (review
+  // #2 - no leak), count the turn's own cost against the orchestration budget
+  // (review #3), and refresh the fleet so the report-up surfaces. NOT awaited.
   done.then(() => {
-    if (resumeSessionId) {
-      sessionTurnLocks.delete(resumeSessionId);
-    }
+    sessionTurnLocks.delete(lockKey);
+    liveChildren.delete(childKey);
+    addSpend(metaHome, relayCostUsd);
     writeFleetStateSnapshot(metaHome);
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send("dispatch:report", { kind: "relay", secondMateId });
+      mainWindow.webContents.send("dispatch:report", { kind: "relay", secondMateId: smId });
     }
   });
   return { ok: true };
