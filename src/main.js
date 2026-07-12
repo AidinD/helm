@@ -2248,7 +2248,7 @@ ipcMain.handle("goal:openWorktree", (_event, { worktreePath }) => {
   return { ok: true };
 });
 
-ipcMain.handle("goal:deleteWorktree", (_event, { goalRunId, projectPath, worktreePath }) => {
+ipcMain.handle("goal:deleteWorktree", (_event, { goalRunId, projectPath, worktreePath, force }) => {
   if (!projectPath || !worktreePath) {
     return { ok: false, error: "projectPath and worktreePath are required" };
   }
@@ -2263,9 +2263,17 @@ ipcMain.handle("goal:deleteWorktree", (_event, { goalRunId, projectPath, worktre
     return { ok: true, alreadyGone: true };
   }
   try {
-    removeWorktree(projectPath, worktreePath);
+    // Default is fail-closed on uncommitted changes (removeWorktree's contract).
+    // The UI catches that specific failure and re-invokes with force:true after
+    // an explicit confirm, so a dirty worktree can be discarded without dropping
+    // to a terminal (bug f9a11d56: "how do I delete an uncommitted worktree?").
+    removeWorktree(projectPath, worktreePath, { force: Boolean(force) });
   } catch (err) {
-    return { ok: false, error: err?.message || String(err) };
+    const message = err?.message || String(err);
+    // Signal the specific "dirty worktree" case so the renderer can offer a
+    // force-discard confirm instead of just surfacing a dead-end error.
+    const uncommitted = /uncommitted changes/i.test(message);
+    return { ok: false, error: message, uncommitted };
   }
   if (goalRunId) {
     removeGoalRunRecord(goalRunId);

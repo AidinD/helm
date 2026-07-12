@@ -5841,7 +5841,17 @@ function fleetCrewItemEl(run) {
           ? `${commits} commit${commits === 1 ? "" : "s"}`
           : run.status;
   item.append(g, label, stateEl);
-  // No separate View/Follow button - the whole row is clickable (above) and
+  // A finished autopilot run gets the same "Done" control the Dashboard report
+  // rows use, right here on the crew row (bug cffdeeb8: "I don't understand what
+  // to do with these - there's no done"). Only for terminal, non-sub-agent runs
+  // (a live run has nothing to acknowledge; a sub-agent isn't captain-ackable).
+  // reportRowDoneBtn stops propagation, so it won't also jump into the run.
+  if (!run.isSubAgent && isTerminalRun(run) && !isGoalRunAcknowledged(run.goalRunId)) {
+    const doneBtn = reportRowDoneBtn(run);
+    doneBtn.classList.add("fleet-crew-done");
+    item.append(doneBtn);
+  }
+  // No separate View/Follow button - the row itself is clickable (above) and
   // deep-links into this run's Autopilot detail (ef303a82).
   return item;
 }
@@ -7987,6 +7997,11 @@ function goalRunDetailEl(run) {
   const goalSnippet = run.goal.length > 80 ? run.goal.slice(0, 80) + "…" : run.goal;
   title.textContent = `Run ${run.ordinal}: ${goalSnippet}`;
   head.append(title);
+  // All right-side controls live in ONE right-aligned group so they cluster
+  // together instead of two competing margin-left:auto's splitting the row and
+  // leaving the collapse control floating mid-head (bug d8b36df6).
+  const right = document.createElement("div");
+  right.className = "goal-run-head-right";
   // Collapse control (bug b72fcd1f: an expanded run couldn't be collapsed again).
   // Shown only for a run the captain MANUALLY expanded (in goalRunExpanded) - a
   // live/escalated run is force-expanded and stays that way. Clicking removes it
@@ -8000,7 +8015,7 @@ function goalRunDetailEl(run) {
       goalRunExpanded.delete(run.goalRunId);
       renderGoalPage();
     });
-    head.append(collapseBtn);
+    right.append(collapseBtn);
   }
   if (run.status === "running") {
     const cancelBtn = document.createElement("button");
@@ -8011,7 +8026,7 @@ function goalRunDetailEl(run) {
       cancelBtn.textContent = "Cancelling after current iteration…";
       await window.helm.cancelGoal(run.goalRunId);
     });
-    head.append(cancelBtn);
+    right.append(cancelBtn);
   } else {
     // Worktree cleanup actions - only once the run is no longer live (a
     // "running" run's worktree is still in use by the in-flight iteration)
@@ -8022,9 +8037,10 @@ function goalRunDetailEl(run) {
     // orphaned worktrees behind with no other way to clean them up.
     const worktreePath = run.result?.worktreePath;
     if (worktreePath) {
-      head.append(goalWorktreeActionsEl(run, worktreePath));
+      right.append(goalWorktreeActionsEl(run, worktreePath));
     }
   }
+  head.append(right);
   wrap.append(head);
 
   const progress = document.createElement("div");
@@ -8130,6 +8146,45 @@ function goalWorktreeActionsEl(run, worktreePath) {
   deleteBtn.className = "text-btn";
   deleteBtn.textContent = "Delete worktree";
   deleteBtn.title = worktreePath;
+  // Perform the delete. force=false is the safe default (fails closed on
+  // uncommitted changes); force=true discards uncommitted work and is only
+  // reached after a second, explicitly-worded confirm (bug f9a11d56).
+  const runDelete = async (force) => {
+    deleteBtn.disabled = true;
+    openBtn.disabled = true;
+    const res = await window.helm.deleteGoalWorktree({
+      goalRunId: run.goalRunId,
+      projectPath: run.projectPath,
+      worktreePath,
+      force,
+    });
+    if (!res || !res.ok) {
+      // Dirty worktree on a non-force attempt: offer force-discard rather than
+      // leaving the user at a dead-end error (which was the whole complaint).
+      if (res?.uncommitted && !force) {
+        deleteBtn.disabled = false;
+        openBtn.disabled = false;
+        forceMode = true;
+        deleteBtn.textContent = "Discard + delete";
+        deleteBtn.classList.add("danger");
+        showToast("Worktree has uncommitted changes - click \"Discard + delete\" to remove it anyway.");
+        return;
+      }
+      showToast(`Failed to delete worktree: ${res?.error || "unknown error"}`);
+      deleteBtn.disabled = false;
+      openBtn.disabled = false;
+      return;
+    }
+    if (res.alreadyGone) {
+      showToast("Worktree was already gone - cleared the entry.");
+    }
+    goalRuns.delete(run.goalRunId);
+    renderGoalPage();
+  };
+
+  // Once a non-force delete reports uncommitted changes, the button flips into
+  // force-discard mode so the next click discards instead of re-confirming.
+  let forceMode = false;
   deleteBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     // Keep the confirm label SHORT (bug 58bb6ca7: the full worktree path + full
@@ -8137,30 +8192,14 @@ function goalWorktreeActionsEl(run, worktreePath) {
     // kept, without dumping the long path/branch (both are on the buttons' title
     // tooltips + the run detail above). removeWorktree only removes the checkout,
     // never the branch ref (lib/worktree.js), so the copy must stay accurate.
+    const label = forceMode
+      ? `Discard uncommitted changes and delete Run ${run.ordinal}'s worktree`
+      : `Confirm delete Run ${run.ordinal}'s worktree${run.result?.branchName ? " (branch kept)" : ""}`;
     showContextMenu(e.clientX, e.clientY, [
       {
-        label: `Confirm delete Run ${run.ordinal}'s worktree${run.result?.branchName ? " (branch kept)" : ""}`,
+        label,
         danger: true,
-        onClick: async () => {
-          deleteBtn.disabled = true;
-          openBtn.disabled = true;
-          const res = await window.helm.deleteGoalWorktree({
-            goalRunId: run.goalRunId,
-            projectPath: run.projectPath,
-            worktreePath,
-          });
-          if (!res || !res.ok) {
-            showToast(`Failed to delete worktree: ${res?.error || "unknown error"}`);
-            deleteBtn.disabled = false;
-            openBtn.disabled = false;
-            return;
-          }
-          if (res.alreadyGone) {
-            showToast("Worktree was already gone - cleared the entry.");
-          }
-          goalRuns.delete(run.goalRunId);
-          renderGoalPage();
-        },
+        onClick: () => runDelete(forceMode),
       },
     ]);
   });

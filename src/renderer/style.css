@@ -3279,15 +3279,19 @@ button.primary {
   color: var(--text);
 }
 
-/* Per-run cancel sits at the right of the run heading. */
-.goal-run-head .goal-cancel-btn {
+/* All right-side head controls (collapse + cancel OR worktree actions) live in
+   this one right-aligned group, so a single margin-left:auto keeps them
+   clustered - no competing auto-margins splitting the row (bug d8b36df6). */
+.goal-run-head-right {
   margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 /* Collapse-back control for a manually-expanded run (bug b72fcd1f). Subtle text
-   button pushed to the right so it clusters with the worktree actions. */
+   button; positioned by the .goal-run-head-right group. */
 .goal-collapse-btn {
-  margin-left: auto;
   background: none;
   border: none;
   color: var(--text-dim);
@@ -3299,12 +3303,10 @@ button.primary {
   color: var(--text);
 }
 
-/* Open/Delete worktree actions (finished runs only) sit in the same slot as
-   the live Cancel button - only one of the two is ever rendered per run. */
+/* Open/Delete worktree actions (finished runs only) - inside the head-right group. */
 .goal-worktree-actions {
   display: flex;
   gap: 8px;
-  margin-left: auto;
 }
 
 .goal-progress {
@@ -4729,6 +4731,13 @@ button.primary {
 }
 .fleet-crew-item.crew-run .fleet-crew-g {
   color: var(--active);
+}
+/* "Done" on a crew row - slightly tighter than the dashboard report variant so
+   it fits the compact 11px row (bug cffdeeb8). */
+.fleet-crew-done {
+  flex: none;
+  padding: 2px 8px;
+  font-size: 10px;
 }
 .dash-q-body {
   flex: 1;

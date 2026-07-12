@@ -32,6 +32,10 @@ try {
     goalRuns.set("done-wt", { goalRunId: "done-wt", ordinal: ++goalRunSeq, goal: "Finished with worktree", projectPath: "P", status: "done", iterations: [], result: { worktreePath: "P-worktrees/goal-x", branchName: "helm/goal-x", stoppedReason: "completed" }, error: null, escalation: null, latestPlan: null });
     goalRuns.set("running-1", { goalRunId: "running-1", ordinal: ++goalRunSeq, goal: "Still running", projectPath: "P", status: "running", iterations: [], result: null, error: null, escalation: null, latestPlan: null });
     goalRuns.set("err-nowt", { goalRunId: "err-nowt", ordinal: ++goalRunSeq, goal: "Errored, no worktree", projectPath: "P", status: "error", iterations: [], result: null, error: "boom", escalation: null, latestPlan: null });
+    // Finished runs collapse to a one-line summary by default now - force them
+    // expanded so the full .goal-run-detail (with worktree actions) renders.
+    goalRunExpanded.add("done-wt");
+    goalRunExpanded.add("err-nowt");
     renderGoalPage();
     return true;
   })()`);
@@ -42,6 +46,14 @@ try {
   // Only the finished-with-worktree run gets the actions group.
   const actionGroups = await count("#goalPage .goal-worktree-actions");
   assert(actionGroups === 1, `worktree actions shown only for the finished run with a worktree (got ${actionGroups})`);
+
+  // Bug d8b36df6: every head control (collapse + worktree actions) clusters in a
+  // single right-aligned group, so the worktree actions live INSIDE it (not as a
+  // sibling with a competing margin-left:auto that left "collapse" floating).
+  const wtInsideRight = await app.eval(
+    `!!document.querySelector("#goalPage .goal-run-head-right .goal-worktree-actions")`
+  );
+  assert(wtInsideRight === true, "worktree actions nested inside the .goal-run-head-right group");
 
   const goalText = await app.eval(`document.getElementById("goalPage").innerText`);
   assert(/Open worktree/.test(goalText), "'Open worktree' button present");

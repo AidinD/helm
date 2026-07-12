@@ -96,10 +96,10 @@ try {
     return { hidden: m.classList.contains("hidden"), items: [...m.querySelectorAll(".item")].map((i) => i.textContent) };
   })()`);
   assert(!menu.hidden, "a choice menu opens for a run that has a worktree");
-  assert(menu.items.some((t) => /clean up worktree/.test(t)) && menu.items.some((t) => /keep the worktree/.test(t)), `the menu offers both cleanup and keep (got ${JSON.stringify(menu.items)})`);
+  assert(menu.items.some((t) => /keep worktree/.test(t)) && menu.items.some((t) => /remove worktree/.test(t)), `the menu offers both cleanup and keep (got ${JSON.stringify(menu.items)})`);
 
   await app.eval(`(() => {
-    const item = [...document.querySelectorAll("#contextMenu .item")].find((i) => /keep the worktree/.test(i.textContent));
+    const item = [...document.querySelectorAll("#contextMenu .item")].find((i) => /keep worktree/.test(i.textContent));
     item.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     return true;
   })()`);
