@@ -4945,7 +4945,11 @@ function fleetPersonaEl(mate) {
   const cur = mate.persona || null;
   const row = document.createElement("div");
   row.className = "fleet-persona";
-  row.addEventListener("click", (e) => e.stopPropagation());
+  // No row-level stopPropagation: it swallowed every click across the persona
+  // row (empty area + label), so clicks to the right of the dropdown "did
+  // nothing" instead of jumping into the card like the rest of it. The dropdown
+  // button below keeps its OWN stopPropagation, so opening the picker still
+  // doesn't jump in. (From the dispatched persona-row-click fix, goal-bc2be26e.)
 
   const tag = document.createElement("span");
   tag.className = "fleet-persona-tag";
