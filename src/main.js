@@ -1930,6 +1930,21 @@ function startGoalRun({
     onChild: (child) => {
       runEntry.currentChild = child;
     },
+    // Persist the worktree identity the moment it exists (Phase-2 Slice 5/6
+    // follow-up): so a run interrupted by an app restart still has its worktree/
+    // branch/baseCommit on the record + can be resumed (before this, those were
+    // only persisted on completion, so an interrupted run had worktreePath:null
+    // and was unresumable). Also stamp it resumable now - rehydration reclassifies
+    // an interrupted run and the goal:resume gate needs resumable + baseCommit.
+    onWorktree: ({ worktreePath, branchName, baseCommit }) => {
+      // Mark resumable:true mid-run. A run that COMPLETES has this corrected by
+      // the completion upsert (resumable only for quota/escalated); a run the app
+      // restart INTERRUPTS never completes, so it stays resumable + now has its
+      // worktree/branch/baseCommit -> goal:resume accepts it. A still-live run is
+      // protected from resume by goal:resume's liveGoalRuns check, so the early
+      // true is harmless.
+      upsertGoalRunRecord({ goalRunId, worktreePath, branchName, baseCommit, resumable: true, updatedAt: Date.now() });
+    },
     onIteration: (record) => send({ kind: "iteration", record }),
     // Forwarded to the renderer as its own "escalation" goal:event kind, on
     // the same channel as "iteration"/"done"/"error", so the Goal page can
@@ -1975,6 +1990,9 @@ function startGoalRun({
         goalRunId,
         status: "error",
         error: errorMessage,
+        // A hard error (runGoal threw) is NOT cleanly resumable - clear the
+        // mid-run resumable:true so it isn't offered for a "fortsätt".
+        resumable: false,
         updatedAt: Date.now(),
       });
       if (dispatch?.onComplete) {
@@ -2035,8 +2053,10 @@ ipcMain.handle("goal:cancel", (_event, { goalRunId }) => {
 // A dispatched run's report-back + budget wiring is reconstructed so a resumed
 // crew run still reports up. The kept worktree is the durable state that makes
 // this safe (see runGoal's resume path). "fortsätt" (Slice 6) drives this.
-// (Resuming an app-RESTART-interrupted run isn't supported yet - the worktree
-// path isn't persisted mid-run; that needs Slice 6's mid-run persistence.)
+// App-RESTART-interrupted runs are now resumable too: startGoalRun's onWorktree
+// persists the worktree/branch/baseCommit + resumable:true the moment the
+// worktree exists, so an interrupted run (which never completed to clear it)
+// still qualifies here.
 function resumeGoalRunById(goalRunId) {
   const rec = loadGoalRunHistory().find((r) => r.goalRunId === goalRunId);
   if (!rec) {

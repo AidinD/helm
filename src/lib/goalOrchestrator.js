@@ -1144,6 +1144,7 @@ export async function runGoal({
   onEscalation,
   cancelToken,
   onChild,
+  onWorktree,
   resume,
 }) {
   if (!projectPath || !goal) {
@@ -1232,6 +1233,18 @@ export async function runGoal({
       baseCommit = runGit(worktreePath, ["rev-parse", "HEAD"]).trim();
     } catch {
       baseCommit = null;
+    }
+  }
+
+  // Surface the worktree identity the MOMENT it exists (not only on completion),
+  // so the caller can persist it mid-run - which is what lets an app-restart-
+  // interrupted run be resumed later (its worktree/branch/baseCommit are on the
+  // record before any iteration). Best-effort; never breaks the run.
+  if (onWorktree) {
+    try {
+      onWorktree({ worktreePath, branchName, baseCommit });
+    } catch {
+      // never let a caller's callback abort the run
     }
   }
 
