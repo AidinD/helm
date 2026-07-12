@@ -1,23 +1,20 @@
-// E2E: the "fortsätt" cascade (durability crux). A first mate's helm_resume_fleet
-// - what the captain's "continue"/"fortsätt" maps to - must cascade to resumeFleet
-// and SELECT exactly the resumable runs owned by that mate's tree (its own crew
-// + its second mates' crew), skipping other mates' runs and non-resumable ones.
+// E2E (LIVE): first-mate -> second-mate relay delivery. A first mate's
+// helm_relay_to_second_mate spawns a REAL second-mate (Opus) turn that receives
+// the message and reports back UP via helm_report_up; the first mate collects it
+// with helm_collect_reports. This is "orchestrate via the first mate" mode.
 //
-// Deterministic without launching real claude: the seeded runs have no worktree
-// on disk, so each is SELECTED (counted in `total`) but not fully relaunched
-// (`resumed` stays 0) - which is exactly what proves the cascade's selection
-// logic. (Full relaunch of a real worktree is covered by resumeGoalRunById's own
-// gating tests + test-dispatch-loop's real run.)
+// This spends a real (small) Opus turn and can take a minute or two. The message
+// is deliberately directive so the turn reliably calls helm_report_up.
 //
-// Run:  node scripts/e2e/test-fortsatt-cascade.mjs
+// Run:  node scripts/e2e/test-relay-delivery.mjs
 import { launch } from "./harness.mjs";
-import { spawn } from "node:child_process";
+import { spawn, execSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 function log(...a) {
-  console.log("[fortsatt-e2e]", ...a);
+  console.log("[relay-delivery-e2e]", ...a);
 }
 let exitCode = 0;
 function assert(cond, msg) {
@@ -26,13 +23,14 @@ function assert(cond, msg) {
     exitCode = 1;
   }
 }
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const REPO_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\//, "")), "..", "..");
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "helm-fortsatt-"));
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "helm-relay-"));
 const metaHome = path.join(tmp, "meta-home");
 const matesPath = path.join(tmp, "mates.json");
-const historyPath = path.join(tmp, "goal-run-history.json");
-fs.mkdirSync(metaHome, { recursive: true });
+const scratchRepo = path.join(tmp, "scratch-repo");
+const TOKEN = "relaytok" + Math.floor(Date.now() / 1000);
 
 function makeMcpClient(env) {
   const serverPath = path.join(REPO_ROOT, "src", "mcp", "helmDispatchServer.js");
@@ -76,14 +74,21 @@ function makeMcpClient(env) {
 let app;
 let mate;
 try {
+  fs.mkdirSync(metaHome, { recursive: true });
+  fs.mkdirSync(scratchRepo, { recursive: true });
+  execSync("git init", { cwd: scratchRepo });
+  execSync('git config user.email "e2e@test.local"', { cwd: scratchRepo });
+  execSync('git config user.name "E2E"', { cwd: scratchRepo });
+  fs.writeFileSync(path.join(scratchRepo, "README.md"), "# scratch\n");
+  execSync("git add -A", { cwd: scratchRepo });
+  execSync('git commit -m "init"', { cwd: scratchRepo });
+
   process.env.HELM_META_HOME_OVERRIDE = metaHome;
   process.env.HELM_MATES_PATH = matesPath;
-  process.env.HELM_GOAL_RUN_HISTORY_PATH = historyPath;
   process.env.HELM_SECOND_MATES_PATH = path.join(tmp, "second-mates.json");
   app = await launch();
   await app.waitForSelector("#pageToggle", 30000, { visible: true });
 
-  // Read one of the app's owned first mates.
   let ownedMateId = null;
   for (let i = 0; i < 40 && !ownedMateId; i++) {
     try {
@@ -91,45 +96,49 @@ try {
       ownedMateId = (state.mates || []).find((m) => m.status === "active")?.mateId || (state.mates || [])[0]?.mateId || null;
     } catch {}
     if (!ownedMateId) {
-      await new Promise((r) => setTimeout(r, 150));
+      await wait(150);
     }
   }
   assert(!!ownedMateId, `found an owned first mate (${ownedMateId})`);
-
-  // Seed history: two resumable runs owned by our mate, one owned by ANOTHER
-  // mate, one owned-but-not-resumable. Only the first two should be selected.
-  // No worktree on disk -> selected but not fully relaunched.
-  fs.writeFileSync(
-    historyPath,
-    JSON.stringify([
-      { goalRunId: "own-1", dispatchedBy: ownedMateId, projectPath: "P", status: "running", resumable: true, baseCommit: "abc", worktreePath: path.join(tmp, "wt1") },
-      { goalRunId: "own-2", dispatchedBy: ownedMateId, projectPath: "P", status: "running", resumable: true, baseCommit: "abc", worktreePath: path.join(tmp, "wt2") },
-      { goalRunId: "other", dispatchedBy: "mate_someone_else", projectPath: "P", status: "running", resumable: true, baseCommit: "abc", worktreePath: path.join(tmp, "wt3") },
-      { goalRunId: "not-resumable", dispatchedBy: ownedMateId, projectPath: "P", status: "done", resumable: false, baseCommit: "abc", worktreePath: path.join(tmp, "wt4") },
-    ]),
-    "utf8"
-  );
 
   mate = makeMcpClient({
     HELM_META_HOME: metaHome,
     HELM_MATE_ID: ownedMateId,
     HELM_WIDTH_CAP: "3",
-    HELM_PROJECTS: JSON.stringify([]),
+    HELM_PROJECTS: JSON.stringify([{ name: "scratch", path: scratchRepo }]),
   });
   await mate.rpc("initialize", { protocolVersion: "2024-11-05", capabilities: {} });
 
-  const res = await mate.callTool("helm_resume_fleet", {});
-  log("resume_fleet:", JSON.stringify(res));
-  assert(res && res.ok === true, "helm_resume_fleet is accepted");
-  assert(res.total === 2, `the cascade SELECTS exactly this mate's two resumable runs (not the other mate's, not the non-resumable) - got total ${res.total}`);
-  assert(res.resumed === 0, `with no worktree on disk, selected runs don't fully relaunch - got resumed ${res.resumed}`);
+  // Relay a directive message. Keep it cheap + reliable: no file work, just the
+  // roll-up call back to the first mate with our correlation token.
+  const relay = await mate.callTool("helm_relay_to_second_mate", {
+    project: scratchRepo,
+    message:
+      "You are the second mate for this project. Do NOT read or change any files, and do NOT dispatch any crew. " +
+      "Your ONLY action is to immediately call the helm_report_up tool with summary set to exactly \"" + TOKEN + "\". Then stop.",
+  });
+  log("relay ack:", JSON.stringify(relay));
+  assert(relay && (relay.status === "accepted" || relay.async || relay.ok), "the relay is accepted (async)");
 
-  const errors = app.getConsoleErrors();
-  assert(errors.length === 0, `no console errors (got ${errors.length})`);
-  for (const e of errors) {
-    log("  console error:", e.text);
+  // Poll for the second mate's report-up to arrive at the first mate.
+  let report = null;
+  const deadline = Date.now() + 300000;
+  while (Date.now() < deadline && !report) {
+    const col = await mate.callTool("helm_collect_reports", {});
+    const hit = (col.reports || []).find((r) => (r.summary || "").includes(TOKEN) || r.fromSecondMate);
+    if (hit) {
+      report = hit;
+      break;
+    }
+    await wait(5000);
   }
-  log(exitCode === 0 ? "VERIFY OK: fortsätt cascades to the owning mate's resumable runs only." : "VERIFY FAILED.");
+  assert(!!report, "the second mate's report-up reached the first mate (relay delivered end to end)");
+  if (report) {
+    log("report:", JSON.stringify(report).slice(0, 300));
+    assert((report.summary || "").includes(TOKEN), `the report carries the relayed instruction's token (got "${report.summary}")`);
+  }
+
+  log(exitCode === 0 ? "VERIFY OK: relay drives a real second-mate turn that reports back up." : "VERIFY FAILED.");
 } catch (err) {
   exitCode = 1;
   log("ERROR:", err.stack || err.message);
@@ -141,7 +150,6 @@ try {
   }
   delete process.env.HELM_META_HOME_OVERRIDE;
   delete process.env.HELM_MATES_PATH;
-  delete process.env.HELM_GOAL_RUN_HISTORY_PATH;
   delete process.env.HELM_SECOND_MATES_PATH;
   try {
     fs.rmSync(tmp, { recursive: true, force: true });
