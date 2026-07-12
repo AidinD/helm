@@ -5156,6 +5156,25 @@ function markCardHandoffBusy(el) {
 // count that expands to the individual report rows for drill-down. Runs that
 // need the captain also bubble up to the Dashboard Report-back, but they stay
 // here too so the mate's own view of its crew is complete.
+// Persist which fleet nodes (crew report rollups, 2nd-mate branches) the captain
+// has expanded, keyed by a stable id, so a FORCED dashboard rebuild (e.g. after
+// marking an autopilot Done, which force-refreshes) doesn't collapse the whole
+// tree back to its default state (bug 36dda656). Survives rebuilds because it's
+// module state, not DOM state.
+const openFleetNodes = new Set();
+function fleetNodeToggler(el, key) {
+  if (openFleetNodes.has(key)) {
+    el.classList.add("open");
+  }
+  return () => {
+    if (el.classList.toggle("open")) {
+      openFleetNodes.add(key);
+    } else {
+      openFleetNodes.delete(key);
+    }
+  };
+}
+
 function fleetMateReportRollupEl(mate) {
   const runs = terminalRunsBy(mate.mateId);
   if (runs.length === 0) {
@@ -5177,7 +5196,8 @@ function fleetMateReportRollupEl(mate) {
   const clear = needs > 0 ? ` · ${needs} need${needs === 1 ? "s" : ""} you` : " · all clear";
   label.textContent = `Crew reported back: ${runs.length}${clear}`;
   head.append(chev, label);
-  head.addEventListener("click", () => wrap.classList.toggle("open"));
+  // Persisted expand state (bug 36dda656): survives the force-rebuild on Done.
+  head.addEventListener("click", fleetNodeToggler(wrap, "rollup:" + mate.mateId));
 
   const rows = document.createElement("div");
   rows.className = "fleet-report-rows";
@@ -5459,9 +5479,11 @@ function fleetSecondMateEl(sm) {
   chev.className = "fleet-chev";
   chev.textContent = "▶";
   chev.style.visibility = crew.length ? "visible" : "hidden";
+  // Persisted expand state (bug 36dda656): survives the force-rebuild on Done.
+  const toggleBranch = fleetNodeToggler(branch, "branch:" + sm.secondMateId);
   chev.addEventListener("click", (e) => {
     e.stopPropagation();
-    branch.classList.toggle("open");
+    toggleBranch();
   });
   const body = document.createElement("div");
   body.className = "fleet-branch-body";
