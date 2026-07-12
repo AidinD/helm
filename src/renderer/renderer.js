@@ -5215,7 +5215,9 @@ function continueOnMobileBtn(session, { title } = {}) {
   const btn = document.createElement("button");
   btn.className = "fleet-btn fleet-mobile-btn";
   btn.title = "Continue this session on your phone (opens a Remote Control terminal)";
-  btn.textContent = "📱";
+  // Simple monochrome glyph matching the other fleet buttons (✎ ↻), not a
+  // colourful emoji that stood out (bug ca32567c). "↗" = hand this off elsewhere.
+  btn.textContent = "↗";
   btn.addEventListener("click", async (e) => {
     e.stopPropagation();
     const cwd = session?.cwd || "";

@@ -4472,11 +4472,23 @@ button.primary {
 .fleet-chev {
   color: var(--text-faint);
   font-size: 9px;
-  margin-top: 3px;
-  transition: transform 0.15s;
+  transition: transform 0.15s, background 0.15s, color 0.15s;
   flex: none;
-  width: 9px;
   cursor: pointer;
+  /* Bigger hit target (bug c717be73): the bare 9px glyph was easy to miss and
+     the click fell through to the node. Pad the clickable box out to ~25px and
+     cancel it with an equal negative margin so surrounding layout doesn't move. */
+  box-sizing: content-box;
+  width: 9px;
+  padding: 8px;
+  margin: -5px 0 -8px -8px;
+  border-radius: 6px;
+  text-align: center;
+  line-height: 9px;
+}
+.fleet-chev:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 12%, transparent);
 }
 .fleet-branch.open .fleet-chev {
   transform: rotate(90deg);
