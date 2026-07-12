@@ -16,3 +16,6 @@ pasted-images/
 # CUDA DLLs and model weights, installed manually per-machine, never
 # committed.
 .whisper/
+
+# Ad-hoc flow-review inspection screenshots (see inspect-flow.mjs)
+scripts/e2e/screenshots/flow-review/

@@ -5307,7 +5307,16 @@ function fleetNodeToggler(el, key) {
 }
 
 function fleetMateReportRollupEl(mate) {
-  const runs = terminalRunsBy(mate.mateId);
+  return fleetReportRollupEl(mate.mateId, "rollup:" + mate.mateId, "Crew reported back");
+}
+
+// The report roll-up for one owner's terminal runs. ownerId === null means the
+// captain's OWN (Direct/Autopilot-launched) runs - those aren't "crew", so the
+// verb differs. Extracted so the Direct card gets the same review surface mate
+// cards have had all along (flow review P1: captain-launched runs used to vanish
+// from the Dashboard the moment they stopped running).
+function fleetReportRollupEl(ownerId, toggleKey, verb) {
+  const runs = terminalRunsBy(ownerId);
   if (runs.length === 0) {
     return null;
   }
@@ -5325,10 +5334,10 @@ function fleetMateReportRollupEl(mate) {
   const label = document.createElement("span");
   label.className = "fleet-report-rollup-label";
   const clear = needs > 0 ? ` · ${needs} need${needs === 1 ? "s" : ""} you` : " · all clear";
-  label.textContent = `Crew reported back: ${runs.length}${clear}`;
+  label.textContent = `${verb}: ${runs.length}${clear}`;
   head.append(chev, label);
   // Persisted expand state (bug 36dda656): survives the force-rebuild on Done.
-  head.addEventListener("click", fleetNodeToggler(wrap, "rollup:" + mate.mateId));
+  head.addEventListener("click", fleetNodeToggler(wrap, toggleKey));
 
   const rows = document.createElement("div");
   rows.className = "fleet-report-rows";
@@ -5919,6 +5928,14 @@ function fleetDirectCardEl(sms) {
     }
   }
   card.append(list);
+
+  // Report roll-up for the captain's OWN finished runs (ownerId null). Without
+  // this a Direct/Autopilot run you launched yourself dropped off the Dashboard
+  // the moment it stopped running - no report row, no needs-you (flow review P1).
+  const rollup = fleetReportRollupEl(null, "rollup:direct", "Your runs finished");
+  if (rollup) {
+    card.append(rollup);
+  }
   return card;
 }
 
@@ -7437,6 +7454,36 @@ async function renderFocusPage() {
   page.append(list);
 }
 
+// Resolve a goal to a known project folder by matching its Jot category to a
+// repo basename (the jot-task-tracking convention is category == repo/folder
+// name). Returns a cwd or null. Used by "Work on this" to pre-root the session.
+function resolveProjectForGoal(goal) {
+  const cat = (goal.category || "").trim().toLowerCase();
+  if (!cat) {
+    return null;
+  }
+  const repos = [...new Set(state.sessions.filter((s) => s.cwd).map((s) => s.cwd))];
+  return (
+    repos.find((cwd) => (cwd.split(/[\\/]/).filter(Boolean).pop() || "").toLowerCase() === cat) || null
+  );
+}
+
+// "Work on this": start acting on a goal in one click. Opens a fresh session
+// rooted at the goal's project (resolved from its category, else you pick the
+// folder) with the goal text seeded into the composer - drawing the goal ->
+// project -> session link the Goals surface was missing (flow review P1).
+async function workOnGoal(goal) {
+  let cwd = resolveProjectForGoal(goal);
+  if (!cwd) {
+    cwd = await window.helm.pickFolder();
+    if (!cwd) {
+      return;
+    }
+  }
+  navigateToPage("chat");
+  openFreshDraftInPane(cwd, goal.text || "", { forceIndex: 0 });
+}
+
 function focusGoalCard(goal, isTop) {
   const card = document.createElement("div");
   card.className = "focus-card" + (isTop ? " focus-card-top" : "");
@@ -7529,6 +7576,23 @@ function focusGoalBreakdown(goal) {
     desc.textContent = goal.description;
     body.append(desc);
   }
+
+  // "Work on this" - the goal -> session launch the Goals surface was missing.
+  const actions = document.createElement("div");
+  actions.className = "focus-actions";
+  const workBtn = document.createElement("button");
+  workBtn.className = "focus-work-btn";
+  workBtn.textContent = "Work on this";
+  const resolved = resolveProjectForGoal(goal);
+  workBtn.title = resolved
+    ? `Start a fresh session in ${resolved.split(/[\\/]/).filter(Boolean).pop()} with this goal seeded`
+    : "Start a fresh session on this goal (you pick the project)";
+  workBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    workOnGoal(goal);
+  });
+  actions.append(workBtn);
+  body.append(actions);
 
   const subHead = document.createElement("div");
   subHead.className = "focus-sub-head";
