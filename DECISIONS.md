@@ -1,5 +1,22 @@
 # Decisions
 
+## 2026-07-12 (late) - Cross-instance dispatch orphaning (2nd mate empty / 1st mate waiting)
+
+Symptom: a first mate dispatched 3 autopilot runs; they completed with commits, but the 2nd mate showed empty and the first mate "waited" with no report-back.
+Root cause (diagnosed from on-disk state, not guessed): the dispatch queue lives under the META-HOME (`<your-claude-home>\.helm-dispatch`), which is the first mate's root and therefore SHARED by every Helm instance rooted there - but each instance keeps its OWN mate + goal-run store (installed = `~/.helm`, dev = repo root).
+Two instances were running (the captain's installed app + the dev app I kept restarting this session for the mobile feature).
+`main.js` processDispatchRequests claimed ANY request in the shared queue with no ownership check, so both instances raced to run the same dispatched goals - proven by identical goal branch names (`helm/goal-bc2be26e/-7cfe968b/-089b3aa6`) appearing under DIFFERENT goalRunIds in BOTH stores.
+An instance that runs a goal dispatched by a mate it doesn't own records the run under a mateId absent from its store, so `terminalRunsBy(mate.mateId)` matches nothing -> empty roll-up + no `pendingTriageNudge` -> the first mate never gets its report-back.
+
+Fix (full, chosen by the captain over repro-first):
+1. Ownership-scoped claiming - new pure predicate `isForeignDispatch(request, ownedMateIds)` in lib/dispatchCaps.js; processDispatchRequests skips (does NOT claim) any request whose `dispatchedBy` isn't a mate in THIS instance's store, leaving it for the owning instance. This is the systemic fix - it stops the double-run and the orphaning at the source.
+2. Immediate report surfacing - main sends a `dispatch:report` push on report write; the renderer force-refreshes the dashboard so the crew report + "collect & continue" triage cue appear at once instead of up to a poll tick later (the fleet fingerprint doesn't track every facet, so a forced rebuild is needed).
+3. Re-wake stays the EXISTING captain-driven path (jumpIntoFirstMate seeds `pendingTriageNudge` -> the mate runs helm_collect_reports). Deliberately NOT silent auto-resume: the first-mate design is dormant-until-invoked ("a dormant session bills no tokens"), and auto-driving risks a dispatch runaway. (a)+(b) make the cue reliably surface so the one-click re-engage works; that closes the loop while keeping the captain in it.
+
+Operational: do NOT run two Helm instances against the same meta-home expecting isolated dispatch - (1) now prevents cross-claiming, but the dev app should ideally get its own dispatch root later. I kept the dev app DOWN after diagnosis.
+Recovery for the current stuck state: the work is safe on branches helm/goal-{bc2be26e[5], 7cfe968b[5], 089b3aa6[2]} in worktrees; restarting the installed app rehydrates the 3 done runs so they surface under Jack Sparrow.
+SEPARATE parked issue seen in passing: ~543 orphaned `.fleet-state.json.*.tmp` files under the meta-home - the EPERM-on-atomic-rename-on-Dropbox problem (Jot efcaf486); cleaned the orphans, root cause still parked.
+
 ## 2026-07-12 - Click-eat root cause, dev/installed separation, Continue-on-mobile
 
 Fleet click-instability (recurring "clicks between first mates don't register") root cause finally pinned with REAL mouse input (Input.dispatchMouseEvent, not synthetic el.click - synthetic can't reproduce it): a FORCED dashboard refresh mid-press eats the click, a non-forced one doesn't.

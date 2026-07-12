@@ -8011,6 +8011,16 @@ window.helm.onGoalEvent((evt) => {
   refreshDashboardIfVisible();
 });
 
+// A dispatched run just reported back. FORCE a dashboard rebuild (not the
+// fingerprint-gated refresh) so the crew report surfaces under its first-mate
+// card and the "collect & continue" triage cue (pendingTriageNudge) appears the
+// moment the report lands - the fleet fingerprint doesn't track every facet, so
+// a plain refresh could otherwise skip the rebuild (see the 2026-07-11 note in
+// acknowledgeGoalRun). The poll-tick refresh still backstops this.
+window.helm.onDispatchReport?.(() => {
+  refreshDashboardIfVisible({ force: true });
+});
+
 // Reflects unseenGoalAttention.size as a small dot + count on the primary
 // Dashboard tab, so a run that errored/escalated while the user was on
 // another page stays discoverable after the toast fades. Subtle by design

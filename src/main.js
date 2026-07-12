@@ -50,7 +50,7 @@ import {
 } from "./lib/dispatchQueue.js";
 import { recordsNeedingReport, buildReportFromRecord } from "./lib/dispatchReconcile.js";
 import { assembleFleetState } from "./lib/fleetState.js";
-import { widthCapExceeded, depthCapExceeded } from "./lib/dispatchCaps.js";
+import { widthCapExceeded, depthCapExceeded, isForeignDispatch } from "./lib/dispatchCaps.js";
 import { listRoutines, createRoutine, updateRoutine, removeRoutine, dueRoutines, markRoutineFired } from "./lib/helmRoutines.js";
 import { buildArtifactSrcdoc, formatAnnotationsAsPrompt } from "./lib/lavishSdk.js";
 import { isAvailable as whisperStreamAvailable, startStream as startWhisperStream, stopStream as stopWhisperStream } from "./lib/whisperStream.js";
@@ -2344,6 +2344,17 @@ function processDispatchRequests(metaHome) {
       if (!dispatchId) {
         continue;
       }
+      // OWNERSHIP scoping (cross-instance orphaning bug, 2026-07-12): the queue
+      // lives under the shared meta-home, so a dev build and the installed build
+      // both watch it - but each has its OWN mate store. Only run a request whose
+      // dispatching mate belongs to THIS instance; leave a foreign one in the
+      // queue (do NOT claim) so the instance that owns that mate handles it.
+      // Without this, whichever instance won the claim race would double-run the
+      // goal and orphan the report under a mateId absent from its store. See
+      // lib/dispatchCaps.js isForeignDispatch.
+      if (isForeignDispatch(request, new Set(loadMates().map((m) => m.mateId)))) {
+        continue;
+      }
       // Atomically CLAIM the request before doing anything with it. This closes
       // both the in-process double-scan (fs.watch + poll) AND the cross-process
       // race where two Helm instances watch the same meta-home (review H1):
@@ -2401,6 +2412,13 @@ function processDispatchRequests(metaHome) {
             onComplete: (result, meta) => {
               writeReport(metaHome, buildDispatchReport({ dispatchId, mateId, request, result, meta }));
               writeFleetStateSnapshot(metaHome); // a run finished - refresh the cross-mate view
+              // Nudge the renderer to repaint the fleet NOW so the crew report
+              // surfaces under its first-mate card (and the "collect & continue"
+              // triage cue appears) immediately, instead of on the next poll
+              // tick. Best-effort: the poll-tick refresh still backstops it.
+              if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send("dispatch:report", { dispatchId, mateId });
+              }
             },
           },
         });
