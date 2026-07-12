@@ -5237,9 +5237,9 @@ function continueOnMobileBtn(session, { title } = {}) {
   const btn = document.createElement("button");
   btn.className = "fleet-btn fleet-mobile-btn";
   btn.title = "Continue this session on your phone (opens a Remote Control terminal)";
-  // Simple monochrome glyph matching the other fleet buttons (✎ ↻), not a
-  // colourful emoji that stood out (bug ca32567c). "↗" = hand this off elsewhere.
-  btn.textContent = "↗";
+  // Simple monochrome phone glyph matching the other fleet buttons (✎ ↻), not a
+  // colourful emoji (bug ca32567c: "isn't there a simple phone or wifi icon").
+  btn.textContent = "✆";
   btn.addEventListener("click", async (e) => {
     e.stopPropagation();
     const cwd = session?.cwd || "";
