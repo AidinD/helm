@@ -4402,6 +4402,69 @@ function renderDashQuota() {
   chip.className = "dash-quota-chip" + (pct >= 80 ? " hot" : pct >= 50 ? " warm" : "");
 }
 
+// Phase-2 orchestration guardrail control (Slice 0): a budget readout + a kill/
+// resume toggle on the Dashboard. Subtle when idle; amber when stopped or over
+// budget. No-op if the chip isn't rendered.
+async function renderDashOrchestration() {
+  const chip = document.getElementById("dashOrchestrationChip");
+  if (!chip) {
+    return;
+  }
+  let budget = null;
+  try {
+    const res = await window.helm.getOrchestrationBudget();
+    budget = res && res.ok ? res.budget : null;
+  } catch {
+    budget = null;
+  }
+  chip.textContent = "";
+  chip.className = "dash-orch-chip";
+  if (!budget) {
+    return;
+  }
+  const spent = Number(budget.spentUsd) || 0;
+  const ceiling = typeof budget.ceilingUsd === "number" ? budget.ceilingUsd : null;
+  const over = ceiling != null && spent >= ceiling;
+  const stopped = !!budget.killed;
+  // Idle + nothing spent + not stopped: stay out of the way (empty -> hidden).
+  if (!stopped && !over && spent <= 0) {
+    return;
+  }
+  const label = document.createElement("span");
+  label.className = "dash-orch-label";
+  if (stopped) {
+    chip.classList.add("stopped");
+    label.textContent = "⏸ Orchestration stopped";
+  } else if (over) {
+    chip.classList.add("stopped");
+    label.textContent = `Budget reached · $${spent.toFixed(2)}`;
+  } else {
+    label.textContent = ceiling != null ? `Orch $${spent.toFixed(2)} / $${ceiling.toFixed(0)}` : `Orch $${spent.toFixed(2)}`;
+  }
+  chip.append(label);
+  const btn = document.createElement("button");
+  btn.className = "dash-orch-btn";
+  if (stopped || over) {
+    btn.textContent = "Resume";
+    btn.title = "Clear the stop + reset spend so dispatch can resume (keeps the ceiling)";
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      await window.helm.resumeOrchestration();
+      renderDashOrchestration();
+    });
+  } else {
+    btn.textContent = "Stop";
+    btn.title = "Kill switch: stop the whole orchestration tree (cancels live runs; blocks new dispatch)";
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      const res = await window.helm.killOrchestration();
+      showToast(res && res.ok ? `Orchestration stopped (${res.cancelled} live run${res.cancelled === 1 ? "" : "s"} cancelled).` : "Couldn't stop orchestration.");
+      renderDashOrchestration();
+    });
+  }
+  chip.append(btn);
+}
+
 // A cheap summary of exactly the fields renderSidebar()'s output depends on
 // (session identity/status/model/archived + the Jot badge fields it reads,
 // plus the config knobs that affect grouping/visibility). Comparing this
@@ -5972,8 +6035,9 @@ async function fillDashboardSections({ force = false } = {}) {
     }
     return;
   }
-  // Keep the topbar quota chip current on every tick (cheap; no-op if absent).
+  // Keep the topbar quota + orchestration chips current on every tick.
   renderDashQuota();
+  renderDashOrchestration();
 
   // Persona catalog for the Fleet cards' picker - loaded once, before the
   // (synchronous) fleet render below reads it.
@@ -6082,10 +6146,16 @@ async function renderDashboardPage() {
   const quotaChip = document.createElement("div");
   quotaChip.id = "dashQuotaChip";
   quotaChip.className = "dash-quota-chip";
-  topbarActions.append(quotaChip, focusModeToggleEl());
+  // Phase-2 orchestration guardrail control (Slice 0): budget readout + kill/
+  // resume. Populated live by renderDashOrchestration.
+  const orchChip = document.createElement("div");
+  orchChip.id = "dashOrchestrationChip";
+  orchChip.className = "dash-orch-chip";
+  topbarActions.append(quotaChip, orchChip, focusModeToggleEl());
   topbar.append(heading, topbarActions);
   page.append(topbar);
   renderDashQuota();
+  renderDashOrchestration();
 
   // Each dynamic section lives in its own stable slot so the refresh tick can
   // re-render just the section whose data changed (fillDashboardSections),

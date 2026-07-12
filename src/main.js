@@ -36,7 +36,8 @@ import { personaOverlay, PERSONAS } from "./lib/personas.js";
 import { listSlashItems } from "./lib/slashCommands.js";
 import { trackHelmUsage, summarizeHelmUsage } from "./lib/helmUsage.js";
 import { initAutoUpdate } from "./lib/autoUpdate.js";
-import { deriveSecondMates, bindSecondMateSession, renameSecondMate } from "./lib/secondMates.js";
+import { deriveSecondMates, bindSecondMateSession, renameSecondMate, readBindings } from "./lib/secondMates.js";
+import { addSpend, isOverBudget, isKilled, setKilled, resetBudget, readBudget, setCeiling } from "./lib/orchestrationBudget.js";
 import {
   ensureDispatchDirs,
   requestsDir,
@@ -1906,6 +1907,42 @@ ipcMain.handle("goal:cancel", (_event, { goalRunId }) => {
   return { ok: true };
 });
 
+// Phase-2 guardrail (Slice 0): the KILL SWITCH. Stops the whole orchestration
+// tree - flips the persisted killed flag (so no further dispatch is accepted,
+// even after a restart) AND cancels every live dispatched run right now (same
+// mechanism as goal:cancel). Reversible via orchestration:resume.
+ipcMain.handle("orchestration:killTree", () => {
+  const metaHome = resolveMetaHome();
+  setKilled(metaHome, true);
+  let cancelled = 0;
+  for (const run of liveGoalRuns.values()) {
+    if (run.cancelToken) {
+      run.cancelToken.cancelled = true;
+    }
+    if (run.currentChild) {
+      killChildTree(run.currentChild);
+      run.currentChild = null;
+    }
+    cancelled += 1;
+  }
+  return { ok: true, cancelled };
+});
+
+// Clears the kill flag + zeroes spend so dispatch can resume (keeps the ceiling).
+ipcMain.handle("orchestration:resume", () => {
+  return { ok: true, budget: resetBudget(resolveMetaHome()) };
+});
+
+// Read the current orchestration budget (for a Dashboard readout).
+ipcMain.handle("orchestration:budget", () => {
+  return { ok: true, budget: readBudget(resolveMetaHome()) };
+});
+
+// Set the cost ceiling (USD); null removes the cap.
+ipcMain.handle("orchestration:setCeiling", (_event, { ceilingUsd }) => {
+  return { ok: true, budget: setCeiling(resolveMetaHome(), ceilingUsd) };
+});
+
 // --- Persisted goal-run index (see lib/goalRunHistory.js) — read on renderer
 // startup so past runs survive an app restart. A "running" record with no
 // matching entry in liveGoalRuns means the process behind it is gone (the
@@ -2367,7 +2404,11 @@ function processDispatchRequests(metaHome) {
     // this, whichever instance won the claim race would double-run the goal and
     // orphan the report under a mateId absent from its store. See
     // lib/dispatchCaps.js isForeignDispatch.
-    const ownedMateIds = new Set(loadMates().map((m) => m.mateId));
+    // Owned dispatchers = this instance's first mates AND its second mates (the
+    // latter dispatch crew in Phase 2; their ids are the keys of second-mates.json).
+    // Without the second-mate ids here, a crew dispatch whose dispatchedBy is a
+    // secondMateId would be treated as foreign and never claimed (Slice 0 fix).
+    const ownedMateIds = new Set([...loadMates().map((m) => m.mateId), ...Object.keys(readBindings())]);
     for (const request of readRequests(metaHome)) {
       const dispatchId = request.dispatchId;
       if (!dispatchId) {
@@ -2389,6 +2430,17 @@ function processDispatchRequests(metaHome) {
       const reject = (reason) => {
         writeAck(metaHome, dispatchId, { status: "rejected", reason });
       };
+
+      // Guardrails (Phase-2 Slice 0): a killed or over-budget orchestration
+      // accepts no further dispatch. Checked before any work is started.
+      if (isKilled(metaHome)) {
+        reject("Orchestration stopped by the kill switch. Resume it from the Dashboard before dispatching again.");
+        continue;
+      }
+      if (isOverBudget(metaHome)) {
+        reject("Orchestration paused: the token/cost budget ceiling was reached. Raise or reset the budget from the Dashboard.");
+        continue;
+      }
 
       // Validate the project (known enum or explicit absolute path escape
       // hatch, design decision 5).
@@ -2431,7 +2483,10 @@ function processDispatchRequests(metaHome) {
             dispatchId,
             tier: request.tier || "crew",
             onComplete: (result, meta) => {
-              writeReport(metaHome, buildDispatchReport({ dispatchId, mateId, request, result, meta }));
+              const report = buildDispatchReport({ dispatchId, mateId, request, result, meta });
+              writeReport(metaHome, report);
+              // Count this run's cost against the orchestration budget (Slice 0).
+              addSpend(metaHome, report.costUsd);
               writeFleetStateSnapshot(metaHome); // a run finished - refresh the cross-mate view
               // Nudge the renderer to repaint the fleet NOW so the crew report
               // surfaces under its first-mate card (and the "collect & continue"

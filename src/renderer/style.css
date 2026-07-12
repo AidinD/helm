@@ -3918,6 +3918,39 @@ button.primary {
   border-color: color-mix(in srgb, var(--danger, #e5484d) 55%, transparent);
 }
 
+/* Phase-2 orchestration guardrail chip (Slice 0): budget readout + kill/resume.
+   Subtle by default; amber when stopped or over budget. Empty -> hidden. */
+.dash-orch-chip {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.dash-orch-chip:empty {
+  display: none;
+}
+.dash-orch-chip.stopped .dash-orch-label {
+  color: var(--waiting);
+}
+.dash-orch-btn {
+  font-size: 11px;
+  padding: 2px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.dash-orch-btn:hover {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--text) 30%, transparent);
+}
+.dash-orch-chip.stopped .dash-orch-btn {
+  color: var(--waiting);
+  border-color: color-mix(in srgb, var(--waiting) 45%, transparent);
+}
+
 .dash-focus-toggle {
   display: flex;
   align-items: center;

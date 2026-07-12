@@ -83,6 +83,14 @@ export function widthCapExceeded(liveRuns, mateId, widthCap) {
  * MCP tools), but it is enforced here at the single authority regardless.
  */
 export function depthCapExceeded(liveRuns, request) {
+  // Phase-2 tier cap: the only legal chain is first-mate -> second-mate -> crew.
+  // A request whose caller is itself CREW is a third dispatch level and refused
+  // outright, independent of the live-run scan below. Crew runs are tool-less
+  // (goalOrchestrator, no MCP), so this is structurally unreachable today, but
+  // it is the explicit ceiling once a second mate can dispatch (Slice 2).
+  if (request?.callerTier === "crew") {
+    return true;
+  }
   const caller = request?.dispatchedBy || null;
   if (!caller) {
     return false;
