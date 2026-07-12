@@ -3284,6 +3284,21 @@ button.primary {
   margin-left: auto;
 }
 
+/* Collapse-back control for a manually-expanded run (bug b72fcd1f). Subtle text
+   button pushed to the right so it clusters with the worktree actions. */
+.goal-collapse-btn {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+.goal-collapse-btn:hover {
+  color: var(--text);
+}
+
 /* Open/Delete worktree actions (finished runs only) sit in the same slot as
    the live Cancel button - only one of the two is ever rendered per run. */
 .goal-worktree-actions {
