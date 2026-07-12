@@ -5648,10 +5648,19 @@ function fleetSecondMateEl(sm) {
   return branch;
 }
 
-// A crew member: an autonomous run (background task) with a Follow/View action.
+// A crew member: an autonomous run (background task). The whole row is the click
+// target and opens that run's Autopilot detail (bug ef303a82: "remove the View
+// button, clicking the row should take me to the autopilot").
 function fleetCrewItemEl(run) {
   const item = document.createElement("div");
   item.className = "fleet-crew-item";
+  if (!run.isSubAgent) {
+    item.classList.add("is-clickable");
+    item.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openGoalRun(run.goalRunId);
+    });
+  }
   // Color-code the state so a problem crew item reads at a glance (review:
   // was always plain --text-faint). error/escalated -> needs, running -> run.
   const needs = run.status === "error" || !!run.escalation;
@@ -5682,18 +5691,8 @@ function fleetCrewItemEl(run) {
           ? `${commits} commit${commits === 1 ? "" : "s"}`
           : run.status;
   item.append(g, label, stateEl);
-  // A dispatched run has its own worktree/Goal page to follow; a session's
-  // sub-agent doesn't - the session node itself is the way in, so no button.
-  if (!run.isSubAgent) {
-    const follow = document.createElement("button");
-    follow.className = "fleet-btn";
-    follow.textContent = running ? "Follow" : "View";
-    follow.addEventListener("click", (e) => {
-      e.stopPropagation();
-      navigateToPage("goal");
-    });
-    item.append(follow);
-  }
+  // No separate View/Follow button - the whole row is clickable (above) and
+  // deep-links into this run's Autopilot detail (ef303a82).
   return item;
 }
 
@@ -7687,14 +7686,30 @@ function renderGoalPage() {
   page.append(form);
 
   // ---- Runs (newest first) ----
-  const runs = [...goalRuns.values()];
+  // Acknowledged (Done) runs are hidden here - Done clears them from this page
+  // (dce61455 "when are the runs cleared?": they persist in history + git, but
+  // Done removes them from the view). Terminal runs render COLLAPSED to a
+  // one-line summary so the list stays scannable (b72fcd1f); live/attention runs
+  // and the deep-link target render expanded.
+  const allRuns = [...goalRuns.values()];
+  const runs = allRuns.filter((r) => !isGoalRunAcknowledged(r.goalRunId));
+  const hiddenDone = allRuns.length - runs.length;
   if (runs.length) {
     const runsWrap = document.createElement("div");
     runsWrap.className = "goal-runs";
     for (const run of runs.reverse()) {
-      runsWrap.append(goalRunDetailEl(run));
+      const live = run.status === "running" || !!run.escalation;
+      const expanded = live || goalRunExpanded.has(run.goalRunId) || pendingGoalScrollId === run.goalRunId;
+      runsWrap.append(expanded ? goalRunDetailEl(run) : goalRunSummaryEl(run));
     }
     page.append(runsWrap);
+  }
+  if (hiddenDone > 0) {
+    const note = document.createElement("div");
+    note.className = "analysis-totals";
+    note.style.marginTop = "10px";
+    note.textContent = `${hiddenDone} completed run${hiddenDone === 1 ? "" : "s"} cleared from view (marked Done). They stay on disk + in git.`;
+    page.append(note);
   }
 
   // Deep-link target: a crew report row asked to open a SPECIFIC run (see
@@ -7715,10 +7730,45 @@ function renderGoalPage() {
 // renderGoalPage consumes + clears it after scrolling that run into view.
 let pendingGoalScrollId = null;
 
+// Which terminal runs the captain has manually expanded on the Autopilot page
+// (b72fcd1f: terminal runs render collapsed to a summary by default). Module
+// state so it survives a re-render; live/attention runs are always expanded.
+const goalRunExpanded = new Set();
+
+// Collapsed one-line summary of a terminal run on the Autopilot page (b72fcd1f).
+// Click anywhere on it to expand into the full goalRunDetailEl - keeps a long
+// run list scannable so you can open just the one you care about.
+function goalRunSummaryEl(run) {
+  const report = goalRunReport(run);
+  const row = document.createElement("div");
+  row.className = "goal-run-summary" + (report.needsCaptain ? " goal-run-summary-needs" : "");
+  row.title = "Click to expand this run";
+  row.addEventListener("click", () => {
+    goalRunExpanded.add(run.goalRunId);
+    renderGoalPage();
+  });
+  const chev = document.createElement("span");
+  chev.className = "goal-run-summary-chev";
+  chev.textContent = "▶";
+  const glyph = document.createElement("span");
+  glyph.className = "goal-run-summary-ic";
+  glyph.textContent = run.status === "error" ? "✕" : run.escalation ? "⚠" : "✓";
+  const title = document.createElement("span");
+  title.className = "goal-run-summary-title";
+  const goal = run.goal || "(run)";
+  title.textContent = goal.length > 72 ? goal.slice(0, 72) + "…" : goal;
+  const meta = document.createElement("span");
+  meta.className = "goal-run-summary-meta";
+  meta.textContent = report.commitCount > 0 ? `${report.commitCount} commit${report.commitCount === 1 ? "" : "s"}` : report.status;
+  row.append(chev, glyph, title, meta);
+  return row;
+}
+
 // Navigate to the Autopilot page focused on a specific run ("into the autopilot"
 // from a crew report row), rather than dumping the user on the run list.
 function openGoalRun(goalRunId) {
   pendingGoalScrollId = goalRunId || null;
+  goalRunExpanded.add(goalRunId); // deep-linking into a run expands it
   navigateToPage("goal");
 }
 
