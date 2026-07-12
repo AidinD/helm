@@ -36,7 +36,7 @@ import { personaOverlay, PERSONAS } from "./lib/personas.js";
 import { listSlashItems } from "./lib/slashCommands.js";
 import { trackHelmUsage, summarizeHelmUsage } from "./lib/helmUsage.js";
 import { initAutoUpdate } from "./lib/autoUpdate.js";
-import { deriveSecondMates, bindSecondMateSession, renameSecondMate, readBindings, proposeSecondMate, markSecondMateCreated } from "./lib/secondMates.js";
+import { deriveSecondMates, bindSecondMateSession, renameSecondMate, readBindings, proposeSecondMate, markSecondMateCreated, secondMateIdForSession } from "./lib/secondMates.js";
 import { addSpend, isOverBudget, isKilled, setKilled, resetBudget, readBudget, setCeiling } from "./lib/orchestrationBudget.js";
 import {
   ensureDispatchDirs,
@@ -1465,6 +1465,7 @@ ipcMain.handle(
     let allowedTools;
     let appendSystemPrompt;
     let strictMcpConfig;
+    let effectiveSecondMateId = null;
     try {
       if (isMetaHomeRoot(cwd)) {
         const metaHome = resolveMetaHome();
@@ -1496,17 +1497,20 @@ ipcMain.handle(
         // runGoal path (never this handler), so this only ever narrows a
         // first-mate launch.
         strictMcpConfig = true;
-      } else if (secondMateId) {
-        // Phase-2 Slice 2: a SECOND-MATE session (project-rooted, tagged with a
-        // secondMateId by jumpIntoSecondMate) gets the crew-dispatch tools too -
-        // one tier deeper than a first mate. Unlike a first mate it is NOT strict:
-        // it keeps the user's full MCP set for hands-on project work, and the
-        // helm_* crew tools are ADDED on top (+ pre-approved so a -p turn can call
-        // them). Its dispatches are stamped dispatchedBy=secondMateId, callerTier
-        // "second-mate", so the depth cap allows crew but crew can't re-dispatch.
+      } else if (secondMateId || (resumeSessionId && secondMateIdForSession(resumeSessionId))) {
+        // Phase-2 Slice 2: a SECOND-MATE session (project-rooted) gets the crew-
+        // dispatch tools too - one tier deeper than a first mate. Resolve the id
+        // from the pane tag on a fresh engagement OR from the durable binding on
+        // a RESUME (a resumed pane is rebuilt without the tag, so keying only on
+        // the pane tag silently dropped the tools on re-entry - review CONFIRMED).
+        // Unlike a first mate it is NOT strict: it keeps the user's full MCP set
+        // for hands-on project work, and helm_* is ADDED on top (+ pre-approved).
+        // Dispatches are stamped dispatchedBy=<this id>, callerTier "second-mate",
+        // so the depth cap allows crew but crew can't re-dispatch.
+        effectiveSecondMateId = secondMateId || secondMateIdForSession(resumeSessionId);
         const metaHome = resolveMetaHome();
         ensureDispatchDirs(metaHome);
-        mcpConfig = buildDispatchMcpConfig(metaHome, secondMateId, "second-mate");
+        mcpConfig = buildDispatchMcpConfig(metaHome, effectiveSecondMateId, "second-mate");
         allowedTools = FIRST_MATE_ALLOWED_TOOLS;
         if (!resumeSessionId) {
           appendSystemPrompt = secondMateInstructions();
@@ -1543,6 +1547,18 @@ ipcMain.handle(
             title: prompt.trim().split("\n")[0].slice(0, 80) || "(untitled)",
             createIfAbsent: !resumeSessionId,
           });
+          // Bind a second-mate session to its id SERVER-SIDE the moment it
+          // appears, so this instance owns its crew dispatches (processDispatch's
+          // ownedMateIds) immediately - not dependent on the renderer's bind-on-
+          // session, which is skipped if the pane was reassigned before the event
+          // (the orphaned-first-dispatch window flagged in review).
+          if (effectiveSecondMateId) {
+            try {
+              bindSecondMateSession(effectiveSecondMateId, evt.sessionId);
+            } catch (err) {
+              console.error("[helm] failed to bind second-mate session:", err);
+            }
+          }
         }
         if (evt.kind === "quota" && evt.quota) {
           recordQuota(evt.quota);

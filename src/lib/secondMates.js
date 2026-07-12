@@ -148,6 +148,24 @@ export function proposeSecondMate(firstMateId, projectPath, { brief = null, assi
   return { secondMateId: id, ...bindings[id] };
 }
 
+/**
+ * The secondMateId currently bound to a given CLI session, or null. Lets
+ * session:start re-attach the crew-dispatch config to a RESUMED second-mate
+ * session by its durable binding, not a pane tag that a resume rebuilds away
+ * (the "resumed second mate loses its tools" bug).
+ */
+export function secondMateIdForSession(sessionId, bindings = readBindings()) {
+  if (!sessionId) {
+    return null;
+  }
+  for (const [id, b] of Object.entries(bindings)) {
+    if (b && b.sessionId === sessionId) {
+      return id;
+    }
+  }
+  return null;
+}
+
 /** Marks a proposed second mate as CREATED once its session actually spins up. */
 export function markSecondMateCreated(secondMateId, sessionId, model = null) {
   const bindings = readBindings();
