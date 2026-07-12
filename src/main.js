@@ -998,13 +998,28 @@ function firstMateInstructions() {
   return _firstMateInstructions || undefined;
 }
 
-function buildFirstMateMcpConfig(metaHome, mateId) {
-  // Named mates: the session is bound to one of the two fixed mate slots by the
-  // mateId the renderer passes. Fall back to the first active mate if none was
-  // given (a direct meta-home launch that didn't pick a slot) so a first mate
-  // always has a stable identity. ensureMates guarantees the two slots exist.
-  const active = ensureMates(metaHome);
-  const mate = (mateId && findMateById(mateId)) || active[0];
+// The second-mate operating manual, attached on a fresh second-mate turn (see
+// session:start). The judgment tier: own a project, dispatch crew, validate +
+// merge their work, report up, externalize before retire. Cached (static doc).
+let _secondMateInstructions = null;
+function secondMateInstructions() {
+  if (_secondMateInstructions === null) {
+    try {
+      _secondMateInstructions = fs.readFileSync(path.join(__dirname, "lib", "second-mate-instructions.md"), "utf8");
+    } catch (err) {
+      console.error("[helm] could not read second-mate-instructions.md:", err);
+      _secondMateInstructions = "";
+    }
+  }
+  return _secondMateInstructions || undefined;
+}
+
+// The dispatch MCP config shared by both tiers that can dispatch: a first mate
+// (callerTier "first-mate", callerId = its mateId) and, in Phase 2, a second
+// mate (callerTier "second-mate", callerId = its secondMateId). The MCP server
+// stamps every request it writes with this callerId (as dispatchedBy) + tier, so
+// the watcher's ownership + depth caps route it correctly.
+function buildDispatchMcpConfig(metaHome, callerId, callerTier) {
   const serverPath = path.join(__dirname, "mcp", "helmDispatchServer.js");
   const config = {
     mcpServers: {
@@ -1018,7 +1033,8 @@ function buildFirstMateMcpConfig(metaHome, mateId) {
           // separate `node` being on PATH.
           ELECTRON_RUN_AS_NODE: "1",
           HELM_META_HOME: metaHome,
-          HELM_MATE_ID: mate.mateId,
+          HELM_MATE_ID: callerId,
+          HELM_CALLER_TIER: callerTier,
           HELM_PROJECTS: JSON.stringify(knownProjects()),
           HELM_WIDTH_CAP: String(DISPATCH_WIDTH_CAP),
         },
@@ -1026,6 +1042,16 @@ function buildFirstMateMcpConfig(metaHome, mateId) {
     },
   };
   return JSON.stringify(config);
+}
+
+function buildFirstMateMcpConfig(metaHome, mateId) {
+  // Named mates: the session is bound to one of the two fixed mate slots by the
+  // mateId the renderer passes. Fall back to the first active mate if none was
+  // given (a direct meta-home launch that didn't pick a slot) so a first mate
+  // always has a stable identity. ensureMates guarantees the two slots exist.
+  const active = ensureMates(metaHome);
+  const mate = (mateId && findMateById(mateId)) || active[0];
+  return buildDispatchMcpConfig(metaHome, mate.mateId, "first-mate");
 }
 
 // --- Stale-build indicator: hands back the running build's own identity plus
@@ -1413,7 +1439,7 @@ function recordHelmSession(sessionId, { cwd, model, effort, permissionMode, titl
 // --- Start (or resume) a rooted session; stream events to the renderer ---
 ipcMain.handle(
   "session:start",
-  (_event, { cwd, prompt, model, effort, permissionMode, resumeSessionId, suggestedModel, suggestedEffort, internal, mateId }) => {
+  (_event, { cwd, prompt, model, effort, permissionMode, resumeSessionId, suggestedModel, suggestedEffort, internal, mateId, secondMateId }) => {
     if (!cwd || !prompt) {
       return { ok: false, error: "cwd and prompt are required" };
     }
@@ -1470,6 +1496,22 @@ ipcMain.handle(
         // runGoal path (never this handler), so this only ever narrows a
         // first-mate launch.
         strictMcpConfig = true;
+      } else if (secondMateId) {
+        // Phase-2 Slice 2: a SECOND-MATE session (project-rooted, tagged with a
+        // secondMateId by jumpIntoSecondMate) gets the crew-dispatch tools too -
+        // one tier deeper than a first mate. Unlike a first mate it is NOT strict:
+        // it keeps the user's full MCP set for hands-on project work, and the
+        // helm_* crew tools are ADDED on top (+ pre-approved so a -p turn can call
+        // them). Its dispatches are stamped dispatchedBy=secondMateId, callerTier
+        // "second-mate", so the depth cap allows crew but crew can't re-dispatch.
+        const metaHome = resolveMetaHome();
+        ensureDispatchDirs(metaHome);
+        mcpConfig = buildDispatchMcpConfig(metaHome, secondMateId, "second-mate");
+        allowedTools = FIRST_MATE_ALLOWED_TOOLS;
+        if (!resumeSessionId) {
+          appendSystemPrompt = secondMateInstructions();
+        }
+        // NOT strict: additive to the project's full MCP set (see comment above).
       }
     } catch (err) {
       console.error("[helm] failed to build first-mate launch config:", err);
