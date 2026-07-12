@@ -40,6 +40,12 @@ import {
 
 const META_HOME = process.env.HELM_META_HOME || "";
 const MATE_ID = process.env.HELM_MATE_ID || null;
+// Which tier is dispatching: "first-mate" (dispatches second-mate/crew work) or
+// "second-mate" (dispatches crew). Stamped on each request so the watcher's
+// depth cap can enforce the chain first-mate -> second-mate -> crew (crew, which
+// is a tool-less runGoal, can never dispatch). Defaults to first-mate for the
+// original single-tier behaviour.
+const CALLER_TIER = process.env.HELM_CALLER_TIER || "first-mate";
 const WIDTH_CAP = Number(process.env.HELM_WIDTH_CAP) || 3;
 
 function loadProjects() {
@@ -155,6 +161,7 @@ async function toolDispatch(args) {
     maxIterations: typeof args.maxIterations === "number" ? args.maxIterations : null,
     verifyCommand: args.verifyCommand || null,
     dispatchedBy: MATE_ID,
+    callerTier: CALLER_TIER,
   };
   const dispatchId = writeRequest(META_HOME, request);
   const ack = await waitForAck(dispatchId);

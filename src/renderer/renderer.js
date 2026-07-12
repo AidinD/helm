@@ -4278,6 +4278,9 @@ async function sendFromPane(index, els) {
     // Named mates: a first-mate pane carries its mateId so session:start attaches
     // the dispatch mcp-config bound to THAT mate (not just "the meta-home mate").
     mateId: pane.mateId,
+    // Phase-2 Slice 2: a second-mate pane carries its secondMateId so session:start
+    // attaches the crew-dispatch tools bound to THAT second mate.
+    secondMateId: pane.secondMateId,
   });
   if (!res.ok) {
     if (panes[index] === pane) {
