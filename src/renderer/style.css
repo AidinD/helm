@@ -3526,6 +3526,34 @@ button.primary {
   border-top: 1px solid var(--border);
 }
 
+/* Action row on a paused/interrupted run card - holds the one-click Resume. */
+.goal-summary-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+.goal-interrupted-actions {
+  margin-top: 8px;
+}
+/* Resume is the primary recovery action on a paused/interrupted run, so it
+   reads as an accented (not ghost) button - the one thing to click here. */
+.goal-resume-btn {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: var(--accent-contrast, #1a1a1a);
+  border-radius: 6px;
+  padding: 7px 15px;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.goal-resume-btn:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.goal-resume-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 /* "Escalate on trouble" checkbox - reuses .settings-toggle-row's layout but
    without its bottom border/margin (it sits mid-form, not in a list of its
    own), and a bit tighter above/below than that row's own list spacing. */
