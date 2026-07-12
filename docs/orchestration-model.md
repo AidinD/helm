@@ -51,6 +51,40 @@ The first mate breaks the captain's intent into per-project assignments and hand
 Each second mate dispatches crew (agents / Autopilot runs) to do the actual work, and reports progress up.
 Small quick things skip the chain - the captain goes straight to a second mate or even an agent.
 
+## The daily loop (AUTHORITATIVE, the captain 2026-07-12)
+
+This is the canonical intended workflow - the target the phased build (below) is heading for.
+
+1. **Start the day in the first mate.** Prompt it: "what should I work on today? I want to work on A, B and C."
+2. **The first mate creates one second mate per topic** - a real project-rooted session (Opus) for A, for B, for C. Not just a dispatched headless run; an actual second-mate session that exists and is jumpable.
+3. **Two ways to proceed, the captain's choice** (this dual mode is essential):
+   - **Orchestrate via the first mate** - stay in the first mate and drive the second mates through it. Simpler, more orchestratory - but the first mate stays active and relays, so it costs more tokens.
+   - **Jump into a second mate and work there directly** - hands-on in the project session. Preferred token-wise: the first mate goes dormant (bills nothing) while you work in the one Opus session that matters.
+   Either mode must work; the captain switches freely.
+4. **Ask the first mate for a summary when done.** Go back to the first mate; it aggregates across the second mates into one cross-project wrap-up.
+5. **Retire.** The second mates are ephemeral (their continuity is the project's own files); the first mate is a durable role, dormant until tomorrow.
+
+The current build stands at Phase 1 of the phased path (below): the first mate dispatches Autopilot *runs* directly and "second mate" is a derived VIEW, not yet a created session.
+Step 2 (first mate *creates* real second-mate sessions) + the first-mate-driven mode of step 3 are the Phase-2 target.
+
+## Durability + resume (REQUIRED on every phase, the captain 2026-07-12)
+
+The whole tree must survive an interruption - running out of tokens mid-run, or the app closing - and be trivially continuable.
+The bar: the captain types **"fortsätt" (continue) on the first mate**, and resumption **propagates all the way down** - first mate -> its second mates -> their in-flight/interrupted Autopilot runs - each picking up where it stopped.
+
+The durable substrate already exists and survives a crash:
+- The dispatch queue on disk (`.helm-dispatch/` - requests/acks/reports/fleet-state).
+- `goalRunHistory` (every run + status; an interrupted run is already marked `interrupted`).
+- Worktrees with their committed progress + `notes.md` (Autopilot continuity is already notes.md-based: each iteration runs fresh and reads notes.md).
+- Session transcripts (`~/.claude/projects`, resumable via `--resume`), `mates.json`, second-mate bindings.
+
+What must be BUILT for top-down "fortsätt":
+1. **Resumable Autopilot runs** - relaunch `goalOrchestrator` against the EXISTING worktree/branch (continue from notes.md) instead of a fresh one; a run stopped on a quota limit is marked resumable and picks up when quota resets.
+2. **Resume-dispatch** - a path to re-attach to an interrupted/quota-stopped run rather than only starting fresh ones.
+3. **Top-down cascade** - "fortsätt" on the first mate resumes its session, reads fleet-state/history for anything unfinished, and cascades resumption down the tree (in the Phase-2 model each second mate owns resuming its own crew).
+
+Token-exhaustion and app-crash are the same mechanism: durable per-tier state + a resume that re-hydrates and continues.
+
 ## How this maps onto Helm today
 
 The cwd a session is rooted in *is* its tier - this is why orchestrator detection is cwd-based:

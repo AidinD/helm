@@ -1,5 +1,24 @@
 # Decisions
 
+## 2026-07-12 (late3) - Orchestration flow: framing corrected, authoritative daily loop + resume requirement
+
+The captain pushed back on a misframing I introduced: I had presented "Option A (derived 2nd mate) vs Option B (real 2nd-mate agent)" as two end-states.
+That was wrong. `orchestration-model.md` always defined B as the target (first mate Sonnet -> second mate Opus, the judgment tier that dispatches crew + reports up -> crew by complexity), with a PHASED path whose Phase 1 is "second mates as ephemeral runs, first mate dispatches directly - the model without the token bleed".
+So the current build is Phase 1 OF B, a deliberate stepping stone - not a competing option. Corrected the redesign doc accordingly.
+
+Authoritative daily loop (the captain's own spec, now in orchestration-model.md "The daily loop"):
+1. Start in the first mate: "what should I work on today? A, B, C."
+2. First mate CREATES one real second-mate session (Opus) per topic.
+3. Dual mode, captain's choice: orchestrate via the first mate (simpler, more tokens) OR jump into a second mate and work directly (cheaper, first mate dormant). Both must work.
+4. Ask the first mate for a cross-project summary when done.
+5. Retire.
+
+New first-class requirement (all phases): DURABILITY + top-down resume.
+Running out of tokens mid-run or closing the app must not lose the tree; typing "fortsätt" on the first mate must cascade resumption down (first mate -> second mates -> interrupted/quota-stopped Autopilot runs, each continuing from its durable state + notes.md).
+Durable substrate already exists (dispatch queue, goalRunHistory with `interrupted`, worktrees+notes.md, --resume transcripts); what must be built: resumable runs (relaunch against the existing worktree), a resume-dispatch path, and the top-down cascade.
+
+Next: Phase-2 build plan is written (orchestration-flow-redesign.md) - create real second-mate sessions, second-mate-dispatches-crew, report-up, first-mate-driven mode, model-per-tier - with hard caps + token budget + kill switch designed in first. Not built yet; awaiting the captain's go on the plan. All docs updated (orchestration-model.md, orchestration-flow-redesign.md, PLAN.md, USING-HELM.md).
+
 ## 2026-07-12 (late2) - The REAL "2nd mate empty" + "Done errors on uncommitted"
 
 After the cross-instance fix made the report roll-up surface, two DOWNSTREAM bugs remained (the actual thing the captain meant):

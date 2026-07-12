@@ -1,75 +1,52 @@
-# Orchestration flow: expected vs actual, and how to close the gap
+# Orchestration flow: current status + Phase-2 build plan
 
-Written 2026-07-12 for the captain's review (he flagged the flow as "strange and far too manual").
-This is a DESIGN decision doc - the fix touches core orchestration, so it's written up for a call rather than implemented blind while he was away.
+Updated 2026-07-12 after the captain corrected the framing.
+The AUTHORITATIVE workflow now lives in `orchestration-model.md` ("The daily loop") - this doc is the current-status + gap + concrete build plan for getting there.
 
-## The mismatch he described
+## Framing correction (important)
 
-**Expected:**
-1. Give 1st mate a task.
-2. 1st mate hands over to 2nd mate.
-3. 2nd mate spins up autopilots.
-4. 2nd mate collects the results.
-5. 2nd mate reports back to 1st mate.
+An earlier version of this doc framed the choice as "Option A (keep the derived second mate) vs Option B (real second-mate agent)".
+That was wrong: **A is not an alternative to B - it is Phase 1 of the phased path toward B** that `orchestration-model.md` itself lays out (§"How this maps... Phased path": "Second mates as ephemeral runs first ... the model without the token bleed").
+So we are not choosing between two end-states; we are building B, and we are standing at Phase 1.
+The canonical design has always been B: first mate (Sonnet) -> second mate (Opus, the judgment tier that dispatches crew + reports up) -> crew (by complexity).
 
-**What actually happens:**
-1. Give 1st mate a task.
-2. 2nd mate does nothing.
-3. Autopilots spin up (dispatched by the 1st mate directly).
-4. You jump into the 2nd mate and get an auto-prompt (should be automatic or a button).
-5. The 2nd mate reviews the work.
-6. No reporting back to the 1st mate.
-7. Manual cleanup of the autopilots.
+## Where we stand (Phase 1, built)
 
-## Why it works the way it does today (the current design)
+- The first mate dispatches Autopilot **runs** directly; "second mate" is a DERIVED per-project view over those runs, with no session of its own until you jump in.
+- Report-back is pull: the captain jumps into a mate to consume reports (`pendingTriageNudge` / `pendingSecondMateReviewNudge`).
+- The Opus tier currently lands on the dispatched Autopilot runs, not on an active second-mate session.
+- 2026-07-12 polish already shipped so Phase 1 doesn't feel broken: jump-in seeds a review nudge (not blank), reports surface immediately (`dispatch:report` push), cross-instance dispatch is ownership-scoped, Done no longer traps.
 
-The "2nd mate" is NOT an active agent in the current build - it is a DERIVED grouping node.
-`deriveSecondMates` (lib/secondMates.js) creates one per distinct `(dispatchedBy, projectPath)` straight from the goal-run history; it has no session of its own until you jump in.
-The 1st mate holds the `helm_*` dispatch tools and dispatches the autopilot runs DIRECTLY (see launcher.js: only first mates get the dispatch tools; a dispatched run is depth-capped and cannot itself dispatch).
-Report-back is a PULL model: finished runs write reports to the dispatch queue, and the 1st mate only consumes them on its NEXT turn via `helm_collect_reports` - it does not get re-woken automatically.
-The 1st mate is deliberately DORMANT between turns ("a dormant session bills no tokens", first-mate-instructions.md) - which is why nothing auto-aggregates.
+## The gap to the authoritative daily loop
 
-So today's tiers are really: **1st mate (agent) -> autopilot crew (runs)**, with "2nd mate" as a per-project VIEW over the crew, and the captain as the thing that re-engages the loop.
-That was a deliberate trade (cheap, oversight-preserving) - but it does NOT match the mental model of a genuine 2nd-mate agent that owns a project, spins its own crew, and reports up.
+The daily loop (orchestration-model.md) needs two things Phase 1 doesn't have:
+1. **Step 2 - the first mate CREATES a real second-mate session per topic** (A/B/C), Opus-rooted in each project, existing + jumpable up front - not a derived view of headless runs.
+2. **Step 3 mode 1 - drive those second mates THROUGH the first mate** (the relay), as an alternative to jumping in directly.
 
-## The decision: which model do we want?
+## Phase-2 build plan (proposed - not yet built)
 
-### Option A - Keep the derived 2nd mate, just make the CURRENT flow feel automatic (low risk)
-Close the specific rough edges without changing the tier structure:
-- Auto-open the 2nd-mate review with its nudge already seeded (DONE 2026-07-12 - jump-in now seeds `pendingSecondMateReviewNudge` instead of a blank session).
-- Auto-surface reports the moment they land (DONE - `dispatch:report` push + forced fleet refresh).
-- Fix the status semantics so a 1st mate awaiting crew reads "waiting on crew", and once crew is done + reports are back it reads "reports ready", NOT the alarming "needs you" (bug 9c0c7209 - see below).
-- Optional: auto-acknowledge a run once its branch is merged, so "Done" mostly takes care of itself.
-- The captain still drives the re-engagement (jump in to aggregate), which keeps oversight and costs nothing while idle.
-This is the pragmatic path: the flow stops feeling broken, but the 2nd mate stays a view, not an agent.
+Guardrails first, because this is the tier that can run away (the rejected unbounded fan-out lesson):
+- **Hard width/depth caps** (already have `dispatchCaps.js` - extend to the second-mate tier).
+- **A token budget ceiling** per orchestration + a visible **kill switch** (stop the whole tree).
+- Bounded, explicit dispatch only - never recursive self-spawn.
 
-### Option B - Make the 2nd mate a REAL agent tier (matches his expected model, higher risk)
-The 1st mate delegates a project brief to a spawned 2nd-mate SESSION; that 2nd-mate agent spins its own autopilot crew, waits for + aggregates their reports, and reports UP to the 1st mate; the 1st mate aggregates across 2nd mates for the captain.
-This is a genuine 3-level autonomous loop.
-Cost/risk: it re-introduces the depth the current design deliberately caps (a dispatched tier that itself dispatches), multiplies token spend (three live agent tiers instead of one), and is exactly the shape that can run away (see the "agent fan-out runaway" lesson) - it needs hard width/depth caps, a budget ceiling, and a kill switch before it's safe to run unattended.
-It also needs an auto-report-UP mechanism (2nd mate -> 1st mate) and an auto-re-wake of the dormant 1st mate, which is the piece the dormancy model intentionally omitted.
+Then:
+1. **`helm_create_second_mate(project, brief)`** - a first-mate tool that spawns a project-rooted Opus session, binds it (second-mate binding already exists), and seeds it with the brief. One per A/B/C.
+2. **Second mate dispatches its own crew** - give the second-mate session the crew-dispatch capability (Autopilot runs within its project), depth-capped so crew can't re-dispatch.
+3. **Report UP the chain** - second mate aggregates its crew's reports and reports to the first mate; first mate aggregates across second mates for the captain (step 4). Extends the existing `dispatch:report` + report-queue plumbing one tier.
+4. **First-mate-driven mode** - the relay so the captain can steer a second mate through the first mate (step 3 mode 1), not only by jumping in.
+5. **Model-per-tier wiring** - first mate Sonnet (already), created second mate Opus, crew by complexity.
 
-### Recommendation
-Ship **Option A** now (most of it is already done as of 2026-07-12) - it removes the "strange and too manual" feel with low risk and preserves oversight/cost.
-Treat **Option B** as a separate, explicitly-scoped project with caps + budget + kill switch designed in from the start, only if the derived-2nd-mate model still feels too manual after living with Option A.
-The two are compatible: Option A is the same flow Option B would automate, so nothing done now is wasted.
+## Durability + resume (REQUIRED, cross-cutting - see orchestration-model.md)
 
-## Bug 9c0c7209 - "1st mate needs you when it's really just waiting on 2nd mates"
+"fortsätt" on the first mate must cascade resumption down to interrupted/quota-stopped Autopilot runs.
+Build items: resumable runs (relaunch goalOrchestrator against the existing worktree, continue from notes.md), a resume-dispatch path, and the top-down cascade.
+This is designed into Phase 2 from the start, not bolted on - each second mate owns resuming its own crew.
 
-Root: the `waitingOnCrew` badge (mateHasLiveCrew) only suppresses "needs you" while crew is still RUNNING.
-Once the crew finishes and reports are back, `mateHasLiveCrew` is false, so the mate flips to "needs you" - which is technically correct (reports need triage) but reads as "the mate is stuck on me" rather than "your crew is done, here are the results".
-Under his expected model (auto-aggregation) the 1st mate wouldn't surface to him at all until the 2nd mate had rolled things up.
+## Bug 9c0c7209 - "first mate needs you when it's just waiting on second mates"
 
-Fix direction (part of Option A, NOT yet implemented - needs his call on wording):
-- Add a third state between "working/waiting on crew" and "needs you": **"reports ready"** (crew done, nothing errored/escalated) - informational, not an alarm-amber "needs you".
-- Reserve "needs you" for a run that actually errored or escalated (a real decision), matching how the crew rows already distinguish `runNeedsCaptain`.
-- With auto-report-up (Option B) this state would instead be the 1st mate's own aggregated summary turn.
+Under the Phase-2 model the first mate wouldn't surface to the captain until the second mate had rolled its crew up - so this largely dissolves.
+Interim (Phase 1) fix, still needing the captain's wording call: add a **"reports ready"** state (crew done, nothing errored) distinct from the alarm-amber **"needs you"** (reserve that for a genuinely errored/escalated run, matching `runNeedsCaptain`).
 
-## Status of the surrounding p0 fixes (all 2026-07-12, in Jot "review")
-- 9f957394 - 2nd-mate box click routing + rows deep-link into the autopilot. DONE.
-- 7bacc349 - animated running indicator. DONE.
-- 36dda656 - tree no longer collapses on Done. DONE.
-- ca32567c - simpler mobile glyph. DONE.
-- c717be73 - bigger chevron hit target. DONE.
-- 6ed0b09e - quota on dashboard. DONE.
-- 9c0c7209 - waiting-vs-needs-you semantics. DEFERRED to this doc (needs the wording/behaviour call above).
+## Status of the 2026-07-12 p0 batch
+All in Jot "review" except 9c0c7209 (deferred to the wording call above): 9f957394, 7bacc349, 36dda656, ca32567c, c717be73, 6ed0b09e - done.
