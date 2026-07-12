@@ -11,6 +11,7 @@ let mateSessionIds = new Set();
 // "this is first mate X" instead of the cryptic prompt-derived title a
 // first-mate session gets after its first turn. Rebuilt each refresh().
 let mateBySessionId = new Map();
+let secondMateBySessionId = new Map();
 // App-level view history (Dashboard/Analysis/Archive/Chat/...), driven by the
 // mouse side buttons so back/forward navigate across the WHOLE app.
 // navigateToPage pushes here; appNavigateView walks it.
@@ -826,6 +827,15 @@ function firstMateForSession(session) {
     return null;
   }
   return mateBySessionId.get(session.cliSessionId) || mateBySessionId.get(session.sessionId) || null;
+}
+
+// The second mate a session is bound to (if any), so surfaces like the needs-you
+// queue can name it by its fleet name instead of its first-prompt title (2992bcfd).
+function secondMateForSession(session) {
+  if (!session) {
+    return null;
+  }
+  return secondMateBySessionId.get(session.cliSessionId) || secondMateBySessionId.get(session.sessionId) || null;
 }
 
 // "Delete" a session from Helm's own view — never touches the desktop
@@ -4430,7 +4440,20 @@ function computeSidebarFingerprint(sessions, config) {
 let lastSidebarFingerprint = null;
 
 async function refresh() {
-  const [data, matesResult] = await Promise.all([window.helm.getSessions(), window.helm.listMates()]);
+  const [data, matesResult, secondMatesResult] = await Promise.all([
+    window.helm.getSessions(),
+    window.helm.listMates(),
+    window.helm.listSecondMates(),
+  ]);
+  // Map a bound second-mate session -> its second mate, so the needs-you queue
+  // can show a second mate by its FLEET name ("2nd mate · helm") instead of its
+  // raw first-prompt title ("You are the second mate for..."), which read as a
+  // different thing entirely (bug 2992bcfd).
+  secondMateBySessionId = new Map(
+    ((secondMatesResult?.ok ? secondMatesResult.secondMates : secondMatesResult) || [])
+      .filter((sm) => sm && sm.sessionId)
+      .map((sm) => [sm.sessionId, sm])
+  );
   // Which sessions are ACTUALLY a first mate: the ones bound to an active mate
   // (mate.sessionId), not merely rooted at the meta-home. A personal chat the
   // captain happens to root in the meta-home dir (e.g. the Claude rules folder)
@@ -5290,20 +5313,46 @@ function fleetMateCardEl(mate, sms, boardSummary = {}) {
   // distinct, non-alarming "waiting on crew" state (blue "in motion", no amber
   // accent) instead of "needs you". Reserve "needs you" for a truly idle mate.
   const waitingOnCrew = mateStatus === "waiting" && mateHasLiveCrew(mate);
+  // Reports-ready vs needs-you (bug 9c0c7209): once a mate's crew has finished
+  // and reported back with nothing errored/escalated, the mate is NOT stuck on
+  // you - show an informational "reports ready", not the alarm "needs you".
+  // Reserve "needs you" (+ the amber accent) for a genuinely errored/escalated
+  // run, or a mate actually waiting on your input with no crew to explain it.
+  const terminalCrew = terminalRunsBy(mate.mateId);
+  const alarmCrew = terminalCrew.some((r) => r.status === "error" || !!r.escalation);
+  const reportsReady = !waitingOnCrew && !alarmCrew && terminalCrew.length > 0;
   const kind = document.createElement("span");
   kind.className = "fleet-kind session";
   kind.textContent = "💬 session";
   const role = document.createElement("div");
   role.className = "fleet-mate-role";
-  if (mateStatus === "waiting" || mateStatus === "active") {
+  if (mateStatus === "waiting" || mateStatus === "active" || alarmCrew || reportsReady) {
     const badge = document.createElement("span");
-    badge.className = "fleet-badge " + (waitingOnCrew || mateStatus === "active" ? "run" : "need");
-    badge.textContent = waitingOnCrew ? "waiting on crew" : mateStatus === "waiting" ? "needs you" : "working";
+    let bkind;
+    let btext;
+    if (waitingOnCrew) {
+      bkind = "run";
+      btext = "waiting on crew";
+    } else if (alarmCrew) {
+      bkind = "need";
+      btext = "needs you";
+    } else if (reportsReady) {
+      bkind = "ok";
+      btext = "reports ready";
+    } else if (mateStatus === "active") {
+      bkind = "run";
+      btext = "working";
+    } else {
+      bkind = "need";
+      btext = "needs you";
+    }
+    badge.className = "fleet-badge " + bkind;
+    badge.textContent = btext;
     role.append(badge);
   }
   role.append(kind, document.createTextNode(sms.length ? ` ${sms.length} second mate${sms.length === 1 ? "" : "s"}` : " idle"));
   idBox.append(name, role);
-  if (mateStatus === "waiting" && !waitingOnCrew) {
+  if (alarmCrew || (mateStatus === "waiting" && !waitingOnCrew && !reportsReady)) {
     card.classList.add("fleet-mate-needs");
   }
   const actions = document.createElement("div");
@@ -6473,10 +6522,19 @@ function dashSessionRowEl(session) {
   // unrecognizable in this queue. Show it as the mate ("1st mate · <name>")
   // instead, and keep the prompt title as context on the why line below.
   const mate = firstMateForSession(session);
+  // A second mate is named after its first prompt too, which is unrecognizable
+  // here - show it by its fleet name ("2nd mate · <project>") so it matches the
+  // Fleet view instead of reading as a different thing (bug 2992bcfd).
+  const secondMate = mate ? null : secondMateForSession(session);
   if (mate) {
     const tag = document.createElement("span");
     tag.className = "dash-goal-tag";
     tag.textContent = "1st mate";
+    top.append(tag);
+  } else if (secondMate) {
+    const tag = document.createElement("span");
+    tag.className = "dash-goal-tag";
+    tag.textContent = "2nd mate";
     top.append(tag);
   } else if (session.jot?.category) {
     const tag = document.createElement("span");
@@ -6486,7 +6544,7 @@ function dashSessionRowEl(session) {
   }
   const title = document.createElement("span");
   title.className = "dash-q-title";
-  title.textContent = mate ? mate.name : session.title;
+  title.textContent = mate ? mate.name : secondMate ? secondMate.name : session.title;
   top.append(title);
   qbody.append(top);
 
@@ -6501,15 +6559,27 @@ function dashSessionRowEl(session) {
   // A first mate waiting only on its own dispatched crew isn't blocked on you -
   // drop the alarming "Waiting on you" prefix and read "waiting on crew".
   const waitingOnCrew = session.status === "waiting" && mateHasLiveCrew(mate);
-  const waitPrefix = session.status === "waiting" ? (waitingOnCrew ? "Waiting on crew · " : "Waiting on you · ") : "";
+  // Reports-ready: crew done + reported, nothing errored/escalated - not stuck on
+  // you (bug 9c0c7209). Only meaningful for a first-mate session (has crew).
+  const mateTerminalCrew = mate ? terminalRunsBy(mate.mateId) : [];
+  const mateAlarm = mateTerminalCrew.some((r) => r.status === "error" || !!r.escalation);
+  const reportsReady = !waitingOnCrew && !mateAlarm && mateTerminalCrew.length > 0;
+  const waitPrefix =
+    session.status === "waiting"
+      ? waitingOnCrew
+        ? "Waiting on crew · "
+        : reportsReady
+          ? "Reports ready · "
+          : "Waiting on you · "
+      : "";
   why.textContent = waitPrefix + contextTitle + bits.join(" · ");
   qbody.append(why);
   row.append(qbody);
 
   if (session.status === "waiting") {
     const meta = document.createElement("div");
-    meta.className = "dash-q-meta" + (waitingOnCrew ? " crew" : "");
-    meta.textContent = waitingOnCrew ? "waiting on crew" : "needs input";
+    meta.className = "dash-q-meta" + (waitingOnCrew || reportsReady ? " crew" : "");
+    meta.textContent = waitingOnCrew ? "waiting on crew" : reportsReady ? "reports ready" : "needs input";
     row.append(meta);
   }
 
