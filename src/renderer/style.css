@@ -3211,6 +3211,20 @@ button.primary {
   padding-left: 11px;
 }
 
+/* Transient flash when a crew report row deep-links into a specific run, so the
+   eye lands on it after the scroll. Fades out on its own (removed after 2s). */
+.goal-run-deeplinked {
+  animation: goalRunDeeplinkFlash 2s ease-out;
+}
+@keyframes goalRunDeeplinkFlash {
+  0% {
+    background: color-mix(in srgb, var(--accent) 22%, transparent);
+  }
+  100% {
+    background: transparent;
+  }
+}
+
 .goal-run-head {
   display: flex;
   align-items: center;

@@ -5442,6 +5442,16 @@ function fleetSecondMateEl(sm) {
   const anyNeeds = crew.some(crewNeedsCaptain);
   const branch = document.createElement("div");
   branch.className = "fleet-branch secondmate";
+  // Catch-all so NO click anywhere in the 2nd-mate node falls through to the
+  // enclosing first-mate card (which would jumpIntoFirstMate). Any click on the
+  // node's own padding / empty areas / crew-row gaps now routes to the 2nd mate,
+  // not the 1st. Inner controls (chevron toggle, rename/archive/mobile buttons,
+  // crew rows) keep their own handlers + stopPropagation, so this only catches
+  // the gaps. (Bug 9f957394: "clicks not near jump-in jump into 1st mate".)
+  branch.addEventListener("click", (e) => {
+    e.stopPropagation();
+    jumpIntoSecondMate(sm);
+  });
 
   const head = document.createElement("div");
   head.className = "fleet-branch-head";
@@ -6684,7 +6694,9 @@ function dashReportRowEl(run) {
   const report = goalRunReport(run);
   const row = document.createElement("div");
   row.className = "dash-queue-row" + (report.needsCaptain ? " dash-report-needs" : "");
-  row.addEventListener("click", () => navigateToPage("goal"));
+  // Whole row is the click target and it deep-links INTO this autopilot run's
+  // detail (scroll + highlight), not just to the goal list (bug 9f957394).
+  row.addEventListener("click", () => openGoalRun(run.goalRunId));
 
   // Left icon: needs-you warning when the captain must act; a done check
   // otherwise. Own markup (dashQueueStateIcon's goalRun path assumes a live/
@@ -7628,6 +7640,30 @@ function renderGoalPage() {
     }
     page.append(runsWrap);
   }
+
+  // Deep-link target: a crew report row asked to open a SPECIFIC run (see
+  // openGoalRun). Scroll it into view and flash a highlight so the eye lands on
+  // it among several run blocks, then clear the one-shot target.
+  if (pendingGoalScrollId) {
+    const target = document.getElementById("goalrun-" + pendingGoalScrollId);
+    pendingGoalScrollId = null;
+    if (target) {
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+      target.classList.add("goal-run-deeplinked");
+      setTimeout(() => target.classList.remove("goal-run-deeplinked"), 2000);
+    }
+  }
+}
+
+// One-shot deep-link: the goal run a Dashboard crew-report row wants opened.
+// renderGoalPage consumes + clears it after scrolling that run into view.
+let pendingGoalScrollId = null;
+
+// Navigate to the Autopilot page focused on a specific run ("into the autopilot"
+// from a crew report row), rather than dumping the user on the run list.
+function openGoalRun(goalRunId) {
+  pendingGoalScrollId = goalRunId || null;
+  navigateToPage("goal");
 }
 
 // One run's live block: heading (ordinal + goal, so concurrent runs are
@@ -7636,6 +7672,10 @@ function renderGoalPage() {
 // rendering so the Goal page can show several runs at once.
 function goalRunDetailEl(run) {
   const wrap = document.createElement("div");
+  // id so a crew report row on the Dashboard can deep-link straight to THIS
+  // run's detail (scroll + highlight) instead of dumping the user on the goal
+  // list - "into the autopilot", not just "view" (bug 9f957394).
+  wrap.id = "goalrun-" + run.goalRunId;
   // Subtle amber accent (see .goal-run-detail-attention in style.css) so a
   // run needing attention is visible at a glance among several run blocks,
   // not just discoverable by reading each status line.
