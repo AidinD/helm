@@ -80,6 +80,10 @@ try {
 
   // Crew under a second mate (rendered even while collapsed).
   assert((await count("#dashFleetSlot .fleet-crew-item")) === 2, "crew items render under their second mates");
+  // Bug cffdeeb8: a finished crew run gets a "Done" control right on the row, so
+  // the captain can acknowledge it without deep-linking in. c2 is done -> one
+  // Done button; c1 is still running -> none.
+  assert((await count("#dashFleetSlot .fleet-crew-done")) === 1, "the finished crew run shows a Done button, the running one doesn't");
   assert((await count("#dashFleetSlot .fleet-badge.run")) >= 1, "a second mate with live crew shows a 'busy' badge");
   assert((await count("#dashFleetSlot .fleet-spin")) >= 1, "live crew shows the working spinner");
 
