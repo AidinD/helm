@@ -4604,6 +4604,11 @@ button.primary {
   color: var(--waiting);
   flex-shrink: 0;
 }
+/* "waiting on crew" is in-motion, not blocked on you - read it as calm/active
+   (blue), not the amber "needs input" --waiting tone. */
+.dash-q-meta.crew {
+  color: var(--active);
+}
 
 .dash-queue-actions {
   display: flex;
