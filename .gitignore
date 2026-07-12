@@ -9,6 +9,7 @@ usage-log.jsonl
 helm-usage.jsonl
 goal-run-history.json
 mates.json
+second-mates.json
 routines.json
 pasted-images/
 # whisper.cpp CUDA binary + GGML model for voice transcription (see
