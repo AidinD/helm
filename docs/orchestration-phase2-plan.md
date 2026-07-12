@@ -13,9 +13,15 @@ Grounded in a read of the actual code (dispatch watcher, secondMates, goalOrches
 - Resume today is display-only: `goal:history` relabels a dead `running` record `interrupted`. No path relaunches runGoal against an existing worktree. `--resume` is only for interactive panes.
 
 ## Build status (2026-07-12)
-- **Slice 0 - guardrails: DONE + verified + committed.** orchestrationBudget.js (per-meta-home cost ceiling + kill switch, atomic budget.json) + unit test; dispatchCaps depth cap rejects callerTier==='crew'; processDispatchRequests rejects when killed/over-budget + counts costUsd + owns second-mate ids; kill/resume/budget IPC + Dashboard chip.
-- **Slice 1 - lazy proposed/created second mates: DONE + verified + committed.** secondMates.js status/brief/firstMateId/projectPath in bindings; deriveSecondMates unions proposed; proposeSecondMate/markSecondMateCreated; bind flips proposed->created; secondMates:propose IPC; Fleet renders a proposed mate distinctly. Unit test.
-- **Slices 2-6: NOT STARTED.** Next focused pass. Slice 4 (canonical-session mutex) + Slice 5 (worktree reuse) are the flagged hazards - build them with fresh attention, not at a session tail.
+- **Slice 0 - guardrails: DONE + verified + reviewed + committed.** orchestrationBudget.js (per-meta-home cost ceiling + kill switch) + unit test; depth cap rejects callerTier==='crew'; processDispatchRequests rejects when killed/over-budget + counts costUsd + owns second-mate ids; kill/resume/budget IPC + Dashboard chip.
+- **Slice 1 - lazy proposed/created second mates: DONE + verified + reviewed + committed.** bindings carry status/brief/firstMateId/projectPath; deriveSecondMates unions proposed; proposeSecondMate/markSecondMateCreated; bind flips proposed->created; secondMates:propose IPC; Fleet renders proposed distinctly. Unit test.
+- **Slice 2 - second mate dispatches its own crew: DONE + verified + reviewed + committed.** buildDispatchMcpConfig(callerId, callerTier); session:start attaches crew tools to a secondMateId pane (non-strict) + resolves the id from the durable binding on RESUME (review fix); MCP stamps callerTier; server-side bind on session event closes the orphan window (review fix).
+- **Slice 3 - report up: DONE + verified + reviewed + committed.** helm_report_up (second mates only) writes a roll-up addressed to the parent first mate (parent resolved from deriveSecondMates - review fix - and 'direct' is top-of-chain, no dead-letter); first mate's helm_collect_reports surfaces it.
+- **Slices 4-6: NOT STARTED (deliberate pause).** Slice 4 (canonical session + relay, needs a per-sessionId mutex vs concurrent --resume) and Slice 5 (resumable runs, worktree/node_modules reuse) are the two flagged HAZARDS. Build them in a fresh focused pass, not at the tail of a long build - a subtle bug here corrupts a transcript or deletes the shared node_modules. Slice 6 (fortsätt cascade) depends on 5.
+
+### Each slice's review round found + fixed real bugs (per the captain's request)
+- Slice 2: a RESUMED second mate silently lost its crew tools (pane-tag keying); a first crew dispatch could be orphaned if the renderer bind was missed. Both fixed (durable-binding keying + server-side bind).
+- Slice 3: report-up was dead on arrival (parent read from a never-populated binding field); 'direct' would dead-letter. Both fixed (derive parent; 'direct' = top-of-chain).
 
 ## Slices (build in order)
 
