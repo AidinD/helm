@@ -36,7 +36,7 @@ import { personaOverlay, PERSONAS } from "./lib/personas.js";
 import { listSlashItems } from "./lib/slashCommands.js";
 import { trackHelmUsage, summarizeHelmUsage } from "./lib/helmUsage.js";
 import { initAutoUpdate } from "./lib/autoUpdate.js";
-import { deriveSecondMates, bindSecondMateSession, renameSecondMate, readBindings, proposeSecondMate, markSecondMateCreated, secondMateIdForSession } from "./lib/secondMates.js";
+import { deriveSecondMates, bindSecondMateSession, renameSecondMate, readBindings, proposeSecondMate, markSecondMateCreated, secondMateIdForSession, secondMateId } from "./lib/secondMates.js";
 import { addSpend, isOverBudget, isKilled, setKilled, resetBudget, readBudget, setCeiling } from "./lib/orchestrationBudget.js";
 import {
   ensureDispatchDirs,
@@ -987,7 +987,7 @@ function resolveDispatchProject(project) {
 // it has no live channel to answer a permission prompt (verified: without this,
 // a real first-mate session replies "TOOL-BLOCKED" and never dispatches - review M3).
 const FIRST_MATE_MCP_SERVER = "helm-dispatch";
-const FIRST_MATE_ALLOWED_TOOLS = ["helm_dispatch", "helm_collect_reports", "helm_list_projects", "helm_fleet_state", "helm_report_up", "helm_create_second_mate"].map(
+const FIRST_MATE_ALLOWED_TOOLS = ["helm_dispatch", "helm_collect_reports", "helm_list_projects", "helm_fleet_state", "helm_report_up", "helm_create_second_mate", "helm_relay_to_second_mate"].map(
   (t) => `mcp__${FIRST_MATE_MCP_SERVER}__${t}`
 );
 
@@ -2504,6 +2504,82 @@ function liveRunSnapshot() {
   }));
 }
 
+// Phase-2 Slice 4b relay (ASYNC, the captain's call): spawn an internal second-mate
+// turn to handle a first mate's relayed message, then return immediately. The
+// second mate does its work (dispatches crew, etc.) and reports back up via
+// helm_report_up - no long synchronous tool call, so nothing can time out. It
+// resumes the bound session (or starts a fresh one), guarded by the per-session
+// turn lock so it never races a direct pane turn on the same session.
+// Returns { ok } (turn launched) or { ok:false, error } (busy / no parent).
+function runRelayTurn(metaHome, { secondMateId, projectPath, message }) {
+  const binding = readBindings()[secondMateId] || {};
+  const resumeSessionId = binding.sessionId || null;
+  if (resumeSessionId && sessionTurnLocks.has(resumeSessionId)) {
+    return { ok: false, error: "That second mate is busy with a turn right now - try again once it's idle." };
+  }
+  // Resolve the parent first mate from the derived second mate (same source as
+  // the session:start path); "direct" second mates have no first mate to report
+  // up to, so a relay to one is refused (a relay only makes sense mate->mate).
+  const derivedSm = deriveSecondMates(loadGoalRunHistory()).find((s) => s.secondMateId === secondMateId);
+  const parentFirstMate = derivedSm?.firstMateId;
+  const parentMateId = parentFirstMate && parentFirstMate !== "direct" ? parentFirstMate : null;
+  if (!parentMateId) {
+    return { ok: false, error: "No parent first mate for this second mate - relay only works first-mate -> second-mate." };
+  }
+  ensureDispatchDirs(metaHome);
+  const mcpConfig = buildDispatchMcpConfig(metaHome, secondMateId, "second-mate", parentMateId);
+  if (resumeSessionId) {
+    sessionTurnLocks.add(resumeSessionId);
+  }
+  let child;
+  let done;
+  try {
+    ({ child, done } = startSession({
+      cwd: projectPath,
+      prompt: message,
+      model: "claude-opus-4-8",
+      mcpConfig,
+      allowedTools: FIRST_MATE_ALLOWED_TOOLS,
+      // A fresh relay turn (no bound session yet) boots the second mate with its
+      // manual; a resumed one already has it in context.
+      appendSystemPrompt: resumeSessionId ? undefined : secondMateInstructions(),
+      strictMcpConfig: false,
+      resumeSessionId,
+      onEvent: (evt) => {
+        // Bind the session id the moment it appears so the second mate owns its
+        // own crew dispatches + a later relay/jump-in resumes the SAME session.
+        if (evt.kind === "session" && evt.sessionId) {
+          try {
+            bindSecondMateSession(secondMateId, evt.sessionId);
+          } catch {
+            // best effort
+          }
+        }
+      },
+    }));
+  } catch (err) {
+    if (resumeSessionId) {
+      sessionTurnLocks.delete(resumeSessionId);
+    }
+    return { ok: false, error: `Failed to start the relay turn: ${err?.message || String(err)}` };
+  }
+  if (child) {
+    liveChildren.set("relay-" + secondMateId + "-" + Date.now(), child);
+  }
+  // Fire-and-forget: release the lock when the turn ends + refresh the fleet so
+  // the second mate's report-up surfaces. We do NOT await this (async relay).
+  done.then(() => {
+    if (resumeSessionId) {
+      sessionTurnLocks.delete(resumeSessionId);
+    }
+    writeFleetStateSnapshot(metaHome);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("dispatch:report", { kind: "relay", secondMateId });
+    }
+  });
+  return { ok: true };
+}
+
 function processDispatchRequests(metaHome) {
   if (dispatchScanInFlight) {
     return;
@@ -2567,6 +2643,37 @@ function processDispatchRequests(metaHome) {
           }
         } catch (err) {
           reject(`Failed to propose second mate: ${err?.message || String(err)}`);
+        }
+        continue;
+      }
+
+      // Phase-2 Slice 4b relay (async): a first mate drives a second mate without
+      // the captain jumping in. Ensure the second mate exists (propose so its
+      // parent resolves), then launch an internal second-mate turn fire-and-forget
+      // and ack the ACCEPT immediately (the response comes later via report-up).
+      // Gated by kill/budget below? No - handled here, and a relay that spins crew
+      // is itself budget-gated at the crew dispatch, so allow the relay turn.
+      if (request.kind === "relay") {
+        const relayProject = resolveDispatchProject(request.project);
+        if (!relayProject) {
+          reject(`Unknown project "${request.project}". Call helm_list_projects, or pass an explicit absolute repo path.`);
+          continue;
+        }
+        if (!(request.message || "").trim()) {
+          reject("A relay needs a non-empty message.");
+          continue;
+        }
+        const smId = secondMateId(request.dispatchedBy || "direct", relayProject);
+        try {
+          proposeSecondMate(request.dispatchedBy || "direct", relayProject, {});
+        } catch {
+          // non-fatal - runRelayTurn resolves the parent from the derived mate
+        }
+        const relayRes = runRelayTurn(metaHome, { secondMateId: smId, projectPath: relayProject, message: request.message });
+        if (relayRes.ok) {
+          writeAck(metaHome, dispatchId, { status: "accepted", secondMateId: smId, async: true });
+        } else {
+          reject(relayRes.error);
         }
         continue;
       }

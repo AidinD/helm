@@ -139,6 +139,19 @@ const TOOLS = [
     },
   },
   {
+    name: "helm_relay_to_second_mate",
+    description:
+      "FIRST MATES ONLY: drive a second mate WITHOUT the captain jumping in (the daily loop's 'orchestrate via the first mate' mode). Sends a message to the project's second mate; it works asynchronously (spins up if needed, dispatches its own crew, etc.) and reports back UP to you via helm_report_up - so this returns immediately, and you pick up the result with helm_collect_reports on a later turn. Use it to delegate + move on, not to converse in real time.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project: { type: "string", description: "Project name (see helm_list_projects) or absolute repo path." },
+        message: { type: "string", description: "What you want the second mate to do." },
+      },
+      required: ["project", "message"],
+    },
+  },
+  {
     name: "helm_report_up",
     description:
       "SECOND MATES ONLY: roll up your project's outcome and report it UP to your first mate (who aggregates across projects for the captain). Call this once your assignment is done or needs to pause - after you've validated your crew's work. Give a compact synthesis, not a transcript. This is how the chain closes: first-mate <- you <- crew.",
@@ -307,12 +320,52 @@ async function toolCreateSecondMate(args) {
   return { ok: true, secondMateId: ack.secondMateId || null, project };
 }
 
+// First mate relays a message to a project's second mate (async - it reports
+// back up). The app launches the second-mate turn fire-and-forget and acks the
+// ACCEPT immediately.
+async function toolRelay(args) {
+  if (CALLER_TIER !== "first-mate") {
+    return { error: "Only a first mate relays to a second mate." };
+  }
+  if (!META_HOME) {
+    return { error: "HELM_META_HOME not configured; cannot reach the dispatch queue." };
+  }
+  const project = (args?.project || "").trim();
+  const message = (args?.message || "").trim();
+  if (!project || !message) {
+    return { error: "Both `project` and `message` are required." };
+  }
+  ensureDispatchDirs(META_HOME);
+  const dispatchId = writeRequest(META_HOME, {
+    kind: "relay",
+    project,
+    message,
+    dispatchedBy: MATE_ID,
+    callerTier: CALLER_TIER,
+  });
+  const ack = await waitForAck(dispatchId);
+  if (!ack) {
+    return { status: "pending", note: "Relay queued; the app has not acknowledged it yet." };
+  }
+  if (ack.status === "rejected") {
+    return { status: "rejected", reason: ack.reason || "rejected by Helm" };
+  }
+  return {
+    ok: true,
+    status: "dispatched",
+    secondMateId: ack.secondMateId || null,
+    note: "The second mate is working on it asynchronously and will report back up - collect it with helm_collect_reports on a later turn.",
+  };
+}
+
 function callTool(name, args) {
   switch (name) {
     case "helm_dispatch":
       return toolDispatch(args || {});
     case "helm_create_second_mate":
       return toolCreateSecondMate(args || {});
+    case "helm_relay_to_second_mate":
+      return toolRelay(args || {});
     case "helm_collect_reports":
       return toolCollectReports(args || {});
     case "helm_list_projects":
