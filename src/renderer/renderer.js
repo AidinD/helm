@@ -5673,10 +5673,39 @@ function mostRecentSessionForCwd(cwd) {
   );
 }
 
+// A review nudge for a second mate that has crew reports waiting. Mirrors the
+// first mate's pendingTriageNudge, but for the JUDGMENT tier: the second mate's
+// job is to review the crew's per-branch work and merge what holds. Without this
+// a fresh second-mate jump-in opened a BLANK session with no idea the crew had
+// just landed commits on branches (the "2nd mate is empty" report). Scoped to
+// this project's dispatched, terminal, not-yet-acknowledged runs. Empty when
+// there's nothing waiting.
+function pendingSecondMateReviewNudge(sm) {
+  const runs = [...goalRuns.values()]
+    .filter(isTerminalRun)
+    .filter((r) => !isGoalRunAcknowledged(r.goalRunId))
+    .filter((r) => samePath(r.projectPath, sm.projectPath))
+    .filter((r) => (sm.firstMateId && sm.firstMateId !== "direct" ? r.dispatchedBy === sm.firstMateId : true))
+    .sort((a, b) => (b.ordinal || 0) - (a.ordinal || 0));
+  if (runs.length === 0) {
+    return "";
+  }
+  const lines = runs.slice(0, REPORT_BACK_LIMIT).map((r) => {
+    const rep = goalRunReport(r);
+    const branch = rep.branchName ? ` [branch ${rep.branchName}, ${rep.commitCount || 0} commit(s)]` : "";
+    return `- "${r.goal}" — ${rep.status}${branch}${rep.needsCaptain ? ` — ${rep.needsCaptain}` : ""}`;
+  });
+  return (
+    `You are the second mate for this project - the judgment tier. Your dispatched crew reported back ${runs.length} run${runs.length === 1 ? "" : "s"}, each on its OWN branch + worktree. ` +
+    `For each: inspect the commits on its branch, verify the fix actually holds (don't trust the run's own claim), then MERGE the solid ones into the main branch and say clearly which you merged. For any that failed or look wrong, say what you'd re-dispatch or fix instead - do not merge those. Crew work waiting:\n${lines.join("\n")}`
+  );
+}
+
 // Jump into a second mate: resume its bound project session; else the most
 // recent existing session in that project (the fix for direct/derived second
 // mates, whose sessionId was never bound - they used to always open fresh);
-// else start a fresh one rooted in the project (Opus, tagged so it binds back).
+// else start a fresh one rooted in the project (Opus, tagged so it binds back),
+// seeded with a crew-review nudge so it opens with the work to do, not blank.
 function jumpIntoSecondMate(sm) {
   // Navigate to chat FIRST (see jumpIntoFirstMate) - the composer focus in
   // openSessionInPane / openFreshDraftInPane no-ops while chat is hidden.
@@ -5686,7 +5715,7 @@ function jumpIntoSecondMate(sm) {
   if (existing) {
     openSessionInPane(existing, 0);
   } else {
-    openFreshDraftInPane(sm.projectPath, "", {
+    openFreshDraftInPane(sm.projectPath, pendingSecondMateReviewNudge(sm), {
       forceIndex: 0,
       paneOverrides: { modelDefault: "claude-opus-4-8", secondMateId: sm.secondMateId, title: sm.name },
     });
@@ -6506,20 +6535,26 @@ function reportRowDoneBtn(run) {
     }
     showContextMenu(e.clientX, e.clientY, [
       {
-        label: "Done + clean up worktree",
-        onClick: async () => {
-          // Only mark done if the cleanup actually succeeded - otherwise leave
-          // the row so the failure is visible and retryable, rather than hiding
-          // a no-op behind an acknowledge.
-          const ok = await cleanupGoalRunWorktree(run);
-          if (ok) {
-            await acknowledgeGoalRun(run.goalRunId);
-          }
-        },
+        // Primary + safe: pure acknowledge, no git. Never errors - clears the
+        // report from the glance and leaves the worktree/branch on disk for a
+        // manual merge/review. This is the non-trapping default (the previous
+        // menu led with the worktree-removal option, which fail-closes on an
+        // uncommitted/dirty worktree and then refused to acknowledge at all -
+        // the "Done errors because it's uncommitted" trap).
+        label: "Done (keep worktree)",
+        onClick: () => acknowledgeGoalRun(run.goalRunId),
       },
       {
-        label: "Done, keep the worktree",
-        onClick: () => acknowledgeGoalRun(run.goalRunId),
+        label: "Done + remove worktree",
+        onClick: async () => {
+          // Try the cleanup, but acknowledge REGARDLESS: "Done" is the captain
+          // asserting this run is handled, so a cleanup failure (e.g. a dirty
+          // worktree) must not trap the run in the glance. cleanupGoalRunWorktree
+          // already toasts why it kept the worktree; the commits are what matter,
+          // the worktree is scratch.
+          await cleanupGoalRunWorktree(run);
+          await acknowledgeGoalRun(run.goalRunId);
+        },
       },
     ]);
   });
