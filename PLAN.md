@@ -5,7 +5,20 @@ context flow, and (later) orchestration — without removing any Claude feature.
 Built by wrapping the real `claude` binary headlessly (stream-json), so all
 skills, CLAUDE.md, settings, permissions, and MCP are preserved.
 
-## Current status (2026-07-11)
+## Current status (2026-07-12)
+
+Orchestration flow reframed + the next big build scoped.
+2026-07-12 landed (in Jot "review"): the cross-instance dispatch orphaning fix (ownership-scoped claiming), second-mate jump-in seeds a review nudge, Done no longer traps on a dirty worktree, and a batch of 6 p0 UX fixes (2nd-mate click routing + deep-link, animated running indicator, tree-collapse-on-Done, bigger chevron target, simpler mobile glyph, quota on dashboard). Merged the salvaged autopilot work (pasted-image inline transcript rendering + persona-row click fix + test) and cleaned up all goal worktrees. Installer at 0.1.342.
+
+The big open thread is ORCHESTRATION (see orchestration-model.md "The daily loop" + orchestration-flow-redesign.md):
+- Framing corrected - the current build is **Phase 1 of B** (the target: first mate Sonnet -> second mate Opus that dispatches crew + reports up), not a competing "Option A".
+- Authoritative daily loop settled with Aidin: start in first mate -> it CREATES a real second-mate session per topic -> dual mode (orchestrate via first mate = more tokens, OR jump into a second mate directly = cheaper) -> ask first mate for a summary -> retire.
+- New first-class requirement: durability + top-down "fortsätt" resume (token-out / app-close must be trivially continuable, cascading down to interrupted Autopilot runs).
+- Phase-2 build plan written (create real second-mate sessions, second-mate-dispatches-crew, report-up, first-mate-driven mode, model-per-tier) with caps + token budget + kill switch first. NOT built yet - awaiting Aidin's go on the plan.
+
+Still also true (de-risking, from 2026-07-11): verify the packaged app in real daily use.
+
+### (superseded) Prior status (2026-07-11)
 
 Feature-nearly-complete.
 A long session (rooted in the meta-home, not Helm) landed a large batch — see the git log for 2026-07-11 and the Jot "Helm" board's review column.

@@ -36,6 +36,20 @@ This is the rhythm to internalize.
 6. Come back, review the result - read the diff, read Autopilot's captured contract + verify evidence, decide.
 7. Finish and discard the session. The knowledge is already in files and Jot.
 
+### The orchestration loop (the tiered target - authoritative, 2026-07-12)
+
+The rhythm above is the day-to-day today. The intended orchestration loop, once the first mate creates real second mates (Phase 2 - see orchestration-model.md "The daily loop"), is:
+
+1. **Start the day in the first mate.** "What should I work on today? I want to work on A, B and C."
+2. **The first mate creates one second mate per topic** - a real project-rooted Opus session for A, for B, for C.
+3. **Choose how to proceed** (dual mode, freely switchable):
+   - Stay in the **first mate** and orchestrate the second mates through it - simpler, more orchestratory, but more tokens (the first mate stays active).
+   - Or **jump into a second mate** and work there directly - preferred token-wise (the first mate goes dormant and bills nothing while you work in the one session that matters).
+4. **Ask the first mate for a summary** when you feel done - it aggregates across the second mates.
+5. **Retire.** Second mates are ephemeral (continuity is the project's files); the first mate is a durable role, dormant until tomorrow.
+
+Interruption is safe: if you run out of tokens or close the app mid-flight, typing **"fortsätt" on the first mate** resumes the whole tree top-down (first mate -> second mates -> their in-flight Autopilot runs).
+
 ## Decision guide: which surface for which work
 
 The nav is deliberately lean - Dashboard is the only primary tab; Chat and Plan are quieter secondary detours.
