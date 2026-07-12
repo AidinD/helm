@@ -2030,15 +2030,26 @@ ipcMain.handle("goal:cancel", (_event, { goalRunId }) => {
   return { ok: true };
 });
 
-// Phase-2 Slice 5: RESUME a stopped run (quota-exhausted / interrupted /
-// escalated) by re-running against its EXISTING worktree + notes.md. A
-// dispatched run's report-back + budget wiring is reconstructed so a resumed
+// Phase-2 Slice 5: RESUME a run that STOPPED in a resumable state (quota-
+// exhausted or escalated) by re-running against its EXISTING worktree + notes.md.
+// A dispatched run's report-back + budget wiring is reconstructed so a resumed
 // crew run still reports up. The kept worktree is the durable state that makes
 // this safe (see runGoal's resume path). "fortsätt" (Slice 6) drives this.
+// (Resuming an app-RESTART-interrupted run isn't supported yet - the worktree
+// path isn't persisted mid-run; that needs Slice 6's mid-run persistence.)
 ipcMain.handle("goal:resume", (_event, { goalRunId }) => {
   const rec = loadGoalRunHistory().find((r) => r.goalRunId === goalRunId);
   if (!rec) {
     return { ok: false, error: "No such run." };
+  }
+  // Only a run left in a resumable state can be resumed, and only ONCE. This
+  // gate does triple duty (review): it blocks a SECOND resume of the same record
+  // (two live runs on one worktree = git corruption, #1), and it excludes pre-
+  // Slice-5 records that have no persisted baseCommit (whose commit count would
+  // read 0 and could auto-delete their committed work, #3). resumable is cleared
+  // below the moment we start, so a concurrent second call also fails this.
+  if (!rec.resumable) {
+    return { ok: false, error: "This run isn't in a resumable state (only a quota-stopped or escalated run, once each)." };
   }
   if (liveGoalRuns.has(goalRunId)) {
     return { ok: false, error: "That run is already live." };
@@ -2046,6 +2057,18 @@ ipcMain.handle("goal:resume", (_event, { goalRunId }) => {
   if (!rec.worktreePath || !fs.existsSync(rec.worktreePath)) {
     return { ok: false, error: "The run's worktree is no longer on disk - can't resume." };
   }
+  // Respect the Slice-0 guardrails: a resume launches a real autonomous run, so
+  // the kill switch + budget ceiling must gate it exactly like a fresh dispatch
+  // (review #2 - resume must not be a backdoor around Stop / over-budget).
+  const gateHome = rec.dispatchMetaHome || resolveMetaHome();
+  if (isKilled(gateHome)) {
+    return { ok: false, error: "Orchestration is stopped by the kill switch - resume the orchestration first." };
+  }
+  if (isOverBudget(gateHome)) {
+    return { ok: false, error: "Orchestration is over its budget ceiling - raise or reset the budget first." };
+  }
+  // Consume this record so it can't be resumed again (guards #1).
+  upsertGoalRunRecord({ goalRunId, resumable: false, updatedAt: Date.now() });
   const resume = { worktreePath: rec.worktreePath, branchName: rec.branchName || null, baseCommit: rec.baseCommit || null };
   let dispatch;
   if (rec.dispatchedBy) {
