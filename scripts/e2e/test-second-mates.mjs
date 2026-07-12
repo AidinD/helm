@@ -11,7 +11,7 @@ const tmp = path.join(os.tmpdir(), "second-mates-test-" + Date.now());
 fs.mkdirSync(tmp, { recursive: true });
 process.env.HELM_SECOND_MATES_PATH = path.join(tmp, "second-mates.json");
 
-const { secondMateId, deriveSecondMates, bindSecondMateSession, renameSecondMate, readBindings, DIRECT_FIRST_MATE } =
+const { secondMateId, deriveSecondMates, bindSecondMateSession, renameSecondMate, readBindings, proposeSecondMate, DIRECT_FIRST_MATE } =
   await import("../../src/lib/secondMates.js");
 
 function log(...a) {
@@ -64,6 +64,22 @@ assert(readBindings()[aCrew.secondMateId].sessionId === null, "binding a session
 renameSecondMate(aCrew.secondMateId, "  Crewline lane  ");
 assert(readBindings()[aCrew.secondMateId].name === "Crewline lane", "renameSecondMate trims + persists a custom name");
 assert(deriveSecondMates(history).find((s) => s.secondMateId === aCrew.secondMateId).name === "Crewline lane", "derived second mate reflects the custom name over the project basename");
+
+// --- Phase 2: a second mate that dispatches its OWN crew (ship-review phantom
+// fix). A crew run whose dispatchedBy is a SECOND MATE id must attach to that
+// second mate, NOT mint a phantom node hashed from the second-mate id.
+const smC = proposeSecondMate("mate_C", "D:/Repo/proj-c", { brief: "c work" });
+assert(smC.secondMateId.startsWith("sm_"), "proposeSecondMate returns an sm_ id");
+const crewHistory = [
+  { goalRunId: "cr1", dispatchedBy: smC.secondMateId, projectPath: "D:/Repo/proj-c", status: "running" },
+  { goalRunId: "cr2", dispatchedBy: smC.secondMateId, projectPath: "D:/Repo/proj-c", status: "done" },
+];
+const derivedC = deriveSecondMates(crewHistory);
+const cNode = derivedC.find((s) => s.secondMateId === smC.secondMateId);
+assert(cNode && cNode.crew.length === 2, "crew dispatched by a second mate attaches to THAT second mate (both runs)");
+assert(cNode && cNode.firstMateId === "mate_C", "the second mate keeps its real first-mate parent from the binding (not a phantom)");
+assert(!derivedC.some((s) => s.firstMateId && s.firstMateId.startsWith("sm_")), "no phantom node whose firstMateId is itself a second mate");
+assert(!derivedC.some((s) => s.secondMateId === secondMateId(smC.secondMateId, "D:/Repo/proj-c")), "the second-mate id was NOT re-hashed into a phantom (firstMate,project) node");
 
 try {
   fs.rmSync(tmp, { recursive: true, force: true });

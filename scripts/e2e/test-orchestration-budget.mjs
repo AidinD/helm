@@ -74,6 +74,21 @@ try {
   assert(readBudget(home).ceilingUsd === 5, "setCeiling(\"5\") coerces a numeric string");
   setCeiling(home, null);
   assert(readBudget(home).ceilingUsd === null, "setCeiling(null) explicitly removes the cap");
+
+  // Fail-closed on a CORRUPT budget file (ship-review): a damaged file must not
+  // silently un-kill a stopped fleet. A MISSING file still reads as not-killed.
+  const corruptHome = fs.mkdtempSync(path.join(os.tmpdir(), "helm-budget-corrupt-"));
+  try {
+    assert(isKilled(corruptHome) === false, "a missing budget file reads as not-killed (nothing configured)");
+    fs.mkdirSync(path.dirname(budgetPath(corruptHome)), { recursive: true });
+    fs.writeFileSync(budgetPath(corruptHome), "{ this is not json", "utf8");
+    assert(isKilled(corruptHome) === true, "a corrupt budget file fails CLOSED (reads as killed)");
+    assert(readBudget(corruptHome).corrupt === true, "the corrupt read is flagged");
+    resetBudget(corruptHome);
+    assert(isKilled(corruptHome) === false, "resetBudget (Resume) recovers from a corrupt file");
+  } finally {
+    fs.rmSync(corruptHome, { recursive: true, force: true });
+  }
 } finally {
   fs.rmSync(home, { recursive: true, force: true });
 }

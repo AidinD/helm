@@ -6,10 +6,29 @@
 //
 // Run:  node scripts/e2e/test-goal-resume-button.mjs
 import { launch } from "./harness.mjs";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 function log(...a) {
   console.log("[goal-resume-e2e]", ...a);
 }
+
+// Seed the on-disk history so the clicked id actually RESOLVES in the backend.
+// esc-1 is resumable but has no worktree, so a correctly-passed id yields the
+// "worktree no longer on disk" refusal - whereas a mis-wired arg (the object-vs-
+// bare-string bug this guards) would yield "No such run". That's the difference
+// that proves the button passes the id correctly through the preload.
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "helm-resume-btn-"));
+fs.writeFileSync(
+  path.join(tmp, "goal-run-history.json"),
+  JSON.stringify([
+    { goalRunId: "esc-1", goal: "A paused run", projectPath: "P", status: "running", resumable: true, baseCommit: "abc", worktreePath: path.join(tmp, "gone") },
+    { goalRunId: "int-1", goal: "An interrupted run", projectPath: "P", status: "running", resumable: true, baseCommit: "abc", worktreePath: path.join(tmp, "gone2") },
+  ]),
+  "utf8"
+);
+process.env.HELM_GOAL_RUN_HISTORY_PATH = path.join(tmp, "goal-run-history.json");
 const app = await launch();
 let exitCode = 0;
 function assert(cond, msg) {
@@ -22,8 +41,12 @@ const count = (sel) => app.eval(`document.querySelectorAll(${JSON.stringify(sel)
 
 try {
   await app.waitForSelector("#pageToggle", 30000, { visible: true });
+  // Let boot's own navigateToPage("dashboard") settle before we navigate away,
+  // so our goal nav isn't immediately overridden.
+  await app.waitForSelector("#dashboardPage", 8000, { visible: true });
+  await app.eval("new Promise(r => setTimeout(r, 400))");
   await app.eval(`(() => { navigateToPage("goal"); return true; })()`);
-  await app.waitForSelector("#goalPage", 8000, { visible: true });
+  await app.waitForSelector("#goalPage", 12000, { visible: true });
 
   // window.helm is a frozen contextBridge object (can't stub its methods), so
   // spy on the renderer-global showToast instead - it fires when the handler
@@ -56,13 +79,18 @@ try {
   const goalText = await app.eval(`document.getElementById("goalPage").innerText`);
   assert(!/not wired up yet|planned follow-up/.test(goalText), "the stale 'resume not wired up yet' copy is gone");
 
-  // Click the first Resume button; the real resume returns {ok:false} for a
-  // seeded id, so the handler should surface a "couldn't resume" toast.
-  await app.eval(`(() => { document.querySelector("#goalPage .goal-resume-btn").click(); return true; })()`);
-  await app.eval("new Promise(r => setTimeout(r, 500))");
+  // Click the paused run's Resume button (esc-1, which IS in the seeded
+  // history). A correctly-passed id resolves the record and refuses on the
+  // missing worktree; a mis-wired arg would say "No such run" - so asserting
+  // the toast is about the WORKTREE proves the id reached the backend intact
+  // (guards the object-vs-bare-string preload bug).
+  await app.eval(`document.querySelector("#goalPage .goal-resume-btn").click()`);
+  await app.eval("new Promise(r => setTimeout(r, 600))");
   const toasts = await app.eval(`window.__toasts`);
   assert(Array.isArray(toasts) && toasts.length >= 1, `clicking Resume runs the handler and gives feedback (got ${toasts?.length} toast(s))`);
-  assert(/resume|cap/i.test((toasts || []).join(" ")), `the feedback is about resuming (got ${JSON.stringify(toasts)})`);
+  const joined = (toasts || []).join(" ");
+  assert(!/No such run/i.test(joined), `the id reached the backend (NOT "No such run"): ${JSON.stringify(toasts)}`);
+  assert(/worktree/i.test(joined), `the seeded run resolved and refused on its missing worktree (got ${JSON.stringify(toasts)})`);
 
   const errors = app.getConsoleErrors();
   assert(errors.length === 0, `no console errors (got ${errors.length})`);
@@ -76,5 +104,9 @@ try {
 } finally {
   const killOut = await app.close();
   log("cleanup:", killOut || "(nothing killed)");
+  delete process.env.HELM_GOAL_RUN_HISTORY_PATH;
+  try {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  } catch {}
 }
 process.exit(exitCode);
