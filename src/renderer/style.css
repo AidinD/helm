@@ -3225,6 +3225,47 @@ button.primary {
   }
 }
 
+/* Collapsed one-line run summary on the Autopilot page (b72fcd1f): terminal runs
+   render as this scannable row; click expands into the full detail. */
+.goal-run-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card);
+  cursor: pointer;
+  font-size: 12.5px;
+}
+.goal-run-summary:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+.goal-run-summary-needs {
+  border-left: 3px solid var(--waiting);
+}
+.goal-run-summary-chev {
+  color: var(--text-faint);
+  font-size: 9px;
+  flex: none;
+}
+.goal-run-summary-ic {
+  color: var(--text-dim);
+  flex: none;
+}
+.goal-run-summary-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.goal-run-summary-meta {
+  color: var(--text-dim);
+  flex: none;
+  font-size: 11.5px;
+}
+
 .goal-run-head {
   display: flex;
   align-items: center;
@@ -4605,6 +4646,13 @@ button.primary {
   background: var(--bg-card);
   border: 1px solid var(--border);
   font-size: 11px;
+}
+/* Whole crew row is the click target now (no View button) - ef303a82. */
+.fleet-crew-item.is-clickable {
+  cursor: pointer;
+}
+.fleet-crew-item.is-clickable:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
 }
 .fleet-crew-g {
   width: 15px;
