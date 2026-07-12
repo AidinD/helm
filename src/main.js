@@ -1829,6 +1829,7 @@ function startGoalRun({
   verifyCommand,
   escalationConfig,
   dispatch,
+  resume,
 }) {
   // Hard-clamp iterations at the trust boundary, not just the UI. This spawns
   // real autonomous claude subprocesses that make real commits and spend real
@@ -1917,6 +1918,10 @@ function startGoalRun({
     // "Escalate on trouble"; an unchecked box sends `undefined`, which
     // keeps runGoal's pre-existing behavior (no escalation) unchanged.
     escalationConfig: escalationConfig || undefined,
+    // Phase-2 Slice 5: when present, runGoal re-attaches to this existing
+    // worktree/branch (skips createWorktree + provisionDeps) instead of a fresh
+    // one, so a quota-stopped / interrupted run continues where it left off.
+    resume: resume || undefined,
     cancelToken,
     // Track each freshly-spawned iteration/verify child so before-quit can
     // sweep its tree (L1) and goal:cancel can kill the in-flight one
@@ -1949,6 +1954,10 @@ function startGoalRun({
         commitCount: typeof result?.commitCount === "number" ? result.commitCount : null,
         stoppedReason: result?.stoppedReason || null,
         escalation: result?.escalation || null,
+        // Persisted so a "fortsätt" can resume this run against the same worktree
+        // with a cumulative commit count (Phase-2 Slice 5).
+        baseCommit: result?.baseCommit || null,
+        resumable: !!result?.resumable,
         updatedAt: Date.now(),
       });
       if (dispatch?.onComplete) {
@@ -2019,6 +2028,53 @@ ipcMain.handle("goal:cancel", (_event, { goalRunId }) => {
     run.currentChild = null;
   }
   return { ok: true };
+});
+
+// Phase-2 Slice 5: RESUME a stopped run (quota-exhausted / interrupted /
+// escalated) by re-running against its EXISTING worktree + notes.md. A
+// dispatched run's report-back + budget wiring is reconstructed so a resumed
+// crew run still reports up. The kept worktree is the durable state that makes
+// this safe (see runGoal's resume path). "fortsätt" (Slice 6) drives this.
+ipcMain.handle("goal:resume", (_event, { goalRunId }) => {
+  const rec = loadGoalRunHistory().find((r) => r.goalRunId === goalRunId);
+  if (!rec) {
+    return { ok: false, error: "No such run." };
+  }
+  if (liveGoalRuns.has(goalRunId)) {
+    return { ok: false, error: "That run is already live." };
+  }
+  if (!rec.worktreePath || !fs.existsSync(rec.worktreePath)) {
+    return { ok: false, error: "The run's worktree is no longer on disk - can't resume." };
+  }
+  const resume = { worktreePath: rec.worktreePath, branchName: rec.branchName || null, baseCommit: rec.baseCommit || null };
+  let dispatch;
+  if (rec.dispatchedBy) {
+    const metaHome = rec.dispatchMetaHome || resolveMetaHome();
+    const mateId = rec.dispatchedBy;
+    const dispatchId = rec.dispatchId || crypto.randomUUID();
+    const request = { goal: rec.goal, project: rec.projectPath, tier: rec.tier || "crew" };
+    dispatch = {
+      dispatchedBy: mateId,
+      dispatchId,
+      tier: rec.tier || "crew",
+      onComplete: (result, meta) => {
+        const report = buildDispatchReport({ dispatchId, mateId, request, result, meta });
+        writeReport(metaHome, report);
+        addSpend(metaHome, report.costUsd);
+        writeFleetStateSnapshot(metaHome);
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send("dispatch:report", { dispatchId, mateId });
+        }
+      },
+    };
+  }
+  const started = startGoalRun({
+    projectPath: rec.projectPath,
+    goal: rec.goal,
+    dispatch,
+    resume,
+  });
+  return { ok: true, goalRunId: started.goalRunId };
 });
 
 // Phase-2 guardrail (Slice 0): the KILL SWITCH. Stops the whole orchestration

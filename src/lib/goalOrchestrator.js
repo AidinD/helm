@@ -1144,6 +1144,7 @@ export async function runGoal({
   onEscalation,
   cancelToken,
   onChild,
+  resume,
 }) {
   if (!projectPath || !goal) {
     throw new Error("runGoal requires both projectPath and goal.");
@@ -1197,20 +1198,41 @@ export async function runGoal({
   // branch name and have the second worktree creation throw. Keep the
   // human-readable `goal-`/`helm/goal-` prefixes for at-a-glance
   // identification; only the collision-prone suffix changes.
-  const runUuid = randomUUID();
-  const { worktreePath, branchName } = createWorktree(projectPath, {
-    id: `goal-${runUuid}`,
-    branchName: `helm/goal-${runUuid}`,
-    deps: "junction",
-  });
-  // The exact commit this worktree forked from — the baseline for counting
-  // how many commits the goal itself added (see countCommitsOnBranch). Captured
-  // now, before any iteration commits land.
+  // RESUME (Phase-2 Slice 5): re-attach to an EXISTING worktree/branch (a run
+  // interrupted by an app restart or stopped on a quota limit) instead of
+  // creating a new one. createWorktree would throw on an existing path, and
+  // provisionDeps would throw because the node_modules junction already exists -
+  // so both are skipped. The recorded baseCommit is REUSED, never re-captured
+  // from the current HEAD: prior iterations already committed, so re-capturing
+  // would zero the cumulative commit count. The worktree's notes.md/phase.json/
+  // plan.md are read in place by the iterations below, so continuity is intact.
+  let worktreePath;
+  let branchName;
   let baseCommit = null;
-  try {
-    baseCommit = runGit(worktreePath, ["rev-parse", "HEAD"]).trim();
-  } catch {
-    baseCommit = null;
+  if (resume && resume.worktreePath) {
+    worktreePath = resume.worktreePath;
+    branchName = resume.branchName || null;
+    baseCommit = resume.baseCommit || null;
+    if (!fs.existsSync(worktreePath)) {
+      throw new Error(`runGoal resume: the worktree is no longer on disk: ${worktreePath}`);
+    }
+  } else {
+    // A crypto.randomUUID() suffix (not Date.now()+short-random) so two runs
+    // started in the same millisecond can never collide on the worktree id /
+    // branch name and have the second worktree creation throw.
+    const runUuid = randomUUID();
+    ({ worktreePath, branchName } = createWorktree(projectPath, {
+      id: `goal-${runUuid}`,
+      branchName: `helm/goal-${runUuid}`,
+      deps: "junction",
+    }));
+    // The exact commit this worktree forked from — the baseline for counting
+    // how many commits the goal itself added (see countCommitsOnBranch).
+    try {
+      baseCommit = runGit(worktreePath, ["rev-parse", "HEAD"]).trim();
+    } catch {
+      baseCommit = null;
+    }
   }
 
   // Repo-map priming (see module doc comment / repoMap.js): built ONCE here,
@@ -1233,6 +1255,9 @@ export async function runGoal({
 
   const iterations = [];
   let consecutiveFailures = 0;
+  // Set when an iteration hard-fails with a rate-limit/quota error - a resumable
+  // stop, not a real failure (Phase-2 Slice 5).
+  let quotaExhausted = false;
   // Consecutive implement-phase iterations that reported success but changed
   // nothing outside .helm-goal/ (see NO_OP_CONVERGENCE_STREAK). Reset the
   // moment any real change or phase progress happens.
@@ -1319,6 +1344,11 @@ export async function runGoal({
       appendNotes(worktreePath, i, syntheticResult);
       record = { iteration: i, phase: iterationPhase, ok: false, error: outcome.error, committed: false };
       consecutiveFailures += 1;
+      // A rate-limit/quota error is a RESUMABLE stop, not a real failure - flag
+      // it so the loop stops with stoppedReason "quota_exhausted" (below).
+      if (/rate.?limit|quota|usage limit|too many requests|\b429\b/i.test(String(outcome.error || ""))) {
+        quotaExhausted = true;
+      }
     } else if (outcome.result.success === false) {
       discardWorktreeChanges(worktreePath);
       appendNotes(worktreePath, i, outcome.result);
@@ -1516,6 +1546,14 @@ export async function runGoal({
       }
     }
 
+    // A quota/rate-limit stop is RESUMABLE, not a real failure: stop cleanly with
+    // a distinct reason (kept from the two-failures abort), so the worktree
+    // survives (see the auto-clean guard) and "fortsätt" can pick it up once
+    // quota returns (Phase-2 Slice 5).
+    if (quotaExhausted) {
+      stoppedReason = "quota_exhausted";
+      break;
+    }
     if (consecutiveFailures >= 2) {
       stoppedReason = "two_consecutive_failures";
       break;
@@ -1553,8 +1591,11 @@ export async function runGoal({
   // pause means "stop and wait for a human," not "abort," and a resume must
   // find the same worktree/branch/notes.md/phase.json still there. This is
   // the one case that overrides the zero-commits rule below.
+  // A QUOTA-stopped run is also never auto-cleaned (like escalated): it's meant
+  // to be RESUMED once quota returns, so its worktree/branch/notes.md must
+  // survive (Phase-2 Slice 5). Same for anything else marked resumable.
   let cleanedUp = false;
-  if (commitCount === 0 && stoppedReason !== "escalated") {
+  if (commitCount === 0 && stoppedReason !== "escalated" && stoppedReason !== "quota_exhausted") {
     try {
       discardWorktreeChanges(worktreePath);
       removeWorktree(projectPath, worktreePath, { force: true });
@@ -1584,6 +1625,13 @@ export async function runGoal({
     iterations,
     stoppedReason,
     cleanedUp,
+    // Baseline commit the worktree forked from - persisted so a RESUME can reuse
+    // it and keep the commit count cumulative (Phase-2 Slice 5).
+    baseCommit,
+    // True when this run stopped in a state a "fortsätt" can pick up (kept
+    // worktree): quota-exhausted or escalated. Crew resumes re-run against the
+    // same worktree/branch/notes.md.
+    resumable: stoppedReason === "quota_exhausted" || stoppedReason === "escalated",
     // Point 12 Phase-0 escalation (see doc comment): non-null exactly when
     // stoppedReason === "escalated" - the signal that fired, for a future
     // human-gated card to render. Always null when escalationConfig was not
