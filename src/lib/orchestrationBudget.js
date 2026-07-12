@@ -80,7 +80,17 @@ export function addSpend(metaHome, costUsd) {
 
 /** Sets the ceiling (USD). Pass null to remove the cap. */
 export function setCeiling(metaHome, ceilingUsd) {
-  return update(metaHome, { ceilingUsd: ceilingUsd == null ? null : Number(ceilingUsd) });
+  // null explicitly removes the cap. A non-numeric/NaN/negative value must NOT
+  // silently disable the ceiling (a guardrail that fails OPEN on bad input is
+  // worse than useless) - keep the current ceiling instead (ship-review).
+  if (ceilingUsd == null) {
+    return update(metaHome, { ceilingUsd: null });
+  }
+  const n = Number(ceilingUsd);
+  if (!Number.isFinite(n) || n < 0) {
+    return readBudget(metaHome);
+  }
+  return update(metaHome, { ceilingUsd: n });
 }
 
 export function isOverBudget(metaHome) {

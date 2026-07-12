@@ -60,6 +60,20 @@ try {
 
   addSpend(home, -5);
   assert(readBudget(home).spentUsd === 0, "a non-positive cost is ignored");
+
+  // setCeiling fail-closed on bad input (ship-review): only an explicit null
+  // removes the cap; a non-numeric / NaN / negative value must NOT silently
+  // disable the ceiling - it keeps the current one.
+  setCeiling(home, 3);
+  assert(readBudget(home).ceilingUsd === 3, "setCeiling(3) sets a numeric ceiling");
+  setCeiling(home, "not a number");
+  assert(readBudget(home).ceilingUsd === 3, "setCeiling(garbage) keeps the current ceiling (fail-closed)");
+  setCeiling(home, -1);
+  assert(readBudget(home).ceilingUsd === 3, "setCeiling(negative) keeps the current ceiling (fail-closed)");
+  setCeiling(home, "5");
+  assert(readBudget(home).ceilingUsd === 5, "setCeiling(\"5\") coerces a numeric string");
+  setCeiling(home, null);
+  assert(readBudget(home).ceilingUsd === null, "setCeiling(null) explicitly removes the cap");
 } finally {
   fs.rmSync(home, { recursive: true, force: true });
 }
