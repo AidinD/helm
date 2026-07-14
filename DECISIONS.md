@@ -8,7 +8,7 @@ Fix: a config overlay `archivedSecondMates`.
 Crew autopilot runs are untouched (they stay on the Autopilot page) - the overlay only hides the second-mate NODE.
 The archive button saves a handoff first (the existing "Save handoff to HANDOFF.md + archive" path; the label was corrected from the stale "DECISIONS.md"), per Aidin's "they should leave their handoffs too".
 Also revised 58e9a433's retire teardown to use the same overlay (archiveSecondMateIds) so crew-derived children vanish on retire too, not just binding-only ones.
-Still pending (next): a handoff per ENGAGED child on the retire-teardown path (the archive-button path already saves one; retire currently archives children's sessions without a summarize - adding it needs the renderer to summarize each engaged child before retire).
+Retire teardown also leaves a handoff per ENGAGED child: saveSecondMateHandoffsFor summarizes each second mate that has a live session and writes its HANDOFF.md before retire archives it (proposed / crew-only children have nothing to summarize). Best-effort per child - a failed summary never blocks the retire.
 Archiving a second mate is currently one-way (no restore path), matching how sessions worked; a restore could be added later.
 Verified: test-second-mate-archive.mjs (binding dropped + overlay set + Fleet excludes it) + test-retire-teardown still green.
 

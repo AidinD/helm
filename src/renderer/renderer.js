@@ -2011,6 +2011,7 @@ async function retireMateWithCarryOver(mate, persona = null) {
     }
     setPaneBusyUIRaw(focusedPaneIndex, "");
   }
+  await saveSecondMateHandoffsFor(mate);
   const retireRes = await window.helm.retireMate(mate.mateId, handoff, persona || null);
   reflectTornDownSessions(retireRes);
   await archiveOutgoingMateSession(mate);
@@ -2028,6 +2029,7 @@ async function retireMateWithCarryOver(mate, persona = null) {
 // wrote a HANDOFF.md that file stays on disk - "start fresh" only drops the
 // prompt carry-over, it doesn't destroy the durable handoff.
 async function retireMateClean(mate, persona = null) {
+  await saveSecondMateHandoffsFor(mate);
   const retireRes = await window.helm.retireMate(mate.mateId, null, persona || null);
   reflectTornDownSessions(retireRes);
   await archiveOutgoingMateSession(mate);
@@ -2057,6 +2059,36 @@ function reflectTornDownSessions(retireRes) {
   for (const s of state.sessions) {
     if (set.has(s.cliSessionId) || set.has(s.sessionId)) {
       s.isArchived = true;
+    }
+  }
+}
+
+// Before retiring a first mate tears down its second-mate subtree, give each
+// ENGAGED second mate (one with a live session) a final handoff to HANDOFF.md in
+// its project - so tearing the subtree down doesn't silently drop its context
+// (task 58e9a433 + Aidin's "they should leave their handoffs too"). Proposed
+// second mates (no session) have nothing to summarize. Best-effort per child; a
+// failed summary never blocks the retire.
+async function saveSecondMateHandoffsFor(mate) {
+  let children = [];
+  try {
+    const res = await window.helm.listSecondMates();
+    children = ((res && res.secondMates) || []).filter((s) => s.firstMateId === mate.mateId && s.sessionId);
+  } catch {
+    return;
+  }
+  for (const sm of children) {
+    const session = state.sessions.find((x) => (x.cliSessionId || x.sessionId) === sm.sessionId);
+    if (!session || !session.cwd) {
+      continue;
+    }
+    try {
+      const summary = await summarizeSession(session);
+      if (summary && summary.text) {
+        await window.helm.saveHandoff(session.cwd, summary.text.trim());
+      }
+    } catch {
+      // best-effort - a failed child handoff must never block the retire
     }
   }
 }
