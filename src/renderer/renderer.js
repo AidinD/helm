@@ -1494,8 +1494,15 @@ function rowEl(session) {
   dot.className = `status-dot ${session.status}`;
   const title = document.createElement("span");
   title.className = "row-title";
-  title.textContent = session.title;
-  title.title = session.title;
+  // Name a mate-bound session by its durable fleet name, consistent with the
+  // chat pane header and the needs-you queue - not the prompt-derived
+  // session.title (bug 5fda2a96: the chat header showed "Captain Hook" while the
+  // sidebar still showed "Jag vill jobba med beatdrop..." for the same session).
+  const rowFm = firstMateForSession(session);
+  const rowSm = rowFm ? null : secondMateForSession(session);
+  const rowLabel = rowFm ? rowFm.name : rowSm ? rowSm.name : session.title;
+  title.textContent = rowLabel;
+  title.title = rowLabel;
   titleLine.append(dot, title);
   if (isOrchestratorSession(session)) {
     const tag = document.createElement("span");
@@ -5246,8 +5253,15 @@ function augmentSecondMatesWithSessions(secondMates, mates = []) {
     .sort((a, b) => (b.lastActivityAt || 0) - (a.lastActivityAt || 0));
   for (const sess of sessions) {
     const sid = sess.cliSessionId || sess.sessionId;
-    if (boundIds.has(sid)) {
-      continue; // already the session behind a first mate's second mate
+    if (boundIds.has(sid) || secondMateForSession(sess)) {
+      // Skip if already a first mate's own session, OR if this session resolves
+      // to a REGISTERED second mate. boundIds only holds the single sm.sessionId
+      // form, but secondMateForSession matches on cliSessionId OR sessionId - so
+      // a registered second mate whose id form differs from the session's slipped
+      // through and got emitted as a synthetic prompt-title node, diverging from
+      // the real fleet name the chat header shows (bug c48a4a22). Now it's
+      // attributed to the registered second mate (its .name), single-sourced.
+      continue;
     }
     list.push({
       secondMateId: "sess_" + sid,
