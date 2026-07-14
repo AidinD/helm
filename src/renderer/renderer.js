@@ -5812,6 +5812,25 @@ function fleetNudgeEl(mate, kind, opts = {}) {
   return nudge;
 }
 
+// After a second mate's session is archived (with or without a handoff), drop the
+// second-mate NODE too: archive its id (server overlay + binding removal) and
+// reflect it in the local config so it leaves the Fleet immediately instead of
+// re-deriving from its crew runs on the next refresh (bug 05166d55). The handoff,
+// if any, was already saved by the archive path that ran just before this.
+async function finishSecondMateArchive(sm) {
+  if (!sm || !sm.secondMateId) {
+    return;
+  }
+  await window.helm.archiveSecondMate(sm.secondMateId);
+  if (!Array.isArray(state.config.archivedSecondMates)) {
+    state.config.archivedSecondMates = [];
+  }
+  if (!state.config.archivedSecondMates.includes(sm.secondMateId)) {
+    state.config.archivedSecondMates.push(sm.secondMateId);
+  }
+  refreshDashboardIfVisible();
+}
+
 // A second mate: a project SESSION (jumpable) with an expandable crew list.
 function fleetSecondMateEl(sm) {
   // Drop crew runs the captain has already marked Done (acknowledged terminal
@@ -5977,9 +5996,9 @@ function fleetSecondMateEl(sm) {
       // this Fleet button isn't a silent no-handoff archive path.
       showContextMenu(e.clientX, e.clientY, [
         ...(backingSession.cwd
-          ? [{ label: "Save handoff to DECISIONS.md + archive", danger: true, onClick: () => archiveWithHandoff(backingSession) }]
+          ? [{ label: "Save handoff to HANDOFF.md + archive", danger: true, onClick: async () => { await archiveWithHandoff(backingSession); await finishSecondMateArchive(sm); } }]
           : []),
-        { label: "Archive without a handoff", danger: true, onClick: () => doPlainArchive() },
+        { label: "Archive without a handoff", danger: true, onClick: async () => { await doPlainArchive(); await finishSecondMateArchive(sm); } },
       ]);
     });
     head.append(archiveBtn);
@@ -6330,7 +6349,13 @@ async function fillDashboardSections({ force = false } = {}) {
 
   const [matesResult, secondMatesResult] = await Promise.all([window.helm.listMates(), window.helm.listSecondMates()]);
   const activeMatesList = matesResult?.ok ? matesResult.active : [];
-  const secondMatesList = augmentSecondMatesWithSessions(secondMatesResult?.ok ? secondMatesResult.secondMates : [], activeMatesList);
+  // Exclude second mates the captain archived (bug 05166d55 / retire teardown):
+  // the archivedSecondMates overlay keeps a node out of the Fleet even when it
+  // would otherwise re-derive from goal-run history.
+  const archivedSecondMateIds = new Set(state.config.archivedSecondMates || []);
+  const secondMatesList = augmentSecondMatesWithSessions(secondMatesResult?.ok ? secondMatesResult.secondMates : [], activeMatesList).filter(
+    (s) => !archivedSecondMateIds.has(s.secondMateId)
+  );
   // Trigger layer 3: the Jot board state of the projects the mates work, so the
   // retire nudge can strengthen (boards clear) or dampen (urgent task queued).
   const projectPaths = [...new Set(secondMatesList.map((s) => s.projectPath).filter(Boolean))];

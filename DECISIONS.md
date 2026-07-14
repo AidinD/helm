@@ -1,5 +1,17 @@
 # Decisions
 
+## 2026-07-14 - Archiving a second mate now sticks (archivedSecondMates overlay)
+
+05166d55: archiving a second mate from its card archived the session + removed the DOM node, but a CREW-derived node re-derived from goal-run history and reappeared next refresh - "I archived it but it's still here".
+Fix: a config overlay `archivedSecondMates`.
+`archiveSecondMate` (new IPC) adds the id to the overlay AND drops its binding; the Fleet render excludes any second mate whose id is in the overlay, so it stays gone even when it would re-derive.
+Crew autopilot runs are untouched (they stay on the Autopilot page) - the overlay only hides the second-mate NODE.
+The archive button saves a handoff first (the existing "Save handoff to HANDOFF.md + archive" path; the label was corrected from the stale "DECISIONS.md"), per Aidin's "they should leave their handoffs too".
+Also revised 58e9a433's retire teardown to use the same overlay (archiveSecondMateIds) so crew-derived children vanish on retire too, not just binding-only ones.
+Still pending (next): a handoff per ENGAGED child on the retire-teardown path (the archive-button path already saves one; retire currently archives children's sessions without a summarize - adding it needs the renderer to summarize each engaged child before retire).
+Archiving a second mate is currently one-way (no restore path), matching how sessions worked; a restore could be added later.
+Verified: test-second-mate-archive.mjs (binding dropped + overlay set + Fleet excludes it) + test-retire-teardown still green.
+
 ## 2026-07-14 - Removed the redundant Fleet proposals banner + the confusing Fleet count
 
 b7f662fd + adcef9e9: the top "N topics proposed - engage one to start" banner duplicated the proposed second mates already listed under each first-mate card, and it let old never-engaged proposals accumulate as stale "engage me" chips.

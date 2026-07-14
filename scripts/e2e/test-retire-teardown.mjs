@@ -109,6 +109,18 @@ try {
   delete process.env.HELM_MATES_PATH;
   delete process.env.HELM_SECOND_MATES_PATH;
   delete process.env.HELM_GOAL_RUN_HISTORY_PATH;
+  // The teardown now writes torn-down ids to the real config.archivedSecondMates
+  // overlay (no seam) - remove the test ids so real config isn't polluted.
+  try {
+    const configPath = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\//, "")), "..", "..", "config.json");
+    if (fs.existsSync(configPath)) {
+      const cfg = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      if (Array.isArray(cfg.archivedSecondMates)) {
+        cfg.archivedSecondMates = cfg.archivedSecondMates.filter((x) => x !== "sm_test_created" && x !== "sm_test_proposed");
+        fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2) + "\n", "utf8");
+      }
+    }
+  } catch {}
   try {
     fs.rmSync(tmp, { recursive: true, force: true });
   } catch {}
