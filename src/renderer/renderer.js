@@ -2113,6 +2113,14 @@ function openSessionInPane(session, paneIndex, _ignored) {
       cliSessionId: session.cliSessionId || session.sessionId,
       cwd: session.cwd || "",
       title: fm ? fm.name : sm ? sm.name : session.title,
+      // Carry the resolved mate id so a turn in a RESUMED mate session attaches the
+      // dispatch config bound to THAT mate. Without this, session:start fell back
+      // to buildFirstMateMcpConfig's active[0], so a second first mate's dispatches
+      // (create_second_mate, etc.) were stamped onto the slot-0 mate - "asked Davy
+      // Jones to make second mates, they showed up under LeChuck" (bug 2a5e6196).
+      // The fresh-draft path already set mateId; this fixes the resume path.
+      mateId: fm ? fm.mateId : undefined,
+      secondMateId: sm ? sm.secondMateId : undefined,
       loading: true,
       isOrchestrator: isOrchestratorSession(session),
     };

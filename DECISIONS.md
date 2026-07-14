@@ -1,5 +1,13 @@
 # Decisions
 
+## 2026-07-14 - Resumed mate session lost its mateId, so dispatches stamped the wrong mate
+
+2a5e6196: the captain asked his SECOND first mate (Davy Jones) to create second mates; they appeared under the FIRST mate (LeChuck, slot 0).
+Root cause: session:start attaches the dispatch MCP config via buildFirstMateMcpConfig(metaHome, mateId), which falls back to active[0] when mateId is absent, and the chat send passes mateId: pane.mateId.
+The fresh-draft jump-in path set pane.mateId (paneOverrides), but openSessionInPane (the RESUME path) never set it - so jumping into an existing second first-mate session and acting stamped its dispatches onto the slot-0 mate.
+Fix: openSessionInPane now sets pane.mateId + pane.secondMateId from the resolved mate (firstMateForSession/secondMateForSession, already computed for the title) - fixing both the first-mate attribution and the latent second-mate parallel (a resumed second-mate pane now attaches the right secondMateId too).
+Verified in test-fleet-ui-fixes.mjs (a resumed first-mate pane carries its own mateId; a resumed second-mate pane its own secondMateId).
+
 ## 2026-07-14 - Retire tears down the second-mate subtree (the captain's intent: option 3)
 
 58e9a433: retiring a first mate orphaned its second mates - they vanished from the Fleet (their firstMateId pointed at the now-dead mateId) but their sessions/crew kept running invisibly.

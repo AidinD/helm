@@ -103,6 +103,25 @@ try {
   })()`);
   assert(sidebarLabel === "Captain Hook", `sidebar names a first-mate session by fleet name (got ${JSON.stringify(sidebarLabel)})`);
 
+  // 2a5e6196 - openSessionInPane carries the resolved mate id, so a turn in a
+  // RESUMED mate session attaches the dispatch config bound to THAT mate (not the
+  // slot-0 active[0] fallback that stamped a second first mate's dispatches onto
+  // the wrong mate).
+  const paneMate = await app.eval(`(() => {
+    mateBySessionId = new Map([["cDavy", { mateId: "mate_davy", name: "Davy Jones", sessionId: "cDavy" }]]);
+    secondMateBySessionId = new Map([["cSm", { secondMateId: "sm_reg2", name: "SM", sessionId: "cSm", firstMateId: "mate_x" }]]);
+    state.sessions.push({ sessionId: "sDavy", cliSessionId: "cDavy", cwd: "D:/x", title: "t", status: "idle", isArchived: false });
+    state.sessions.push({ sessionId: "sSm", cliSessionId: "cSm", cwd: "D:/y", title: "t2", status: "idle", isArchived: false });
+    openSessionInPane(state.sessions.find((s) => s.cliSessionId === "cDavy"), 0);
+    const fmPane = { mateId: panes[0] && panes[0].mateId, secondMateId: panes[0] && panes[0].secondMateId };
+    openSessionInPane(state.sessions.find((s) => s.cliSessionId === "cSm"), 0);
+    const smPane = { mateId: panes[0] && panes[0].mateId, secondMateId: panes[0] && panes[0].secondMateId };
+    return { fmPane, smPane };
+  })()`);
+  assert(paneMate.fmPane.mateId === "mate_davy", `resumed first-mate pane carries its own mateId (got ${JSON.stringify(paneMate.fmPane.mateId)})`);
+  assert(!paneMate.fmPane.secondMateId, "a first-mate pane carries no secondMateId");
+  assert(paneMate.smPane.secondMateId === "sm_reg2", `resumed second-mate pane carries its own secondMateId (got ${JSON.stringify(paneMate.smPane.secondMateId)})`);
+
   // c48a4a22 - a registered second mate whose id form differs from the session's
   // is NOT re-synthesized as a prompt-title node (so chat + fleet single-source
   // the same fleet name).
