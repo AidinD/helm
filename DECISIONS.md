@@ -4004,3 +4004,81 @@ the first-mate tier. The tiered vocabulary + operating rules above still stand.
   at a sensible moment (idle / day boundary, never mid-task) -> one-click ->
   automatic summarize-to-files + fresh same-named session. Phased plan steps
   5-6 in `docs/orchestration-model.md` (refresh pipe + tree/fleet view).
+
+## Phase 2 built + hardened (2026-07-14)
+
+Batch-reconciled after a long build+review flurry (44 commits since the last
+doc touch - the docs-staleness pill was correct).
+
+**Phase 2 (tiered orchestration) is BUILT** - the "awaiting the captain's go" plan
+above shipped.
+The build order was deliberate: **guardrails FIRST** (Slice 0: per-fleet token/
+cost budget ceiling + a kill switch + width/depth caps), before any tier, so the
+tree can never run away and burn quota - the exact failure the model was meant to
+avoid.
+Then the tiers, one slice at a time, each **feature -> adversarial review in a
+fresh context -> fix** (this caught ~16 real bugs before they shipped): lazy
+proposed/created second mates (Slice 1), second-mate-dispatches-crew depth-capped
+(Slice 2), report-up (Slice 3), per-session turn lock + async relay (Slice 4),
+resumable runs (Slice 5), and the top-down "fortsätt" cascade (Slice 6).
+
+**Durability = a first-class requirement, met via worktree reuse.**
+A run that stops on quota/escalation or is cut off by an app restart keeps its
+worktree + branch + notes.md; `goal:resume` re-attaches `runGoal` to that
+existing worktree (never a fresh one) and is gated resumable-once + kill/budget/
+width-cap.
+"fortsätt" on a first mate cascades (`helm_resume_fleet`) to every resumable run
+its tree owns.
+Alternative rejected: re-run from scratch (loses the partial work the whole
+pause-not-abort design exists to keep).
+
+**First mate stays LEAN (no user MCP); second mates + regular sessions keep it.**
+A first-mate session is launched `--strict-mcp-config` with ONLY the helm_*
+dispatch tools - not the machine's ~20 MCP servers - so it's a pure orchestrator.
+Reaffirmed with the captain 2026-07-14 (he chose "keep lean" when asked).
+Alternatives weighed + declined: full MCP in first mates (tool bloat in the
+orchestrator's context), and a curated MCP subset (more machinery than it's
+worth right now).
+
+**Second-mate MCP parity fix (2026-07-14).**
+A second mate passes `--mcp-config` (to add the helm_* crew tools), and just
+passing `--mcp-config` makes Claude Code stop AUTO-ALLOWING the user's own MCP
+tools - so in a headless `-p` turn they stall on an unanswerable permission
+prompt ("works in Claude Desktop, not in Helm").
+Fix: pre-approve the user's already-configured servers (read `mcpServers` keys
+from `~/.claude.json` -> `mcp__<key>` in the second mate's `allowedTools`).
+This RESTORES the auto-allow a regular (no --mcp-config) session already has - it
+grants nothing the user hasn't set up; it is not new access.
+Alternative deferred: per-call permission prompting (least-privilege, but needs a
+real interactive-permission feature since Helm runs headless -p with no prompt
+channel; the CLI has no --permission-prompt-tool in this version).
+
+**Cross-instance safety for resume (data-loss guard).**
+`liveGoalRuns` is per-process but the goal-run history is a single shared file,
+so a second Helm instance could resume a run the first is driving -> two runs on
+one worktree -> git corruption.
+A live run now stamps `livePid` + a 20s heartbeat; another instance treats a
+FRESH foreign heartbeat as owned-elsewhere (refuses resume, keeps it "running")
+and a STALE one as a dead process's leftover (resumable). Clean quit releases it.
+
+**Smaller hardening decisions (2026-07-14):**
+- Budget fails CLOSED on a CORRUPT budget.json (reads as killed) - a damaged file
+  must not silently un-kill a stopped fleet; a merely MISSING file still reads as
+  not-configured/not-killed.
+- `deriveSecondMates`: crew dispatched BY a second mate attaches to that second
+  mate, not to a phantom node hashed from its id (which broke fleet attribution +
+  report-up parent resolution).
+- Retire ARCHIVES the outgoing mate's own session (its context lives on in the
+  handoff), so it doesn't resurface as a stray "archive finished session" nudge.
+- A first mate awaiting its own dispatched crew (live, reported, OR errored) reads
+  a calm crew state, never the alarm "needs input" - the action lives on the crew
+  (their own attention rows), not as input to the mate.
+
+**Holistic flow review (3 fresh-context agents + hands-on).**
+Root finding: the plumbing was solid but the BACK HALF of the daily loop (what the
+captain can do when work returns) had thin/missing affordances.
+Closed: one-click Resume on paused/interrupted runs, a Direct-run report rollup
+(captain-launched runs no longer vanish), a "Work on this" goal->session launch,
+first-mate proposals surfaced near the queue, Focus as a first-class sub-nav tab,
+a working crew-row "Done" that clears the row + can clean the worktree, and a copy
+pass (standardize "Autopilot run", drop implementation leaks, no em dashes).
