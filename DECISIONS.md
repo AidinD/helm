@@ -1,5 +1,20 @@
 # Decisions
 
+## 2026-07-14 - Retire: carry-over is a choice, not automatic
+
+Retiring a first mate always ran through `retireMateWithCarryOver`: it gave the outgoing session a final summarize turn, stashed that as `pendingHandoff`, and the fresh mate's composer was pre-seeded with "You are ... taking over from a retired predecessor. Their handoff: ...".
+Aidin hit this in practice - jumped into a fresh first mate and found the composer pre-filled with the previous thread's orchestration handoff, when his usual reason for retiring is to START SOMETHING NEW, not continue.
+Auto carry-over made "continue the thread" the default and "start fresh" the friction (you had to notice and clear a prompt you might not have read, with the risk of a fresh mate running off on the old job).
+
+Decision: retire now offers an explicit two-option menu (`offerRetireChoice`), mirroring `offerArchiveChoice` - "Retire (start fresh)" and "Retire and carry over". Start-fresh is listed first (the common case).
+"Start fresh" = new `retireMateClean`: no summarize turn, `retireMate(..., null, ...)`, blank composer.
+"Carry over" = the existing `retireMateWithCarryOver` (summarize + pendingHandoff seed), unchanged.
+Both still archive the outgoing session (shared `archiveOutgoingMateSession` helper).
+
+Key point that made this safe: dropping the prompt carry-over does NOT lose the handoff. Durable continuity lives in `HANDOFF.md` on disk (the earlier HANDOFF.md-convention work); "start fresh" only skips seeding the composer, so a new session can still read HANDOFF.md on demand if the thread needs picking up later.
+Alternatives rejected: (a) keep auto carry-over with a "clear" affordance - still the wrong default; (b) a persistent per-mate setting - over-engineered, the choice is per-retire by nature.
+The persona-switch path (`retireMateWithCarryOver(mate, next)`) deliberately keeps forced carry-over: a persona switch is a faithful transfer of the same job, not a fresh start.
+
 ## 2026-07-12 (late3) - Orchestration flow: framing corrected, authoritative daily loop + resume requirement
 
 Aidin pushed back on a misframing I introduced: I had presented "Option A (derived 2nd mate) vs Option B (real 2nd-mate agent)" as two end-states.
