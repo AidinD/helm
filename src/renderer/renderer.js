@@ -1958,6 +1958,24 @@ async function retireMateWithCarryOver(mate, persona = null) {
     setPaneBusyUIRaw(focusedPaneIndex, "");
   }
   await window.helm.retireMate(mate.mateId, handoff, persona || null);
+  // Archive the outgoing mate's own session as part of retiring. Retire ends
+  // that mate's lifecycle (its context lives on in the handoff + the fresh
+  // mate), so the old session is finished - tuck it away here instead of leaving
+  // it to resurface as a stray "Archive finished session" proposal the captain
+  // has to deal with separately (bug a5178cbc: "I retired a 1st mate and then
+  // this came up - what do I do with it?"). A retired mate is no longer bound to
+  // an active mate, so isOrchestratorSession no longer shields it from the
+  // archive pile - archiving now is the clean end of the retire.
+  if (mate.sessionId) {
+    try {
+      const backing = state.sessions.find((s) => (s.cliSessionId || s.sessionId) === mate.sessionId);
+      if (backing && !backing.isArchived) {
+        await window.helm.archiveSession(backing.sessionId, true);
+      }
+    } catch {
+      // best-effort - a failed archive just leaves the old archive proposal
+    }
+  }
   if (busy) {
     busy.done();
   }

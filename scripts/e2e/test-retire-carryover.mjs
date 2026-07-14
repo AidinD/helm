@@ -100,7 +100,18 @@ try {
     log("handoff (first 160 chars):", handoff.slice(0, 160).replace(/\n/g, " "));
   }
 
-  log(exitCode === 0 ? "VERIFY OK: retire runs the final summarize turn and carries it into the respawned mate." : "VERIFY FAILED.");
+  // Retire also ARCHIVES the outgoing mate's own session, so it doesn't resurface
+  // as a stray "Archive finished session" proposal (bug a5178cbc). Confirm the
+  // retired session is archived in the backend now.
+  const archived = await app.eval(`(async () => {
+    const raw = await window.helm.getSessions();
+    const list = Array.isArray(raw) ? raw : (raw && raw.sessions) || [];
+    const s = list.find((x) => (x.cliSessionId || x.sessionId) === ${JSON.stringify(sessionId)});
+    return s ? !!s.isArchived : "session-not-found";
+  })()`);
+  assert(archived === true, `the retired mate's session is archived by retire (got ${JSON.stringify(archived)})`);
+
+  log(exitCode === 0 ? "VERIFY OK: retire summarizes + carries over into the respawned mate, and archives the old session." : "VERIFY FAILED.");
 } catch (err) {
   exitCode = 1;
   log("ERROR:", err.stack || err.message);
