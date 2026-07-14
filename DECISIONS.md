@@ -1,5 +1,11 @@
 # Decisions
 
+## 2026-07-15 - Surface a turn that ends without a result (no more "looks hung")
+
+a39286b7: a session that ended cleanly (exit 0) but WITHOUT a genuine CLI result event - e.g. it stopped after a tool call (ToolSearch/WebSearch) without concluding - fell through the "done" handler's branches (not a stop; not a code!==0 failure) into the normal-completion branch and went SILENTLY idle: composer showed the send icon (not stop), no loading spinner, no completion text, no error. It looked hung ("har den hängt sig?").
+Fix: a dedicated `!sawResult` branch (code is 0 here - code!==0 is already handled above) keeps whatever streamed and pushes a visible "the run ended without finishing (no result) - press continue to resume" notice, and does NOT auto-fire a queued prompt (the turn didn't complete).
+Normal completion (sawResult true) is unchanged - regression-checked via test-retire-clean (a real turn ends with sawResult true and still hits the normal branch).
+
 ## 2026-07-14 - Second mate shows its own session status under the first mate (not crew-only)
 
 9ad82c28: a registered (crew-derived) second mate under its first mate read "idle" / "crew idle" while the SAME second mate showed as working (active) in the "needs you / in motion" list.
