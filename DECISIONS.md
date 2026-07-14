@@ -1,5 +1,16 @@
 # Decisions
 
+## 2026-07-14 - Removed the redundant Fleet proposals banner + the confusing Fleet count
+
+b7f662fd + adcef9e9: the top "N topics proposed - engage one to start" banner duplicated the proposed second mates already listed under each first-mate card, and it let old never-engaged proposals accumulate as stale "engage me" chips.
+The "FLEET N" header count showed the live-crew count, which read as "0" next to a populated fleet - confusing more than informing.
+The captain questioned both; both removed.
+Proposals are engaged and managed under their mate card, in context; the Fleet header now shows no count (the per-mate cards convey liveness).
+This supersedes the earlier idea of adding a dismiss-x to the banner - the right fix for a redundant panel is to remove it, not decorate it.
+Dead CSS (.fleet-proposals*) removed too.
+Related: 58e9a433's retire teardown + the dispatch smoke-test hygiene fix already cut stale-proposal accumulation at the source.
+Verified in test-fleet-ui-fixes.mjs (no .fleet-proposals banner; no count in the Fleet head).
+
 ## 2026-07-14 - Resumed mate session lost its mateId, so dispatches stamped the wrong mate
 
 2a5e6196: the captain asked his SECOND first mate (Davy Jones) to create second mates; they appeared under the FIRST mate (LeChuck, slot 0).
