@@ -951,7 +951,9 @@ async function archiveWithHandoff(session) {
   try {
     const res = await summarizeSession(session);
     if (res && res.text) {
-      const cap = await window.helm.captureNote(session.cwd, `Handoff (on archiving "${session.title}"):\n\n${res.text.trim()}`);
+      // HANDOFF.md (overwrite, latest-only) - NOT DECISIONS.md (append), which
+      // this used to bloat with transient session narrative (the captain 2026-07-14).
+      const cap = await window.helm.saveHandoff(session.cwd, res.text.trim());
       saved = !!(cap && cap.ok);
       if (!saved) {
         showToast(`Handoff save failed: ${cap?.error || "unknown"} - archiving anyway.`);
@@ -970,7 +972,7 @@ async function archiveWithHandoff(session) {
   // the fleet fingerprint).
   refreshDashboardIfVisible({ force: true });
   if (saved) {
-    showToast(`Handoff saved to DECISIONS.md; archiving "${session.title}".`);
+    showToast(`Handoff saved to HANDOFF.md; archiving "${session.title}".`);
   }
   archiveSession(session);
 }
@@ -1623,7 +1625,7 @@ function rowEl(session) {
           // transfer; see DECISIONS.md "Session-renewal strategy").
           showContextMenu(x, y, [
             ...(session.cwd
-              ? [{ label: `Save handoff to DECISIONS.md + archive "${session.title}"`, danger: true, onClick: () => archiveWithHandoff(session) }]
+              ? [{ label: `Save handoff to HANDOFF.md + archive "${session.title}"`, danger: true, onClick: () => archiveWithHandoff(session) }]
               : []),
             { label: `Archive "${session.title}" without a handoff`, danger: true, onClick: () => archiveSession(session) },
           ]);
@@ -1890,6 +1892,12 @@ async function buildDurableContextDirective(cwd) {
   }
   if (toRead.length) {
     lines.push(`- READ these first (they do NOT auto-load): ${toRead.join(", ")} in ${cwd}.`);
+    // HANDOFF.md (when present) is the latest-session current-state note; the
+    // others are durable reference. Name the split so the fresh session reads
+    // for orientation vs rationale correctly.
+    if (toRead.includes("HANDOFF.md")) {
+      lines.push("  HANDOFF.md = where things stand + what's next (start here); DECISIONS.md = the why; PLAN.md = the roadmap.");
+    }
   }
   if (memCount) {
     lines.push(`- ${memCount} memory file(s) exist for this project; consult the memory index for relevant decisions/traps.`);

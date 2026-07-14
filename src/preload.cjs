@@ -29,6 +29,9 @@ contextBridge.exposeInMainWorld("helm", {
   openContext: (opts) => ipcRenderer.invoke("context:open", opts),
   readContext: (opts) => ipcRenderer.invoke("context:read", opts),
   captureNote: (cwd, text) => ipcRenderer.invoke("context:capture", { cwd, text }),
+  // Handoffs go here (OVERWRITE, latest-only) - not into DECISIONS.md (append),
+  // which they used to bloat with transient session narrative.
+  saveHandoff: (cwd, text) => ipcRenderer.invoke("context:saveHandoff", { cwd, text }),
   copyToClipboard: (text) => ipcRenderer.invoke("clipboard:write", text),
   saveImage: (base64Data, ext) => ipcRenderer.invoke("image:save", { base64Data, ext }),
   transcribeVoice: (samples, language) => ipcRenderer.invoke("voice:transcribe", { samples, language }),

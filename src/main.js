@@ -472,7 +472,10 @@ ipcMain.handle("context:list", (_event, cwd) => {
     out.claudeMd.push({ kind: "projectClaude", label: "Project CLAUDE.md", path: pj, exists: fs.existsSync(pj) });
     // The durable project docs that do NOT auto-load (unlike CLAUDE.md) - the
     // "etc" of the request, and what a carried-over session must be pointed at.
-    for (const name of ["DECISIONS.md", "PLAN.md"]) {
+    // HANDOFF.md FIRST: it's the latest session's current-state summary (small,
+    // overwritten each handoff - see context:saveHandoff), so a fresh session
+    // reads it before diving into DECISIONS.md's full rationale history.
+    for (const name of ["HANDOFF.md", "DECISIONS.md", "PLAN.md"]) {
       const p = path.join(cwd, name);
       out.projectDocs.push({ kind: "projectDoc", name, path: p, exists: fs.existsSync(p) });
     }
@@ -519,7 +522,7 @@ function resolveContextFile({ cwd, kind, name } = {}) {
   }
   if (kind === "projectDoc") {
     // Guarded to the known durable-doc names in the session's own cwd.
-    if (!cwd || (name !== "DECISIONS.md" && name !== "PLAN.md")) {
+    if (!cwd || (name !== "HANDOFF.md" && name !== "DECISIONS.md" && name !== "PLAN.md")) {
       return { ok: false, error: "Invalid project doc" };
     }
     const file = path.join(cwd, name);
@@ -597,6 +600,45 @@ ipcMain.handle("context:capture", (_event, { cwd, text } = {}) => {
     const tmp = file + "." + crypto.randomBytes(4).toString("hex") + ".tmp";
     try {
       fs.writeFileSync(tmp, updated, "utf8");
+      fs.renameSync(tmp, file);
+    } catch (err) {
+      try {
+        fs.unlinkSync(tmp);
+      } catch {
+        // best-effort cleanup
+      }
+      throw err;
+    }
+    return { ok: true, path: file };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+// --- Save a session HANDOFF to the project's HANDOFF.md - the "current state /
+// where things stand + what's next" continuity note a fresh session reads first.
+// Unlike context:capture (which APPENDS a durable decision to DECISIONS.md),
+// this OVERWRITES: a handoff is latest-only, superseded by the next one, so it
+// must never grow the file (the old DECISIONS-append pattern bloated DECISIONS.md
+// with transient session narrative - the captain 2026-07-14). Git history keeps prior
+// handoffs. Atomic temp+rename. Durable rationale still goes to DECISIONS.md; a
+// handoff should distill any genuinely new decision INTO DECISIONS.md separately. ---
+ipcMain.handle("context:saveHandoff", (_event, { cwd, text } = {}) => {
+  if (!cwd || !text || !text.trim()) {
+    return { ok: false, error: "Nothing to save" };
+  }
+  const file = path.join(cwd, "HANDOFF.md");
+  const date = new Date().toISOString().slice(0, 16).replace("T", " ");
+  const body =
+    `# Handoff - latest session state\n\n` +
+    `_Overwritten on each handoff (latest-only); prior handoffs are in git history._\n` +
+    `_Saved ${date}. For durable rationale see DECISIONS.md; for the roadmap, PLAN.md._\n\n` +
+    text.trim() +
+    "\n";
+  try {
+    const tmp = file + "." + crypto.randomBytes(4).toString("hex") + ".tmp";
+    try {
+      fs.writeFileSync(tmp, body, "utf8");
       fs.renameSync(tmp, file);
     } catch (err) {
       try {
