@@ -35,6 +35,7 @@ import { ensureMates, activeMates, findMateById, loadMates, renameMate, retireAn
 import { personaOverlay, PERSONAS } from "./lib/personas.js";
 import { listSlashItems } from "./lib/slashCommands.js";
 import { trackHelmUsage, summarizeHelmUsage } from "./lib/helmUsage.js";
+import { mcpAllowedToolsFromConfig } from "./lib/userMcp.js";
 import { initAutoUpdate } from "./lib/autoUpdate.js";
 import { deriveSecondMates, bindSecondMateSession, renameSecondMate, readBindings, proposeSecondMate, markSecondMateCreated, secondMateIdForSession, secondMateId } from "./lib/secondMates.js";
 import { addSpend, isOverBudget, isKilled, setKilled, resetBudget, readBudget, setCeiling } from "./lib/orchestrationBudget.js";
@@ -991,6 +992,18 @@ const FIRST_MATE_ALLOWED_TOOLS = ["helm_dispatch", "helm_collect_reports", "helm
   (t) => `mcp__${FIRST_MATE_MCP_SERVER}__${t}`
 );
 
+// The user's OWN configured MCP servers, as `mcp__<key>` allowedTools entries,
+// so a second-mate session can actually USE them in headless -p (see
+// lib/userMcp.js for the full why - bug 1f8b54be). Read once + cached; a config
+// change is picked up on the next Helm restart.
+let _userMcpAllowedTools = null;
+function userMcpAllowedTools() {
+  if (!_userMcpAllowedTools) {
+    _userMcpAllowedTools = mcpAllowedToolsFromConfig(path.join(os.homedir(), ".claude.json"));
+  }
+  return _userMcpAllowedTools;
+}
+
 // The first-mate operating manual, attached as system context on a fresh
 // first-mate turn (see session:start). Read once and cached - it's a static doc.
 let _firstMateInstructions = null;
@@ -1548,7 +1561,12 @@ ipcMain.handle(
         const parentFirstMate = derivedSm?.firstMateId;
         const parentMateId = parentFirstMate && parentFirstMate !== "direct" ? parentFirstMate : null;
         mcpConfig = buildDispatchMcpConfig(metaHome, effectiveSecondMateId, "second-mate", parentMateId);
-        allowedTools = FIRST_MATE_ALLOWED_TOOLS;
+        // helm_* crew tools + the user's OWN MCP servers pre-approved, so the
+        // "keeps the user's full MCP set" intent actually holds in headless -p
+        // (passing --mcp-config otherwise de-auto-allows them -> they stall on an
+        // unanswerable permission prompt; bug 1f8b54be). NOT strict, so the
+        // servers still load; this just restores their auto-allow.
+        allowedTools = [...FIRST_MATE_ALLOWED_TOOLS, ...userMcpAllowedTools()];
         if (!resumeSessionId) {
           appendSystemPrompt = secondMateInstructions();
         }
