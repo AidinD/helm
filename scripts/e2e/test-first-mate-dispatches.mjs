@@ -67,6 +67,12 @@ let app;
 try {
   process.env.HELM_META_HOME_OVERRIDE = metaHome;
   process.env.HELM_MATES_PATH = path.join(tmp, "mates.json");
+  // Sandbox the bindings + run-history too: helm_create_second_mate writes a
+  // binding, and without these seams it lands in the REAL repo second-mates.json
+  // (a stale "fake-proj" proposal pointing at a deleted temp dir - exactly the
+  // lingering-proposal class this app has bugs about). Keep the test hermetic.
+  process.env.HELM_SECOND_MATES_PATH = path.join(tmp, "second-mates.json");
+  process.env.HELM_GOAL_RUN_HISTORY_PATH = path.join(tmp, "goal-run-history.json");
   app = await launch();
   await app.waitForSelector("#pageToggle", 30000, { visible: true });
 
@@ -141,6 +147,8 @@ try {
   }
   delete process.env.HELM_META_HOME_OVERRIDE;
   delete process.env.HELM_MATES_PATH;
+  delete process.env.HELM_SECOND_MATES_PATH;
+  delete process.env.HELM_GOAL_RUN_HISTORY_PATH;
   try {
     fs.rmSync(tmp, { recursive: true, force: true });
   } catch {}
