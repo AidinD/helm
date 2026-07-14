@@ -11150,6 +11150,27 @@ window.helm.onSessionEvent((evt) => {
         });
         bumpSessionActivity(pane.sessionId);
         renderPane(index);
+      } else if (!evt.summary?.sawResult) {
+        // The turn ended cleanly (exit 0) but WITHOUT a genuine CLI result event -
+        // e.g. it stopped after a tool call without concluding. This used to fall
+        // through to the normal-completion branch and go SILENTLY idle: send icon,
+        // no spinner, no completion text, no error - so it looked hung (the captain:
+        // "har den hängt sig?" - a39286b7). Keep whatever streamed and surface the
+        // state so it's legible and the captain can continue to resume. A queued
+        // prompt is deliberately NOT fired - the turn didn't complete.
+        pane.stopRequested = false;
+        pane.lastTurnStats = {
+          durationMs: typeof evt.summary?.durationMs === "number" ? evt.summary.durationMs : Date.now() - startedAt,
+          totalTokens: evt.summary?.totalTokens ?? null,
+          costUsd: evt.summary?.costUsd ?? null,
+        };
+        pane.turns.push({
+          role: "assistant",
+          kind: "text",
+          text: "⚠ The run ended without finishing (no result was produced) - it may have hit a limit or been interrupted. Press ⏎ to continue and resume it.",
+        });
+        bumpSessionActivity(pane.sessionId);
+        renderPane(index);
       } else {
         pane.stopRequested = false;
         // Feeds wireTurnStatsOnLastReply's "12.3s · 1.2k tokens" readout on
