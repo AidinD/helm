@@ -1,5 +1,15 @@
 # Decisions
 
+## 2026-07-14 - First-mate session binds to its mate SERVER-SIDE (root of the mis-attribution bugs)
+
+3c52cc0d + 2a5e6196 (the latter reopened as "samma fel igen" - my earlier openSessionInPane pane.mateId fix was necessary but not sufficient).
+A first mate's session was bound to its mate only in the RENDERER, on the "session" event, behind a pane-identity guard (`panes[entry.index] !== entry.pane` bails).
+Typing a prompt in a first mate then navigating to the dashboard before it replied reassigned the pane, so the guard bailed and bindMateSession never ran.
+The session was then never recognized as the mate's: it surfaced as a "direct" second mate under Captain (3c52cc0d), and because mate.sessionId was never set, a second first mate's dispatches mis-attributed to the slot-0 mate (2a5e6196).
+Second mates already bind server-side (main.js session:start) for exactly this reason - the comment there even calls out the dropped-renderer-bind race. Fix: do the same for first mates - bind server-side on the session event when the launch is a first mate (meta-home root) with an explicit mateId, independent of any renderer/UI state.
+The earlier pane.mateId fix stands (it fixes the resumed-pane dispatch config), but it sat downstream of a binding that, in the navigate-away case, never happened.
+Verified: test-first-mate-bind.mjs (a first-mate session started with a mateId but NO pane still binds to its mate - which can only be the server-side path, since the renderer bind cannot run without a pane).
+
 ## 2026-07-14 - Archiving a second mate now sticks (archivedSecondMates overlay)
 
 05166d55: archiving a second mate from its card archived the session + removed the DOM node, but a CREW-derived node re-derived from goal-run history and reappeared next refresh - "I archived it but it's still here".
