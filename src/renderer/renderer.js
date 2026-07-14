@@ -1068,6 +1068,11 @@ function showBusyToast(text) {
   document.body.append(el);
   let removed = false;
   return {
+    update: (t) => {
+      if (!removed) {
+        label.textContent = t;
+      }
+    },
     done: () => {
       if (!removed) {
         removed = true;
@@ -1997,15 +2002,17 @@ async function summarizeAndCarryOver(session) {
 // thread survives the transfer.
 async function retireMateWithCarryOver(mate, persona = null) {
   let handoff = null;
-  let busy = null;
+  // A persistent spinner toast for the WHOLE retire - the summarize, the
+  // per-mate handoffs, and the archiving are all multi-second and usually
+  // triggered from the dashboard where the per-pane status isn't visible, so
+  // without this the retire sat silent while it archived its mates (task
+  // 88b7afe3). Its text advances through the phases below.
+  const busy = showBusyToast(`Retiring ${mate.name}…`);
+  handoffBusyIds.add(mate.mateId);
+  fillDashboardSections({ force: true });
   if (mate.sessionId) {
-    // The summarize is multi-second and usually triggered from the dashboard,
-    // where the per-pane status isn't visible - so show a persistent spinner
-    // toast AND a busy state on the mate's own card ("på rutan").
-    busy = showBusyToast(`Retiring ${mate.name} - saving handoff…`);
+    busy.update(`Retiring ${mate.name} - saving handoff…`);
     setPaneBusyUIRaw(focusedPaneIndex, `Retiring ${mate.name} - saving handoff…`);
-    handoffBusyIds.add(mate.mateId);
-    fillDashboardSections({ force: true });
     try {
       const res = await summarizeSession({ cwd: mate.root || state.orchestratorHome, cliSessionId: mate.sessionId, sessionId: mate.sessionId, title: mate.name });
       if (res && res.text) {
@@ -2016,13 +2023,12 @@ async function retireMateWithCarryOver(mate, persona = null) {
     }
     setPaneBusyUIRaw(focusedPaneIndex, "");
   }
-  await saveSecondMateHandoffsFor(mate);
+  await saveSecondMateHandoffsFor(mate, busy);
+  busy.update(`Retiring ${mate.name} - archiving…`);
   const retireRes = await window.helm.retireMate(mate.mateId, handoff, persona || null);
   reflectTornDownSessions(retireRes);
   await archiveOutgoingMateSession(mate);
-  if (busy) {
-    busy.done();
-  }
+  busy.done();
   handoffBusyIds.delete(mate.mateId);
   fillDashboardSections({ force: true });
 }
@@ -2034,10 +2040,19 @@ async function retireMateWithCarryOver(mate, persona = null) {
 // wrote a HANDOFF.md that file stays on disk - "start fresh" only drops the
 // prompt carry-over, it doesn't destroy the durable handoff.
 async function retireMateClean(mate, persona = null) {
-  await saveSecondMateHandoffsFor(mate);
+  // Same spinner as the carry-over path: this tears down + archives the mates and
+  // hands them off too, all multi-second, and previously ran with NO indicator at
+  // all (task 88b7afe3).
+  const busy = showBusyToast(`Retiring ${mate.name}…`);
+  handoffBusyIds.add(mate.mateId);
+  fillDashboardSections({ force: true });
+  await saveSecondMateHandoffsFor(mate, busy);
+  busy.update(`Retiring ${mate.name} - archiving…`);
   const retireRes = await window.helm.retireMate(mate.mateId, null, persona || null);
   reflectTornDownSessions(retireRes);
   await archiveOutgoingMateSession(mate);
+  busy.done();
+  handoffBusyIds.delete(mate.mateId);
   fillDashboardSections({ force: true });
 }
 
@@ -2074,7 +2089,7 @@ function reflectTornDownSessions(retireRes) {
 // (task 58e9a433 + the captain's "they should leave their handoffs too"). Proposed
 // second mates (no session) have nothing to summarize. Best-effort per child; a
 // failed summary never blocks the retire.
-async function saveSecondMateHandoffsFor(mate) {
+async function saveSecondMateHandoffsFor(mate, busy = null) {
   let children = [];
   try {
     const res = await window.helm.listSecondMates();
@@ -2082,11 +2097,17 @@ async function saveSecondMateHandoffsFor(mate) {
   } catch {
     return;
   }
+  let n = 0;
   for (const sm of children) {
     const session = state.sessions.find((x) => (x.cliSessionId || x.sessionId) === sm.sessionId);
     if (!session || !session.cwd) {
       continue;
     }
+    // Progress on the retire spinner: summarizing each child is a real Sonnet
+    // turn, so without this the retire sat silent while it worked through the
+    // mates (task 88b7afe3).
+    n += 1;
+    busy?.update?.(`Retiring ${mate.name} - handing off ${sm.name || "a mate"} (${n}/${children.length})…`);
     try {
       const summary = await summarizeSession(session);
       if (summary && summary.text) {

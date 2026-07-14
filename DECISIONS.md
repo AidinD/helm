@@ -1,5 +1,11 @@
 # Decisions
 
+## 2026-07-15 - Retire shows a spinner while it archives its mates
+
+88b7afe3: retire had no progress indicator while it tore down/archived its second mates - and retireMateClean had NO busy toast at all, so a clean retire (which now also summarizes a handoff per engaged child - real Sonnet turns) ran silently.
+Fix: both retire paths show a persistent showBusyToast for the whole sequence, its text advancing through the phases ("saving handoff" -> "handing off <mate> (n/N)" -> "archiving"). showBusyToast gained an update() method for the per-mate progress.
+Verified: toast update()/done() + test-retire-clean regression.
+
 ## 2026-07-15 - Second-mate attribution verified correct (2a5e6196 bounced "still in .406")
 
 The captain bounced 2a5e6196 ("still a problem in .406"). Rather than a third speculative fix (I'd mis-reasoned twice), I reproduced the exact scenario: test-second-mate-attribution.mjs starts a session with the SLOT-1 mate's mateId, has it call helm_create_second_mate, and checks the resulting proposal's firstMateId.

@@ -180,6 +180,20 @@ try {
   assert(reopenBusy.runningBusy === true, "reopening a session with a live turn shows busy/working");
   assert(reopenBusy.idleBusy === false, "reopening a session with no live turn shows idle");
 
+  // 88b7afe3 - the retire spinner: showBusyToast can update its text (per-mate
+  // progress) and remove itself.
+  const toast = await app.eval(`(() => {
+    const b = showBusyToast("first");
+    const el = document.querySelector(".toast-busy");
+    const before = el && el.querySelector("span:last-child").textContent;
+    b.update("second");
+    const after = el && el.querySelector("span:last-child").textContent;
+    b.done();
+    return { before, after, gone: !document.querySelector(".toast-busy") };
+  })()`);
+  assert(toast.before === "first" && toast.after === "second", "the retire busy toast updates its text via update()");
+  assert(toast.gone === true, "the retire busy toast removes itself via done()");
+
   log(exitCode === 0 ? "VERIFY OK: all Fleet/chat naming + gauge fixes behave as intended." : "VERIFY FAILED.");
 } catch (err) {
   exitCode = 1;
