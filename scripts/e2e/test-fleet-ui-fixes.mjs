@@ -151,6 +151,20 @@ try {
   assert(fleetChrome.hasBanner === false, "the top 'topics proposed' banner is removed");
   assert(fleetChrome.hasCount === false, "the Fleet header shows no count");
 
+  // 9ad82c28 - a registered (crew-derived) second mate reflects its OWN session's
+  // status, not just crew: "working" when its session is active, not "idle".
+  const smStatus = await app.eval(`(() => {
+    state.sessions.push({ sessionId: "sActive", cliSessionId: "cActive", cwd: "D:/b", status: "active", title: "t", isArchived: false });
+    state.sessions.push({ sessionId: "sIdle", cliSessionId: "cIdle", cwd: "D:/b2", status: "idle", title: "t", isArchived: false });
+    const mk = (id, sid) => fleetSecondMateEl({ secondMateId: id, firstMateId: "mate_x", projectPath: "D:/b", name: "dinghy", sessionId: sid, crew: [], isSessionNode: false });
+    return {
+      working: mk("sm_w", "cActive").querySelector(".fleet-badge") && mk("sm_w", "cActive").querySelector(".fleet-badge").textContent,
+      idle: mk("sm_i", "cIdle").querySelector(".fleet-badge") && mk("sm_i", "cIdle").querySelector(".fleet-badge").textContent,
+    };
+  })()`);
+  assert(smStatus.working === "working", `a registered 2nd mate with an active session shows "working" (got ${JSON.stringify(smStatus.working)})`);
+  assert(smStatus.idle === "idle", `a registered 2nd mate with an idle session shows "idle" (got ${JSON.stringify(smStatus.idle)})`);
+
   log(exitCode === 0 ? "VERIFY OK: all Fleet/chat naming + gauge fixes behave as intended." : "VERIFY FAILED.");
 } catch (err) {
   exitCode = 1;
