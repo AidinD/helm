@@ -128,7 +128,7 @@ const TOOLS = [
   {
     name: "helm_create_second_mate",
     description:
-      "FIRST MATES ONLY: propose a second mate for a project (the daily loop's 'lay out A, B, C' step). This does NOT spin up a session - it lazily registers the assignment so the second mate appears in the Fleet; its Opus session spins up only when the captain first engages it (or you relay to it). Idempotent per project.",
+      "FIRST MATES ONLY: register a second mate for a project. Use it for BOTH the daily-loop 'lay out A, B, C' step AND, crucially, as your response whenever the captain names a single project to work on ('I want to work on dinghy') - reach for this INSTEAD of exploring the repo or implementing yourself. It does NOT spin up a session: it lazily registers the assignment so the second mate appears in the Fleet, and its Opus session spins up only when the captain jumps into it (or you relay to it). So the pattern is: create it, then tell the captain to jump into it in the Fleet. Idempotent per project.",
     inputSchema: {
       type: "object",
       properties: {

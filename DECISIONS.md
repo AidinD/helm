@@ -1,5 +1,24 @@
 # Decisions
 
+## 2026-07-14 - First mate absorbs single-project work instead of creating a second mate
+
+Two p0 Jot tasks (43982d2e "used a lot of tokens?", 508c03fc "why no second mate created?") were the SAME root cause.
+The captain told a first mate "Jag vill jobba med dinghy" (I added a task to its Jot).
+Instead of creating a dinghy second mate, the first mate ran Bash to find the task, proposed to explore the repo and implement itself, and on the continue turn did Edit/Bash directly - 3.4-4.4M tokens burned in the meta-home-rooted first-mate context doing a second mate's job.
+
+Diagnosed from the code, not guessed: the first mate DID have both the instructions (first-mate-instructions.md injected as appendSystemPrompt on a fresh turn, main.js ~1563) AND the tools (helm_create_second_mate + helm_relay_to_second_mate in FIRST_MATE_ALLOWED_TOOLS). So the failure was guidance, not missing capability. Three gaps let it happen:
+1. No playbook for the most common request. The instructions covered morning-survey, multi-project ("fix all three"), and "continue", but not the singular "I want to work on project X" - the single most common captain ask. The model was left to guess and guessed "help directly".
+2. helm_create_second_mate was framed as a morning-planning tool. Its description led with "propose a second mate (the daily loop's 'lay out A, B, C' step)", so on a singular request the model didn't reach for it.
+3. The "no hands-on work" guardrail keyed on cwd ("in your own cwd"). The first mate `cd`'d into D:\Repo\Misc\dinghy over Bash - real hands-on work that didn't trip a cwd check.
+Compounding: "Direct access is always allowed" + "Don't become a standing relay" read as "single-project work shouldn't go through me", with no counterweight saying "so CREATE the second mate and hand the captain to it".
+
+Fix (text/prompt only, no mechanism change - the create->Fleet->jump-in->Opus substrate already works and is tested):
+- first-mate-instructions.md: added an explicit playbook for the singular "work on project X" request (look up the Jot task for the brief -> helm_create_second_mate -> point the captain at the Fleet), naming the million-token "quick look" as the role's most expensive mistake, and drawing the relay distinction (one-time hand-off = correct; routing ongoing work through yourself = the relay to avoid).
+- first-mate-instructions.md: rewrote the "no hands-on work" bullet to key on the ACTION (never edit files / run builds / cd into a repo to work), not the cwd, closing the Bash-into-repo loophole.
+- helmDispatchServer.js: reframed helm_create_second_mate's description to lead with "register a second mate ... for BOTH the daily-loop step AND your response whenever the captain names a single project", explicitly "INSTEAD of exploring the repo or implementing yourself".
+
+Not verified with a live behavioral run yet: it's a stochastic Sonnet turn and, against the real meta-home, would register a real second mate in the captain's live Fleet (a side effect). A sandboxed smoke test (seeded temp meta-home) is the clean way to confirm the tool-choice change; offered to the captain rather than run unprompted.
+
 ## 2026-07-14 - Retire: carry-over is a choice, not automatic
 
 Retiring a first mate always ran through `retireMateWithCarryOver`: it gave the outgoing session a final summarize turn, stashed that as `pendingHandoff`, and the fresh mate's composer was pre-seeded with "You are ... taking over from a retired predecessor. Their handoff: ...".
