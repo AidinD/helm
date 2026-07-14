@@ -5573,10 +5573,15 @@ function fleetMateCardEl(mate, sms, boardSummary = {}) {
   //          retiring, don't offer the button.
   //  done  : work wrapped and nothing urgent - a clean moment to retire,
   //          strengthened when the boards are entirely clear.
-  const crew = sms.flatMap((s) => s.crew.map(crewLiveRun));
+  // Same acknowledged-filter as the crew rows (fleetSecondMateEl): a run the
+  // captain marked Done must stop counting as "needs you" here too, so the mate
+  // goes quiet + the work-wrapped retire nudge can fire once all crew is handled.
+  // dispatchedEver stays over the FULL set (it did dispatch work at some point).
+  const keepCrew = (r) => !(isTerminalRun(r) && isGoalRunAcknowledged(r.goalRunId));
+  const dispatchedEver = sms.some((s) => s.crew.length > 0);
+  const crew = sms.flatMap((s) => s.crew.filter(keepCrew).map(crewLiveRun));
   const anyLive = crew.some(crewRunning);
   const anyNeeds = crew.some(crewNeedsCaptain);
-  const dispatchedEver = crew.length > 0;
   const saturated = pct != null && pct >= FIRST_MATE_HANDOFF_PCT;
   const workWrapped = dispatchedEver && !anyLive && !anyNeeds;
   const boards = [...new Set(sms.map((s) => s.projectPath).filter(Boolean))].map((p) => boardSummary[p]).filter((b) => b && b.matched);
@@ -5658,7 +5663,15 @@ function fleetNudgeEl(mate, kind, opts = {}) {
 
 // A second mate: a project SESSION (jumpable) with an expandable crew list.
 function fleetSecondMateEl(sm) {
-  const crew = sm.crew.map(crewLiveRun);
+  // Drop crew runs the captain has already marked Done (acknowledged terminal
+  // runs). Without this, a handled/errored run stays under its second mate
+  // FOREVER - the fleet crew list was never acknowledged-filtered, so "Done"
+  // removed the button but not the row, leaving no way to clear them (Aidin:
+  // "I don't know what to do with them - I can't get rid of them"). Live runs
+  // and sub-agents are never hidden this way.
+  const crew = sm.crew
+    .filter((r) => !(isTerminalRun(r) && isGoalRunAcknowledged(r.goalRunId)))
+    .map(crewLiveRun);
   const anyLive = crew.some(crewRunning);
   const anyNeeds = crew.some(crewNeedsCaptain);
   const branch = document.createElement("div");
@@ -6928,6 +6941,18 @@ async function acknowledgeGoalRun(goalRunId) {
   await fillDashboardSections({ force: true });
 }
 
+// A run's worktree/branch live under `.result` on a live Goal-page run, but at
+// the TOP LEVEL on a rehydrated/dispatched history record (the shape the fleet
+// crew rows carry). Read both, or the crew-row "Done" never offers to clean the
+// worktree and dispatched runs' worktrees orphan (Aidin: "4 worktrees I don't
+// know what to do with").
+function runWorktreePath(run) {
+  return run?.result?.worktreePath || run?.worktreePath || null;
+}
+function runBranchName(run) {
+  return run?.result?.branchName || run?.branchName || null;
+}
+
 // "Done + clean up": remove the run's worktree and delete its branch, but only
 // when the branch is merged (unmerged branches are kept - see goal:cleanupRun).
 // Returns true when cleanup succeeded (fully, or as far as it safely could -
@@ -6937,8 +6962,8 @@ async function acknowledgeGoalRun(goalRunId) {
 async function cleanupGoalRunWorktree(run) {
   const res = await window.helm.cleanupGoalRun({
     projectPath: run.projectPath,
-    worktreePath: run.result?.worktreePath || null,
-    branchName: run.result?.branchName || null,
+    worktreePath: runWorktreePath(run),
+    branchName: runBranchName(run),
   });
   if (!res || !res.ok) {
     showToast(`Cleanup failed: ${res?.error || "unknown error"}. The worktree was kept - remove it by hand if needed.`);
@@ -6947,7 +6972,7 @@ async function cleanupGoalRunWorktree(run) {
   if (res.note) {
     showToast(res.note);
   } else if (res.branchDeleted) {
-    showToast(`Cleaned up the worktree + deleted merged branch "${run.result?.branchName}".`);
+    showToast(`Cleaned up the worktree + deleted merged branch "${runBranchName(run)}".`);
   } else if (res.worktreeRemoved) {
     showToast("Cleaned up the worktree.");
   }
@@ -6961,7 +6986,7 @@ function reportRowDoneBtn(run) {
   const btn = document.createElement("button");
   btn.className = "dash-report-done";
   btn.textContent = "Done";
-  const worktreePath = run.result?.worktreePath || null;
+  const worktreePath = runWorktreePath(run);
   // Set expectations up front (flow review P3): "Done" acknowledges the run and
   // KEEPS its worktree by default. A run that left a worktree gets an explicit
   // keep-vs-remove choice on click; one that didn't is a plain acknowledge.

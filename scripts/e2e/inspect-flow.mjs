@@ -25,6 +25,10 @@ try {
   const dashText = await app.eval(`document.getElementById("dashboardPage").innerText`);
   log("=== DASHBOARD (boot) innerText ===\n" + dashText + "\n=== end ===");
 
+  // Freeze the event-driven dashboard refresh so a session/goal tick can't
+  // overwrite our seeded fleet before the screenshot (inspection only).
+  await app.eval(`(() => { refreshDashboardIfVisible = () => {}; if (typeof fillDashboardSections === "function") { fillDashboardSections = async () => {}; } return true; })()`);
+
   // 2) Seed a representative daily-loop fleet and render it into the fleet slot.
   //    Two first mates (one busy, one with proposed + created second mates), a
   //    Direct session, crew in every meaningful state (running / done+commits /
