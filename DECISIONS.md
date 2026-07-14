@@ -1,5 +1,12 @@
 # Decisions
 
+## 2026-07-15 - Second-mate attribution verified correct (2a5e6196 bounced "still in .406")
+
+Aidin bounced 2a5e6196 ("still a problem in .406"). Rather than a third speculative fix (I'd mis-reasoned twice), I reproduced the exact scenario: test-second-mate-attribution.mjs starts a session with the SLOT-1 mate's mateId, has it call helm_create_second_mate, and checks the resulting proposal's firstMateId.
+Result: PASS - the proposal is attributed to the slot-1 mate that created it, not slot-0. So the full chain (pane.mateId -> session:start -> HELM_MATE_ID -> request.dispatchedBy -> proposeSecondMate) is correct in the current source, backed also by test-fleet-ui-fixes' "resumed first-mate pane carries its own mateId".
+So the code is correct. The ".406 still" is almost certainly PERSISTED proposals from BEFORE the fix (9c32e65): a mis-attributed binding in second-mates.json keeps its old firstMateId; installing a fixed build does not retroactively re-attribute existing bindings. New proposals attribute correctly.
+Resolution for the user: install the fresh build; old mis-attributed proposals clear when their (wrong) parent mate is retired or they're archived - the code no longer creates new ones wrong. No source change; kept the reproduction as a regression test.
+
 ## 2026-07-15 - Token readout shows output, not the cache_read-dominated total
 
 Aidin: "Helm drar jättemycket tokens jämfört med Claude Desktop" - Helm showed 1257.1k tokens for a turn while Desktop showed 1.1k.
