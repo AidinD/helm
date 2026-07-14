@@ -993,6 +993,19 @@ function offerArchiveChoice(x, y, session, plainArchive) {
   ]);
 }
 
+// Retire a first mate: a two-option menu (mirrors offerArchiveChoice) so carrying
+// the thread over is an explicit choice, not automatic. "Start fresh" retires
+// without a handoff - the fresh mate lands on a blank composer, for when you're
+// beginning something new. "Carry over" gives the outgoing mate a final
+// summarize turn and seeds the successor's composer with it, for continuing the
+// same job in clean context. See DECISIONS.md "Retire: carry-over is a choice".
+function offerRetireChoice(x, y, mate) {
+  showContextMenu(x, y, [
+    { label: "Retire (start fresh)", onClick: () => retireMateClean(mate) },
+    { label: "Retire and carry over", onClick: () => retireMateWithCarryOver(mate) },
+  ]);
+}
+
 // From the Archive page — flips isArchived back to false so the session
 // reappears both in Helm's sidebar and in the real desktop app.
 async function unarchiveSession(session) {
@@ -1966,29 +1979,46 @@ async function retireMateWithCarryOver(mate, persona = null) {
     setPaneBusyUIRaw(focusedPaneIndex, "");
   }
   await window.helm.retireMate(mate.mateId, handoff, persona || null);
-  // Archive the outgoing mate's own session as part of retiring. Retire ends
-  // that mate's lifecycle (its context lives on in the handoff + the fresh
-  // mate), so the old session is finished - tuck it away here instead of leaving
-  // it to resurface as a stray "Archive finished session" proposal the captain
-  // has to deal with separately (bug a5178cbc: "I retired a 1st mate and then
-  // this came up - what do I do with it?"). A retired mate is no longer bound to
-  // an active mate, so isOrchestratorSession no longer shields it from the
-  // archive pile - archiving now is the clean end of the retire.
-  if (mate.sessionId) {
-    try {
-      const backing = state.sessions.find((s) => (s.cliSessionId || s.sessionId) === mate.sessionId);
-      if (backing && !backing.isArchived) {
-        await window.helm.archiveSession(backing.sessionId, true);
-      }
-    } catch {
-      // best-effort - a failed archive just leaves the old archive proposal
-    }
-  }
+  await archiveOutgoingMateSession(mate);
   if (busy) {
     busy.done();
   }
   handoffBusyIds.delete(mate.mateId);
   fillDashboardSections({ force: true });
+}
+
+// Retire a first mate WITHOUT carrying a handoff into its successor: no final
+// summarize turn, no pendingHandoff, so the fresh mate lands on a blank composer.
+// For when you're retiring to start something NEW rather than to continue the
+// thread (the common case). The outgoing session is still archived, and if it
+// wrote a HANDOFF.md that file stays on disk - "start fresh" only drops the
+// prompt carry-over, it doesn't destroy the durable handoff.
+async function retireMateClean(mate, persona = null) {
+  await window.helm.retireMate(mate.mateId, null, persona || null);
+  await archiveOutgoingMateSession(mate);
+  fillDashboardSections({ force: true });
+}
+
+// Archive the outgoing mate's own session as part of retiring. Retire ends that
+// mate's lifecycle (its context lives on in the handoff + the fresh mate, or is
+// deliberately dropped on a clean retire), so the old session is finished - tuck
+// it away here instead of leaving it to resurface as a stray "Archive finished
+// session" proposal the captain has to deal with separately (bug a5178cbc: "I
+// retired a 1st mate and then this came up - what do I do with it?"). A retired
+// mate is no longer bound to an active mate, so isOrchestratorSession no longer
+// shields it from the archive pile - archiving now is the clean end of the retire.
+async function archiveOutgoingMateSession(mate) {
+  if (!mate.sessionId) {
+    return;
+  }
+  try {
+    const backing = state.sessions.find((s) => (s.cliSessionId || s.sessionId) === mate.sessionId);
+    if (backing && !backing.isArchived) {
+      await window.helm.archiveSession(backing.sessionId, true);
+    }
+  } catch {
+    // best-effort - a failed archive just leaves the old archive proposal
+  }
 }
 
 // Sets just the status text on whichever pane is currently focused, without
@@ -5572,13 +5602,11 @@ function fleetMateCardEl(mate, sms, boardSummary = {}) {
   // Retire = custom inline confirm (no native window.confirm).
   const retireBtn = document.createElement("button");
   retireBtn.className = "fleet-btn";
-  retireBtn.title = "Retire this mate and hand off to a fresh one";
+  retireBtn.title = "Retire this mate (carry the thread over, or start fresh)";
   retireBtn.textContent = "↻";
   retireBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    customConfirm(`Retire ${mate.name} and spin up a fresh mate in its place?`, "Retire", () => {
-      retireMateWithCarryOver(mate);
-    });
+    offerRetireChoice(e.clientX, e.clientY, mate);
   });
   actions.append(renameBtn, retireBtn);
   // Continue on mobile: only when this mate has a bound session to hand off.
@@ -5694,13 +5722,11 @@ function fleetNudgeEl(mate, kind, opts = {}) {
   if (offerRetire) {
     const btn = document.createElement("button");
     btn.className = "fleet-btn fleet-btn-accent";
-    btn.textContent = "Retire and hand off";
+    btn.textContent = "Retire";
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
-      // Same guarded path as the header retire icon - was firing with no confirm.
-      customConfirm(`Retire ${mate.name} and spin up a fresh mate in its place?`, "Retire", () => {
-        retireMateWithCarryOver(mate);
-      });
+      // Same choice menu as the header retire icon (carry over vs start fresh).
+      offerRetireChoice(e.clientX, e.clientY, mate);
     });
     nudge.append(btn);
   }
