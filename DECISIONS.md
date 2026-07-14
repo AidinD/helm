@@ -1,5 +1,18 @@
 # Decisions
 
+## 2026-07-14 - Fleet/chat UI batch: mate name in chat, retire flash, context gauge for all mates
+
+Three p0 UI bugs, all fixed and E2E-verified (scripts/e2e/test-fleet-ui-fixes.mjs, deterministic, no API turns):
+- 5fda2a96: openSessionInPane titled a mate-bound session by session.title (the prompt-derived title) instead of the mate's fleet name.
+Fix: resolve firstMateForSession/secondMateForSession (mirrors the needs-you queue), which corrects every chat entry point at once since they all route through openSessionInPane.
+- 96d34b98: retiring a first mate flashed its session under Captain tagged "2nd mate" for a few seconds.
+Cause: the mate removal is read fresh (listMates) each render, but the archive flag only reached state.sessions on a later getSessions() poll - so for one render the session was mate-unbound AND locally-not-archived, which is exactly what augmentSecondMatesWithSessions classifies as a "direct" node.
+Fix: archiveOutgoingMateSession sets backing.isArchived locally right after the archive IPC succeeds, closing the one-render window.
+- bf1ea538: the context gauge only showed for the mate whose session was open in a pane (the only place context usage was known).
+Fix: a per-poll bulk IPC (session:contextTokens) reuses estimateSessionContextTokens (a transcript tail-read) to estimate context for every mate session; the gauge prefers the live pane value and falls back to the estimate, so every first-mate card shows a gauge.
+Bonus: the "ctx" retire nudge now fires for a saturated mate even when its session isn't open. contextWindowForPane was refactored to contextWindowForModel so the % is computable without an open pane.
+Chosen over heavier alternatives (await refresh() before re-render for the flash; storing context on the session object for the gauge) - the fingerprint already carried the open-pane token count, so extending it was the minimal change.
+
 ## 2026-07-14 - First mate absorbs single-project work instead of creating a second mate
 
 Two p0 Jot tasks (43982d2e "used a lot of tokens?", 508c03fc "why no second mate created?") were the SAME root cause.
@@ -17,7 +30,7 @@ Fix (text/prompt only, no mechanism change - the create->Fleet->jump-in->Opus su
 - first-mate-instructions.md: rewrote the "no hands-on work" bullet to key on the ACTION (never edit files / run builds / cd into a repo to work), not the cwd, closing the Bash-into-repo loophole.
 - helmDispatchServer.js: reframed helm_create_second_mate's description to lead with "register a second mate ... for BOTH the daily-loop step AND your response whenever the captain names a single project", explicitly "INSTEAD of exploring the repo or implementing yourself".
 
-Not verified with a live behavioral run yet: it's a stochastic Sonnet turn and, against the real meta-home, would register a real second mate in Aidin's live Fleet (a side effect). A sandboxed smoke test (seeded temp meta-home) is the clean way to confirm the tool-choice change; offered to Aidin rather than run unprompted.
+Verified with a sandboxed live smoke test (scripts/e2e/test-first-mate-dispatches.mjs, throwaway git repo + temp meta-home, no real-Fleet side effect): given "Jag vill jobba med projektet X", the first mate's tool sequence was ToolSearch -> helm_create_second_mate, with zero Edit/Write - it dispatched on the first move instead of absorbing the work. One stochastic run, so signal not proof, but it directly confirms the tool-choice change.
 
 ## 2026-07-14 - Retire: carry-over is a choice, not automatic
 
