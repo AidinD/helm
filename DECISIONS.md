@@ -1,5 +1,22 @@
 # Decisions
 
+## 2026-07-14 - Tier-discipline guards: a first mate can no longer do hands-on work
+
+Follow-up to the "first mate absorbs single-project work" fix (which was prompt-only).
+Aidin asked whether we should have hard GUARDS so a first mate can't run away doing work in its own seat (ad17e2e6); Aidin approved layers 1+2 and delegated the layer-3 form to me.
+Three layers:
+- Layer 3 (hard, the core): a first-mate launch now passes `--disallowedTools Edit Write NotebookEdit Task` (FIRST_MATE_DISALLOWED_TOOLS in main.js, plumbed through launcher.js).
+File mutation and sub-agent fan-out are structurally impossible in the coordinator seat - the beatdrop 23-Edit runaway can't recur.
+Read/Grep/Glob/Bash stay for survey; the rare legit write (a Jot status tick) goes via Bash.
+A deny beats the permissive permission-mode, so it holds.
+Chosen over a path-scoped PreToolUse hook (deny Edit only inside project repos): the hook is more machinery AND still leaks via Bash-writes, so a blanket deny of the mutation tools is simpler and more robust.
+HANDOFF.md is written by the app (context:saveHandoff), not the Edit tool, so retire is unaffected.
+- Layer 2 (accounting): a first mate's OWN turn cost is now metered into the fleet budget (addSpend in the done handler, gated to !internal meta-home launches).
+The budget/kill switch previously only counted dispatched-run cost, so an in-tier runaway was invisible to the ceiling; now it isn't.
+- Layer 1 (detection): a new "hot" retire nudge fires when a first mate's session has run >= FIRST_MATE_HOT_TURNS (60) turns.
+The beatdrop case was ~143 turns at ~12% of a 1M context window, so the ctx% gauge alone would never have flagged it - turn count catches what context% misses.
+Verified (test-first-mate-guards.mjs): the hot trigger fires by turns; a live first mate's Write attempt created no file (denied); its own cost hit budget.json (spentUsd 0.44).
+
 ## 2026-07-14 - Fleet/chat UI batch: mate name in chat, retire flash, context gauge for all mates
 
 Three p0 UI bugs, all fixed and E2E-verified (scripts/e2e/test-fleet-ui-fixes.mjs, deterministic, no API turns):

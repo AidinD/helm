@@ -1034,6 +1034,15 @@ const FIRST_MATE_ALLOWED_TOOLS = ["helm_dispatch", "helm_collect_reports", "helm
   (t) => `mcp__${FIRST_MATE_MCP_SERVER}__${t}`
 );
 
+// First-mate tier guard (tier-discipline, task ad17e2e6): a first mate must not
+// do hands-on project work or fan out its own workers - it dispatches via the
+// helm_* tools above. Denying Edit/Write/NotebookEdit makes file mutation
+// structurally impossible (the beatdrop runaway did 23 Edits in the coordinator
+// seat); denying Task removes the sub-agent fan-out multiplier. Read/Grep/Glob/
+// Bash stay so it can still survey (git state, Jot, file reads). The rare
+// legitimate write (a Jot status tick) can still go via Bash.
+const FIRST_MATE_DISALLOWED_TOOLS = ["Edit", "Write", "NotebookEdit", "Task"];
+
 // The user's OWN configured MCP servers, as `mcp__<key>` allowedTools entries,
 // so a second-mate session can actually USE them in headless -p (see
 // lib/userMcp.js for the full why - bug 1f8b54be). Read once + cached; a config
@@ -1563,6 +1572,7 @@ ipcMain.handle(
     // a failure to build the config must not break launching a normal session.
     let mcpConfig;
     let allowedTools;
+    let disallowedTools;
     let appendSystemPrompt;
     let strictMcpConfig;
     let effectiveSecondMateId = null;
@@ -1574,6 +1584,9 @@ ipcMain.handle(
         // Pre-approve exactly the dispatch tools so the headless first mate can
         // call them without a permission prompt it can't answer (review M3).
         allowedTools = FIRST_MATE_ALLOWED_TOOLS;
+        // Tier-discipline guard (ad17e2e6): deny file mutation + sub-agent
+        // fan-out so a first mate can't do hands-on project work in its own seat.
+        disallowedTools = FIRST_MATE_DISALLOWED_TOOLS;
         // Load the first-mate operating manual as system context on the FRESH
         // turn only (no resume) so a newly-spun-up mate boots knowing its role,
         // with the composer left empty for the captain's first prompt. On resume
@@ -1652,6 +1665,7 @@ ipcMain.handle(
       resumeSessionId,
       mcpConfig,
       allowedTools,
+      disallowedTools,
       appendSystemPrompt,
       strictMcpConfig,
       onEvent: (evt) => {
@@ -1736,6 +1750,20 @@ ipcMain.handle(
         kind: "done",
         summary: { ...summary, durationMs: meta.durationMs, totalTokens: meta.totalTokens, costUsd: meta.costUsd },
       });
+
+      // Tier-discipline guard, layer 2 (ad17e2e6): meter a FIRST MATE's own turn
+      // cost into the fleet budget. The budget/kill switch already counts
+      // dispatched-run cost, but a first mate doing work in its own seat (the
+      // beatdrop runaway) was unmetered - so an in-tier runaway never tripped the
+      // ceiling. Count it here (skip Helm-internal launches like the summarize
+      // turn, which aren't captain-visible work). Best-effort; never blocks done.
+      if (!internal && isMetaHomeRoot(cwd) && meta.costUsd > 0) {
+        try {
+          addSpend(resolveMetaHome(), meta.costUsd);
+        } catch (err) {
+          console.error("[helm] failed to meter first-mate spend:", err);
+        }
+      }
 
       // Learn model→context-window from what the CLI reported (done even for
       // internal launches — they run real models, so their reported windows
