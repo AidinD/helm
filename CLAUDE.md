@@ -1,8 +1,10 @@
 # Helm — project rules
 
-Personal Electron wrapper around the real `claude` CLI. See `PLAN.md` for
-the current build plan and active phase, and `DECISIONS.md` for past
-decisions and why - both live in this repo, not in global memory.
+Personal Electron wrapper around the real `claude` CLI. If `HANDOFF.md` exists,
+read it FIRST - it's the latest session's current state + what's next
+(overwritten each handoff, so always small). See `PLAN.md` for the current build
+plan and active phase, and `DECISIONS.md` for past decisions and why - all live
+in this repo, not in global memory.
 `docs/USING-HELM.md` is the day-to-day usage guide (the daily loop, when
 to reach for Chat vs Autopilot vs an orchestrator session, the keyboard
 layer) - point the captain at it if he asks how to use the app.

@@ -4082,3 +4082,30 @@ Closed: one-click Resume on paused/interrupted runs, a Direct-run report rollup
 first-mate proposals surfaced near the queue, Focus as a first-class sub-nav tab,
 a working crew-row "Done" that clears the row + can clean the worktree, and a copy
 pass (standardize "Autopilot run", drop implementation leaks, no em dashes).
+
+## Handoffs go to HANDOFF.md (overwrite), not DECISIONS.md (2026-07-14)
+
+**Decision:** A session handoff (the "where things stand + what's next"
+continuity note) is written to `HANDOFF.md` in the project, OVERWRITTEN each
+time (latest-only), and a fresh session reads it FIRST. `DECISIONS.md` holds
+ONLY durable rationale, appended; a handoff should distill any genuinely new
+decision into a short DECISIONS.md entry separately.
+
+**Context:** archive-with-handoff appended the handoff INTO DECISIONS.md, so the
+durable-rationale doc bloated with transient session narrative - Skiff's hit
+1119 lines, a whole captured handoff among the real decisions. A fresh session
+reads DECISIONS.md on demand, so the bloat also made that read heavier over time.
+
+**Alternatives considered + declined:**
+- *Keep appending, periodically compact DECISIONS.md.* Rejected as the primary
+  fix: it fights the symptom (compaction risks losing the "why") instead of the
+  cause (mixing transient continuity into durable rationale).
+- *Per-call permission-style prompting / smarter capture.* Overkill; the split is
+  the simple correct model.
+
+**Why:** handoffs are inherently latest-only (superseded by the next), so an
+overwrite file never grows; durable decisions are append-only and worth keeping,
+so they stay in DECISIONS.md. Clean separation = both files stay right-sized.
+Implemented: `context:saveHandoff` (atomic overwrite), archiveWithHandoff writes
+there, HANDOFF.md is first in the carry-over "read these" directive, and each
+project's CLAUDE.md points a fresh session at HANDOFF.md first.
