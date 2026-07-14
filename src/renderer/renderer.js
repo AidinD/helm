@@ -1318,12 +1318,8 @@ document.addEventListener("keydown", (e) => {
   if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) {
     return;
   }
-  let page = null;
-  if (e.code === "Space" || e.key === " ") {
-    page = "dashboard";
-  } else {
-    page = { 1: "lavish", 2: "analysis", 3: "archive" }[e.key]; // lavish = the "Plan" tab
-  }
+  const isSpace = e.code === "Space" || e.key === " ";
+  const page = isSpace ? "dashboard" : { 1: "lavish", 2: "analysis", 3: "archive" }[e.key]; // lavish = the "Plan" tab
   if (!page) {
     return;
   }
@@ -1332,6 +1328,17 @@ document.addEventListener("keydown", (e) => {
     return;
   }
   e.preventDefault();
+  // ctrl+space chains: first press shows the dashboard; pressing it again while
+  // already ON the dashboard jumps into the first "needs you" chat, so the
+  // shortcut reads "what needs me?" -> "take me into it" (task 93975f46).
+  if (isSpace && isDashboardVisible()) {
+    const firstNeedsYou = dashboardInMotionRows().find((r) => r.needsAction && r.kind === "session");
+    if (firstNeedsYou) {
+      navigateToPage("chat");
+      openSessionInPane(firstNeedsYou.session, focusedPaneIndex);
+      return;
+    }
+  }
   navigateToPage(page);
 });
 
