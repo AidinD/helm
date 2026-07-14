@@ -12,6 +12,11 @@ let mateSessionIds = new Set();
 // first-mate session gets after its first turn. Rebuilt each refresh().
 let mateBySessionId = new Map();
 let secondMateBySessionId = new Map();
+// CLI session ids with a turn CURRENTLY running (from the "session" event until
+// the process "closed"), tracked independently of any pane so it survives
+// navigating away and reopening. Lets a reopened pane show "working" for a live
+// turn instead of a hung-looking idle (bug a39286b7).
+let runningSessions = new Set();
 // App-level view history (Dashboard/Analysis/Archive/Chat/...), driven by the
 // mouse side buttons so back/forward navigate across the WHOLE app.
 // navigateToPage pushes here; appNavigateView walks it.
@@ -2161,12 +2166,20 @@ function openSessionInPane(session, paneIndex, _ignored) {
       mateId: fm ? fm.mateId : undefined,
       secondMateId: sm ? sm.secondMateId : undefined,
       loading: true,
+      // If a turn is currently running for this session, reopen it as busy so it
+      // shows "working" (stop icon + status), not a hung-looking idle. Live
+      // events are redirected here by cliSessionId, and "done" clears it
+      // (a39286b7). freshPane() defaults busy:false for a session with no live turn.
+      busy: runningSessions.has(session.cliSessionId || session.sessionId),
       isOrchestrator: isOrchestratorSession(session),
     };
   }
   renderSinglePane(paneIndex);
   renderSidebar();
   loadTranscriptInto(paneIndex);
+  if (panes[paneIndex]?.busy) {
+    setPaneBusyUI(paneIndex, "Working…");
+  }
   // Clicking into a session is an intent to write in it — put the cursor in
   // the composer so you can type immediately without a second click (the captain's
   // ask). focus() is a no-op on a textarea inside a hidden (#chatPage.hidden)
@@ -11033,6 +11046,15 @@ window.helm.onSessionEvent((evt) => {
     return;
   }
 
+  // Running-session tracking (a39286b7): kept independent of the pane-identity
+  // gate below, so it stays correct even after navigating away and back. A
+  // session is "running" from its "session" event until the process "closed".
+  if (evt.kind === "session" && evt.sessionId) {
+    runningSessions.add(evt.sessionId);
+  } else if (evt.kind === "closed" && evt.sessionId) {
+    runningSessions.delete(evt.sessionId);
+  }
+
   // Routes purely via launchPaneHistory + an identity check, the same
   // pattern already used by the modelFit handler above. A separate
   // launchId->index map (paneLaunchMap) used to do this lookup WITHOUT the
@@ -11044,10 +11066,23 @@ window.helm.onSessionEvent((evt) => {
   // on launchPaneHistory removes both problems: one map, one identity check,
   // used everywhere a launchId needs to find its way back to a pane.
   const entry = launchPaneHistory.get(evt.launchId);
-  if (!entry || panes[entry.index] !== entry.pane) {
+  if (!entry) {
     return;
   }
-  const { index, pane, startedAt } = entry;
+  let { index, pane, startedAt } = entry;
+  if (panes[index] !== pane) {
+    // The original pane was reassigned (e.g. navigated to the dashboard and back,
+    // which rebuilds the pane). If a pane is CURRENTLY showing the same session,
+    // redirect this live event to it - so a reopened pane keeps ticking and gets
+    // the completion, instead of the turn running invisibly and looking hung
+    // (a39286b7). If the session isn't open anywhere, drop the event as before.
+    const liveIdx = pane.cliSessionId ? panes.findIndex((p) => p && p.cliSessionId === pane.cliSessionId) : -1;
+    if (liveIdx < 0) {
+      return;
+    }
+    index = liveIdx;
+    pane = panes[liveIdx];
+  }
   switch (evt.kind) {
     case "session":
       pane.cliSessionId = evt.sessionId;

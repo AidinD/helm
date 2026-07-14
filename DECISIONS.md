@@ -1,5 +1,13 @@
 # Decisions
 
+## 2026-07-15 - Reopened pane shows a live turn as working (the REAL a39286b7 fix)
+
+Corrected diagnosis: tracing the dinghy transcript (fe77442b) showed the "hung" session never hung - it completed normally (end_turn at 21:53:51). It LOOKED hung because the pane showed idle (send icon, no spinner) while the turn was still running.
+Root: openSessionInPane rebuilt the pane with no busy state tied to a live turn, and live events route via launchPaneHistory's pane-identity check, which bails after a navigate-away/reopen (the pane object changed). So the turn kept running headlessly while its reopened pane sat idle, then "suddenly" showed done on the next refresh.
+(The earlier 5617272 - surface a turn that ends WITHOUT a result - was a valid but DIFFERENT scenario; it stays.)
+Fix (3 parts): (1) a renderer `runningSessions` set, tracked on the "session"/"closed" events independent of the pane gate; (2) openSessionInPane reopens a session as busy when it's in runningSessions, so it shows working, not idle; (3) the event handler, on a pane-identity mismatch, redirects the event to whichever pane currently shows the same cliSessionId - so a reopened pane keeps ticking and gets the completion.
+Verified: test-fleet-ui-fixes.mjs (reopening a running session shows busy; an idle one shows idle) + test-retire-clean (a real turn still runs session->working->done->idle through the rewritten handler gate).
+
 ## 2026-07-15 - Surface a turn that ends without a result (no more "looks hung")
 
 a39286b7: a session that ended cleanly (exit 0) but WITHOUT a genuine CLI result event - e.g. it stopped after a tool call (ToolSearch/WebSearch) without concluding - fell through the "done" handler's branches (not a stop; not a code!==0 failure) into the normal-completion branch and went SILENTLY idle: composer showed the send icon (not stop), no loading spinner, no completion text, no error. It looked hung ("har den hängt sig?").
