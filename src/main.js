@@ -1763,6 +1763,23 @@ ipcMain.handle(
               console.error("[helm] failed to bind second-mate session:", err);
             }
           }
+          // Bind a FIRST-mate session SERVER-SIDE too, for the SAME reason as the
+          // second-mate bind above: the renderer's bind-on-session (renderer.js
+          // "session" case) is skipped when the pane is reassigned before the
+          // event lands - e.g. you type a prompt in a first mate then navigate to
+          // the dashboard before it replies. The binding was then dropped, so the
+          // session was never recognized as the mate's: it surfaced as a "direct"
+          // 2nd mate under Captain, and a second first mate's dispatches
+          // mis-attributed to the slot-0 mate (bugs 3c52cc0d + 2a5e6196 "samma fel
+          // igen"). Only when this launch is a first mate (meta-home root) with an
+          // explicit mateId - never a captain personal chat in the meta-home.
+          if (isMetaHomeRoot(cwd) && mateId) {
+            try {
+              bindMateSession(mateId, evt.sessionId);
+            } catch (err) {
+              console.error("[helm] failed to bind first-mate session:", err);
+            }
+          }
         }
         if (evt.kind === "quota" && evt.quota) {
           recordQuota(evt.quota);
