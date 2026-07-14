@@ -1,5 +1,12 @@
 # Decisions
 
+## 2026-07-14 - Second mate shows its own session status under the first mate (not crew-only)
+
+9ad82c28: a registered (crew-derived) second mate under its first mate read "idle" / "crew idle" while the SAME second mate showed as working (active) in the "needs you / in motion" list.
+fleetSecondMateEl's badge + "now" line for a non-session-node reflected only crew state (anyLive/anyNeeds), ignoring the second mate's own session.
+Fix: reflect the second mate's OWN session status first (active -> working, waiting -> needs you), falling back to crew state when there is no live session - so the fleet matches the in-motion list.
+Verified in test-fleet-ui-fixes.mjs (a registered 2nd mate with an active session shows "working"; with an idle session shows "idle").
+
 ## 2026-07-14 - First-mate session binds to its mate SERVER-SIDE (root of the mis-attribution bugs)
 
 3c52cc0d + 2a5e6196 (the latter reopened as "samma fel igen" - my earlier openSessionInPane pane.mateId fix was necessary but not sufficient).

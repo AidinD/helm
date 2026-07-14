@@ -5932,8 +5932,21 @@ function fleetSecondMateEl(sm) {
     badgeKind = st === "waiting" ? "need" : st === "active" ? "run" : "ok";
     badgeText = st === "waiting" ? "needs you" : st === "active" ? "working" : "idle";
   } else {
-    badgeKind = anyNeeds ? "need" : anyLive ? "run" : "ok";
-    badgeText = anyNeeds ? "needs you" : anyLive ? "busy" : "idle";
+    // Reflect the second mate's OWN session status first - it showed as working
+    // in the "needs you / in motion" list above while reading "idle" here because
+    // this branch looked only at crew (bug 9ad82c28). Fall back to crew state when
+    // there is no live session.
+    const st = sess?.status;
+    if (st === "active") {
+      badgeKind = "run";
+      badgeText = "working";
+    } else if (st === "waiting") {
+      badgeKind = "need";
+      badgeText = "needs you";
+    } else {
+      badgeKind = anyNeeds ? "need" : anyLive ? "run" : "ok";
+      badgeText = anyNeeds ? "needs you" : anyLive ? "busy" : "idle";
+    }
   }
   badge.className = "fleet-badge " + badgeKind;
   badge.textContent = badgeText;
@@ -5960,6 +5973,14 @@ function fleetSecondMateEl(sm) {
     } else {
       now.append(document.createTextNode("idle · "));
     }
+  } else if (sess?.status === "active") {
+    // The second mate's own session is running a turn - show that first, like the
+    // in-motion list does, instead of a crew-only "idle" (bug 9ad82c28).
+    const spin = document.createElement("span");
+    spin.className = "fleet-spin";
+    now.append(spin, document.createTextNode("working · "));
+  } else if (sess?.status === "waiting") {
+    now.append(document.createTextNode("waiting on you · "));
   } else if (liveN > 0) {
     const spin = document.createElement("span");
     spin.className = "fleet-spin";
