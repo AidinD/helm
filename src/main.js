@@ -694,6 +694,35 @@ function applySessionArchive(sessionId, archived) {
 }
 ipcMain.handle("session:archive", (_event, { sessionId, archived }) => applySessionArchive(sessionId, archived));
 
+// Archive second mates by id: hide them from the Fleet for good. Adds each id to
+// a config overlay (archivedSecondMates) that the renderer excludes, AND drops the
+// binding. The overlay is what makes it stick even for a CREW-derived node: the
+// binding removal alone wouldn't, because deriveSecondMates re-derives the node
+// from goal-run history every refresh - so "archive" appeared to do nothing
+// (bug 05166d55). Crew runs themselves are untouched (they stay on the Autopilot
+// page); this only removes the second-mate NODE from the fleet tree.
+function archiveSecondMateIds(ids) {
+  const list = (ids || []).filter(Boolean);
+  if (!list.length) {
+    return;
+  }
+  const cfg = loadConfig();
+  const set = new Set(cfg.archivedSecondMates || []);
+  for (const id of list) {
+    set.add(id);
+  }
+  writeConfig({ ...cfg, archivedSecondMates: [...set] });
+  removeSecondMates(list);
+}
+ipcMain.handle("secondMates:archive", (_event, { id }) => {
+  try {
+    archiveSecondMateIds([id]);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err) };
+  }
+});
+
 // Retire teardown (task 58e9a433): when a first mate is retired, tear down its
 // second-mate subtree so nothing lingers referencing a now-dead parent id.
 // the captain's intent for retire = "I'm done with this whole track", so we archive
@@ -715,7 +744,10 @@ function tearDownSecondMatesFor(mateId) {
         }
       }
     }
-    removeSecondMates(subMates.map((s) => s.secondMateId));
+    // Add to the archived-second-mates overlay (not just removeSecondMates): a
+    // crew-derived child re-derives from goal-run history, so only the overlay
+    // keeps it out of the Fleet after retire (same fix as the archive button).
+    archiveSecondMateIds(subMates.map((s) => s.secondMateId));
     return { count: subMates.length, sessionIds };
   } catch (err) {
     console.error("[helm] tearDownSecondMatesFor failed:", err);

@@ -118,6 +118,7 @@ contextBridge.exposeInMainWorld("helm", {
   listSecondMates: () => ipcRenderer.invoke("secondMates:list"),
   bindSecondMateSession: (secondMateId, sessionId) => ipcRenderer.invoke("secondMates:bindSession", { secondMateId, sessionId }),
   renameSecondMate: (secondMateId, name) => ipcRenderer.invoke("secondMates:rename", { secondMateId, name }),
+  archiveSecondMate: (id) => ipcRenderer.invoke("secondMates:archive", { id }),
   onSessionEvent: (handler) => {
     const listener = (_event, payload) => handler(payload);
     ipcRenderer.on("session:event", listener);
