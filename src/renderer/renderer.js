@@ -763,14 +763,28 @@ function sessionById(id) {
   return state.sessions.find((s) => s.sessionId === id);
 }
 
-// Context-window size for a pane's session: prefer the real window Helm
-// learned for that session's model (from the CLI's result events, stored in
-// config.modelContextWindows), fall back to the configurable default for a
-// model not yet seen. Used to turn the token estimate into the gauge's %.
-function contextWindowForPane(pane) {
-  const model = sessionById(pane.sessionId)?.model;
+// The session record backing a mate, matched on EITHER id form (mate.sessionId
+// is the CLI session id, which is not always equal to session.sessionId).
+function sessionForMate(mate) {
+  return state.sessions.find((s) => (s.cliSessionId || s.sessionId) === mate.sessionId) || null;
+}
+
+// Last-known context size per mate session (keyed on mate.sessionId), refreshed
+// each dashboard poll so EVERY first mate can show its context gauge, not only
+// the one currently open in a pane (bug bf1ea538).
+let contextTokensBySession = {};
+
+// Context-window size for a model: prefer the real window Helm learned for it
+// (from the CLI's result events, stored in config.modelContextWindows), fall
+// back to the configurable default for a model not yet seen. Turns a token
+// estimate into the gauge's %.
+function contextWindowForModel(model) {
   const learned = state.config.modelContextWindows || {};
   return (model && learned[model]) || state.config.contextWindowTokens || 1000000;
+}
+
+function contextWindowForPane(pane) {
+  return contextWindowForModel(sessionById(pane.sessionId)?.model);
 }
 
 // state.sessions is only refreshed by the 30s poll / explicit refresh() —
@@ -2015,6 +2029,14 @@ async function archiveOutgoingMateSession(mate) {
     const backing = state.sessions.find((s) => (s.cliSessionId || s.sessionId) === mate.sessionId);
     if (backing && !backing.isArchived) {
       await window.helm.archiveSession(backing.sessionId, true);
+      // Keep the local cache in sync immediately. The mate removal is read fresh
+      // from listMates() on the very next render, but the archive flag only
+      // reaches state.sessions on a later getSessions() poll - so for one render
+      // the session was mate-unbound AND locally-not-yet-archived, which is
+      // exactly what augmentSecondMatesWithSessions classifies as a "direct" node,
+      // flashing the retired mate under Captain tagged "2nd mate" (bug 96d34b98).
+      // Setting it here closes that window so the next fillDashboardSections drops it.
+      backing.isArchived = true;
     }
   } catch {
     // best-effort - a failed archive just leaves the old archive proposal
@@ -2045,12 +2067,19 @@ function openSessionInPane(session, paneIndex, _ignored) {
   const alreadyOpenHere = panes[paneIndex]?.sessionId === session.sessionId;
   if (!alreadyOpenHere) {
     stopLiveStatsTicker(paneIndex);
+    // Name a mate-bound session by its durable fleet name, not the prompt-derived
+    // session.title (which a first mate picks up after its first turn). Mirrors the
+    // needs-you queue (firstMateForSession/secondMateForSession). Without this the
+    // chat pane header showed e.g. "Jag vill jobba med dinghy..." for a first mate
+    // that has a real fleet name (bug 5fda2a96).
+    const fm = firstMateForSession(session);
+    const sm = fm ? null : secondMateForSession(session);
     panes[paneIndex] = {
       ...freshPane(),
       sessionId: session.sessionId,
       cliSessionId: session.cliSessionId || session.sessionId,
       cwd: session.cwd || "",
-      title: session.title,
+      title: fm ? fm.name : sm ? sm.name : session.title,
       loading: true,
       isOrchestrator: isOrchestratorSession(session),
     };
@@ -5064,7 +5093,10 @@ function dashboardFleetFingerprint(mates = [], secondMates = [], boardSummary = 
       const st = m.sessionId
         ? state.sessions.find((s) => (s.cliSessionId || s.sessionId) === m.sessionId)?.status || "-"
         : "-";
-      return `${m.mateId}:${m.name}:${m.sessionId || "-"}:${st}:${p?.contextTokens || 0}`;
+      // Effective context = live pane value when open, else the per-poll estimate
+      // (so a non-open mate's gauge repaints as its context changes - bug bf1ea538).
+      const ctx = p && typeof p.contextTokens === "number" ? p.contextTokens : contextTokensBySession[m.sessionId] || 0;
+      return `${m.mateId}:${m.name}:${m.sessionId || "-"}:${st}:${ctx}`;
     })
     .join(",");
   const smFp = secondMates.map((s) => `${s.secondMateId}:${s.name}:${s.sessionId || "-"}:${s.crew.length}`).join(",");
@@ -5619,12 +5651,16 @@ function fleetMateCardEl(mate, sms, boardSummary = {}) {
   // Persona control: the temperament this mate brings to coordination.
   card.append(fleetPersonaEl(mate));
 
-  // Context gauge - only when this mate's session is open in a pane (that's the
-  // only place we know its context usage).
-  const pane = panes.find((p) => p && p.cliSessionId && p.cliSessionId === mate.sessionId && typeof p.contextTokens === "number");
+  // Context gauge for this mate. Prefer the live per-pane value when its session
+  // is open (freshest); otherwise fall back to the per-poll estimate fetched for
+  // every mate, so BOTH first mates show a gauge - not only the open one (bug
+  // bf1ea538). The % also drives the "ctx" retire nudge below, so this now fires
+  // for a saturated mate even when its session isn't open in a pane.
+  const openPane = panes.find((p) => p && p.cliSessionId && p.cliSessionId === mate.sessionId && typeof p.contextTokens === "number");
+  const ctxTokens = openPane ? openPane.contextTokens : contextTokensBySession[mate.sessionId];
   let pct = null;
-  if (pane) {
-    pct = Math.min(100, Math.round((pane.contextTokens / contextWindowForPane(pane)) * 100));
+  if (typeof ctxTokens === "number") {
+    pct = Math.min(100, Math.round((ctxTokens / contextWindowForModel(sessionForMate(mate)?.model)) * 100));
     const gauge = document.createElement("div");
     gauge.className = "fleet-gauge";
     const bar = document.createElement("span");
@@ -6270,6 +6306,17 @@ async function fillDashboardSections({ force = false } = {}) {
     for (const { sm, sess } of activeSessionNodes) {
       sm.crew = (saMap[sess.sessionId] || []).map((a) => ({ isSubAgent: true, id: a.id, goal: a.description, status: "running" }));
     }
+  }
+  // Context gauge for EVERY first mate: tail-read each mate session's last-known
+  // context size (keyed on mate.sessionId), stashed for the synchronous fleet
+  // render below. On the poll, not per render. The gauge prefers a live pane
+  // value when open; this is the fallback so both mates show a gauge (bug bf1ea538).
+  const mateCtxSessions = activeMatesList.filter((m) => m.sessionId).map((m) => ({ cliSessionId: m.sessionId, sessionId: m.sessionId }));
+  if (mateCtxSessions.length) {
+    const ctxRes = await window.helm.getContextTokens(mateCtxSessions);
+    contextTokensBySession = ctxRes?.ok ? ctxRes.contextTokens || {} : {};
+  } else {
+    contextTokensBySession = {};
   }
   if (bailIfPressed()) {
     return;

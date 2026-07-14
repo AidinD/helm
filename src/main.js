@@ -1164,6 +1164,25 @@ ipcMain.handle("session:liveSubAgents", (_event, { sessions }) => {
   return { ok: true, subAgents: out };
 });
 
+// Last-known context size per session, so the Fleet can show a context gauge for
+// EVERY first mate, not just the one open in a pane (bug bf1ea538). Same batch
+// shape as session:liveSubAgents; reuses estimateSessionContextTokens (a
+// transcript tail-read), so keep the caller's list to mates that have a session.
+ipcMain.handle("session:contextTokens", (_event, { sessions }) => {
+  const out = {};
+  for (const s of sessions || []) {
+    try {
+      const t = estimateSessionContextTokens(s.cliSessionId, s.sessionId);
+      if (typeof t === "number") {
+        out[s.sessionId] = t;
+      }
+    } catch {
+      // tolerant - a missing/unreadable transcript just means no estimate
+    }
+  }
+  return { ok: true, contextTokens: out };
+});
+
 // --- Pick a repo folder to root a new session in ---
 ipcMain.handle("dialog:pickFolder", async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
