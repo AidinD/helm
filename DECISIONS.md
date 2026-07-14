@@ -1,5 +1,15 @@
 # Decisions
 
+## 2026-07-14 - Retire tears down the second-mate subtree (Aidin's intent: option 3)
+
+58e9a433: retiring a first mate orphaned its second mates - they vanished from the Fleet (their firstMateId pointed at the now-dead mateId) but their sessions/crew kept running invisibly.
+Presented three options (re-parent to successor / surface as orphans / tear down); Aidin's intention was option 3 - retire = "I'm done with this whole track".
+Fix (server-side, atomic in the mates:retire handler): tearDownSecondMatesFor(mateId) runs BEFORE retireAndRespawn (while the mateId is still the parent the second mates reference).
+It archives each second mate's interactive session (applySessionArchive, refactored out of the session:archive handler) and drops its binding (new removeSecondMates in secondMates.js), for both proposed and engaged second mates.
+Crew autopilot runs in goal-run history are deliberately NOT killed - they stay on the Autopilot page; force-stopping in-flight work would lose it.
+The handler returns tornDownSessionIds so the renderer marks those sessions archived locally (reflectTornDownSessions), dropping them from the sidebar/fleet on the immediate re-render instead of after the next poll (same staleness gap the retire-flash fix closed for the first mate's own session).
+Verified: test-retire-teardown.mjs (both second mates derive before retire; the engaged one's session lands in tornDownSessionIds; both bindings removed; neither lingers after) + test-retire-clean still green.
+
 ## 2026-07-14 - Mate naming consistent across all surfaces (sidebar + second-mate single-source)
 
 Follow-up to the chat-header naming fix, which Aidin bounced as incomplete.

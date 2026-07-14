@@ -37,7 +37,7 @@ import { listSlashItems } from "./lib/slashCommands.js";
 import { trackHelmUsage, summarizeHelmUsage } from "./lib/helmUsage.js";
 import { mcpAllowedToolsFromConfig } from "./lib/userMcp.js";
 import { initAutoUpdate } from "./lib/autoUpdate.js";
-import { deriveSecondMates, bindSecondMateSession, renameSecondMate, readBindings, proposeSecondMate, markSecondMateCreated, secondMateIdForSession, secondMateId } from "./lib/secondMates.js";
+import { deriveSecondMates, bindSecondMateSession, renameSecondMate, readBindings, proposeSecondMate, markSecondMateCreated, secondMateIdForSession, secondMateId, removeSecondMates } from "./lib/secondMates.js";
 import { addSpend, isOverBudget, isKilled, setKilled, resetBudget, readBudget, setCeiling } from "./lib/orchestrationBudget.js";
 import {
   ensureDispatchDirs,
@@ -667,7 +667,7 @@ ipcMain.handle("context:saveHandoff", (_event, { cwd, text } = {}) => {
 // reverted by another app. We still mirror the flag into whichever store the
 // session lives in (best-effort) so views stay consistent, but the overlay is
 // what actually holds the line. ---
-ipcMain.handle("session:archive", (_event, { sessionId, archived }) => {
+function applySessionArchive(sessionId, archived) {
   const shouldArchive = archived !== false;
   const cfg = loadConfig();
   const set = new Set(cfg.archivedSessions || []);
@@ -691,7 +691,37 @@ ipcMain.handle("session:archive", (_event, { sessionId, archived }) => {
   // reverts it, the overlay above still keeps the session archived in Helm.
   const mirror = setSessionArchived(sessionId, shouldArchive);
   return { ok: true, desktopMirror: mirror.ok };
-});
+}
+ipcMain.handle("session:archive", (_event, { sessionId, archived }) => applySessionArchive(sessionId, archived));
+
+// Retire teardown (task 58e9a433): when a first mate is retired, tear down its
+// second-mate subtree so nothing lingers referencing a now-dead parent id.
+// Aidin's intent for retire = "I'm done with this whole track", so we archive
+// each second mate's interactive session and drop its binding (proposed/created).
+// Crew autopilot runs in goal-run history are intentionally NOT killed - they
+// stay on the Autopilot page; force-stopping in-flight work would lose it.
+// Returns { count, sessionIds } so the caller can reflect it locally.
+function tearDownSecondMatesFor(mateId) {
+  try {
+    const subMates = deriveSecondMates(loadGoalRunHistory()).filter((s) => s.firstMateId === mateId);
+    const sessionIds = [];
+    for (const sm of subMates) {
+      if (sm.sessionId) {
+        try {
+          applySessionArchive(sm.sessionId, true);
+          sessionIds.push(sm.sessionId);
+        } catch (err) {
+          console.error("[helm] failed to archive second-mate session on retire:", err);
+        }
+      }
+    }
+    removeSecondMates(subMates.map((s) => s.secondMateId));
+    return { count: subMates.length, sessionIds };
+  } catch (err) {
+    console.error("[helm] tearDownSecondMatesFor failed:", err);
+    return { count: 0, sessionIds: [] };
+  }
+}
 
 // "Continue on mobile": open a real terminal running an interactive Remote
 // Control session for this conversation, so it can be driven from the Claude
@@ -1410,10 +1440,15 @@ ipcMain.handle("mates:rename", (_event, { mateId, name }) => {
 });
 ipcMain.handle("mates:retire", (_event, { mateId, handoff, persona }) => {
   try {
+    // Tear down the retiring mate's second-mate subtree FIRST, while its mateId
+    // is still the parent the second mates reference (task 58e9a433). Archives
+    // their sessions + drops their bindings so they don't linger as hidden
+    // orphans or stale proposals under a dead parent.
+    const torndown = tearDownSecondMatesFor(mateId);
     // `persona` set = a deliberate persona switch: respawn into it. Absent =
     // an ordinary retire, which resets the fresh mate to the plain coordinator.
     const mate = retireAndRespawn(mateId, handoff || null, persona || null);
-    return { ok: true, mate };
+    return { ok: true, mate, tornDownSessionIds: torndown.sessionIds };
   } catch (err) {
     return { ok: false, error: err?.message || String(err) };
   }

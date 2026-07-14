@@ -53,6 +53,29 @@ function writeBindings(obj) {
 }
 
 /**
+ * Drop second-mate bindings by id (proposed/created/engaged). Used when a first
+ * mate is retired and its subtree is torn down (task 58e9a433) so its second
+ * mates don't linger as stale proposals or orphaned nodes referencing a dead
+ * parent id. Only removes bindings; crew runs in goal-run history are untouched
+ * (they stay on the Autopilot page - tearing down in-flight work would lose it).
+ * Returns the number of bindings removed.
+ */
+export function removeSecondMates(ids) {
+  const bindings = readBindings();
+  let removed = 0;
+  for (const id of ids || []) {
+    if (bindings[id]) {
+      delete bindings[id];
+      removed++;
+    }
+  }
+  if (removed > 0) {
+    writeBindings(bindings);
+  }
+  return removed;
+}
+
+/**
  * Derives the second-mate list from goal-run history: one per distinct
  * (dispatchedBy||"direct", projectPath), carrying its crew (the runs) plus any
  * persisted sessionId/name override. Pure w.r.t. its inputs (bindings injectable
