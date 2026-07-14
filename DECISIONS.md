@@ -1,5 +1,15 @@
 # Decisions
 
+## 2026-07-14 - Second mate: load the delegate heuristic + a batch playbook (dispatch, don't grind)
+
+Aidin jumped into a second mate and asked it to do 3 beatdrop Jot tasks; it did all 3 itself instead of dispatching Autopilot crew.
+Same class as the first-mate gap, one tier down.
+Verified in code: main.js:1645 appends second-mate-instructions.md, which says "Dispatch crew to do the actual work" but defers the actual delegate-vs-do-it-yourself JUDGMENT to orchestrator-instructions.md - a file that is NOT loaded into a second-mate session (only second-mate-instructions.md is appended).
+So the deciding calibration was referenced but absent from context, and the model defaulted to doing the work.
+Partly defensible - the second mate IS the hands-on tier, so trivial tasks (show version number) and underspecified ones (the Kid task, which it actually asked to clarify) are legitimately inline - but doing ALL three with zero dispatch is the miscalibration.
+Fix (instructions-only; mirrors the first-mate playbook fix; deliberately NO tool-guard here, because unlike a first mate the second mate needs Edit/Write for its real validate/bugfix job): inlined the delegate-vs-do-it-yourself heuristic into second-mate-instructions.md instead of pointing at the unloaded doc, and added a "handed several tasks at once" playbook (one crew run per well-scoped task, partition files for concurrency, scout underspecified ones, trivial inline, then review + merge).
+Not yet behaviorally smoke-tested: a faithful test dispatches real Autopilot crew runs (heavier + side-effectful) rather than the first mate's single create_second_mate call; offered to Aidin.
+
 ## 2026-07-14 - Tier-discipline guards: a first mate can no longer do hands-on work
 
 Follow-up to the "first mate absorbs single-project work" fix (which was prompt-only).

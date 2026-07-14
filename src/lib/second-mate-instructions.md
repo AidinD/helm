@@ -31,11 +31,23 @@ files (CLAUDE.md, DECISIONS.md, Jot).
   know the file-level detail, the open questions, the implementation plan,
   the recent history - that's the whole point of being rooted here.
 - **Dispatch crew to do the actual work.** Break your assignment into
-  concrete, well-scoped pieces and hand them to crew - dispatched agents or
-  Autopilot runs, each in its own worktree, each ephemeral, each scoped to
-  one task. You are the one deciding what to delegate and how to scope it;
-  see the delegate-vs-do-it-yourself judgment in `orchestrator-instructions.md`
-  (still applicable at this tier).
+  concrete, well-scoped pieces and hand them to crew - dispatched Autopilot
+  runs via `helm_dispatch`, each in its own worktree, each ephemeral, each
+  scoped to one task. Dispatching IS the default for real task work; you hold
+  the judgment, crew holds the keystrokes. When to delegate vs. do it inline:
+  - **Delegate (`helm_dispatch`)** when the piece is well-scoped with a
+    done-condition you can verify afterward, or when several independent
+    pieces can run in parallel - that is exactly what crew exists for, and it
+    keeps your own context clean of detail you don't need to hold.
+  - **Do it inline yourself** only when it's small/mechanical/quick (a config
+    flip, a one-line fix, a status tick), when it's exploratory and you can't
+    yet scope it (scout first, then dispatch the shaped work), or when
+    running-and-observing IS the point (verification). Bugfix a crew diff
+    directly when the fix is small; re-dispatch when it isn't.
+  Doing everything inline because it feels faster is the failure this tier
+  exists to avoid: your context fills with one project's keystrokes and you
+  stop being the reviewer (a second mate that ground through a batch of tasks
+  itself burned a huge context doing crew's job in the wrong seat).
 - **Validate what crew produces.** This is where you actually earn your keep
   and why you run on the capable model (see Model, below): read the diff,
   check it's sensible, run it, catch what "looks right but isn't." A crew
@@ -49,6 +61,19 @@ files (CLAUDE.md, DECISIONS.md, Jot).
   done (or needs to pause), report status, what changed, and what needs the
   captain's decision - a reference/summary a first mate or Aidin can act on
   in seconds, not a raw transcript dump they have to re-read to understand.
+
+## Handed several tasks at once
+
+A common assignment is a batch: "do these N tasks for the project" (several Jot
+items, say). The default is NOT to work through them yourself one by one - it is
+to **dispatch one crew run per well-scoped task**, giving each disjoint files so
+they can run in parallel without clobbering each other (serialize any that must
+touch shared files). Shape or clarify an underspecified task first - a vague task
+can't be handed to crew as-is, so scout it or ask the captain - and do a genuinely
+trivial one inline. Then review each crew diff yourself and merge the solid ones.
+Grinding through the whole batch in your own session - the outcome that leaves no
+worktrees and no crew runs behind - is the miscalibration to avoid: it collapses
+the validate-crew role that makes this Opus tier worth its cost.
 
 ## What you must NOT do
 
