@@ -5387,35 +5387,16 @@ function choosePersona(mate, key, running) {
 function dashboardFleetSection(mates = [], secondMates = [], boardSummary = {}) {
   const section = document.createElement("section");
   section.className = "dash-board dash-fleet";
-  const liveCount = [...goalRuns.values()].filter((r) => crewRunning(r)).length;
-  section.append(dashBoardHead("Fleet", liveCount, "First mates → second mates (project sessions) → crew"));
+  // No count on the Fleet header: it previously showed the live-crew count, which
+  // read as "0" next to a populated fleet and confused more than it informed
+  // (b7f662fd). The per-mate cards already convey liveness.
+  section.append(dashBoardHead("Fleet", null, "First mates → second mates (project sessions) → crew"));
 
-  // Proposals banner: when the first mate has laid out topics (proposed second
-  // mates not yet engaged), surface them at the TOP of the fleet - right under
-  // the needs-you queue - instead of leaving them buried as a badge in a column
-  // (flow review P2). One click per chip engages that proposal.
-  const proposed = secondMates.filter((s) => s.status === "proposed" && !s.sessionId);
-  if (proposed.length > 0) {
-    const banner = document.createElement("div");
-    banner.className = "fleet-proposals";
-    const label = document.createElement("span");
-    label.className = "fleet-proposals-label";
-    label.textContent = `${proposed.length} topic${proposed.length === 1 ? "" : "s"} proposed - engage one to start:`;
-    banner.append(label);
-    proposed.forEach((sm) => {
-      const chip = document.createElement("button");
-      chip.className = "fleet-proposal-chip";
-      const brief = sm.brief ? ` - ${sm.brief.length > 48 ? sm.brief.slice(0, 48) + "…" : sm.brief}` : "";
-      chip.textContent = sm.name + brief;
-      chip.title = `Engage the proposed second mate for ${sm.name}`;
-      chip.addEventListener("click", (e) => {
-        e.stopPropagation();
-        jumpIntoSecondMate(sm);
-      });
-      banner.append(chip);
-    });
-    section.append(banner);
-  }
+  // The top "N topics proposed - engage one to start" banner was removed
+  // (b7f662fd / adcef9e9): it duplicated the proposed second mates already listed
+  // under each first-mate card, where they're engaged and managed in context. A
+  // proposal lives under its mate, not in a redundant top strip that also let old,
+  // never-engaged proposals accumulate as stale "engage me" chips.
 
   const cols = document.createElement("div");
   cols.className = "fleet-cols";

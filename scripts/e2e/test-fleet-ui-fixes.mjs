@@ -138,6 +138,19 @@ try {
   assert(smDivergence.synthetic === false, "a registered 2nd mate is NOT re-synthesized as a prompt-title node on id-form mismatch");
   assert(smDivergence.registeredName === "Beatdrop mate", "the 2nd mate keeps its registered fleet name (single-sourced with the chat header)");
 
+  // b7f662fd - the redundant top proposals banner is gone, and the Fleet header
+  // no longer shows the (confusing "0") live count.
+  const fleetChrome = await app.eval(`(() => {
+    const proposed = { secondMateId: "sm_prop", status: "proposed", sessionId: null, firstMateId: "direct", projectPath: "D:/p", name: "P", brief: "b", crew: [] };
+    const section = dashboardFleetSection([], [proposed], {});
+    return {
+      hasBanner: !!section.querySelector(".fleet-proposals"),
+      hasCount: !!section.querySelector(".dash-board-head .dash-count"),
+    };
+  })()`);
+  assert(fleetChrome.hasBanner === false, "the top 'topics proposed' banner is removed");
+  assert(fleetChrome.hasCount === false, "the Fleet header shows no count");
+
   log(exitCode === 0 ? "VERIFY OK: all Fleet/chat naming + gauge fixes behave as intended." : "VERIFY FAILED.");
 } catch (err) {
   exitCode = 1;
