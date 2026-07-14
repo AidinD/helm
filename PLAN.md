@@ -5,7 +5,22 @@ context flow, and (later) orchestration — without removing any Claude feature.
 Built by wrapping the real `claude` binary headlessly (stream-json), so all
 skills, CLAUDE.md, settings, permissions, and MCP are preserved.
 
-## Current status (2026-07-12)
+## Current status (2026-07-14)
+
+Phase 2 (tiered orchestration) is BUILT, hardened, and polished; installer at 0.1.387.
+
+What landed since 2026-07-12 (all in Jot "review", not self-marked done):
+- **Phase 2 shipped** guardrails-first (budget ceiling + kill switch + width/depth caps), then the tiers slice-by-slice (lazy second mates, second-mate-dispatches-crew, report-up, per-session turn lock + async relay, resumable runs, top-down "fortsätt" cascade) - each feature + a fresh-context adversarial review + fixes.
+- **Durability met:** quota-stopped / escalated / app-restart-interrupted runs keep their worktree and resume into it (goal:resume, gated); "fortsätt" cascades from a first mate to its whole tree.
+- **Ship-review + holistic flow review** (fresh-context agents + hands-on) closed the back-half-of-the-loop gaps: one-click Resume, Direct-run report rollup, Goals "Work on this" launch, proposals surfaced near the queue, Focus as a sub-nav tab, a working crew-row Done (clears + cleans worktree), and a copy pass.
+- **Escalated + feedback fixes:** cross-instance double-resume guard (livePid + heartbeat), budget fail-closed on a corrupt file, deriveSecondMates phantom-node fix, retire archives the outgoing session, a first mate awaiting crew reads calm (not "needs input"), collapse-chevron placement.
+- **MCP:** first mate stays lean by design (Aidin confirmed); second mates now pre-approve the user's own MCP servers so they're actually usable in headless -p (parity fix); regular sessions were already fine.
+
+Testing: a broad CDP-E2E suite (including live-turn tests for the dispatch loop, relay delivery, and retire-with-carry-over) is green.
+
+Remaining is still DE-RISKING, not building: prove it in real daily use (Aidin is now running the installed app + feeding back p0s, which this session worked through). Parked: Google Calendar, interactive Plan prototypes, first-mate voice, collapsible settings, auto-update token.
+
+### (superseded) Prior status (2026-07-12)
 
 Orchestration flow reframed + the next big build scoped.
 2026-07-12 landed (in Jot "review"): the cross-instance dispatch orphaning fix (ownership-scoped claiming), second-mate jump-in seeds a review nudge, Done no longer traps on a dirty worktree, and a batch of 6 p0 UX fixes (2nd-mate click routing + deep-link, animated running indicator, tree-collapse-on-Done, bigger chevron target, simpler mobile glyph, quota on dashboard). Merged the salvaged autopilot work (pasted-image inline transcript rendering + persona-row click fix + test) and cleaned up all goal worktrees. Installer at 0.1.342.
