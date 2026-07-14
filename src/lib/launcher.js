@@ -227,7 +227,13 @@ export function startSession({ cwd, prompt, model, effort, permissionMode, resum
           (msgUsage.cache_creation_input_tokens || 0) +
           (msgUsage.cache_read_input_tokens || 0);
         if (tokens > 0) {
-          emit({ kind: "usage", totalTokens: tokens });
+          // totalTokens (incl. cache_read) is kept for accounting; outputTokens is
+          // what the UI shows. cache_read - the cached context re-fed to the model
+          // every turn - dominated the displayed number (~99%), making it look like
+          // a token explosion next to Desktop's leaner output-based count, when the
+          // real generation is tiny and cache reads bill at a fraction (a39286b7
+          // follow-up). Show what the model actually produced.
+          emit({ kind: "usage", totalTokens: tokens, outputTokens: msgUsage.output_tokens || 0 });
         }
       }
       if (Array.isArray(blocks)) {
@@ -308,6 +314,9 @@ export function startSession({ cwd, prompt, model, effort, permissionMode, resum
         numTurns: evt.num_turns,
         durationMs: evt.duration_ms,
         totalTokens: totalTokens > 0 ? totalTokens : null,
+        // The turn's generated output - what the UI shows, instead of the
+        // cache_read-dominated total (a39286b7 follow-up).
+        outputTokens: usage.output_tokens || 0,
         contextWindows,
       });
     } else if (type === "rate_limit_event") {

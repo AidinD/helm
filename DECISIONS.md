@@ -1,5 +1,13 @@
 # Decisions
 
+## 2026-07-15 - Token readout shows output, not the cache_read-dominated total
+
+The captain: "Helm drar jättemycket tokens jämfört med Claude Desktop" - Helm showed 1257.1k tokens for a turn while Desktop showed 1.1k.
+Traced it (dinghy transcript): Helm summed input+output+cache_creation+cache_read per assistant message, and the renderer summed those across a turn's steps; cache_read - the cached conversation context re-fed to the model on every step - was ~99% of the number, so a ~127k-context turn with ~10 tool-steps showed ~1.27M.
+Desktop's number is output tokens. So Helm was not using more - it was DISPLAYING cache reads (billed at a fraction, and inherent to any multi-turn conversation; the actual generation per turn was 89-2116 tokens).
+Fix: the launcher emits outputTokens alongside totalTokens; the UI (live ticker + the post-turn readout) shows outputTokens. totalTokens (full, incl. cache_read) is retained for the usage log / accounting.
+Verified: parse + a real turn through the new plumbing (test-retire-clean).
+
 ## 2026-07-15 - Reopened pane shows a live turn as working (the REAL a39286b7 fix)
 
 Corrected diagnosis: tracing the dinghy transcript (fe77442b) showed the "hung" session never hung - it completed normally (end_turn at 21:53:51). It LOOKED hung because the pane showed idle (send icon, no spinner) while the turn was still running.
