@@ -165,6 +165,21 @@ try {
   assert(smStatus.working === "working", `a registered 2nd mate with an active session shows "working" (got ${JSON.stringify(smStatus.working)})`);
   assert(smStatus.idle === "idle", `a registered 2nd mate with an idle session shows "idle" (got ${JSON.stringify(smStatus.idle)})`);
 
+  // a39286b7 (step 2) - reopening a session whose turn is still running shows
+  // "working" (busy), not a hung-looking idle. A session with no live turn is idle.
+  const reopenBusy = await app.eval(`(() => {
+    runningSessions.add("cRun");
+    state.sessions.push({ sessionId: "sRun", cliSessionId: "cRun", cwd: "D:/x", status: "active", title: "t", isArchived: false });
+    state.sessions.push({ sessionId: "sIdle2", cliSessionId: "cIdle2", cwd: "D:/y", status: "idle", title: "t", isArchived: false });
+    openSessionInPane(state.sessions.find((s) => s.cliSessionId === "cRun"), 0);
+    const runningBusy = !!(panes[0] && panes[0].busy);
+    openSessionInPane(state.sessions.find((s) => s.cliSessionId === "cIdle2"), 0);
+    const idleBusy = !!(panes[0] && panes[0].busy);
+    return { runningBusy, idleBusy };
+  })()`);
+  assert(reopenBusy.runningBusy === true, "reopening a session with a live turn shows busy/working");
+  assert(reopenBusy.idleBusy === false, "reopening a session with no live turn shows idle");
+
   log(exitCode === 0 ? "VERIFY OK: all Fleet/chat naming + gauge fixes behave as intended." : "VERIFY FAILED.");
 } catch (err) {
   exitCode = 1;
