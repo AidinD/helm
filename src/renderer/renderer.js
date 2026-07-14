@@ -11116,7 +11116,12 @@ window.helm.onSessionEvent((evt) => {
       // into a running total so the live ticker's "Nk tokens" actually counts
       // UP during the run instead of sitting blank until the final "result"
       // event (Aidin's exact complaint: "den räknar inte upp ... tokens").
-      pane.liveTokens += evt.totalTokens || 0;
+      // Sum OUTPUT tokens for the display, not the all-inclusive total: the
+      // total is ~99% cache_read (the cached context re-fed each turn), which made
+      // the "Nk tokens" readout look like a token explosion (~1.2M) next to
+      // Desktop's leaner output count, while the real generation is tiny
+      // (a39286b7 follow-up). Falls back to totalTokens for older event shapes.
+      pane.liveTokens += evt.outputTokens ?? evt.totalTokens ?? 0;
       renderLiveStats(index, pane);
       pulsePaneStatusIcon(index);
       break;
@@ -11196,7 +11201,7 @@ window.helm.onSessionEvent((evt) => {
         pane.stopRequested = false;
         pane.lastTurnStats = {
           durationMs: typeof evt.summary?.durationMs === "number" ? evt.summary.durationMs : Date.now() - startedAt,
-          totalTokens: evt.summary?.totalTokens ?? null,
+          totalTokens: evt.summary?.outputTokens ?? evt.summary?.totalTokens ?? null,
           costUsd: evt.summary?.costUsd ?? null,
         };
         pane.turns.push({
@@ -11218,7 +11223,7 @@ window.helm.onSessionEvent((evt) => {
         // (e.g. sawResult false) but the run still produced a reply.
         pane.lastTurnStats = {
           durationMs: typeof evt.summary?.durationMs === "number" ? evt.summary.durationMs : Date.now() - startedAt,
-          totalTokens: evt.summary?.totalTokens ?? null,
+          totalTokens: evt.summary?.outputTokens ?? evt.summary?.totalTokens ?? null,
           costUsd: evt.summary?.costUsd ?? null,
         };
         loadTranscriptInto(index).then(refresh);

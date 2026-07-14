@@ -1631,7 +1631,7 @@ ipcMain.handle(
         mainWindow.webContents.send("session:event", { launchId, ...payload });
       }
     };
-    const meta = { toolsUsed: [], costUsd: 0, numTurns: 0, durationMs: null, totalTokens: null, actualModel: model || null, lastAssistantText: "", contextWindows: {} };
+    const meta = { toolsUsed: [], costUsd: 0, numTurns: 0, durationMs: null, totalTokens: null, outputTokens: null, actualModel: model || null, lastAssistantText: "", contextWindows: {} };
     // First-mate tier (design section 5): attach the dispatch MCP tools ONLY
     // when this launch is a first mate (rooted in the meta home). A dispatched
     // second-mate run is a runGoal (never routed through here) rooted in a
@@ -1792,6 +1792,7 @@ ipcMain.handle(
           meta.numTurns = evt.numTurns || 0;
           meta.durationMs = evt.durationMs ?? null;
           meta.totalTokens = evt.totalTokens ?? null;
+          meta.outputTokens = evt.outputTokens ?? null;
           if (evt.contextWindows) {
             Object.assign(meta.contextWindows, evt.contextWindows);
           }
@@ -1832,7 +1833,7 @@ ipcMain.handle(
       // new plumbing path just for display.
       send({
         kind: "done",
-        summary: { ...summary, durationMs: meta.durationMs, totalTokens: meta.totalTokens, costUsd: meta.costUsd },
+        summary: { ...summary, durationMs: meta.durationMs, totalTokens: meta.totalTokens, outputTokens: meta.outputTokens, costUsd: meta.costUsd },
       });
 
       // Tier-discipline guard, layer 2 (ad17e2e6): meter a FIRST MATE's own turn
