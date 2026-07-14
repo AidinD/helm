@@ -1,5 +1,16 @@
 # Decisions
 
+## 2026-07-14 - Mate naming consistent across all surfaces (sidebar + second-mate single-source)
+
+Follow-up to the chat-header naming fix, which the captain bounced as incomplete.
+- 5fda2a96: the chat header showed the fleet name ("Captain Hook") but the SIDEBAR still showed the prompt-derived title for the same session.
+rowEl hardcoded session.title; it now applies the firstMateForSession/secondMateForSession override, mirroring the chat header + needs-you queue.
+- c48a4a22: a second mate's name in chat differed from the fleet.
+The chat header resolves a second mate via secondMateForSession (matches cliSessionId OR sessionId - two id forms), but augmentSecondMatesWithSessions only skipped a session whose single id form was already in boundIds.
+On an id-form mismatch a registered second mate slipped through and was re-emitted as a synthetic prompt-title "sess_<id>" node, so the fleet showed the prompt title while the chat showed the real name.
+Fix: the augment skip now also consults secondMateForSession(sess), so a registered second mate is never re-synthesized - both surfaces single-source its fleet name.
+Verified in the extended test-fleet-ui-fixes.mjs (sidebar shows the fleet name; a registered second mate on an id-form mismatch is not re-synthesized).
+
 ## 2026-07-14 - Second mate: load the delegate heuristic + a batch playbook (dispatch, don't grind)
 
 The captain jumped into a second mate and asked it to do 3 dinghy Jot tasks; it did all 3 itself instead of dispatching Autopilot crew.

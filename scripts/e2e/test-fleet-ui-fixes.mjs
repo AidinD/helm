@@ -91,7 +91,35 @@ try {
   assert(gaugeFix.winIsNumber, "contextWindowForModel returns a positive window size");
   assert(typeof gaugeFix.pct === "number", `a context % is computable for a non-open mate (got ${gaugeFix.pct})`);
 
-  log(exitCode === 0 ? "VERIFY OK: all three Fleet/chat UI fixes behave as intended." : "VERIFY FAILED.");
+  // 5fda2a96 (round 2) - the SIDEBAR row names a mate-bound session by fleet name
+  // too, not just the chat header.
+  const sidebarLabel = await app.eval(`(() => {
+    mateBySessionId = new Map([["c9", { mateId: "m9", name: "Captain Hook", sessionId: "c9" }]]);
+    state.sessions.push({ sessionId: "s9", cliSessionId: "c9", cwd: "D:/x", title: "Jag vill jobba med dinghy...", status: "idle", isArchived: false });
+    const sess = state.sessions.find((s) => s.cliSessionId === "c9");
+    const row = rowEl(sess);
+    const el = row.querySelector(".row-title");
+    return el && el.textContent;
+  })()`);
+  assert(sidebarLabel === "Captain Hook", `sidebar names a first-mate session by fleet name (got ${JSON.stringify(sidebarLabel)})`);
+
+  // c48a4a22 - a registered second mate whose id form differs from the session's
+  // is NOT re-synthesized as a prompt-title node (so chat + fleet single-source
+  // the same fleet name).
+  const smDivergence = await app.eval(`(() => {
+    secondMateBySessionId = new Map([["s8", { secondMateId: "sm-reg", name: "Dinghy mate", sessionId: "s8", firstMateId: "mX" }]]);
+    state.sessions.push({ sessionId: "s8", cliSessionId: "c8", cwd: "D:/dinghy", title: "jag vill jobba...", status: "idle", isArchived: false });
+    const reg = { secondMateId: "sm-reg", name: "Dinghy mate", sessionId: "s8", firstMateId: "mX" };
+    const out = augmentSecondMatesWithSessions([reg], []);
+    return {
+      synthetic: out.some((n) => n.secondMateId === "sess_c8"),
+      registeredName: (out.find((n) => n.secondMateId === "sm-reg") || {}).name,
+    };
+  })()`);
+  assert(smDivergence.synthetic === false, "a registered 2nd mate is NOT re-synthesized as a prompt-title node on id-form mismatch");
+  assert(smDivergence.registeredName === "Dinghy mate", "the 2nd mate keeps its registered fleet name (single-sourced with the chat header)");
+
+  log(exitCode === 0 ? "VERIFY OK: all Fleet/chat naming + gauge fixes behave as intended." : "VERIFY FAILED.");
 } catch (err) {
   exitCode = 1;
   log("ERROR:", err.stack || err.message);
