@@ -75,6 +75,11 @@ const CATEGORY_DRAG_STALE_MS = 30000;
 // window). firstMateHandoffNotified keeps the away-from-desk notification
 // one-per-session so it doesn't fire on every gauge tick.
 const FIRST_MATE_HANDOFF_PCT = 70;
+// Tier-discipline detection (ad17e2e6, layer 1): a first mate that has taken many
+// turns in one session has ground through a lot of work/context even if its
+// context% is still low (the dinghy runaway was ~143 turns at ~12% of a 1M
+// window) - a signal to hand off to a fresh session. Complements the ctx gauge.
+const FIRST_MATE_HOT_TURNS = 60;
 const firstMateHandoffNotified = new Set();
 
 function categoryDragInProgress() {
@@ -5693,12 +5698,16 @@ function fleetMateCardEl(mate, sms, boardSummary = {}) {
   const anyLive = crew.some(crewRunning);
   const anyNeeds = crew.some(crewNeedsCaptain);
   const saturated = pct != null && pct >= FIRST_MATE_HANDOFF_PCT;
+  const mateTurns = sessionForMate(mate)?.completedTurns || 0;
+  const hot = !saturated && mateTurns >= FIRST_MATE_HOT_TURNS;
   const workWrapped = dispatchedEver && !anyLive && !anyNeeds;
   const boards = [...new Set(sms.map((s) => s.projectPath).filter(Boolean))].map((p) => boardSummary[p]).filter((b) => b && b.matched);
   const hasUrgent = boards.some((b) => typeof b.minActivePriority === "number" && b.minActivePriority < 0);
   const boardsClear = boards.length > 0 && boards.every((b) => b.open + b.inProgress === 0);
   if (saturated) {
     card.append(fleetNudgeEl(mate, "ctx", { pct }));
+  } else if (hot) {
+    card.append(fleetNudgeEl(mate, "hot", { turns: mateTurns }));
   } else if (workWrapped && hasUrgent) {
     card.append(fleetNudgeEl(mate, "hold", { boards }));
   } else if (workWrapped) {
@@ -5742,6 +5751,9 @@ function fleetNudgeEl(mate, kind, opts = {}) {
   if (kind === "ctx") {
     tag.textContent = "Getting full";
     txt.append(tag, document.createTextNode(` ${mate.name} is ${opts.pct}% full - hand off to a fresh mate.`));
+  } else if (kind === "hot") {
+    tag.textContent = "Been at it a while";
+    txt.append(tag, document.createTextNode(` ${mate.name} has run ${opts.turns} turns this session - hand off to a fresh mate to reset its context.`));
   } else if (kind === "hold") {
     // Dampened: urgent work is still queued - advise against retiring, no button.
     offerRetire = false;

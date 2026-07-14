@@ -47,7 +47,7 @@ export function resolveClaudeBinary() {
  * Returns { child, done } where `done` resolves with a summary once the process
  * exits. Emits normalized events: { kind, ...fields }.
  */
-export function startSession({ cwd, prompt, model, effort, permissionMode, resumeSessionId, onEvent, mcpConfig, allowedTools, appendSystemPrompt, strictMcpConfig }) {
+export function startSession({ cwd, prompt, model, effort, permissionMode, resumeSessionId, onEvent, mcpConfig, allowedTools, disallowedTools, appendSystemPrompt, strictMcpConfig }) {
   const args = [
     "-p",
     prompt,
@@ -95,6 +95,14 @@ export function startSession({ cwd, prompt, model, effort, permissionMode, resum
   // space-joined value is NOT split by the CLI and matches nothing (verified).
   if (allowedTools && allowedTools.length) {
     args.push("--allowedTools", ...allowedTools);
+  }
+  // First-mate tier guard: DENY the tools of doing work (file mutation) and
+  // fanning out (sub-agents), so a coordinator structurally cannot slip into
+  // hands-on project work - it must dispatch via helm_* instead. Passed as
+  // separate argv values after the flag, same as --allowedTools. A deny beats an
+  // allow, so this holds even under a permissive permission-mode.
+  if (disallowedTools && disallowedTools.length) {
+    args.push("--disallowedTools", ...disallowedTools);
   }
   // User-confirmed default is "auto" (matches what the captain already runs daily
   // in the desktop app); UI exposes the full mode list from the composer.
