@@ -2004,7 +2004,8 @@ async function retireMateWithCarryOver(mate, persona = null) {
     }
     setPaneBusyUIRaw(focusedPaneIndex, "");
   }
-  await window.helm.retireMate(mate.mateId, handoff, persona || null);
+  const retireRes = await window.helm.retireMate(mate.mateId, handoff, persona || null);
+  reflectTornDownSessions(retireRes);
   await archiveOutgoingMateSession(mate);
   if (busy) {
     busy.done();
@@ -2020,7 +2021,8 @@ async function retireMateWithCarryOver(mate, persona = null) {
 // wrote a HANDOFF.md that file stays on disk - "start fresh" only drops the
 // prompt carry-over, it doesn't destroy the durable handoff.
 async function retireMateClean(mate, persona = null) {
-  await window.helm.retireMate(mate.mateId, null, persona || null);
+  const retireRes = await window.helm.retireMate(mate.mateId, null, persona || null);
+  reflectTornDownSessions(retireRes);
   await archiveOutgoingMateSession(mate);
   fillDashboardSections({ force: true });
 }
@@ -2033,6 +2035,25 @@ async function retireMateClean(mate, persona = null) {
 // retired a 1st mate and then this came up - what do I do with it?"). A retired
 // mate is no longer bound to an active mate, so isOrchestratorSession no longer
 // shields it from the archive pile - archiving now is the clean end of the retire.
+// Mark the second-mate sessions the server archived during retire (task
+// 58e9a433 teardown) as archived in the LOCAL cache too, so they drop from the
+// sidebar/fleet on the immediate re-render instead of lingering until the next
+// getSessions() poll - the same staleness gap the retire-flash fix closed for
+// the first mate's own session. Matches on either id form (the binding stores
+// one; a session carries both).
+function reflectTornDownSessions(retireRes) {
+  const ids = retireRes && retireRes.tornDownSessionIds;
+  if (!Array.isArray(ids) || !ids.length) {
+    return;
+  }
+  const set = new Set(ids);
+  for (const s of state.sessions) {
+    if (set.has(s.cliSessionId) || set.has(s.sessionId)) {
+      s.isArchived = true;
+    }
+  }
+}
+
 async function archiveOutgoingMateSession(mate) {
   if (!mate.sessionId) {
     return;
