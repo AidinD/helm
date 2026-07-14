@@ -3309,17 +3309,21 @@ button.primary {
   gap: 10px;
 }
 
-/* Collapse-back control for a manually-expanded run (bug b72fcd1f). Subtle text
-   button; positioned by the .goal-run-head-right group. */
-.goal-collapse-btn {
+/* Collapse-back control for a manually-expanded run (bug b72fcd1f). A ▾ chevron
+   at the FAR LEFT of the head, mirroring the ▶ expand chevron on the collapsed
+   summary row (.goal-run-summary-chev) so the control stays put across toggles
+   (bug d8b36df6). NOT in the right group - it's the head's first child. */
+.goal-collapse-chev {
   background: none;
   border: none;
-  color: var(--text-dim);
-  font-size: 11.5px;
+  color: var(--text-faint);
+  font-size: 10px;
   cursor: pointer;
-  padding: 2px 4px;
+  flex: none;
+  padding: 0;
+  line-height: 1;
 }
-.goal-collapse-btn:hover {
+.goal-collapse-chev:hover {
   color: var(--text);
 }
 

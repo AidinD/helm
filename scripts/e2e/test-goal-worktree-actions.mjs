@@ -47,13 +47,28 @@ try {
   const actionGroups = await count("#goalPage .goal-worktree-actions");
   assert(actionGroups === 1, `worktree actions shown only for the finished run with a worktree (got ${actionGroups})`);
 
-  // Bug d8b36df6: every head control (collapse + worktree actions) clusters in a
-  // single right-aligned group, so the worktree actions live INSIDE it (not as a
-  // sibling with a competing margin-left:auto that left "collapse" floating).
+  // Bug d8b36df6: worktree actions cluster in the right-aligned group...
   const wtInsideRight = await app.eval(
     `!!document.querySelector("#goalPage .goal-run-head-right .goal-worktree-actions")`
   );
   assert(wtInsideRight === true, "worktree actions nested inside the .goal-run-head-right group");
+  // ...and the collapse control is a ▾ chevron at the FAR LEFT of the head - the
+  // same spot the ▶ expand chevron sits on the collapsed row - NOT in the right
+  // group (the captain: "collapse should be where the expand button is"). Assert it's
+  // the head's first child and not inside the right group.
+  const collapsePlacement = await app.eval(`(() => {
+    const head = document.querySelector("#goalPage .goal-run-detail .goal-run-head");
+    const chev = head ? head.querySelector(".goal-collapse-chev") : null;
+    if (!chev) return { hasChev: false };
+    return {
+      hasChev: true,
+      isFirstChild: head.firstElementChild === chev,
+      inRightGroup: !!chev.closest(".goal-run-head-right"),
+    };
+  })()`);
+  assert(collapsePlacement.hasChev, "an expanded run shows the collapse chevron");
+  assert(collapsePlacement.isFirstChild, "the collapse chevron is the head's FIRST (left-most) child, mirroring the expand chevron");
+  assert(collapsePlacement.inRightGroup === false, "the collapse chevron is NOT in the right-aligned group (so it can't float mid-head)");
 
   const goalText = await app.eval(`document.getElementById("goalPage").innerText`);
   assert(/Open worktree/.test(goalText), "'Open worktree' button present");
