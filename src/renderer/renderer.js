@@ -4563,9 +4563,10 @@ async function refresh() {
       session.status === "waiting" &&
       !previouslyWaiting.has(session.sessionId) &&
       !hiddenNow.has(session.sessionId) &&
-      // A first mate that ends its turn only to await dispatched crew isn't
-      // waiting on you - don't fire the intrusive "needs input" OS toast for it.
-      !mateHasLiveCrew(firstMateForSession(session))
+      // A first mate that ends its turn only to await its dispatched crew (live,
+      // reported, or errored) isn't waiting on you - don't fire the intrusive
+      // "needs input" OS toast for it (bug 9c0c7209).
+      !mateCrewWait(firstMateForSession(session)).has
     ) {
       window.helm.notifyAttention({ title: "Helm - session needs input", body: session.title });
     }
@@ -5052,6 +5053,27 @@ function mateHasLiveCrew(mate) {
   return [...goalRuns.values()].some((r) => r.dispatchedBy === mate.mateId && crewRunning(r));
 }
 
+// Classify a WAITING first mate's relationship to its own dispatched crew, so
+// the card badge, the top-queue row, the needs-a-click count, and the OS-notify
+// guard all agree. The point (bug 9c0c7209): a first mate whose turn ended after
+// dispatching crew is NOT blocked on your INPUT - it's awaiting its crew's
+// outcome, which flows back up through its second mates. That's true even when
+// the crew ERRORED/escalated: the action then lives on the crew (its own
+// needs-you attention rows + the second mate's "crew needs a decision"), not as
+// "type something to the first mate". So a mate with ANY crew (live, clean-
+// reported, or errored) reads as a crew state, never the alarm "needs you". Only
+// a mate genuinely awaiting your reply with NO crew to explain the wait is
+// "needs input". Returns { has, live, alarm, reports }.
+function mateCrewWait(mate) {
+  if (!mate || !mate.mateId) {
+    return { has: false, live: false, alarm: false, reports: false };
+  }
+  const live = mateHasLiveCrew(mate);
+  const terminal = terminalRunsBy(mate.mateId);
+  const alarm = terminal.some((r) => r.status === "error" || !!r.escalation);
+  return { has: live || terminal.length > 0, live, alarm, reports: !live && !alarm && terminal.length > 0 };
+}
+
 // A small themed, centered confirm modal (never the native window.confirm -
 // Aidin's standing rule). Calls onConfirm only if the user confirms; clicking
 // the backdrop or Cancel dismisses. Reusable for any destructive action.
@@ -5436,35 +5458,30 @@ function fleetMateCardEl(mate, sms, boardSummary = {}) {
     ? state.sessions.find((s) => (s.cliSessionId || s.sessionId) === mate.sessionId)
     : null;
   const mateStatus = boundSession?.status;
-  // A mate whose turn has ended but that still has live dispatched crew is not
-  // blocked on YOU - it's awaiting its own work and will report back. Show a
-  // distinct, non-alarming "waiting on crew" state (blue "in motion", no amber
-  // accent) instead of "needs you". Reserve "needs you" for a truly idle mate.
-  const waitingOnCrew = mateStatus === "waiting" && mateHasLiveCrew(mate);
-  // Reports-ready vs needs-you (bug 9c0c7209): once a mate's crew has finished
-  // and reported back with nothing errored/escalated, the mate is NOT stuck on
-  // you - show an informational "reports ready", not the alarm "needs you".
-  // Reserve "needs you" (+ the amber accent) for a genuinely errored/escalated
-  // run, or a mate actually waiting on your input with no crew to explain it.
-  const terminalCrew = terminalRunsBy(mate.mateId);
-  const alarmCrew = terminalCrew.some((r) => r.status === "error" || !!r.escalation);
-  const reportsReady = !waitingOnCrew && !alarmCrew && terminalCrew.length > 0;
+  // A mate whose turn has ended after dispatching crew is not blocked on YOU -
+  // it's awaiting its crew's outcome (bug 9c0c7209). This holds even when the
+  // crew ERRORED: the action then lives on the crew (its own needs-you rows +
+  // the 2nd mate's "crew needs a decision"), so the mate shows a calm crew state
+  // - "crew needs a decision" - NOT the alarm "needs you". Reserve "needs you"
+  // (+ the amber card accent) for a mate genuinely awaiting your reply with NO
+  // crew to explain the wait. mateCrewWait single-sources this with the queue.
+  const cw = mateCrewWait(mate);
   const kind = document.createElement("span");
   kind.className = "fleet-kind session";
   kind.textContent = "💬 session";
   const role = document.createElement("div");
   role.className = "fleet-mate-role";
-  if (mateStatus === "waiting" || mateStatus === "active" || alarmCrew || reportsReady) {
+  if (mateStatus === "waiting" || mateStatus === "active" || cw.has) {
     const badge = document.createElement("span");
     let bkind;
     let btext;
-    if (waitingOnCrew) {
+    if (cw.live) {
       bkind = "run";
       btext = "waiting on crew";
-    } else if (alarmCrew) {
-      bkind = "need";
-      btext = "needs you";
-    } else if (reportsReady) {
+    } else if (cw.alarm) {
+      bkind = "run";
+      btext = "crew needs a decision";
+    } else if (cw.reports) {
       bkind = "ok";
       btext = "reports ready";
     } else if (mateStatus === "active") {
@@ -5480,7 +5497,10 @@ function fleetMateCardEl(mate, sms, boardSummary = {}) {
   }
   role.append(kind, document.createTextNode(sms.length ? ` ${sms.length} second mate${sms.length === 1 ? "" : "s"}` : " idle"));
   idBox.append(name, role);
-  if (alarmCrew || (mateStatus === "waiting" && !waitingOnCrew && !reportsReady)) {
+  // Amber "needs you" accent ONLY for a genuine needs-input mate (waiting, no
+  // crew). A crew-waiting mate (incl. errored crew) stays calm - the crew rows
+  // carry the alarm.
+  if (mateStatus === "waiting" && !cw.has) {
     card.classList.add("fleet-mate-needs");
   }
   const actions = document.createElement("div");
@@ -6453,10 +6473,12 @@ function dashboardInMotionRows() {
   const sessionRows = sortByAttention(inMotionSessions).map((s) => ({
     kind: "session",
     session: s,
-    // A first mate waiting only because its dispatched crew is still in flight
-    // isn't a click waiting on you - keep it out of the "N need a click" count
-    // and below the genuine needs-you items (needsAction=false sorts last).
-    needsAction: s.status === "waiting" && !mateHasLiveCrew(firstMateForSession(s)),
+    // A first mate that dispatched crew - live, reported-back, OR errored - isn't
+    // a click waiting on YOU: any action lives on the crew itself (errored crew
+    // get their own needs-you rows below). Keep it out of the "N need a click"
+    // count so it doesn't double-flag as "first mate needs input" (bug 9c0c7209).
+    // Only a waiting mate with NO crew is a genuine needs-you click.
+    needsAction: s.status === "waiting" && !mateCrewWait(firstMateForSession(s)).has,
   }));
   // Attention goal runs (errored/escalated) need a click; running ones are
   // just visibility ("it's working").
@@ -6618,9 +6640,15 @@ function dashQueueStateIcon(kind, session) {
     return ic;
   }
   if (session.status === "waiting") {
-    ic.className = "dash-state-ic dash-state-needs";
-    ic.textContent = "⚠"; // warning - needs your input
-    return ic;
+    // A first mate merely awaiting its dispatched crew (live, reported, or
+    // errored) isn't waiting on YOUR input - show the calm working dot, not the
+    // amber ⚠, so it doesn't read as "needs input" (bug 9c0c7209). Genuine
+    // needs-input (a waiting mate with no crew, or a plain session) keeps the ⚠.
+    if (!mateCrewWait(firstMateForSession(session)).has) {
+      ic.className = "dash-state-ic dash-state-needs";
+      ic.textContent = "⚠"; // warning - needs your input
+      return ic;
+    }
   }
   ic.className = "dash-state-ic dash-state-working";
   const dot = document.createElement("span");
@@ -6738,30 +6766,28 @@ function dashSessionRowEl(session) {
   // For a first-mate session, keep the prompt-derived title as context here so
   // its identity (title above) and topic (here) are both legible.
   const contextTitle = mate && session.title && session.title !== mate.name ? `${session.title} · ` : "";
-  // A first mate waiting only on its own dispatched crew isn't blocked on you -
-  // drop the alarming "Waiting on you" prefix and read "waiting on crew".
-  const waitingOnCrew = session.status === "waiting" && mateHasLiveCrew(mate);
-  // Reports-ready: crew done + reported, nothing errored/escalated - not stuck on
-  // you (bug 9c0c7209). Only meaningful for a first-mate session (has crew).
-  const mateTerminalCrew = mate ? terminalRunsBy(mate.mateId) : [];
-  const mateAlarm = mateTerminalCrew.some((r) => r.status === "error" || !!r.escalation);
-  const reportsReady = !waitingOnCrew && !mateAlarm && mateTerminalCrew.length > 0;
-  const waitPrefix =
-    session.status === "waiting"
-      ? waitingOnCrew
-        ? "Waiting on crew · "
-        : reportsReady
-          ? "Reports ready · "
-          : "Waiting on you · "
-      : "";
+  // A first mate that dispatched crew and is waiting isn't blocked on YOUR input
+  // (bug 9c0c7209) - it's awaiting its crew's outcome. Read a calm crew state,
+  // never the alarming "Waiting on you / needs input", even when crew errored
+  // (the errored crew surface as their OWN needs-you rows + under the 2nd mate,
+  // so re-flagging the first mate as "needs input" was misleading - "nothing I
+  // can do here"). Only a mate with NO crew reads as a genuine needs-input.
+  const cw = mate ? mateCrewWait(mate) : { has: false };
+  const isWaiting = session.status === "waiting";
+  const crewLabel = cw.live ? "waiting on crew" : cw.alarm ? "crew needs a decision" : cw.reports ? "reports ready" : null;
+  const waitPrefix = isWaiting
+    ? crewLabel
+      ? crewLabel.charAt(0).toUpperCase() + crewLabel.slice(1) + " · "
+      : "Waiting on you · "
+    : "";
   why.textContent = waitPrefix + contextTitle + bits.join(" · ");
   qbody.append(why);
   row.append(qbody);
 
-  if (session.status === "waiting") {
+  if (isWaiting) {
     const meta = document.createElement("div");
-    meta.className = "dash-q-meta" + (waitingOnCrew || reportsReady ? " crew" : "");
-    meta.textContent = waitingOnCrew ? "waiting on crew" : reportsReady ? "reports ready" : "needs input";
+    meta.className = "dash-q-meta" + (crewLabel ? " crew" : "");
+    meta.textContent = crewLabel || "needs input";
     row.append(meta);
   }
 
@@ -8118,31 +8144,33 @@ function goalRunDetailEl(run) {
 
   const head = document.createElement("div");
   head.className = "goal-run-head";
+  // Collapse control (bug b72fcd1f: an expanded run couldn't be collapsed again).
+  // Placed as a ▾ chevron at the FAR LEFT of the head - the SAME spot the ▶
+  // expand chevron sits on the collapsed summary row - so toggling doesn't make
+  // the control jump around the header (bug d8b36df6: Aidin - "collapse should
+  // be in the same place the expand button is"). Only for a run the captain
+  // MANUALLY expanded (in goalRunExpanded); a live/escalated run is force-
+  // expanded and can't be collapsed, so it shows no chevron.
+  if (goalRunExpanded.has(run.goalRunId)) {
+    const collapseChev = document.createElement("button");
+    collapseChev.className = "goal-collapse-chev";
+    collapseChev.textContent = "▾";
+    collapseChev.title = "Collapse this run back to a one-line summary";
+    collapseChev.addEventListener("click", () => {
+      goalRunExpanded.delete(run.goalRunId);
+      renderGoalPage();
+    });
+    head.append(collapseChev);
+  }
   const title = document.createElement("span");
   title.className = "goal-run-title";
   const goalSnippet = run.goal.length > 80 ? run.goal.slice(0, 80) + "…" : run.goal;
   title.textContent = `Run ${run.ordinal}: ${goalSnippet}`;
   head.append(title);
-  // All right-side controls live in ONE right-aligned group so they cluster
-  // together instead of two competing margin-left:auto's splitting the row and
-  // leaving the collapse control floating mid-head (bug d8b36df6).
+  // The remaining controls (cancel / worktree actions) cluster in ONE right-
+  // aligned group.
   const right = document.createElement("div");
   right.className = "goal-run-head-right";
-  // Collapse control (bug b72fcd1f: an expanded run couldn't be collapsed again).
-  // Shown only for a run the captain MANUALLY expanded (in goalRunExpanded) - a
-  // live/escalated run is force-expanded and stays that way. Clicking removes it
-  // from the expanded set + re-renders, so it folds back to its one-line summary.
-  if (goalRunExpanded.has(run.goalRunId)) {
-    const collapseBtn = document.createElement("button");
-    collapseBtn.className = "goal-collapse-btn";
-    collapseBtn.textContent = "▾ collapse";
-    collapseBtn.title = "Collapse this run back to a one-line summary";
-    collapseBtn.addEventListener("click", () => {
-      goalRunExpanded.delete(run.goalRunId);
-      renderGoalPage();
-    });
-    right.append(collapseBtn);
-  }
   if (run.status === "running") {
     const cancelBtn = document.createElement("button");
     cancelBtn.className = "goal-cancel-btn";
