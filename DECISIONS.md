@@ -1,5 +1,14 @@
 # Decisions
 
+## 2026-07-15 - Docs-drift: reconcile at wrap-up (the systemic, instruction-level fix)
+
+The captain flagged that docs always fall behind (dinghy sat 10 commits ahead of its DECISIONS.md).
+The passive mechanisms - the CLAUDE.md rule, the "document on the go" second-mate instruction, and the docsStaleness pill - didn't close it, because a busy work session skips the update and the pill only detects, never prompts.
+Fix (systemic, instruction-level): added a wrap-up reconcile BACKSTOP to second-mate-instructions.md - before finishing a piece of work, handing off, or being retired, git-log the commits since DECISIONS.md was last touched and capture what slipped, treating "are my project docs current?" as an explicit part of finishing (like not leaving code uncommitted).
+On-the-go stays the rule (an abrupt handoff never reaches wrap-up); this catches what on-the-go missed.
+dinghy's DECISIONS was already caught up by its own session (commit bb58452); added the one missing versioning entry so it is 0 behind.
+The UI half the captain also floated - making the docsStaleness pill an ACTIVE nudge - is captured as a follow-up task rather than shipped unattended (a UI/workflow feature deserves his review of the placement/behavior).
+
 ## 2026-07-15 - Retire shows a spinner while it archives its mates
 
 88b7afe3: retire had no progress indicator while it tore down/archived its second mates - and retireMateClean had NO busy toast at all, so a clean retire (which now also summarizes a handoff per engaged child - real Sonnet turns) ran silently.

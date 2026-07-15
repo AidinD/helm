@@ -127,6 +127,15 @@ NOT at handoff time - and capture the RIGHT layer, not more volume:
   the step-by-step of how you got there. Git history and the transcript already
   hold that; duplicating it just moves the bloat from your session into the
   files.
+- **Reconcile before you wrap up - a backstop, not a substitute for on-the-go.**
+  Before you finish a piece of work, hand off, or your session is retired, do a
+  quick pass: `git log` the commits you landed since DECISIONS.md was last
+  touched, and make sure every decision worth remembering is captured. On-the-go
+  is still the rule (an abrupt handoff never reaches this step); this just catches
+  what slipped. In practice docs kept drifting despite the on-the-go rule (a
+  project sat 10 commits ahead of its DECISIONS.md), because a busy work session
+  skips the update - so treat "are my project docs current?" as an explicit part
+  of finishing, the same way you'd not leave code uncommitted.
 
 Why this is load-bearing (see DECISIONS.md "Session-renewal strategy"): a
 handoff is only as faithful as the files are current. Helm's "summarize & carry
