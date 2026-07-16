@@ -4762,12 +4762,10 @@ async function refresh() {
       session.status === "waiting" &&
       !previouslyWaiting.has(session.sessionId) &&
       !hiddenNow.has(session.sessionId) &&
-      // A FIRST-mate session's own "waiting" never fires the intrusive OS toast:
-      // a first mate sits in "waiting" after every reply (it's conversational), so
-      // this fired constantly for a mate that had just finished (e.g. created a 2nd
-      // mate) and wasn't blocked on you (bugs 9c0c7209 + 4d82208a). Its real
-      // alerts are crew-driven and surface elsewhere. Non-mate sessions still toast.
-      !firstMateForSession(session)
+      // A first mate that ends its turn only to await its dispatched crew (live,
+      // reported, or errored) isn't waiting on you - don't fire the intrusive
+      // "needs input" OS toast for it (bug 9c0c7209).
+      !mateCrewWait(firstMateForSession(session)).has
     ) {
       window.helm.notifyAttention({ title: "Helm - session needs input", body: session.title });
     }
@@ -5680,13 +5678,8 @@ function fleetMateCardEl(mate, sms, boardSummary = {}) {
       bkind = "run";
       btext = "working";
     } else {
-      // A first mate that has just replied is "waiting" for your next prompt, but
-      // that is NOT an alert - it finished its turn and is idle/available; you
-      // engage it when you want. A mate that created a 2nd mate then replied kept
-      // showing the alarm "needs you" here (bug 4d82208a). Reserve needs-you for
-      // crew-driven state (above); its own idle-waiting reads calm.
-      bkind = "ok";
-      btext = "idle";
+      bkind = "need";
+      btext = "needs you";
     }
     badge.className = "fleet-badge " + bkind;
     badge.textContent = btext;
@@ -5694,10 +5687,12 @@ function fleetMateCardEl(mate, sms, boardSummary = {}) {
   }
   role.append(kind, document.createTextNode(sms.length ? ` ${sms.length} second mate${sms.length === 1 ? "" : "s"}` : " idle"));
   idBox.append(name, role);
-  // No amber "needs you" accent for a first mate that is merely waiting-idle: it
-  // finished its turn (often after creating a 2nd mate) and is available, not
-  // blocking you (bug 4d82208a). Alerts are crew-driven and carried by the crew
-  // rows / the badge above; the mate's own idle-waiting stays calm.
+  // Amber "needs you" accent ONLY for a genuine needs-input mate (waiting, no
+  // crew). A crew-waiting mate (incl. errored crew) stays calm - the crew rows
+  // carry the alarm.
+  if (mateStatus === "waiting" && !cw.has) {
+    card.classList.add("fleet-mate-needs");
+  }
   const actions = document.createElement("div");
   actions.className = "fleet-mate-actions";
   // Rename = inline edit (window.prompt is disabled in Electron + Aidin never
@@ -6727,24 +6722,17 @@ function dashboardRunningRuns() {
 
 function dashboardInMotionRows() {
   const inMotionSessions = state.sessions.filter(
-    (s) =>
-      !s.isArchived &&
-      !isHiddenFromHelm(s) &&
-      // A FIRST-mate session only belongs here while it is actively working - not
-      // when it is merely "waiting" (idle after a turn). A first mate is
-      // conversational, so it sits in "waiting" after every reply; treating that
-      // as needs-you/in-motion flagged it constantly even though it just finished
-      // and is available (bug 4d82208a). Its real needs-you is crew-driven and
-      // surfaces via the attention-run rows below. Non-mate sessions keep the
-      // "waiting = needs your reply" behaviour.
-      (s.status === "active" || (s.status === "waiting" && !firstMateForSession(s)))
+    (s) => !s.isArchived && !isHiddenFromHelm(s) && (s.status === "active" || s.status === "waiting")
   );
   const sessionRows = sortByAttention(inMotionSessions).map((s) => ({
     kind: "session",
     session: s,
-    // Every waiting session here is now a non-first-mate (waiting mates were
-    // filtered out above), so a waiting session is a genuine needs-you click.
-    needsAction: s.status === "waiting",
+    // A first mate that dispatched crew - live, reported-back, OR errored - isn't
+    // a click waiting on YOU: any action lives on the crew itself (errored crew
+    // get their own needs-you rows below). Keep it out of the "N need a click"
+    // count so it doesn't double-flag as "first mate needs input" (bug 9c0c7209).
+    // Only a waiting mate with NO crew is a genuine needs-you click.
+    needsAction: s.status === "waiting" && !mateCrewWait(firstMateForSession(s)).has,
   }));
   // Attention goal runs (errored/escalated) need a click; running ones are
   // just visibility ("it's working").
