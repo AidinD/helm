@@ -1,5 +1,18 @@
 # Decisions
 
+## 2026-07-15 - A first mate's own "waiting" is no longer flagged "needs you"
+
+4d82208a: a first mate showed "needs you" (in the needs-you queue, on its Fleet card, and via the OS "needs input" toast) even when it had just finished - e.g. it created a second mate and replied "jump into it in the Fleet".
+Root: a first-mate session sits in status "waiting" after every reply (it is conversational), and all three surfaces read "waiting + no crew runs" as needs-you.
+A mate that created a second mate has no crew RUN (a proposal/registered second mate is not a run), so mateCrewWait returned has=false and the mate false-flagged constantly.
+Fix: a first mate's own idle-waiting is never needs-you - only crew-driven state is.
+- Queue (dashboardInMotionRows): a waiting first-mate session is excluded (shown only when actively working); its real needs-you is the crew attention-run rows.
+- Card (fleetMateCardEl): a waiting first mate reads badge "idle" with no amber accent, instead of "needs you".
+- OS toast: the "session needs input" notification skips first-mate sessions entirely.
+Non-mate sessions keep "waiting = needs your reply" (both the queue row and the toast).
+Tradeoff: a first mate that genuinely asks a question won't be flagged, because status alone can't tell "asked, awaiting reply" from "finished, idle" - acceptable given the false-positive rate ("ofta"), and the mate is always visible in the Fleet.
+Verified in test-fleet-ui-fixes.mjs (waiting first mate absent from the queue + card badge "idle" + no accent; waiting non-mate still a needs-you row).
+
 ## 2026-07-15 - Docs-drift: reconcile at wrap-up (the systemic, instruction-level fix)
 
 Aidin flagged that docs always fall behind (beatdrop sat 10 commits ahead of its DECISIONS.md).

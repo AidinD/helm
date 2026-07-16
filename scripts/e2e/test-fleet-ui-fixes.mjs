@@ -194,6 +194,32 @@ try {
   assert(toast.before === "first" && toast.after === "second", "the retire busy toast updates its text via update()");
   assert(toast.gone === true, "the retire busy toast removes itself via done()");
 
+  // 4d82208a - a first mate that is merely waiting (idle after a turn, no crew) is
+  // NOT flagged "needs you": not in the in-motion queue, card badge is "idle", no
+  // accent. A waiting NON-mate session is still a genuine needs-you row.
+  const needsYou = await app.eval(`(() => {
+    state.sessions = [
+      { sessionId: "sWaitFm", cliSessionId: "cWaitFm", cwd: "D:/x", status: "waiting", title: "Jag vill jobba...", isArchived: false },
+      { sessionId: "sWaitPlain", cliSessionId: "cWaitPlain", cwd: "D:/y", status: "waiting", title: "plain chat", isArchived: false },
+    ];
+    mateBySessionId = new Map([["cWaitFm", { mateId: "mFm", name: "Corto Maltese", sessionId: "cWaitFm" }]]);
+    const rows = dashboardInMotionRows();
+    const fmInQueue = rows.some((r) => r.kind === "session" && r.session.cliSessionId === "cWaitFm");
+    const plainNeedsAction = rows.some((r) => r.kind === "session" && r.session.cliSessionId === "cWaitPlain" && r.needsAction);
+    let cardBadge = null, cardAccent = null;
+    try {
+      const card = fleetMateCardEl({ mateId: "mFm", name: "Corto Maltese", sessionId: "cWaitFm", persona: null }, [], {});
+      const b = card.querySelector(".fleet-badge");
+      cardBadge = b && b.textContent;
+      cardAccent = card.classList.contains("fleet-mate-needs");
+    } catch (e) { cardBadge = "THREW:" + e.message; }
+    return { fmInQueue, plainNeedsAction, cardBadge, cardAccent };
+  })()`);
+  assert(needsYou.fmInQueue === false, "a waiting (idle) first mate is NOT in the needs-you/in-motion queue");
+  assert(needsYou.plainNeedsAction === true, "a waiting non-mate session IS still a needs-you row");
+  assert(needsYou.cardBadge === "idle", `the first mate card badge is "idle", not "needs you" (got ${JSON.stringify(needsYou.cardBadge)})`);
+  assert(needsYou.cardAccent === false, "the idle first mate card has no needs-you accent");
+
   log(exitCode === 0 ? "VERIFY OK: all Fleet/chat naming + gauge fixes behave as intended." : "VERIFY FAILED.");
 } catch (err) {
   exitCode = 1;
