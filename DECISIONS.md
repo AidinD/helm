@@ -1,17 +1,12 @@
 # Decisions
 
-## 2026-07-15 - A first mate's own "waiting" is no longer flagged "needs you"
+## 2026-07-15 - First-mate needs-you: keep it false-positive-biased (reverted the suppression)
 
-4d82208a: a first mate showed "needs you" (in the needs-you queue, on its Fleet card, and via the OS "needs input" toast) even when it had just finished - e.g. it created a second mate and replied "jump into it in the Fleet".
-Root: a first-mate session sits in status "waiting" after every reply (it is conversational), and all three surfaces read "waiting + no crew runs" as needs-you.
-A mate that created a second mate has no crew RUN (a proposal/registered second mate is not a run), so mateCrewWait returned has=false and the mate false-flagged constantly.
-Fix: a first mate's own idle-waiting is never needs-you - only crew-driven state is.
-- Queue (dashboardInMotionRows): a waiting first-mate session is excluded (shown only when actively working); its real needs-you is the crew attention-run rows.
-- Card (fleetMateCardEl): a waiting first mate reads badge "idle" with no amber accent, instead of "needs you".
-- OS toast: the "session needs input" notification skips first-mate sessions entirely.
-Non-mate sessions keep "waiting = needs your reply" (both the queue row and the toast).
-Tradeoff: a first mate that genuinely asks a question won't be flagged, because status alone can't tell "asked, awaiting reply" from "finished, idle" - acceptable given the false-positive rate ("ofta"), and the mate is always visible in the Fleet.
-Verified in test-fleet-ui-fixes.mjs (waiting first mate absent from the queue + card badge "idle" + no accent; waiting non-mate still a needs-you row).
+4d82208a first read as "a first mate shows needs-you when it doesn't need me", so the first pass (commit f4de6da) suppressed it: a first mate's own "waiting" no longer flagged needs-you on any surface.
+The captain then clarified the priority: he would rather have FALSE POSITIVES than false negatives - better it says "needs you" when it doesn't than miss a mate that genuinely does.
+The suppression traded false positives for false negatives (a first mate that actually asked a question would no longer be flagged, because status can't tell "asked" from "finished"), which is the wrong direction for him.
+So f4de6da was reverted - the original behaviour stands: a waiting first mate with no crew shows "needs you" (queue row + card badge + accent + OS toast), a crew-waiting mate shows the calmer crew state.
+This is a deliberate bias, not a bug: over-flagging is acceptable, under-flagging is not. If the noise ever needs trimming, do it only in a way that never introduces a miss (e.g. flag but rank lower), never by suppressing the signal.
 
 ## 2026-07-15 - Docs-drift: reconcile at wrap-up (the systemic, instruction-level fix)
 
