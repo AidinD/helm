@@ -4624,6 +4624,40 @@ async function renderDashQuota() {
   chip.className = "dash-quota-chip";
 }
 
+// Pure display model for the Fleet-spend chip, extracted so it can be unit-tested
+// without the app (renderDashOrchestration just paints what this returns).
+// The dollar figure confuses subscription users (task 18d4c9f4: "what is fleet
+// spend? where does the $25 come from - I'm on a subscription, not pay-by-usage?").
+// It is Helm's OWN estimate of what the fleet's model usage WOULD cost at API
+// rates (summed from each run's reported token cost), used only as the guardrail
+// behind the Stop button + the $ ceiling - NOT a charge against the subscription.
+// So: an explicit "(est.)" qualifier on the label + a tooltip that says so.
+const FLEET_SPEND_TOOLTIP =
+  "Estimated fleet cost, not a bill. Helm sums what each run's tokens WOULD cost at API rates - it's the guardrail the Stop button and the $ ceiling use to cap a runaway fleet. On your Claude subscription nothing is charged per use; this number is only an internal budget estimate.";
+function orchestrationChipContent(budget) {
+  if (!budget) {
+    return { hidden: true };
+  }
+  const spent = Number(budget.spentUsd) || 0;
+  const ceiling = typeof budget.ceilingUsd === "number" ? budget.ceilingUsd : null;
+  const over = ceiling != null && spent >= ceiling;
+  const stopped = !!budget.killed;
+  // Idle + nothing spent + not stopped: stay out of the way (hidden).
+  if (!stopped && !over && spent <= 0) {
+    return { hidden: true };
+  }
+  let labelText;
+  if (stopped) {
+    labelText = "⏸ Fleet stopped";
+  } else if (over) {
+    labelText = `Budget reached · ~$${spent.toFixed(2)} est.`;
+  } else {
+    // "(est.)" so the figure never reads as real billing (18d4c9f4).
+    labelText = ceiling != null ? `Fleet spend (est.) ~$${spent.toFixed(2)} / $${ceiling.toFixed(0)}` : `Fleet spend (est.) ~$${spent.toFixed(2)}`;
+  }
+  return { hidden: false, stopped, over, labelText, title: FLEET_SPEND_TOOLTIP };
+}
+
 // Phase-2 orchestration guardrail control (Slice 0): a budget readout + a kill/
 // resume toggle on the Dashboard. Subtle when idle; amber when stopped or over
 // budget. No-op if the chip isn't rendered.
@@ -4641,28 +4675,20 @@ async function renderDashOrchestration() {
   }
   chip.textContent = "";
   chip.className = "dash-orch-chip";
-  if (!budget) {
+  const content = orchestrationChipContent(budget);
+  if (content.hidden) {
     return;
   }
   const spent = Number(budget.spentUsd) || 0;
-  const ceiling = typeof budget.ceilingUsd === "number" ? budget.ceilingUsd : null;
-  const over = ceiling != null && spent >= ceiling;
-  const stopped = !!budget.killed;
-  // Idle + nothing spent + not stopped: stay out of the way (empty -> hidden).
-  if (!stopped && !over && spent <= 0) {
-    return;
-  }
+  const over = content.over;
+  const stopped = content.stopped;
+  chip.title = content.title;
   const label = document.createElement("span");
   label.className = "dash-orch-label";
-  if (stopped) {
+  if (stopped || over) {
     chip.classList.add("stopped");
-    label.textContent = "⏸ Fleet stopped";
-  } else if (over) {
-    chip.classList.add("stopped");
-    label.textContent = `Budget reached · $${spent.toFixed(2)}`;
-  } else {
-    label.textContent = ceiling != null ? `Fleet spend $${spent.toFixed(2)} / $${ceiling.toFixed(0)}` : `Fleet spend $${spent.toFixed(2)}`;
   }
+  label.textContent = content.labelText;
   chip.append(label);
   const btn = document.createElement("button");
   btn.className = "dash-orch-btn";

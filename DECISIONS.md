@@ -1,5 +1,13 @@
 # Decisions
 
+## 2026-07-18 - "Fleet spend" is labeled as an estimate, not a subscription charge
+
+Aidin (task 18d4c9f4): "what is fleet spend? I don't know where the $25 comes from - I'm on a subscription, not pay-by-usage."
+The figure is real but mislabeled: it's Helm's OWN running estimate of what the fleet's model usage WOULD cost at API rates (addSpend sums each run's reported costUsd, which the CLI reports even on a subscription), used only as the guardrail behind the Stop button and the $ ceiling. Nothing is billed per use on a subscription - so a bare "Fleet spend $25" reads as money charged when it isn't.
+Fix (labeling only, no behaviour change): the chip's display model is now a pure function `orchestrationChipContent(budget)` returning an "(est.)"-qualified label ("Fleet spend (est.) ~$25.40 / $100") plus a tooltip that says in words it's an internal estimate, not a subscription charge. Extracting the pure function also made it unit-testable without a live budget.
+Kept `spentUsd`/ceiling semantics exactly as-is (the kill-switch still works on the same number); this only changes how it reads.
+Verified: test-fleet-spend-label.mjs (7 cases: spend/no-ceiling/stopped/over/idle/none + tooltip wording).
+
 ## 2026-07-18 - Smart first-mate needs-you: suppress ONLY on a confident "done" signal
 
 Follow-up to the 2026-07-15 revert (which restored the false-positive bias): Aidin asked whether we can actually tell if a first mate expects input - "look for a ?, or even let Haiku do a quick analysis when uncertain" - and to check both Swedish AND English phrases.
