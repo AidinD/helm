@@ -1,5 +1,14 @@
 # Decisions
 
+## 2026-07-18 - Smart first-mate needs-you: suppress ONLY on a confident "done" signal
+
+Follow-up to the 2026-07-15 revert (which restored the false-positive bias): Aidin asked whether we can actually tell if a first mate expects input - "look for a ?, or even let Haiku do a quick analysis when uncertain" - and to check both Swedish AND English phrases.
+The safe way to trim the noise WITHOUT introducing a miss (the constraint from the revert entry) is to keep flagging by default and only stop when a classifier is CONFIDENT the turn finished (done, not awaiting input).
+Two signals, both landing in `session.orchestratorTag` (keyed by session id): (1) a new cheap bilingual heuristic `expectsUserInputHeuristic(text)` seeded at turn-end from the first mate's last message (trailing "?", SV/EN ask-phrases -> waiting_for_input; SV/EN completion-phrases -> done_not_archived; anything ambiguous -> null), and (2) the existing Fas-3 Haiku sweep (`classifySessionStatus`) that already distinguishes the two.
+Renderer gate (`classifierSaysSessionDone`): a waiting first mate flags needs-you on all three surfaces (queue row, fleet-card badge/accent, OS toast) UNLESS orchestratorTag is `done_not_archived`. A `waiting_for_input`/`stuck`/null tag (or no tag yet) keeps flagging - so a genuine question still surfaces, and the default stays over-flagging.
+Only `done_not_archived` suppresses; the heuristic commits it only on a clear completion, otherwise defers to Haiku, otherwise flags. This honours "false positives over false negatives": the sole thing that silences the alarm is positive evidence the mate is done.
+Verified: test-expects-input-heuristic.mjs (12/12, SV+EN) + 6 deterministic assertions in test-fleet-ui-fixes.mjs (no-tag -> flags; done -> calm "done", no accent; waiting_for_input -> still flags).
+
 ## 2026-07-15 - A meta-home session is a first mate only when bound to a mate (personal chats keep full MCP)
 
 Aidin: "Helm doesn't see my Hevy connection." A personal session ("Träning och kost (Hevy)") rooted in the meta-home (/claude) lost its user MCP servers (Hevy, home-assistant, etc.).

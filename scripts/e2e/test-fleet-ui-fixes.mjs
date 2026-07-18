@@ -194,6 +194,39 @@ try {
   assert(toast.before === "first" && toast.after === "second", "the retire busy toast updates its text via update()");
   assert(toast.gone === true, "the retire busy toast removes itself via done()");
 
+  // 4d82208a follow-up - smart needs-you. A waiting first mate flags "needs you"
+  // by DEFAULT (false-positive bias Aidin asked for); it stops ONLY when the
+  // classifier/heuristic is confident it's done (orchestratorTag done_not_archived).
+  // A "waiting_for_input" tag (a genuine question) MUST still flag. Exercised at
+  // the queue-row level and the fleet-card badge/accent level.
+  const smartNeedsYou = await app.eval(`(() => {
+    // Three waiting first mates, no crew, differing only by orchestratorTag.
+    mateBySessionId = new Map([
+      ["cNone", { mateId: "mNone", name: "No Tag", sessionId: "cNone" }],
+      ["cDone", { mateId: "mDone", name: "Done Tag", sessionId: "cDone" }],
+      ["cAsk",  { mateId: "mAsk",  name: "Ask Tag",  sessionId: "cAsk"  }],
+    ]);
+    const mk = (cid, tag) => ({ sessionId: "s_" + cid, cliSessionId: cid, cwd: "D:/fm", title: "t", status: "waiting", isArchived: false, orchestratorTag: tag });
+    state.sessions.push(mk("cNone", null));
+    state.sessions.push(mk("cDone", { statusTag: "done_not_archived", reason: "heuristic: last message" }));
+    state.sessions.push(mk("cAsk", { statusTag: "waiting_for_input", reason: "heuristic: last message" }));
+    const rows = dashboardInMotionRows();
+    const na = (cid) => { const r = rows.find((x) => x.kind === "session" && x.session.cliSessionId === cid); return r ? r.needsAction : null; };
+    const badge = (mate) => { const el = fleetMateCardEl(mate, []); const b = el.querySelector(".fleet-badge"); return { text: b && b.textContent, accent: el.classList.contains("fleet-mate-needs") }; };
+    return {
+      naNone: na("cNone"), naDone: na("cDone"), naAsk: na("cAsk"),
+      bNone: badge({ mateId: "mNone", name: "No Tag", sessionId: "cNone" }),
+      bDone: badge({ mateId: "mDone", name: "Done Tag", sessionId: "cDone" }),
+      bAsk:  badge({ mateId: "mAsk",  name: "Ask Tag",  sessionId: "cAsk"  }),
+    };
+  })()`);
+  assert(smartNeedsYou.naNone === true, "a waiting first mate with NO classification flags needs-you (default: false-positive bias)");
+  assert(smartNeedsYou.naDone === false, "a waiting first mate the classifier marks done_not_archived does NOT flag needs-you");
+  assert(smartNeedsYou.naAsk === true, "a waiting first mate the classifier marks waiting_for_input DOES flag needs-you (a real question)");
+  assert(smartNeedsYou.bNone.text === "needs you" && smartNeedsYou.bNone.accent === true, "fleet card: no tag -> 'needs you' badge + amber accent");
+  assert(smartNeedsYou.bDone.text === "done" && smartNeedsYou.bDone.accent === false, "fleet card: done_not_archived -> calm 'done' badge, no accent");
+  assert(smartNeedsYou.bAsk.text === "needs you" && smartNeedsYou.bAsk.accent === true, "fleet card: waiting_for_input -> 'needs you' badge + accent (still flags)");
+
   log(exitCode === 0 ? "VERIFY OK: all Fleet/chat naming + gauge fixes behave as intended." : "VERIFY FAILED.");
 } catch (err) {
   exitCode = 1;
