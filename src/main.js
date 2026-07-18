@@ -1643,11 +1643,21 @@ ipcMain.handle(
     let appendSystemPrompt;
     let strictMcpConfig;
     let effectiveSecondMateId = null;
+    // A meta-home session is a FIRST MATE only when it is actually bound to one -
+    // either the pane passed its mateId, or a resumed session resolves to a mate by
+    // its binding. A meta-home session with NO mate (a personal chat the captain
+    // keeps in /claude - training/Hevy, health/home-assistant, etc.) is NOT a first
+    // mate: it must keep the user's full MCP set and get no first-mate framing.
+    // Deciding by cwd ALONE stripped every meta-home chat of its MCP servers and
+    // injected the first-mate manual into it (Aidin: "Helm doesn't see my Hevy
+    // connection" - a direct personal session rooted in /claude was classed as a
+    // first mate).
+    const firstMateId = mateId || (resumeSessionId ? activeMates().find((m) => m.sessionId === resumeSessionId)?.mateId || null : null);
     try {
-      if (isMetaHomeRoot(cwd)) {
+      if (isMetaHomeRoot(cwd) && firstMateId) {
         const metaHome = resolveMetaHome();
         ensureDispatchDirs(metaHome);
-        mcpConfig = buildFirstMateMcpConfig(metaHome, mateId);
+        mcpConfig = buildFirstMateMcpConfig(metaHome, firstMateId);
         // Pre-approve exactly the dispatch tools so the headless first mate can
         // call them without a permission prompt it can't answer (review M3).
         allowedTools = FIRST_MATE_ALLOWED_TOOLS;
@@ -1664,7 +1674,7 @@ ipcMain.handle(
           // the base manual. Read from the mate record so it's fixed for this
           // session (a system prompt can't change mid-session). null persona =
           // plain coordinator = no overlay.
-          const mate = mateId ? findMateById(mateId) : null;
+          const mate = findMateById(firstMateId);
           const overlay = personaOverlay(mate?.persona);
           if (overlay) {
             appendSystemPrompt = `${appendSystemPrompt || ""}\n\n${overlay}`;
@@ -1773,9 +1783,9 @@ ipcMain.handle(
           // mis-attributed to the slot-0 mate (bugs 3c52cc0d + 2a5e6196 "samma fel
           // igen"). Only when this launch is a first mate (meta-home root) with an
           // explicit mateId - never a captain personal chat in the meta-home.
-          if (isMetaHomeRoot(cwd) && mateId) {
+          if (isMetaHomeRoot(cwd) && firstMateId) {
             try {
-              bindMateSession(mateId, evt.sessionId);
+              bindMateSession(firstMateId, evt.sessionId);
             } catch (err) {
               console.error("[helm] failed to bind first-mate session:", err);
             }

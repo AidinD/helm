@@ -1,5 +1,14 @@
 # Decisions
 
+## 2026-07-15 - A meta-home session is a first mate only when bound to a mate (personal chats keep full MCP)
+
+Aidin: "Helm doesn't see my Hevy connection." A personal session ("Träning och kost (Hevy)") rooted in the meta-home (/claude) lost its user MCP servers (Hevy, home-assistant, etc.).
+Root: session:start applied the first-mate LEAN treatment - only helm_* tools, --strict-mcp-config (which strips the user's servers), and the first-mate manual injected - based on `isMetaHomeRoot(cwd)` ALONE.
+So every personal chat the captain keeps in the meta-home was stripped of its MCP and mis-framed as a first mate (it worked in a session OUTSIDE Helm, which has full MCP).
+Fix: a meta-home session is a first mate only when it is actually bound to a mate - `firstMateId = mateId || activeMates().find((m) => m.sessionId === resumeSessionId)?.mateId`, and the branch is gated on `isMetaHomeRoot(cwd) && firstMateId`.
+A meta-home session with no mate falls to the normal-chat path: full user MCP, no first-mate framing, no helm_* tools. First mates (mateId set, or resumed-and-bound) are unchanged.
+Verified: test-first-mate-gating.mjs - a no-mate meta-home session has NO helm-dispatch MCP in its transcript (so it keeps the user's full set), a mate-bound one does.
+
 ## 2026-07-15 - First-mate needs-you: keep it false-positive-biased (reverted the suppression)
 
 4d82208a first read as "a first mate shows needs-you when it doesn't need me", so the first pass (commit f4de6da) suppressed it: a first mate's own "waiting" no longer flagged needs-you on any surface.
