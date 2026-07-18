@@ -15,6 +15,7 @@ import { readAllSessions, enrichWithJot, setSessionArchived, forkTranscriptAtUse
 import { loadJot, loadGoals, addSubtask, formatJotSummaryForClassifier, projectBoardSummary } from "./lib/jot.js";
 import { loadConfig, writeConfig } from "./lib/config.js";
 import { startSession } from "./lib/launcher.js";
+import { createLiveSessionRegistry } from "./lib/liveSessions.js";
 import { continueOnMobile } from "./lib/remoteControl.js";
 import { suggestModelEffort } from "./lib/suggest.js";
 import { readTranscript } from "./lib/transcript.js";
@@ -114,6 +115,13 @@ const liveGoalRuns = new Map();
 // A fresh session (no resume id) is never locked (it has no prior transcript to
 // race). Released when the turn's `done` resolves (close or error).
 const sessionTurnLocks = new Set();
+// Authoritative "a turn is running RIGHT NOW" registry (task 5939df: sessions
+// showed "idle" while genuinely working). Unlike sessionTurnLocks (resume-only,
+// for transcript-race prevention) this covers EVERY launch path, fresh included.
+// See src/lib/liveSessions.js for why the file heuristic can't see a live turn.
+const liveSessions = createLiveSessionRegistry();
+const markSessionLive = (id) => liveSessions.markLive(id);
+const markSessionDone = (id) => liveSessions.markDone(id);
 // First-mate tier caps (docs/first-mate-tier-design.md sections 3 + 5),
 // enforced at the app - the single dispatch authority - never trusting the
 // caller. WIDTH: at most this many CONCURRENT dispatched runs per mate (design
@@ -230,6 +238,11 @@ ipcMain.handle("sessions:get", () => {
     if (session.status === "waiting" && acknowledged[session.sessionId] >= session.lastActivityAt) {
       session.status = "idle";
     }
+    // Authoritative live-turn override (task 5939df): if Helm is running a turn
+    // for this session RIGHT NOW, it's working - regardless of what the transcript
+    // heuristic decayed to. This is the fix for "idle while it's actually working"
+    // (a long turn outruns ACTIVE_WINDOW; a mid-turn line reads as "waiting").
+    liveSessions.applyStatus(session);
   }
   const jotIndex = loadJot(config.jot || {});
   enrichWithJot(sessions, jotIndex, config.jot?.weights || {});
@@ -1732,6 +1745,17 @@ ipcMain.handle(
     // (ship-review: session:start was the asymmetric path that leaked the lock).
     let child;
     let done;
+    // Track this launch's session id in the authoritative live-turn set so the
+    // sidebar/fleet show "working", not "idle", while the turn runs (task 5939df).
+    // Known upfront for a resume; learned from the session event for a fresh one.
+    // Skip Helm-internal launches (e.g. the hidden retire-summarize turn) - they're
+    // invisible to the captain, so they must not flash a session "active", matching
+    // the other `!internal` bookkeeping below.
+    let liveTurnId = null;
+    if (!internal && resumeSessionId) {
+      liveTurnId = resumeSessionId;
+      markSessionLive(liveTurnId);
+    }
     try {
       ({ child, done } = startSession({
       cwd,
@@ -1746,6 +1770,10 @@ ipcMain.handle(
       appendSystemPrompt,
       strictMcpConfig,
       onEvent: (evt) => {
+        if (evt.kind === "session" && evt.sessionId && !internal && !liveTurnId) {
+          liveTurnId = evt.sessionId;
+          markSessionLive(liveTurnId);
+        }
         if (evt.kind === "session" && evt.sessionId && !internal) {
           // Record into Helm's own index the moment the session id appears, so
           // a session shows in Direct/Fleet while its first turn is still
@@ -1816,6 +1844,7 @@ ipcMain.handle(
       if (resumeSessionId) {
         sessionTurnLocks.delete(resumeSessionId);
       }
+      markSessionDone(liveTurnId);
       throw err;
     }
     liveChildren.set(launchId, child);
@@ -1826,6 +1855,7 @@ ipcMain.handle(
     const skillMatch = /^\/(\S+)/.exec(prompt.trim());
     done.then((summary) => {
       liveChildren.delete(launchId);
+      markSessionDone(liveTurnId);
       // Release the per-session turn lock (Slice 4) now the turn is over, so the
       // next turn (pane or relay) on this session can proceed.
       if (resumeSessionId) {
@@ -3037,6 +3067,12 @@ function runRelayTurn(metaHome, { secondMateId: smId, projectPath, message }) {
   // --resume the same live transcript -> corruption. So we ALSO lock the bound
   // session id and release it with the primary key (ship-review CONFIRMED).
   let boundSessionKey = null;
+  // Live-turn tracking so the second mate's session shows "working" while this
+  // relay turn runs (task 5939df) - same reason as the interactive path.
+  let liveTurnId = resumeSessionId || null;
+  if (liveTurnId) {
+    markSessionLive(liveTurnId);
+  }
   let child;
   let done;
   try {
@@ -3053,6 +3089,10 @@ function runRelayTurn(metaHome, { secondMateId: smId, projectPath, message }) {
       resumeSessionId,
       onEvent: (evt) => {
         if (evt.kind === "session" && evt.sessionId) {
+          if (!liveTurnId) {
+            liveTurnId = evt.sessionId;
+            markSessionLive(liveTurnId);
+          }
           try {
             // Bind so the second mate owns its crew dispatches + a later
             // relay/jump-in resumes the SAME session, and index it so the
@@ -3083,6 +3123,7 @@ function runRelayTurn(metaHome, { secondMateId: smId, projectPath, message }) {
     }));
   } catch (err) {
     sessionTurnLocks.delete(lockKey);
+    markSessionDone(liveTurnId);
     return { ok: false, error: `Failed to start the relay turn: ${err?.message || String(err)}` };
   }
   liveChildren.set(childKey, child);
@@ -3095,6 +3136,7 @@ function runRelayTurn(metaHome, { secondMateId: smId, projectPath, message }) {
     if (boundSessionKey) {
       sessionTurnLocks.delete(boundSessionKey);
     }
+    markSessionDone(liveTurnId);
     liveChildren.delete(childKey);
     addSpend(metaHome, relayCostUsd);
     writeFleetStateSnapshot(metaHome);
@@ -3437,6 +3479,7 @@ function fireRoutine(routine) {
       }
     };
     let recorded = false;
+    let liveTurnId = null;
     const { child, done } = startSession({
       cwd,
       prompt: routine.prompt,
@@ -3444,6 +3487,10 @@ function fireRoutine(routine) {
       effort: routine.effort || undefined,
       permissionMode: "default",
       onEvent: (evt) => {
+        if (evt.kind === "session" && evt.sessionId && !liveTurnId) {
+          liveTurnId = evt.sessionId;
+          markSessionLive(liveTurnId);
+        }
         if (evt.kind === "session" && evt.sessionId && !recorded) {
           recorded = true;
           recordHelmSession(evt.sessionId, {
@@ -3465,6 +3512,7 @@ function fireRoutine(routine) {
     done
       .then((summary) => {
         liveChildren.delete(launchId);
+        markSessionDone(liveTurnId);
         send({ kind: "done", summary });
         if (summary.sessionId) {
           recordHelmSession(summary.sessionId, { createIfAbsent: false });
@@ -3473,7 +3521,10 @@ function fireRoutine(routine) {
           new Notification({ title: "Helm — routine ran", body: routine.name, silent: false }).show();
         }
       })
-      .catch(() => liveChildren.delete(launchId));
+      .catch(() => {
+        liveChildren.delete(launchId);
+        markSessionDone(liveTurnId);
+      });
   } catch (err) {
     console.error("[helm] failed to fire routine:", routine?.name, err);
   }

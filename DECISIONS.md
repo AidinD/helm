@@ -1,5 +1,14 @@
 # Decisions
 
+## 2026-07-18 - Sessions show "working" while a turn is live (authoritative live-turn override)
+
+The captain (task 5939df): sessions often showed "idle" when they were actually working - "statuses are generally out of sync with what's really going on".
+Root: `deriveStatus` (sessions.js) is a pure transcript heuristic - it reads the last message's role + age. It has no way to see a LIVE turn: a long agentic turn outruns its ACTIVE_WINDOW (3 min) while the last transcript line is still the user prompt, so it decays to "idle" mid-run; and a mid-turn tool/assistant line makes it read "waiting". Exactly the long autopilot/second-mate turns Helm runs hit this.
+Fix: Helm LAUNCHED the turn, so it knows the truth. A new `createLiveSessionRegistry()` (src/lib/liveSessions.js) tracks "a turn is running right now", refcounted by cliSessionId. Every launch path (interactive, second-mate relay, scheduled routine) marks its session id live for the turn's duration and clears it on done/error. sessions:get then forces those sessions to "active", overriding whatever the heuristic decayed to.
+Refcounted (not a Set) so a rare fresh+relay overlap on one id stays live until both turns end. Internal launches (the hidden retire-summarize turn) are skipped - they're invisible to the captain, matching the other `!internal` bookkeeping.
+Extracted the registry as a pure module so the logic is unit-testable without Electron (the isolating case - "live over a transcript that decayed to idle" - can't be reproduced live without a >3min turn).
+Verified: test-live-session-status.mjs (force-active over decayed idle, match by either id form, refcount overlaps, done -> falls back, null guards). Live wiring mirrors liveChildren's proven mark/clear pattern across the same launch paths.
+
 ## 2026-07-18 - One canonical session display name everywhere (sessionDisplayName)
 
 The captain (task 953bbafb, with a screenshot): the SAME session showed two different names in two places - the archive-suggestion row in the needs-you queue read "vad gör den här appen, kan du förklara?" (the raw prompt title) while the Fleet card for the same second mate read "startup-simulator" (its fleet name). Confusing.
