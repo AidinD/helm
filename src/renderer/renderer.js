@@ -862,6 +862,21 @@ function secondMateForSession(session) {
   return secondMateBySessionId.get(session.cliSessionId) || secondMateBySessionId.get(session.sessionId) || null;
 }
 
+// The single canonical display name for a session: its durable FLEET name when it
+// is a first/second mate, otherwise the prompt-derived session.title. Every
+// user-facing surface must route through this so the SAME session never shows two
+// different names in two places (bug 953bbafb: the archive-suggestion row in the
+// needs-you queue showed the raw prompt title "vad gör den här appen..." while the
+// Fleet card showed the fleet name "startup-simulator" for the same session).
+function sessionDisplayName(session) {
+  if (!session) {
+    return "";
+  }
+  const fm = firstMateForSession(session);
+  const sm = fm ? null : secondMateForSession(session);
+  return (fm ? fm.name : sm ? sm.name : session.title) || session.title || "";
+}
+
 // "Delete" a session from Helm's own view — never touches the desktop
 // app's real session files (that would risk destroying real conversation
 // history). Purely hides it from the sidebar via config; restorable from
@@ -1515,9 +1530,7 @@ function rowEl(session) {
   // chat pane header and the needs-you queue - not the prompt-derived
   // session.title (bug 5fda2a96: the chat header showed "Captain Hook" while the
   // sidebar still showed "Jag vill jobba med dinghy..." for the same session).
-  const rowFm = firstMateForSession(session);
-  const rowSm = rowFm ? null : secondMateForSession(session);
-  const rowLabel = rowFm ? rowFm.name : rowSm ? rowSm.name : session.title;
+  const rowLabel = sessionDisplayName(session);
   title.textContent = rowLabel;
   title.title = rowLabel;
   titleLine.append(dot, title);
@@ -2177,7 +2190,7 @@ function openSessionInPane(session, paneIndex, _ignored) {
       sessionId: session.sessionId,
       cliSessionId: session.cliSessionId || session.sessionId,
       cwd: session.cwd || "",
-      title: fm ? fm.name : sm ? sm.name : session.title,
+      title: sessionDisplayName(session),
       // Carry the resolved mate id so a turn in a RESUMED mate session attaches the
       // dispatch config bound to THAT mate. Without this, session:start fell back
       // to buildFirstMateMcpConfig's active[0], so a second first mate's dispatches
@@ -4796,7 +4809,7 @@ async function refresh() {
       // finished (done, not awaiting input) - task 4d82208a follow-up.
       !classifierSaysSessionDone(session)
     ) {
-      window.helm.notifyAttention({ title: "Helm - session needs input", body: session.title });
+      window.helm.notifyAttention({ title: "Helm - session needs input", body: sessionDisplayName(session) });
     }
   }
   state.sessions = data.sessions;
@@ -6976,7 +6989,9 @@ function dashProposeRowEl(session) {
   }
   const title = document.createElement("span");
   title.className = "dash-q-title";
-  title.textContent = `Archive finished session: "${session.title}"`;
+  // Fleet name, not the raw prompt title, so this row matches the Fleet card for
+  // the same session (bug 953bbafb).
+  title.textContent = `Archive finished session: "${sessionDisplayName(session)}"`;
   top.append(title);
   qbody.append(top);
 
@@ -7056,7 +7071,7 @@ function dashSessionRowEl(session) {
   }
   const title = document.createElement("span");
   title.className = "dash-q-title";
-  title.textContent = mate ? mate.name : secondMate ? secondMate.name : session.title;
+  title.textContent = sessionDisplayName(session);
   top.append(title);
   qbody.append(top);
 
@@ -10132,7 +10147,7 @@ function archiveRowEl(session, actionLabel, onAction) {
   info.className = "archive-row-info";
   const title = document.createElement("div");
   title.className = "archive-row-title";
-  title.textContent = session.title;
+  title.textContent = sessionDisplayName(session);
   const meta = document.createElement("div");
   meta.className = "archive-row-meta";
   meta.textContent = `${session.cwd || "no folder"} · last active ${relTime(session.lastActivityAt)}`;
