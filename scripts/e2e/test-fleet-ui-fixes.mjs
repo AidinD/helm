@@ -227,6 +227,33 @@ try {
   assert(smartNeedsYou.bDone.text === "done" && smartNeedsYou.bDone.accent === false, "fleet card: done_not_archived -> calm 'done' badge, no accent");
   assert(smartNeedsYou.bAsk.text === "needs you" && smartNeedsYou.bAsk.accent === true, "fleet card: waiting_for_input -> 'needs you' badge + accent (still flags)");
 
+  // 953bbafb - the SAME session must show ONE name everywhere. The archive-
+  // suggestion row in the needs-you queue used the raw prompt title while the
+  // Fleet card used the fleet name, so a second mate read as "vad gör den här
+  // appen..." in the queue and "startup-simulator" in the fleet. sessionDisplayName
+  // single-sources it; every surface routes through it.
+  const oneName = await app.eval(`(() => {
+    secondMateBySessionId = new Map([["cSS", { secondMateId: "sm_ss", name: "startup-simulator", sessionId: "cSS", firstMateId: "mSin" }]]);
+    mateBySessionId = new Map([["cFM", { mateId: "mFM", name: "Corto Maltese", sessionId: "cFM" }]]);
+    const smSess = { sessionId: "sSS", cliSessionId: "cSS", cwd: "D:/x", title: "vad gör den här appen, kan du förklara?", status: "waiting", isArchived: false };
+    const fmSess = { sessionId: "sFM", cliSessionId: "cFM", cwd: "D:/y", title: "jag vill jobba med beatdrop...", status: "waiting", isArchived: false };
+    const plainSess = { sessionId: "sPL", cliSessionId: "cPL", cwd: "D:/z", title: "some raw prompt title", status: "idle", isArchived: false };
+    state.sessions.push(smSess, fmSess, plainSess);
+    // The archive-suggestion row (the exact surface in the screenshot).
+    const proposeRow = dashProposeRowEl(smSess);
+    const proposeTitle = proposeRow.querySelector(".dash-q-title") && proposeRow.querySelector(".dash-q-title").textContent;
+    return {
+      helperSm: sessionDisplayName(smSess),
+      helperFm: sessionDisplayName(fmSess),
+      helperPlain: sessionDisplayName(plainSess),
+      proposeTitle,
+    };
+  })()`);
+  assert(oneName.helperSm === "startup-simulator", `sessionDisplayName uses the 2nd-mate fleet name (got ${JSON.stringify(oneName.helperSm)})`);
+  assert(oneName.helperFm === "Corto Maltese", `sessionDisplayName uses the 1st-mate fleet name (got ${JSON.stringify(oneName.helperFm)})`);
+  assert(oneName.helperPlain === "some raw prompt title", "sessionDisplayName falls back to the prompt title for a non-mate session");
+  assert(oneName.proposeTitle === 'Archive finished session: "startup-simulator"', `the archive-suggestion row uses the fleet name, not the prompt title (got ${JSON.stringify(oneName.proposeTitle)})`);
+
   log(exitCode === 0 ? "VERIFY OK: all Fleet/chat naming + gauge fixes behave as intended." : "VERIFY FAILED.");
 } catch (err) {
   exitCode = 1;

@@ -1,5 +1,12 @@
 # Decisions
 
+## 2026-07-18 - One canonical session display name everywhere (sessionDisplayName)
+
+Aidin (task 953bbafb, with a screenshot): the SAME session showed two different names in two places - the archive-suggestion row in the needs-you queue read "vad gör den här appen, kan du förklara?" (the raw prompt title) while the Fleet card for the same second mate read "startup-simulator" (its fleet name). Confusing.
+Root: the fleet-name resolution (`fm ? fm.name : sm ? sm.name : session.title`) was copy-pasted into some surfaces (sidebar row, chat pane header) but NOT others - the archive-suggestion row (dashProposeRowEl), the needs-you detail row, the OS "needs input" toast, and the archive page all used the raw `session.title`.
+Fix: extracted one canonical `sessionDisplayName(session)` - fleet name for a first/second mate, else the prompt title - and routed every user-facing surface through it. The duplicated inline blocks were replaced with the helper too, so there's a single source of truth and a new surface can't drift.
+Verified: test-fleet-ui-fixes.mjs (+4 assertions incl. the exact archive-suggestion row from the screenshot rendering "startup-simulator", not the prompt title).
+
 ## 2026-07-18 - "Fleet spend" is labeled as an estimate, not a subscription charge
 
 Aidin (task 18d4c9f4): "what is fleet spend? I don't know where the $25 comes from - I'm on a subscription, not pay-by-usage."
