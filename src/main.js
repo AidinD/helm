@@ -23,7 +23,7 @@ import { findTranscriptPath, projectsRoot, encodeProjectDir } from "./lib/paths.
 import { listSkills, skillMdPath } from "./lib/skills.js";
 import { appendUsageLog, readUsageSummary, computeSuggestionAccuracyVerdict } from "./lib/usage.js";
 import { judgeModelFit } from "./lib/judge.js";
-import { classifySessionStatus, estimateSessionContextTokens, compactSession, getTranscriptSize } from "./lib/orchestratorHelper.js";
+import { classifySessionStatus, expectsUserInputHeuristic, estimateSessionContextTokens, compactSession, getTranscriptSize } from "./lib/orchestratorHelper.js";
 import { savePastedImage, prunePastedImages } from "./lib/images.js";
 import { computeVersionString, captureRunningBuildIdentity, checkForNewerBuild } from "./lib/version.js";
 import { runGoal } from "./lib/goalOrchestrator.js";
@@ -1857,6 +1857,25 @@ ipcMain.handle(
           addSpend(resolveMetaHome(), meta.costUsd);
         } catch (err) {
           console.error("[helm] failed to meter first-mate spend:", err);
+        }
+      }
+
+      // Smart needs-you (heuristic layer, task 4d82208a follow-up): for a FIRST
+      // MATE, seed the Fas-3 classification from a cheap read of its last message,
+      // so a CLEAR completion stops it showing "needs you" immediately instead of
+      // flagging until the next sweep. Only a clear signal commits (SV/EN, see
+      // expectsUserInputHeuristic); an ambiguous message is left for the sweep's
+      // Haiku classifier and keeps flagging meanwhile - the false-positive bias
+      // the captain asked for. Keyed by the same session id sessionClassifications +
+      // orchestratorTag use, so the renderer's needs-you gate picks it up.
+      if (!internal && isMetaHomeRoot(cwd) && firstMateId && summary?.sessionId && meta.lastAssistantText) {
+        try {
+          const tag = expectsUserInputHeuristic(meta.lastAssistantText);
+          if (tag) {
+            sessionClassifications.set(summary.sessionId, { statusTag: tag, reason: "heuristic: last message", classifiedAtActivity: Date.now() });
+          }
+        } catch (err) {
+          console.error("[helm] expects-input heuristic failed:", err);
         }
       }
 

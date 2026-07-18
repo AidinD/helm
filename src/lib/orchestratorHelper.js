@@ -72,6 +72,68 @@ const RECENT_TURNS_FOR_CLASSIFIER = 6;
 const MAX_SUMMARY_CHARS_PER_TURN = 500;
 
 /**
+ * Cheap, synchronous first pass for "does this last message expect a reply from
+ * the captain?" - the same distinction classifySessionStatus makes with Haiku,
+ * but instant and free for the obvious cases (so a first mate that clearly
+ * finished stops showing "needs you" immediately, without waiting for the next
+ * sweep). Returns a statusTag ("done_not_archived" = clearly finished,
+ * "waiting_for_input" = clearly a question/ask) or null (uncertain -> let the
+ * Haiku classifier decide). BILINGUAL: mates reply in Swedish or English, so both
+ * are matched. Bias toward flagging: only commit on a CLEAR signal, leave
+ * anything ambiguous as null so nothing is under-flagged (the captain prefers false
+ * positives over false negatives here).
+ */
+export function expectsUserInputHeuristic(text) {
+  if (!text || !text.trim()) {
+    return null;
+  }
+  // The ask or the sign-off almost always lands at the very end - weigh the last
+  // non-empty line, plus the tail of the whole message.
+  const lines = text
+    .trim()
+    .split(/\n+/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const lastLine = lines[lines.length - 1] || "";
+  const low = (lastLine + " " + text.slice(-400)).toLowerCase();
+
+  // Clear question / request for a decision -> expects input.
+  if (/\?\s*$/.test(lastLine)) {
+    return "waiting_for_input";
+  }
+  const ASKS = [
+    // Swedish
+    "vill du att", "ska jag", "ska vi", "vilken vill", "vilket vill", "vilka vill", "föredrar du",
+    "säg till", "låt mig veta", "vad vill du", "hur vill du", "vad tycker du", "vad säger du",
+    "bekräfta", "är det ok", "okej med dig", "ja eller nej", "vill du ha", "ska den", "vill du jag",
+    // English
+    "do you want", "should i ", "shall i ", "shall we", "which do you", "would you prefer",
+    "let me know", "your call", "up to you", "what do you think", "please confirm", "is that ok",
+    "yes or no", "want me to",
+  ];
+  if (ASKS.some((p) => low.includes(p))) {
+    return "waiting_for_input";
+  }
+
+  // Clear completion / handoff -> no input expected.
+  const DONE = [
+    // Swedish
+    "klart.", "klart -", "klart!", "klart,", "allt klart", "nu är det klart", "färdig",
+    "hoppa in", "är uppsatt", "är upplagd", "pushat", "committat", "genomfört", "åtgärdat",
+    "jag har lagt", "jag har fixat", "jag har skapat", "jag tog hand om", "då var det",
+    // English
+    "done.", "done -", "done!", "all done", "all set", "finished", "completed", "pushed and",
+    "committed and", "jump into", "is set up", "i've added", "i've fixed", "i've created",
+    "taken care of", "that's done",
+  ];
+  if (DONE.some((p) => low.includes(p))) {
+    return "done_not_archived";
+  }
+
+  return null; // uncertain - let the Haiku classifier decide
+}
+
+/**
  * Classifies a single session's current status from its recent transcript
  * tail + Jot task info. Resolves to { statusTag, reason, costUsd } or null
  * on any failure (never throws — this is an ambient background signal, not

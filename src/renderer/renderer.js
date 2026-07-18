@@ -4765,7 +4765,10 @@ async function refresh() {
       // A first mate that ends its turn only to await its dispatched crew (live,
       // reported, or errored) isn't waiting on you - don't fire the intrusive
       // "needs input" OS toast for it (bug 9c0c7209).
-      !mateCrewWait(firstMateForSession(session)).has
+      !mateCrewWait(firstMateForSession(session)).has &&
+      // ...nor when the classifier/heuristic is confident the turn actually
+      // finished (done, not awaiting input) - task 4d82208a follow-up.
+      !classifierSaysSessionDone(session)
     ) {
       window.helm.notifyAttention({ title: "Helm - session needs input", body: session.title });
     }
@@ -5677,6 +5680,11 @@ function fleetMateCardEl(mate, sms, boardSummary = {}) {
     } else if (mateStatus === "active") {
       bkind = "run";
       btext = "working";
+    } else if (classifierSaysSessionDone(boundSession)) {
+      // Turn ended and the classifier/heuristic is confident it finished (not
+      // awaiting input) - show a calm "done" chip, not the "needs you" alarm.
+      bkind = "ok";
+      btext = "done";
     } else {
       bkind = "need";
       btext = "needs you";
@@ -5690,7 +5698,7 @@ function fleetMateCardEl(mate, sms, boardSummary = {}) {
   // Amber "needs you" accent ONLY for a genuine needs-input mate (waiting, no
   // crew). A crew-waiting mate (incl. errored crew) stays calm - the crew rows
   // carry the alarm.
-  if (mateStatus === "waiting" && !cw.has) {
+  if (mateStatus === "waiting" && !cw.has && !classifierSaysSessionDone(boundSession)) {
     card.classList.add("fleet-mate-needs");
   }
   const actions = document.createElement("div");
@@ -6720,6 +6728,19 @@ function dashboardRunningRuns() {
   return [...goalRuns.values()].filter((r) => r.status === "running" && !r.escalation && !r.dispatchedBy);
 }
 
+// Smart needs-you gate (task 4d82208a follow-up). A first mate whose turn ended
+// while "waiting" flags "needs you" by DEFAULT - the false-positive bias the captain
+// asked for: better to nudge when it didn't need him than miss one that did. We
+// only STOP flagging when the classification says it's genuinely done, not
+// awaiting input. That signal comes from two places, both keyed on the session:
+//   - the heuristic seed (main.js, at turn end, from the last message - SV/EN), and
+//   - the Fas-3 Haiku sweep (classifySessionStatus).
+// Both land in session.orchestratorTag. A "waiting_for_input"/"stuck"/null tag
+// (or no tag yet) keeps flagging; only "done_not_archived" suppresses.
+function classifierSaysSessionDone(s) {
+  return s?.orchestratorTag?.statusTag === "done_not_archived";
+}
+
 function dashboardInMotionRows() {
   const inMotionSessions = state.sessions.filter(
     (s) => !s.isArchived && !isHiddenFromHelm(s) && (s.status === "active" || s.status === "waiting")
@@ -6731,8 +6752,9 @@ function dashboardInMotionRows() {
     // a click waiting on YOU: any action lives on the crew itself (errored crew
     // get their own needs-you rows below). Keep it out of the "N need a click"
     // count so it doesn't double-flag as "first mate needs input" (bug 9c0c7209).
-    // Only a waiting mate with NO crew is a genuine needs-you click.
-    needsAction: s.status === "waiting" && !mateCrewWait(firstMateForSession(s)).has,
+    // Only a waiting mate with NO crew is a genuine needs-you click - unless the
+    // classifier/heuristic is confident it actually finished (done, not asking).
+    needsAction: s.status === "waiting" && !mateCrewWait(firstMateForSession(s)).has && !classifierSaysSessionDone(s),
   }));
   // Attention goal runs (errored/escalated) need a click; running ones are
   // just visibility ("it's working").
