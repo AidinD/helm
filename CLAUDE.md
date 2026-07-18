@@ -60,6 +60,15 @@ where a custom glyph isn't worth building.
 
 ## Core principles (full detail in PLAN.md)
 
+- **Proper fixes over patches-on-patches.** In this project, prefer the deeper,
+  long-term-correct solution over layering another override/special-case on top
+  of an already-shaky mechanism. When a fix would be the 2nd or 3rd thing mutating
+  the same state (or otherwise papers over a wrong underlying model), stop and
+  flag it: name the root-cause fix, and if it's a larger refactor, sketch the
+  design first (DECISIONS/PLAN) and align before building rather than shipping
+  another patch. Accumulating overrides on one field is the smell. (Example: the
+  session-status heuristic grew three layers before we recognized it wants a real
+  FSM - see the "Session-status som FSM" Epic + DECISIONS 2026-07-18.)
 - Wrap the real CLI - never re-implement Claude, never strip features.
 - Reuse Session Radar's read layer (`lib/sessions.js`, `lib/jot.js`) rather
   than duplicating file-parsing.
