@@ -1,5 +1,14 @@
 # Decisions
 
+## 2026-07-18 - Helm consumes @jot/core as its Jot data layer (foundation)
+
+First Helm-side step of the Jot integration (docs/auto-captain-design.md): Helm now depends on `@jot/core` (Jot's framework-agnostic data core) via a `file:../jot/dist-core` dependency, and `src/lib/jotHostStore.js` creates a HOST-mode store bound to the SAME todos.json a standalone Jot uses.
+Portable resolution (no hardcoded path): JOT_DATA_DIR override, else `join(app.getPath("appData"), "jot")` - identical to what Jot's own data-dir.ts resolves to. Helm can't reuse Jot's `app.getPath("userData")` (that returns HELM's userData), so it derives Jot's default from the roaming appData base.
+Verified: Helm imports @jot/core and reads the real shared board (83 todos / 13 categories / 6 tags); the full Helm app still boots with the new dependency (test-render-coalesce E2E green).
+NOT wired into Helm's startup yet - this is the tested data layer the embedded Jot tab (webview + core-backed preload) will build on. The auto-captain will write tags/lane-moves through this store.
+Known caveat (deferred): the `file:../jot/dist-core` dep assumes jot is a sibling repo with `dist-core/` built (it's git-ignored). Fine for the local side-by-side setup; a clean distribution (npm-publish @jot/core, or bundle it at package time) is decided when Helm ships with the tab.
+Separate follow-up: the pre-existing hardcoded `DEFAULT_JOT_PATH = "D:\\Dropbox\\jot\\todos.json"` in src/lib/jot.js should move to the same portable resolver (flagged).
+
 ## 2026-07-18 - Jot and Helm: one Jot, two mounts (separate products, shared core)
 
 Driven by the auto-start feature (docs/auto-captain-design.md), which needs Helm to write to the board and react live - a shared todos.json with two writers races on the Dropbox-synced data dir.

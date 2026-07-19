@@ -33,7 +33,10 @@
       "!node_modules/onnxruntime-node/bin/napi-v6/win32/arm64/**/*"
     ],
     "win": {
-      "target": ["nsis", "portable"],
+      "target": [
+        "nsis",
+        "portable"
+      ],
       "icon": "src/renderer/assets/helm-logo.png"
     },
     "nsis": {
@@ -56,6 +59,7 @@
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",
+    "@jot/core": "file:../jot/dist-core",
     "electron-updater": "^6.3.9"
   }
 }
