@@ -16,6 +16,7 @@ import { loadJot, loadGoals, addSubtask, formatJotSummaryForClassifier, projectB
 import { loadConfig, writeConfig } from "./lib/config.js";
 import { startSession } from "./lib/launcher.js";
 import { createLiveSessionRegistry } from "./lib/liveSessions.js";
+import { sessionLifecycleState } from "./lib/sessionState.js";
 import { continueOnMobile } from "./lib/remoteControl.js";
 import { suggestModelEffort } from "./lib/suggest.js";
 import { readTranscript } from "./lib/transcript.js";
@@ -259,6 +260,11 @@ ipcMain.handle("sessions:get", () => {
     // never something that mutates status here. null when never classified
     // (helper disabled, or hasn't reached this session yet).
     session.orchestratorTag = sessionClassifications.get(session.sessionId) || null;
+    // lifecycleState (Epic f3d096fa, increment 1): the single "what is this doing"
+    // field, projected from status + orchestratorTag now that both are resolved.
+    // Additive - no surface reads it yet, so this is a zero-behaviour-change
+    // foundation for migrating the needs-you/working/archive reads onto one field.
+    session.lifecycleState = sessionLifecycleState(session);
     // autoCompacted: surfaced so an automatic (silent) compaction isn't a
     // total black box — the row shows a small note until the next real
     // activity grows the transcript past its post-compaction size.
