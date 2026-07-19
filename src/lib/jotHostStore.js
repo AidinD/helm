@@ -8,24 +8,14 @@
 // NOT wired into Helm's startup yet - this is the tested foundation the Jot tab
 // (webview + core-backed preload) will build on.
 import path from "node:path";
-import { app } from "electron";
 import { TodoStore, LocalJsonStorage } from "@jot/core";
+import { resolveJotDataDir } from "./jotDataDir.js";
 
-// Resolve the SAME data dir a standalone Jot uses, PORTABLY (no hardcoded path):
-// JOT_DATA_DIR override, else the OS userData location for the Jot app
-// (%APPDATA%/jot on Windows). Helm can't call Jot's own app.getPath('userData')
-// (that returns HELM's userData), so derive Jot's default from the roaming appData
-// base + 'jot' - identical to what Jot's data-dir.ts resolves to.
-export function resolveJotDataDir() {
-  const override = process.env.JOT_DATA_DIR;
-  if (override && override.trim().length > 0) {
-    return override.trim();
-  }
-  return path.join(app.getPath("appData"), "jot");
-}
+export { resolveJotDataDir };
 
-// Create a HOST-mode @jot/core store bound to the shared Jot data. The caller owns
-// its lifecycle (init(), and stopWatching on teardown via the store's own API).
+// Create a HOST-mode @jot/core store bound to the shared Jot data (same todos.json
+// a standalone Jot uses - resolved portably via jotDataDir.js, no hardcoded path).
+// The caller owns its lifecycle (init(), and dispose() on teardown).
 export function createJotHostStore(dataDir = resolveJotDataDir()) {
   const store = new TodoStore(new LocalJsonStorage(path.join(dataDir, "todos.json")), dataDir);
   return { store, dataDir };
