@@ -1,5 +1,18 @@
 # Decisions
 
+## 2026-07-18 - Jot and Helm: one Jot, two mounts (separate products, shared core)
+
+Driven by the auto-start feature (docs/auto-captain-design.md), which needs Helm to write to the board and react live - a shared todos.json with two writers races on the Dropbox-synced data dir.
+Decision: keep Jot and Helm as SEPARATE products (Jot stays public/MIT/standalone; fast capture never needs Helm running; a Helm bug can't break the daily todo app), but with a stronger seam AND an embedded Jot tab in Helm.
+The framing that makes it clean is "one Jot, two mounts", not two Jots:
+Split Jot into a Jot-core (data + logic + events) and a Jot-UI component; both the standalone shell and Helm's Jot tab mount the SAME core + UI.
+There is only one implementation, so functionality can't drift between the standalone and embedded views - the trap (reimplementing Jot's UI inside Helm) is explicitly avoided.
+Data sync uses a host/client model: Jot-core runs as host (owns todos.json, emits events) or client (connects to a running host over a local socket) so there is always exactly one runtime writer - killing the Dropbox multi-writer race, and letting Helm ship independently (its bundled core runs host when the standalone app isn't present).
+Bonus: when Helm hosts, the auto-captain talks to the same in-process core, so board writes are direct core calls, not file writes.
+Accepted costs: refactoring Jot into core + UI (the real job, worth it for a single implementation) and the host/client coordination plumbing (the proper fix for the multi-writer problem, not a patch).
+Alternatives rejected: absorbing Jot into Helm (kills its standalone identity, makes capture depend on a heavy app) and keeping the naive shared-file seam (two writers race on Dropbox - already seen as EPERM).
+Start point: the Jot core/UI split is the foundation, tracked as a task in the Jot category.
+
 ## 2026-07-18 - Coalesce per-pane renders so streaming doesn't starve typing
 
 The captain (task f41a7f4e): "input lags when Helm is working on something else."
