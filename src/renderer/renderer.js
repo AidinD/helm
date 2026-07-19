@@ -3052,7 +3052,42 @@ function appendTurns(scroll, turns) {
   }
 }
 
+// Coalesce renderPane calls per pane onto a deferred task (task f41a7f4e: "input
+// lags when Helm is working on something else"). renderPane does a FULL transcript
+// rebuild (innerHTML="" + re-append every turn + re-wire + a scrollTop reflow),
+// and it fires on every streaming "assistant" event. A busy turn (several
+// assistant blocks + usage + tool_use in quick succession) drove several full
+// rebuilds back-to-back, synchronously, starving the textarea the user is typing
+// in. Deferring (a) collapses a synchronous burst to a SINGLE rebuild and (b)
+// yields the main thread so queued keystrokes are dispatched before the rebuild.
+// Uses setTimeout(0), NOT requestAnimationFrame: rAF is throttled/paused when the
+// Helm window is hidden or unfocused, which would stall live streaming updates for
+// a background session until the window regains focus (Helm is a live-monitoring
+// app - that regression is worse than the lag). setTimeout fires regardless of
+// visibility. Terminal/user-initiated renders still call renderPane directly for
+// immediacy; renderPane cancels any pending scheduled render so they never double-run.
+const pendingPaneRenders = new Map(); // index -> setTimeout id
+function scheduleRenderPane(index) {
+  if (pendingPaneRenders.has(index)) {
+    return; // a rebuild is already queued for this pane this tick - coalesce
+  }
+  pendingPaneRenders.set(
+    index,
+    setTimeout(() => {
+      pendingPaneRenders.delete(index);
+      renderPane(index);
+    }, 0)
+  );
+}
+
 function renderPane(index) {
+  // If a coalesced render was queued for this pane, this direct call supersedes
+  // it - drop the pending task so we don't rebuild twice.
+  const pendingTimer = pendingPaneRenders.get(index);
+  if (pendingTimer !== undefined) {
+    clearTimeout(pendingTimer);
+    pendingPaneRenders.delete(index);
+  }
   const paneEl = document.querySelector(`.pane[data-pane="${index}"]`);
   if (!paneEl) {
     return;
@@ -11300,7 +11335,9 @@ window.helm.onSessionEvent((evt) => {
     case "assistant":
       pane.turns.push({ role: "assistant", kind: "text", text: evt.text });
       bumpSessionActivity(pane.sessionId);
-      renderPane(index);
+      // Coalesced onto a frame so a burst of streaming blocks doesn't drive
+      // several synchronous full rebuilds and starve typing (f41a7f4e).
+      scheduleRenderPane(index);
       pulsePaneStatusIcon(index);
       break;
     case "error":
