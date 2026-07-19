@@ -1,5 +1,15 @@
 # Decisions
 
+## 2026-07-18 - Second mates carry the delegation directive on EVERY turn, not just fresh
+
+Aidin (task 9c358433): "the 2nd mate no longer spins up autopilots, it does the work itself."
+Verified before theorizing - built test-second-mate-dispatch-tools.mjs (a second mate DOES get helm_dispatch, so not a capability regression), then read his ACTUAL second-mate transcripts (last 7 days): EVERY one ground its whole assignment inline (beatdrop/crewline, up to 42 edits) with ZERO helm_dispatch calls - and the prompts were exactly the batch case ("work the Jot list", "take care of these N p0 tasks") the manual warns against.
+Root: the full manual was appended only on a FRESH launch (`if (!resumeSessionId)`), but real second mates are almost always driven via jump-in/direct, so every turn passes resumeSessionId and the delegation directive was never re-stated - it relied on the manual still being in a context that compaction eventually drops.
+(Important gotcha learned: --append-system-prompt is NEVER written to the transcript, so the manual's presence/absence can't be checked there - the behaviour is the only signal. This also means my first read of "manual missing" via transcript grep was a false negative; the behavioural evidence, 0 dispatches, is what stands.)
+Fix: a FRESH launch still gets the full manual; a RESUMED turn now gets a condensed delegate-vs-do reminder (src/lib/secondMatePrompt.js), so the guardrail is on EVERY turn - like the first mate's is structural - without re-sending the whole manual each turn. Applied to both the jump-in (session:start) and relay paths.
+Chose the reminder (a persistent, proper guardrail) over another instructions tweak, per the project's proper-fix-over-patches principle. Extracted the decision as a pure `secondMateAppendPrompt(resumeSessionId, fullManual)` so it's unit-testable (the CLI won't let us assert it via transcript).
+Verified: test-second-mate-append-prompt.mjs (fresh->manual, resume->reminder, never dropped, reminder covers the batch case) + the capability E2E still green.
+
 ## 2026-07-18 - Sessions show "working" while a turn is live (authoritative live-turn override)
 
 Aidin (task 5939df): sessions often showed "idle" when they were actually working - "statuses are generally out of sync with what's really going on".

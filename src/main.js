@@ -39,6 +39,7 @@ import { trackHelmUsage, summarizeHelmUsage } from "./lib/helmUsage.js";
 import { mcpAllowedToolsFromConfig } from "./lib/userMcp.js";
 import { initAutoUpdate } from "./lib/autoUpdate.js";
 import { deriveSecondMates, bindSecondMateSession, renameSecondMate, readBindings, proposeSecondMate, markSecondMateCreated, secondMateIdForSession, secondMateId, removeSecondMates } from "./lib/secondMates.js";
+import { secondMateAppendPrompt } from "./lib/secondMatePrompt.js";
 import { addSpend, isOverBudget, isKilled, setKilled, resetBudget, readBudget, setCeiling } from "./lib/orchestrationBudget.js";
 import {
   ensureDispatchDirs,
@@ -1731,9 +1732,10 @@ ipcMain.handle(
         // unanswerable permission prompt; bug 1f8b54be). NOT strict, so the
         // servers still load; this just restores their auto-allow.
         allowedTools = [...FIRST_MATE_ALLOWED_TOOLS, ...userMcpAllowedTools()];
-        if (!resumeSessionId) {
-          appendSystemPrompt = secondMateInstructions();
-        }
+        // Fresh launch gets the full manual; a RESUMED turn (the dominant path for
+        // jump-in/direct second mates) gets the condensed delegate-vs-do reminder,
+        // so the guardrail is present on EVERY turn - not just the first (9c358433).
+        appendSystemPrompt = secondMateAppendPrompt(resumeSessionId, secondMateInstructions());
         // NOT strict: additive to the project's full MCP set (see comment above).
       }
     } catch (err) {
@@ -3082,9 +3084,10 @@ function runRelayTurn(metaHome, { secondMateId: smId, projectPath, message }) {
       model: "claude-opus-4-8",
       mcpConfig,
       allowedTools: FIRST_MATE_ALLOWED_TOOLS,
-      // A fresh relay turn (no bound session yet) boots the second mate with its
-      // manual; a resumed one already has it in context.
-      appendSystemPrompt: resumeSessionId ? undefined : secondMateInstructions(),
+      // A fresh relay turn boots the second mate with its full manual; a resumed
+      // one gets the condensed delegate-vs-do reminder so the guardrail persists
+      // on every turn instead of relying on it still being in context (9c358433).
+      appendSystemPrompt: secondMateAppendPrompt(resumeSessionId, secondMateInstructions()),
       strictMcpConfig: false,
       resumeSessionId,
       onEvent: (evt) => {
