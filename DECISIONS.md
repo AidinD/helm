@@ -1,5 +1,13 @@
 # Decisions
 
+## 2026-07-18 - Quota readout shows the real limit status, not a fabricated 0%
+
+The captain (task 1975093d): "Token usage often shows 0% in the quota tab."
+Verified against the REAL data (config.lastQuota, the persisted rate_limit_info): the payload is `{ status, resetsAt, rateLimitType, overageStatus, ... }` - there is NO `utilization` field. Both quota surfaces (the context popover + the Dashboard chip) computed `Math.round((q.utilization || 0) * 100)`, so with utilization undefined they ALWAYS showed 0% - a fabricated reading, not real usage. Almost certainly an API schema change: utilization was dropped in favour of status + resetsAt.
+Fix: a pure `quotaReadout(q, nowMs)` reports the signal the API actually gives - the limit type ("5h limit"/"7d limit"), its status (allowed -> "OK" / allowed_warning -> "near limit" / rejected -> "limited"), and a reset countdown from resetsAt. A real % is shown ONLY when utilization is genuinely a finite number (future-proof if it returns). The popover no longer draws a misleading 0%-filled bar - it shows a plain status row when there's no %.
+Chose "surface the real fields" over hiding the widget or leaving the 0%, per proper-fix-over-patches: the 0% wasn't a rounding bug, the whole input was wrong.
+Verified: test-quota-readout.mjs (13 cases, driven off the captain's actual payload + a utilization variant + status/reset/label edges).
+
 ## 2026-07-18 - Second mates carry the delegation directive on EVERY turn, not just fresh
 
 The captain (task 9c358433): "the 2nd mate no longer spins up autopilots, it does the work itself."

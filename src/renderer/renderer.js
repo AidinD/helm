@@ -1112,6 +1112,88 @@ function closeContextPopover() {
   document.querySelectorAll(".context-popover").forEach((el) => el.remove());
 }
 
+// Pure quota display model (task 1975093d: "Token usage often shows 0% in the
+// quota tab"). Root cause: the code read `q.utilization`, but the real
+// rate_limit_info payload has NO utilization field - it carries { status,
+// resetsAt, rateLimitType, overage... }. So `q.utilization || 0` was always 0 ->
+// a fabricated "0% used". (Almost certainly an API schema change: utilization was
+// dropped in favour of status + resetsAt.) Fix: report the REAL signal we get -
+// the limit status + when the window resets - and only show a % when utilization
+// is genuinely a finite number (future-proof if it comes back). Pure + nowMs-
+// injected so it's unit-testable.
+function quotaReadout(q, nowMs) {
+  if (!q) {
+    return null;
+  }
+  const typeLabel =
+    q.rateLimitType === "five_hour"
+      ? "5h limit"
+      : q.rateLimitType === "seven_day"
+        ? "7d limit"
+        : q.rateLimitType
+          ? String(q.rateLimitType).replace(/_/g, " ")
+          : "usage limit";
+  const util = typeof q.utilization === "number" && isFinite(q.utilization) ? q.utilization : null;
+  // Reset countdown from resetsAt (unix SECONDS).
+  let resetText = null;
+  if (typeof q.resetsAt === "number" && q.resetsAt > 0) {
+    const secs = Math.round(q.resetsAt - nowMs / 1000);
+    if (secs > 0) {
+      const h = Math.floor(secs / 3600);
+      const m = Math.floor((secs % 3600) / 60);
+      resetText = h > 0 ? `${h}h ${m}m` : `${Math.max(1, m)}m`;
+    } else {
+      resetText = "now";
+    }
+  }
+  if (util !== null) {
+    const pct = Math.round(util * 100);
+    return {
+      hasPct: true,
+      pct,
+      level: pct >= 80 ? "hot" : pct >= 50 ? "warm" : "ok",
+      label: typeLabel,
+      chipText: `Quota ${pct}%`,
+      barValueText: `${pct}% used`,
+      title: `${pct}% of your ${typeLabel} used` + (resetText ? ` · resets in ${resetText}` : ""),
+    };
+  }
+  // No percentage available - report status + reset instead of a misleading 0%.
+  const status = q.status || "unknown";
+  const level = status === "rejected" ? "hot" : status === "allowed_warning" ? "warm" : "ok";
+  const statusWord =
+    status === "rejected" ? "limited" : status === "allowed_warning" ? "near limit" : status === "allowed" ? "OK" : "status unknown";
+  return {
+    hasPct: false,
+    pct: null,
+    level,
+    label: typeLabel,
+    chipText: `${typeLabel} · ${statusWord}`,
+    barValueText: resetText ? `${statusWord} · resets in ${resetText}` : statusWord,
+    title:
+      `Your ${typeLabel}: ${statusWord}` +
+      (resetText ? ` · resets in ${resetText}` : "") +
+      ". The API no longer reports a % used, so Helm shows the limit status + reset time instead of a misleading 0%.",
+  };
+}
+
+// A plain label/value row for the context popover (no bar) - used when there's a
+// value worth showing but no meaningful 0-100 fill (e.g. quota status without a %).
+function cpopTextRow(labelText, valueText) {
+  const row = document.createElement("div");
+  row.className = "cpop-row";
+  const top = document.createElement("div");
+  top.className = "cpop-row-top";
+  const l = document.createElement("span");
+  l.textContent = labelText;
+  const v = document.createElement("span");
+  v.className = "cpop-val";
+  v.textContent = valueText;
+  top.append(l, v);
+  row.append(top);
+  return row;
+}
+
 function cpopBarRow(labelText, valueText, pct, high) {
   const row = document.createElement("div");
   row.className = "cpop-row";
@@ -1154,8 +1236,13 @@ function toggleContextPopover(anchor, pane) {
 
   const q = state.quota;
   if (q) {
-    const qpct = Math.round((q.utilization || 0) * 100);
-    pop.append(cpopBarRow(`Quota · ${q.rateLimitType || "limit"}`, `${qpct}% used`, qpct, qpct >= 80));
+    const r = quotaReadout(q, Date.now());
+    if (r.hasPct) {
+      pop.append(cpopBarRow(`Quota · ${r.label}`, r.barValueText, r.pct, r.pct >= 80));
+    } else {
+      // No % from the API - show the real status + reset, not a misleading 0% bar.
+      pop.append(cpopTextRow(`Quota · ${r.label}`, r.barValueText));
+    }
   } else {
     const none = document.createElement("div");
     none.className = "cpop-empty";
@@ -4606,12 +4693,13 @@ async function renderDashQuota() {
   }
   const q = state.quota;
   if (q) {
-    // The real subscription quota %, when the API actually reported it (a
-    // rate_limit_event - only arrives intermittently, typically near a limit).
-    const pct = Math.round((q.utilization || 0) * 100);
-    chip.textContent = `Quota ${pct}%`;
-    chip.title = `${pct}% of your ${q.rateLimitType || "usage"} limit used`;
-    chip.className = "dash-quota-chip" + (pct >= 80 ? " hot" : pct >= 50 ? " warm" : "");
+    // Real quota signal: a % when the API reports utilization, otherwise the limit
+    // status + reset time (the API dropped the utilization field, so the old
+    // `q.utilization || 0` always read a fabricated 0% - bug 1975093d).
+    const r = quotaReadout(q, Date.now());
+    chip.textContent = r.chipText;
+    chip.title = r.title;
+    chip.className = "dash-quota-chip" + (r.level === "hot" ? " hot" : r.level === "warm" ? " warm" : "");
     return;
   }
   // Fallback so the chip is never blank (bug 6ed0b09e: "I still don't see it" -
