@@ -94,7 +94,14 @@ Jot is split into a **Jot-core** (data + logic + events) and a **Jot-UI componen
 There is only ONE implementation, so features can't drift between "the two Jots" - there aren't two, just two mounts of one.
 The user picks whichever is convenient (fast standalone, or from within Helm), and Helm can ship independently of the standalone app because it bundles its own core.
 Do NOT reimplement Jot's UI inside Helm - that fork is the exact trap this avoids.
-Mounting: Jot-UI as an importable package is cleanest; an embedded BrowserView of Jot's renderer is a pragmatic interim if the package extraction is too much up front.
+
+**Mount mechanism (decided 2026-07-18, after inspecting Helm):** Helm's renderer is plain vanilla JS - no React, no build step. So Jot-UI is NOT shipped as an importable React component (that would force React + a bundler into Helm). Instead:
+
+- `@jot/core` (the electron-free data+logic module) IS a real importable package - Helm's main imports it directly. Proven 2026-07-18: the compiled core is cleanly consumed by an external shell (reads data another shell wrote, mutates, fires change events, persists to the shared todos.json). This is the crux the whole architecture rests on, and it works.
+- Jot-UI is shared as Jot's BUILT RENDERER, which Helm embeds in a WebContentsView / `<webview>` (loading Jot's built index.html). The embed's preload wires its `window.jot` to a `@jot/core` instance (host in Helm, or client to a standalone host). So "one UI, two mounts" is: the same built renderer, loaded by the standalone BrowserWindow and by Helm's embedded view.
+
+This eliminates the fiddliest part originally feared (a buildable React-component UI package) - it isn't needed. Only `@jot/core` needs packaging.
+Open packaging detail: module format. Jot is `type: module` (ESM); `@jot/core` should match (ESM), which needs a bundled/extension-correct build (extensionless TS imports don't resolve as raw Node ESM) - decided at the packaging step.
 
 ### Data sync: one runtime writer (host/client)
 
