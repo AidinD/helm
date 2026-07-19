@@ -1,8 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-
-const DEFAULT_JOT_PATH = "D:\\Dropbox\\jot\\todos.json";
+import { resolveJotTodosPath } from "./jotDataDir.js";
 
 /**
  * Reads and parses Jot's todos.json, tolerating a leading UTF-8 BOM.
@@ -38,7 +37,7 @@ export function loadJot(jotConfig = {}) {
   if (jotConfig.enabled === false) {
     return emptyIndex(null);
   }
-  const jotPath = jotConfig.path || DEFAULT_JOT_PATH;
+  const jotPath = jotConfig.path || resolveJotTodosPath();
   const data = readJotFile(jotPath);
   if (!data) {
     return emptyIndex(jotPath);
@@ -366,7 +365,7 @@ export function loadGoals(jotConfig = {}) {
   if (jotConfig.enabled === false) {
     return { ok: false, path: null, goals: [] };
   }
-  const jotPath = jotConfig.path || DEFAULT_JOT_PATH;
+  const jotPath = jotConfig.path || resolveJotTodosPath();
   const data = readJotFile(jotPath);
   if (!data) {
     return { ok: false, path: jotPath, goals: [] };
@@ -496,7 +495,7 @@ export function addSubtask(jotConfig, parentId, text) {
   if (!parentId) {
     return { ok: false, error: "Missing parent goal id." };
   }
-  const jotPath = jotConfig.path || DEFAULT_JOT_PATH;
+  const jotPath = jotConfig.path || resolveJotTodosPath();
   const dir = path.dirname(jotPath);
   const base = path.basename(jotPath);
 
