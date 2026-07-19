@@ -105,8 +105,12 @@ try {
   const tx = smId ? findTranscript(smId) : null;
   const hasDispatch = tx ? fs.readFileSync(tx, "utf8").includes(DISPATCH_MARKER) : false;
   assert(hasDispatch === true, "a second-mate session gets the helm-dispatch MCP (helm_dispatch etc.) - it CAN spin up crew");
+  // NOTE: we deliberately do NOT assert the manual/reminder text appears in the
+  // transcript - the CLI never writes --append-system-prompt into it (confirmed).
+  // The delegation-directive DECISION is covered deterministically by the unit
+  // test test-second-mate-append-prompt.mjs; this E2E only proves the capability.
 
-  log(exitCode === 0 ? "VERIFY OK: the second mate has the crew-dispatch tools; if it works inline it's a behaviour/calibration issue, not a missing capability." : "VERIFY FAILED: the second mate is missing helm_dispatch - a capability regression, root-cause the launch config.");
+  log(exitCode === 0 ? "VERIFY OK: the second mate has the crew-dispatch tools; the delegation directive itself is unit-tested (append-prompt is not transcript-logged)." : "VERIFY FAILED: the second mate is missing helm_dispatch - a capability regression, root-cause the launch config.");
 } catch (err) {
   exitCode = 1;
   log("ERROR:", err.stack || err.message);
