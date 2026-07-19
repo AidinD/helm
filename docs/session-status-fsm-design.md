@@ -52,6 +52,13 @@ A session with no Helm launch record maps to a state via `deriveStatus` as today
 4. The renderer stops reading `status` + `orchestratorTag` as separate signals and reads the single state (needs-you = `waiting`; archive-suggestion = `wrapped`/`idle`; working badge = `working`). This is where the "four things touching one field" collapses to one.
 5. Delete the now-redundant ad-hoc predicates once every surface reads the state.
 
+## Progress
+
+- Increment 1 (done, commit 13c3baf): `sessionLifecycleState()` + `session.lifecycleState`, additive, unit-tested. Zero behaviour change.
+- Increment 2 (done): the needs-you QUEUE (`dashboardInMotionRows`) reads `lifecycleState === "waiting"` instead of combining `status` + `classifierSaysSessionDone`. Behaviour-preserving (E2E green).
+- Remaining reader migration: the fleet-card badge + accent (`fleetMateCardEl`), the OS attention toast (transition-based, also uses `previouslyWaiting` on `status`), and the archive-suggestion pill - move each onto `lifecycleState` / the `isX` helpers, then remove `classifierSaysSessionDone` once unused.
+- Then the override consolidation: move the acked-downgrade + live-turn override OUT of sessions:get INTO the resolver (so it computes from raw inputs), and add `launching`.
+
 ## What this buys
 
 - One place decides status; a new nuance is a transition, not another mutation of a shared field.

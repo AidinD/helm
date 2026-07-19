@@ -206,7 +206,10 @@ try {
       ["cDone", { mateId: "mDone", name: "Done Tag", sessionId: "cDone" }],
       ["cAsk",  { mateId: "mAsk",  name: "Ask Tag",  sessionId: "cAsk"  }],
     ]);
-    const mk = (cid, tag) => ({ sessionId: "s_" + cid, cliSessionId: cid, cwd: "D:/fm", title: "t", status: "waiting", isArchived: false, orchestratorTag: tag });
+    // status + orchestratorTag as before, PLUS lifecycleState (what main.js now
+    // computes and the needs-you queue reads after the FSM reader migration):
+    // a done-tagged waiting session is 'wrapped', otherwise 'waiting'.
+    const mk = (cid, tag) => ({ sessionId: "s_" + cid, cliSessionId: cid, cwd: "D:/fm", title: "t", status: "waiting", isArchived: false, orchestratorTag: tag, lifecycleState: tag && tag.statusTag === "done_not_archived" ? "wrapped" : "waiting" });
     state.sessions.push(mk("cNone", null));
     state.sessions.push(mk("cDone", { statusTag: "done_not_archived", reason: "heuristic: last message" }));
     state.sessions.push(mk("cAsk", { statusTag: "waiting_for_input", reason: "heuristic: last message" }));
