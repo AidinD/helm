@@ -26,6 +26,8 @@
 //   await app.close();
 
 import { spawn } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
@@ -64,10 +66,25 @@ export async function launch(opts = {}) {
   const args =
     command === "npm" ? [...baseArgs, "--", debugFlag] : [...baseArgs, debugFlag];
 
+  // Isolate config.json so E2E runs never write their throwaway test sessions
+  // into the real dev-repo config.json. config.js already honors HELM_CONFIG_PATH
+  // (a packaged-app/test seam), but tests only ever set the meta-home/mates/
+  // second-mates seams - so config.json defaulted to the repo root and every run
+  // that started a session appended a junk helmSessions entry (~36 accumulated,
+  // all temp-dir cwds). Default it to a throwaway file here (honoring a test's own
+  // override if it set one), and clean it up in close(). Belongs in the harness,
+  // not each test, so ALL current and future E2Es are isolated automatically.
+  const env = { ...process.env };
+  let configTmpDir = null;
+  if (!env.HELM_CONFIG_PATH) {
+    configTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "helm-e2e-config-"));
+    env.HELM_CONFIG_PATH = path.join(configTmpDir, "config.json");
+  }
+
   const child = spawn(command, args, {
     cwd: appDir,
     shell: true, // resolve npm.cmd / electron.cmd shims on Windows
-    env: process.env,
+    env,
     stdio: ["ignore", "pipe", "pipe"],
   });
 
@@ -79,7 +96,7 @@ export async function launch(opts = {}) {
   const target = await waitForRendererTarget(port, readyTimeoutMs, child);
   const cdp = await connectCdp(target.webSocketDebuggerUrl);
 
-  const harness = new Harness({ child, cdp, port, appDir, stdout, stderr });
+  const harness = new Harness({ child, cdp, port, appDir, stdout, stderr, configTmpDir });
   await harness._init();
   return harness;
 }
@@ -186,13 +203,14 @@ function connectCdp(wsUrl) {
 }
 
 class Harness {
-  constructor({ child, cdp, port, appDir, stdout, stderr }) {
+  constructor({ child, cdp, port, appDir, stdout, stderr, configTmpDir }) {
     this.child = child;
     this.cdp = cdp;
     this.port = port;
     this.appDir = appDir;
     this.stdout = stdout;
     this.stderr = stderr;
+    this.configTmpDir = configTmpDir || null;
     /** @type {Array<{type: string, text: string}>} */
     this.console = [];
   }
@@ -386,7 +404,17 @@ class Harness {
     } catch {
       /* ignore */
     }
-    return killByDebugPort(this.port);
+    const result = await killByDebugPort(this.port);
+    // Remove the throwaway config.json dir this launch created (if any). After the
+    // process is gone so nothing is mid-write to it.
+    if (this.configTmpDir) {
+      try {
+        fs.rmSync(this.configTmpDir, { recursive: true, force: true });
+      } catch {
+        /* best effort */
+      }
+    }
+    return result;
   }
 }
 
