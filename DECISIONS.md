@@ -1,5 +1,14 @@
 # Decisions
 
+## 2026-07-18 - Coalesce per-pane renders so streaming doesn't starve typing
+
+The captain (task f41a7f4e): "input lags when Helm is working on something else."
+Root (found, not guessed): renderPane does a FULL transcript rebuild - `scroll.innerHTML=""` + re-append every turn + re-wire every button + a `scrollTop` reflow - and it fired SYNCHRONOUSLY on every streaming "assistant" event (one per content block). A busy turn drove several full O(turns) rebuilds back-to-back on the main thread, starving the textarea the user types in.
+Fix (the safe, mechanism-verifiable part): `scheduleRenderPane` coalesces a synchronous burst to ONE rebuild and defers it, so queued keystrokes are dispatched before the rebuild. Terminal/user-initiated renders still call renderPane directly; renderPane cancels any pending scheduled render so the two never double-run.
+Chose setTimeout(0) over requestAnimationFrame deliberately: rAF is throttled/paused when the window is hidden or unfocused, which would stall live streaming updates for a background session until the window regains focus - a worse regression for a live-monitoring app. (Caught this while testing: the rAF version hung the E2E in an occluded window.) setTimeout fires regardless of visibility and still yields to input.
+HONEST SCOPE: this reduces render contention (coalesce + defer) but the per-event rebuild is still O(turns) - the deeper proper fix is incremental rendering (append only the new turn instead of rebuilding all), flagged as a separate task for when the captain can verify the felt latency. Felt-latency can't be measured headlessly, so this ships the verifiable mechanism, not a claim that the lag is fully gone.
+Verified: test-render-coalesce.mjs (burst -> 1 rebuild, deferred not synchronous, later burst still renders, direct-cancels-pending, per-pane isolation).
+
 ## 2026-07-18 - Quota readout shows the real limit status, not a fabricated 0%
 
 The captain (task 1975093d): "Token usage often shows 0% in the quota tab."
