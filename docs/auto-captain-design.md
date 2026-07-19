@@ -78,17 +78,44 @@ This answers "who runs it if no second mate is up?": the auto-captain ensures on
 3. Work completes -> card -> Review. User verifies -> Done.
 4. Any time: global toggle off, or the fleet kill-switch, stops it.
 
-## Prerequisite decision (blocks build)
+## Prerequisite decision (DECIDED 2026-07-18)
 
-This feature needs Helm to WRITE to the board (tags, lane moves) and REACT to board changes live.
-A shared todos.json with two writers is racy, especially on the Dropbox-synced data dir.
-So before building we must decide the Helm <-> Jot relationship:
+The feature needs Helm to write to the board and react to board changes live, and a shared todos.json with two writers races on the Dropbox-synced data dir.
+Decision: keep Jot and Helm as SEPARATE products, but with a stronger seam AND an embedded Jot tab in Helm - framed as "one Jot, two mounts", NOT two Jots.
+See DECISIONS.md "Jot and Helm: one Jot, two mounts".
 
-- Keep separate + upgrade the seam (Jot stays the standalone source of truth and sole writer, exposing a small local API/events; Helm is a client that sends intents and subscribes). Preserves Jot's public/standalone identity; no write-race; more upfront plumbing.
-- Build Jot into Helm (Helm owns the board data + UI; standalone Jot becomes a thin view or is retired). Simplest for this feature and the tightest loop; absorbs a public standalone product.
-- Keep separate + shared file (both read/write todos.json, Helm file-watches). Least upfront work; two writers race on a Dropbox-synced file - a real risk.
+### One Jot, two mounts
 
-See DECISIONS.md once this is decided.
+Jot is split into a **Jot-core** (data + logic + events) and a **Jot-UI component**, and both shells mount the same two:
+
+- Standalone Jot = Jot-core + Jot-UI in its own Electron shell (stays lightweight; fast capture never needs Helm running).
+- Helm's Jot tab = the SAME Jot-core + the SAME Jot-UI, mounted inside Helm.
+
+There is only ONE implementation, so features can't drift between "the two Jots" - there aren't two, just two mounts of one.
+The user picks whichever is convenient (fast standalone, or from within Helm), and Helm can ship independently of the standalone app because it bundles its own core.
+Do NOT reimplement Jot's UI inside Helm - that fork is the exact trap this avoids.
+Mounting: Jot-UI as an importable package is cleanest; an embedded BrowserView of Jot's renderer is a pragmatic interim if the package extraction is too much up front.
+
+### Data sync: one runtime writer (host/client)
+
+To kill the two-writer race, Jot-core runs in one of two modes:
+
+- host: owns todos.json, writes it, emits change events.
+- client: discovers a running host and connects to it (local socket) instead of writing the file itself.
+
+At runtime there is always exactly one writer: only-Helm -> Helm's core is host; only-standalone -> it's host; both running -> one host, the other client.
+This also gives "ship Helm independently" for free (Helm's bundled core runs host when the standalone app isn't present).
+Bonus: it makes auto-start cleaner - when Helm hosts, the auto-captain talks to the same in-process core, so setting `needs-clarification` / moving a lane is a direct core call, not a file write.
+
+### Real costs (accepted)
+
+1. Refactor Jot into core + UI component (Jot-side work; the real job, worth it - one implementation, no diverging clones).
+2. Host/client coordination plumbing (host discovery, local socket, event bus) - the proper fix for the Dropbox multi-writer problem, not a patch.
+
+### Where to start
+
+The Jot core/UI split is the foundation everything else sits on, so it goes first.
+Tracked as a task in the Jot category.
 
 ## Cross-cutting notes
 
