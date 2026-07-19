@@ -6914,9 +6914,11 @@ function dashboardInMotionRows() {
     // a click waiting on YOU: any action lives on the crew itself (errored crew
     // get their own needs-you rows below). Keep it out of the "N need a click"
     // count so it doesn't double-flag as "first mate needs input" (bug 9c0c7209).
-    // Only a waiting mate with NO crew is a genuine needs-you click - unless the
-    // classifier/heuristic is confident it actually finished (done, not asking).
-    needsAction: s.status === "waiting" && !mateCrewWait(firstMateForSession(s)).has && !classifierSaysSessionDone(s),
+    // Only a waiting mate with NO crew is a genuine needs-you click. The FSM's
+    // `waiting` state already means "turn ended, awaiting input, NOT done" - i.e.
+    // status waiting minus the classifier's done verdict - so it replaces the two
+    // predicates this used to combine (Epic f3d096fa, reader migration).
+    needsAction: s.lifecycleState === "waiting" && !mateCrewWait(firstMateForSession(s)).has,
   }));
   // Attention goal runs (errored/escalated) need a click; running ones are
   // just visibility ("it's working").
