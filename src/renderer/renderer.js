@@ -4913,7 +4913,7 @@ async function refresh() {
   // Detect sessions newly transitioning INTO "waiting" (not already waiting
   // before this poll) for away-from-desk attention delivery - fire once per
   // transition, not on every poll tick a session happens to still be waiting.
-  const previouslyWaiting = new Set(state.sessions.filter((s) => s.status === "waiting").map((s) => s.sessionId));
+  const previouslyWaiting = new Set(state.sessions.filter((s) => s.lifecycleState === "waiting").map((s) => s.sessionId));
   // A session "removed from Helm" must not fire an OS attention toast - that's
   // the most intrusive way a hidden session could leak back. Read the freshly
   // fetched config (data.config), not state.config, so a hide applied this very
@@ -4921,16 +4921,15 @@ async function refresh() {
   const hiddenNow = new Set(data.config?.hiddenSessions || []);
   for (const session of data.sessions) {
     if (
-      session.status === "waiting" &&
+      // FSM 'waiting' = turn ended, awaiting input, NOT done - so it replaces the
+      // status==="waiting" && !classifierSaysSessionDone pair (Epic f3d096fa).
+      session.lifecycleState === "waiting" &&
       !previouslyWaiting.has(session.sessionId) &&
       !hiddenNow.has(session.sessionId) &&
       // A first mate that ends its turn only to await its dispatched crew (live,
       // reported, or errored) isn't waiting on you - don't fire the intrusive
       // "needs input" OS toast for it (bug 9c0c7209).
-      !mateCrewWait(firstMateForSession(session)).has &&
-      // ...nor when the classifier/heuristic is confident the turn actually
-      // finished (done, not awaiting input) - task 4d82208a follow-up.
-      !classifierSaysSessionDone(session)
+      !mateCrewWait(firstMateForSession(session)).has
     ) {
       window.helm.notifyAttention({ title: "Helm - session needs input", body: sessionDisplayName(session) });
     }
@@ -5842,9 +5841,9 @@ function fleetMateCardEl(mate, sms, boardSummary = {}) {
     } else if (mateStatus === "active") {
       bkind = "run";
       btext = "working";
-    } else if (classifierSaysSessionDone(boundSession)) {
-      // Turn ended and the classifier/heuristic is confident it finished (not
-      // awaiting input) - show a calm "done" chip, not the "needs you" alarm.
+    } else if (boundSession?.lifecycleState === "wrapped") {
+      // FSM 'wrapped' = the turn ended and finished (not awaiting input) - a calm
+      // "done" chip, not the "needs you" alarm (Epic f3d096fa reader migration).
       bkind = "ok";
       btext = "done";
     } else {
@@ -5860,7 +5859,7 @@ function fleetMateCardEl(mate, sms, boardSummary = {}) {
   // Amber "needs you" accent ONLY for a genuine needs-input mate (waiting, no
   // crew). A crew-waiting mate (incl. errored crew) stays calm - the crew rows
   // carry the alarm.
-  if (mateStatus === "waiting" && !cw.has && !classifierSaysSessionDone(boundSession)) {
+  if (boundSession?.lifecycleState === "waiting" && !cw.has) {
     card.classList.add("fleet-mate-needs");
   }
   const actions = document.createElement("div");
@@ -6890,18 +6889,11 @@ function dashboardRunningRuns() {
   return [...goalRuns.values()].filter((r) => r.status === "running" && !r.escalation && !r.dispatchedBy);
 }
 
-// Smart needs-you gate (task 4d82208a follow-up). A first mate whose turn ended
-// while "waiting" flags "needs you" by DEFAULT - the false-positive bias the captain
-// asked for: better to nudge when it didn't need him than miss one that did. We
-// only STOP flagging when the classification says it's genuinely done, not
-// awaiting input. That signal comes from two places, both keyed on the session:
-//   - the heuristic seed (main.js, at turn end, from the last message - SV/EN), and
-//   - the Fas-3 Haiku sweep (classifySessionStatus).
-// Both land in session.orchestratorTag. A "waiting_for_input"/"stuck"/null tag
-// (or no tag yet) keeps flagging; only "done_not_archived" suppresses.
-function classifierSaysSessionDone(s) {
-  return s?.orchestratorTag?.statusTag === "done_not_archived";
-}
+// (The former classifierSaysSessionDone gate is gone - every needs-you surface
+// now reads session.lifecycleState === "waiting" instead of combining status +
+// the done-tag itself. The false-positive-bias logic it encoded lives in the FSM
+// projection: a waiting turn stays "waiting" until the classifier is confident
+// it's done, at which point it becomes "wrapped". See sessionState.js. Epic f3d096fa.)
 
 function dashboardInMotionRows() {
   const inMotionSessions = state.sessions.filter(
