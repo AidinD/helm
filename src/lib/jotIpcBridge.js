@@ -111,16 +111,30 @@ export const JOT_STORE_CHANNELS = [
 // opts: { ipcMain, store, dataDir, getTargets, dialog }
 //   getTargets(): WebContents[]  - the frames to push 'state:changed' to (the Jot webview)
 //   dialog: electron.dialog       - optional; enables dialog:pickFolder
-export function registerJotIpc({ ipcMain, store, dataDir, getTargets, dialog }) {
+// opts.skipChannels: channels the HOST already answers (e.g. Helm has its own
+// dialog:pickFolder) - don't re-register those (ipcMain.handle throws on a double
+// registration); the webview's invoke falls through to the host's handler.
+export function registerJotIpc({ ipcMain, store, dataDir, getTargets, dialog, skipChannels = [] }) {
+  const skip = new Set(skipChannels);
+  const registered = [];
+  const handle = (channel, fn) => {
+    if (skip.has(channel)) {
+      return;
+    }
+    ipcMain.handle(channel, fn);
+    registered.push(channel);
+  };
+
   for (const channel of JOT_STORE_CHANNELS) {
-    ipcMain.handle(channel, (_event, ...args) => applyJotOp(store, channel, args));
+    handle(channel, (_event, ...args) => applyJotOp(store, channel, args));
   }
 
   // images:resolve - the renderer asks for the absolute path of a stored image.
-  ipcMain.handle("images:resolve", (_event, relativePath) => path.join(dataDir, relativePath));
+  handle("images:resolve", (_event, relativePath) => path.join(dataDir, relativePath));
 
-  // dialog:pickFolder - only if a dialog was provided (category repo-path picker).
-  ipcMain.handle("dialog:pickFolder", async (_event, defaultPath) => {
+  // dialog:pickFolder - the category repo-path picker. Skipped when the host owns
+  // it (Helm does); otherwise provided here if a dialog was passed.
+  handle("dialog:pickFolder", async (_event, defaultPath) => {
     if (!dialog) {
       return null;
     }
@@ -140,7 +154,7 @@ export function registerJotIpc({ ipcMain, store, dataDir, getTargets, dialog }) 
 
   return () => {
     unsubscribe();
-    for (const channel of [...JOT_STORE_CHANNELS, "images:resolve", "dialog:pickFolder"]) {
+    for (const channel of registered) {
       ipcMain.removeHandler(channel);
     }
   };

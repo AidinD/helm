@@ -139,7 +139,10 @@ const DEFAULT_CONFIG = {
   modelContextWindows: {},
   jot: {
     enabled: true,
-    path: "D:\\Dropbox\\jot\\todos.json",
+    // null = resolve portably (JOT_DATA_DIR, else the OS Jot data dir) via
+    // jotDataDir.js - no hardcoded machine path (task b89aa99b). A user who sets
+    // an explicit path in their config still overrides this.
+    path: null,
     overrides: {}, // { "local_<sessionId>": "CategoryName" } for matches the name heuristic misses
     weights: {}, // override DEFAULT_WEIGHTS from sessions.js (waiting/active/review/inProgress/open)
   },
