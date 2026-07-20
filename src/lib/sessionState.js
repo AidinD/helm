@@ -48,3 +48,29 @@ export function sessionLifecycleState(session) {
 export const isNeedsYouState = (s) => s === "waiting";
 export const isWorkingState = (s) => s === "working";
 export const isArchiveSuggestState = (s) => s === "wrapped" || s === "idle";
+
+// FSM increment 4 (Epic f3d096fa): the ONE place that applies the status
+// OVERRIDES - the manual-ack downgrade and the live-turn override - that
+// sessions:get used to do as two separate inline operations. (These must run
+// BEFORE Jot scoring, which reads status; lifecycleState is projected separately,
+// AFTER orchestratorTag is set - an ordering constraint that keeps these two apart.)
+// Recompute (stateless, drift-free) by deliberate choice: a persisted transition
+// machine would need a reconcile-from-truth step that re-derives this anyway,
+// making the transition layer vestigial for Helm's poll-per-read model.
+// Behaviour-preserving: same status output as the previous inline logic.
+//
+// inputs: { isLive, isAcked } - supplied by the caller from the live-turn registry
+// and the acknowledged-sessions config (main-process state this pure module
+// shouldn't reach into).
+export function applyStatusOverrides(session, { isLive = false, isAcked = false } = {}) {
+  // Manual "I'm done" ack downgrades a still-waiting session to idle.
+  if (session.status === "waiting" && isAcked) {
+    session.status = "idle";
+  }
+  // A live turn is authoritatively "working", over whatever the file heuristic
+  // decayed to (the "idle while working" fix - task 5939df).
+  if (isLive) {
+    session.status = "active";
+  }
+  return session;
+}

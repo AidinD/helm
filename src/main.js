@@ -16,7 +16,7 @@ import { loadJot, loadGoals, addSubtask, formatJotSummaryForClassifier, projectB
 import { loadConfig, writeConfig } from "./lib/config.js";
 import { startSession } from "./lib/launcher.js";
 import { createLiveSessionRegistry } from "./lib/liveSessions.js";
-import { sessionLifecycleState } from "./lib/sessionState.js";
+import { sessionLifecycleState, applyStatusOverrides } from "./lib/sessionState.js";
 import { createJotHostStore } from "./lib/jotHostStore.js";
 import { registerJotIpc } from "./lib/jotIpcBridge.js";
 import { continueOnMobile } from "./lib/remoteControl.js";
@@ -248,19 +248,17 @@ ipcMain.handle("sessions:get", () => {
   // in review — scoring silently used the pre-downgrade status).
   const acknowledged = config.acknowledgedSessions || {};
   for (const session of sessions) {
-    // A "waiting" session the user manually marked done stays downgraded to
-    // "idle" ONLY while the ack is still current — if lastActivityAt has
-    // moved past the timestamp it was acknowledged at, new activity arrived
-    // since, so the ack is stale and the session goes back to needing
-    // attention on its own, with no extra bookkeeping required here.
-    if (session.status === "waiting" && acknowledged[session.sessionId] >= session.lastActivityAt) {
-      session.status = "idle";
-    }
-    // Authoritative live-turn override (task 5939df): if Helm is running a turn
-    // for this session RIGHT NOW, it's working - regardless of what the transcript
-    // heuristic decayed to. This is the fix for "idle while it's actually working"
-    // (a long turn outruns ACTIVE_WINDOW; a mid-turn line reads as "waiting").
-    liveSessions.applyStatus(session);
+    // One place applies the two status overrides (Epic f3d096fa): the manual-ack
+    // downgrade (a "waiting" session the user marked done stays idle ONLY while
+    // the ack is still current - newer lastActivityAt means new activity, so the
+    // ack is stale and it needs attention again) and the authoritative live-turn
+    // override (a session Helm is running a turn for RIGHT NOW is working, over a
+    // decayed transcript heuristic - the "idle while working" fix, task 5939df).
+    // Runs BEFORE enrichWithJot because its scoring reads session.status.
+    applyStatusOverrides(session, {
+      isLive: liveSessions.isLive(session.cliSessionId) || liveSessions.isLive(session.sessionId),
+      isAcked: acknowledged[session.sessionId] >= session.lastActivityAt,
+    });
   }
   const jotIndex = loadJot(config.jot || {});
   enrichWithJot(sessions, jotIndex, config.jot?.weights || {});
