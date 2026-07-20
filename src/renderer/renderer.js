@@ -10038,6 +10038,46 @@ function appNavigateView(dir) {
   navigateToPage(viewNavStack[next], { fromHistory: true });
 }
 
+// Embedded Jot tab (one Jot, two mounts): mount Jot's BUILT renderer in a webview
+// backed by @jot/core in Helm's main. Created once and kept alive across tab
+// switches (so its scroll/state persist); main-side host store + IPC bridge are
+// wired before the webview loads, so window.jot resolves immediately.
+let jotWebviewCreated = false;
+async function renderJotPage() {
+  const container = document.getElementById("jotPage");
+  if (jotWebviewCreated) {
+    return;
+  }
+  container.innerHTML = "";
+  let mount;
+  let paths;
+  try {
+    mount = await window.helm.jotMount();
+    paths = await window.helm.jotPaths();
+  } catch (err) {
+    mount = { ok: false, error: err.message };
+    paths = { ok: false };
+  }
+  if (!mount?.ok || !paths?.ok) {
+    const msg = document.createElement("div");
+    msg.className = "pane-empty";
+    msg.style.padding = "28px";
+    msg.textContent = paths?.error || mount?.error || "Couldn't load Jot.";
+    container.append(msg);
+    return;
+  }
+  const wv = document.createElement("webview");
+  wv.setAttribute("src", paths.src);
+  wv.setAttribute("preload", paths.preload);
+  wv.setAttribute("partition", "persist:jot");
+  wv.style.width = "100%";
+  wv.style.height = "100%";
+  wv.style.border = "0";
+  container.style.height = "calc(100vh - 60px)";
+  container.append(wv);
+  jotWebviewCreated = true;
+}
+
 function navigateToPage(page, opts = {}) {
   // Local, content-free usage analytics: record the view visit so the Analysis
   // page can show which views + navigation paths you actually use. Fire-and-
@@ -10056,6 +10096,7 @@ function navigateToPage(page, opts = {}) {
   }
   document.getElementById("chatPage").classList.toggle("hidden", page !== "chat");
   document.getElementById("dashboardPage").classList.toggle("hidden", page !== "dashboard");
+  document.getElementById("jotPage").classList.toggle("hidden", page !== "jot");
   document.getElementById("focusPage").classList.toggle("hidden", page !== "focus");
   document.getElementById("goalPage").classList.toggle("hidden", page !== "goal");
   document.getElementById("lavishPage").classList.toggle("hidden", page !== "lavish");
@@ -10102,6 +10143,8 @@ function navigateToPage(page, opts = {}) {
 
   if (page === "dashboard") {
     renderDashboardPage();
+  } else if (page === "jot") {
+    renderJotPage();
   } else if (page === "focus") {
     renderFocusPage();
   } else if (page === "goal") {

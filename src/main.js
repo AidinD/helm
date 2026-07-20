@@ -10,13 +10,15 @@ import os from "node:os";
 import fs from "node:fs";
 import crypto from "node:crypto";
 import { execFile, execFileSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { readAllSessions, enrichWithJot, setSessionArchived, forkTranscriptAtUserMessage, switchSessionRootFolder } from "./lib/sessions.js";
 import { loadJot, loadGoals, addSubtask, formatJotSummaryForClassifier, projectBoardSummary } from "./lib/jot.js";
 import { loadConfig, writeConfig } from "./lib/config.js";
 import { startSession } from "./lib/launcher.js";
 import { createLiveSessionRegistry } from "./lib/liveSessions.js";
 import { sessionLifecycleState } from "./lib/sessionState.js";
+import { createJotHostStore } from "./lib/jotHostStore.js";
+import { registerJotIpc } from "./lib/jotIpcBridge.js";
 import { continueOnMobile } from "./lib/remoteControl.js";
 import { suggestModelEffort } from "./lib/suggest.js";
 import { readTranscript } from "./lib/transcript.js";
@@ -124,6 +126,13 @@ const sessionTurnLocks = new Set();
 const liveSessions = createLiveSessionRegistry();
 const markSessionLive = (id) => liveSessions.markLive(id);
 const markSessionDone = (id) => liveSessions.markDone(id);
+
+// Embedded Jot tab (one Jot, two mounts): the @jot/core host store + the
+// webview's webContents (set on did-attach-webview). Created lazily the first
+// time the Jot tab mounts, then kept alive for the app's lifetime.
+let jotHost = null;
+let jotHostUnregister = null;
+let jotWebviewWebContents = null;
 // First-mate tier caps (docs/first-mate-tier-design.md sections 3 + 5),
 // enforced at the app - the single dispatch authority - never trusting the
 // caller. WIDTH: at most this many CONCURRENT dispatched runs per mate (design
@@ -201,7 +210,14 @@ function createWindow() {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
+      // Enables the embedded Jot tab's <webview> (loads Jot's built renderer).
+      webviewTag: true,
     },
+  });
+  // Track the embedded Jot webview's webContents so the Jot IPC bridge can push
+  // state:changed to it (one Jot, two mounts - Epic f3d096fa / auto-captain design).
+  mainWindow.webContents.on("did-attach-webview", (_e, wc) => {
+    jotWebviewWebContents = wc;
   });
   mainWindow.loadFile(path.join(__dirname, "renderer", "index.html"));
   // Electron denies media (mic/camera) permission requests by default unless
@@ -2041,6 +2057,58 @@ ipcMain.handle("session:stop", (_event, { launchId }) => {
   killChildTree(child);
   liveChildren.delete(launchId);
   return { ok: true };
+});
+
+// --- Embedded Jot tab (one Jot, two mounts) ---
+// Resolve the file:// URLs the Jot <webview> needs: Jot's BUILT renderer and the
+// window.jot preload. Jot is a sibling repo (D:\Repo\Tools\jot) whose renderer is
+// built to out/renderer (dev). Returns ok:false with a clear reason if the build
+// isn't present, so the renderer can show a helpful message instead of a blank view.
+function jotRendererIndexPath() {
+  return path.join(__dirname, "..", "..", "jot", "out", "renderer", "index.html");
+}
+ipcMain.handle("jot:paths", () => {
+  const indexPath = jotRendererIndexPath();
+  if (!fs.existsSync(indexPath)) {
+    return { ok: false, error: `Jot's built renderer isn't at ${indexPath}. Run \`npm run build\` in the jot repo.` };
+  }
+  return {
+    ok: true,
+    src: pathToFileURL(indexPath).href,
+    preload: pathToFileURL(path.join(__dirname, "jot-webview-preload.cjs")).href,
+  };
+});
+
+// Create the @jot/core host store (once) and wire the IPC bridge so the Jot
+// webview's window.jot is answered by the shared board. Idempotent - safe to call
+// each time the tab opens.
+ipcMain.handle("jot:mount", async () => {
+  if (jotHost) {
+    return { ok: true, dataDir: jotHost.dataDir };
+  }
+  try {
+    // Point the embedded Jot at the SAME board the user's standalone Jot uses.
+    // Helm knows that authoritatively via config.jot.path (e.g. <your-jot-data-dir>\
+    // todos.json); use its dir. Falls back to the portable resolver otherwise.
+    const jotPathCfg = loadConfig().jot?.path;
+    const dataDir = jotPathCfg && jotPathCfg.trim() ? path.dirname(jotPathCfg) : undefined;
+    const host = createJotHostStore(dataDir);
+    await host.store.init();
+    jotHostUnregister = registerJotIpc({
+      ipcMain,
+      store: host.store,
+      dataDir: host.dataDir,
+      getTargets: () => (jotWebviewWebContents ? [jotWebviewWebContents] : []),
+      // Helm already owns dialog:pickFolder (returns path|null, what Jot's UI
+      // expects) - let the webview fall through to it instead of double-registering.
+      skipChannels: ["dialog:pickFolder"],
+    });
+    jotHost = host;
+    return { ok: true, dataDir: host.dataDir };
+  } catch (err) {
+    console.error("[helm] jot:mount failed:", err);
+    return { ok: false, error: err?.message || String(err) };
+  }
 });
 
 // --- Goal page: suggest a default verify command for a project folder, so

@@ -11,6 +11,9 @@ contextBridge.exposeInMainWorld("helm", {
   setAttentionCount: (n) => ipcRenderer.invoke("attention:setCount", n),
   suggestModelEffort: (prompt) => ipcRenderer.invoke("suggest:modelEffort", prompt),
   getJotGoals: () => ipcRenderer.invoke("jot:goals"),
+  // Embedded Jot tab (one Jot, two mounts).
+  jotPaths: () => ipcRenderer.invoke("jot:paths"),
+  jotMount: () => ipcRenderer.invoke("jot:mount"),
   getJotBoardSummary: (projectPaths) => ipcRenderer.invoke("jot:boardSummary", { projectPaths }),
   // A session's in-flight sub-agents (Task tool), for showing them as crew.
   getLiveSubAgents: (sessions) => ipcRenderer.invoke("session:liveSubAgents", { sessions }),

@@ -1,5 +1,18 @@
 # Decisions
 
+## 2026-07-18 - Embedded Jot tab: Jot's renderer in a webview, backed by @jot/core
+
+The visible half of "one Jot, two mounts" (docs/auto-captain-design.md). A "Jot" tab in Helm's nav mounts Jot's BUILT renderer in a `<webview>` (webviewTag enabled), with a preload (src/jot-webview-preload.cjs) that exposes the exact `window.jot` Jot's renderer expects - backed by the @jot/core host store via the IPC bridge (jotIpcBridge). So the identical Jot UI runs in Helm and standalone, over the same board, with no fork.
+Flow: navigateToPage("jot") -> jot:mount (create the host store once + registerJotIpc, targeting the webview's webContents for state:changed) -> jot:paths (file:// URLs for Jot's out/renderer + the preload) -> create the webview. The host store points at the SAME board the user's standalone Jot uses (config.jot.path's dir, else the portable resolver).
+Bridge collision handled: Helm already owns `dialog:pickFolder` (returns path|null, what Jot expects), so registerJotIpc skips it (skipChannels) - the webview's invoke falls through to Helm's handler.
+Verified LIVE end-to-end: test-jot-tab.mjs seeds a temp board, opens the tab, and confirms the webview renders Jot's board AND shows the seeded todo via the @jot/core bridge.
+Dev note: the webview loads jot's out/renderer via a sibling-repo file:// path; production packaging (bundle jot's renderer + publish @jot/core) is deferred. Remaining: iterate on placement/sizing per the captain's review of the tab.
+
+## 2026-07-18 - Jot data path is portable everywhere (removed the last hardcoded default)
+
+config.js DEFAULT_CONFIG.jot.path was hardcoded to "D:\\Dropbox\\jot\\todos.json" - a machine-specific default that anyone else downloading Helm would inherit (wrongly), and which made the embedded Jot ignore JOT_DATA_DIR. Changed the default to null; both readers (lib/jot.js and jot:mount) fall through to jotDataDir.js's portable resolver (JOT_DATA_DIR, else the OS Jot dir) when no explicit path is set.
+No behaviour change for the captain: his config.json has jot.path persisted, which still wins. The default now only affects a config without a persisted path - where portable resolution is correct, not a stranger's Dropbox path. Completes the portability pass started in lib/jot.js.
+
 ## 2026-07-18 - Helm consumes @jot/core as its Jot data layer (foundation)
 
 First Helm-side step of the Jot integration (docs/auto-captain-design.md): Helm now depends on `@jot/core` (Jot's framework-agnostic data core) via a `file:../jot/dist-core` dependency, and `src/lib/jotHostStore.js` creates a HOST-mode store bound to the SAME todos.json a standalone Jot uses.
