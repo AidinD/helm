@@ -55,9 +55,10 @@ A session with no Helm launch record maps to a state via `deriveStatus` as today
 ## Progress
 
 - Increment 1 (done, commit 13c3baf): `sessionLifecycleState()` + `session.lifecycleState`, additive, unit-tested. Zero behaviour change.
-- Increment 2 (done): the needs-you QUEUE (`dashboardInMotionRows`) reads `lifecycleState === "waiting"` instead of combining `status` + `classifierSaysSessionDone`. Behaviour-preserving (E2E green).
-- Remaining reader migration: the fleet-card badge + accent (`fleetMateCardEl`), the OS attention toast (transition-based, also uses `previouslyWaiting` on `status`), and the archive-suggestion pill - move each onto `lifecycleState` / the `isX` helpers, then remove `classifierSaysSessionDone` once unused.
-- Then the override consolidation: move the acked-downgrade + live-turn override OUT of sessions:get INTO the resolver (so it computes from raw inputs), and add `launching`.
+- Increment 2 (done): the needs-you QUEUE (`dashboardInMotionRows`) reads `lifecycleState === "waiting"`.
+- Increment 3 (done): ALL remaining needs-you surfaces migrated - the fleet-card badge (`wrapped` -> "done") + accent, and the OS attention toast (+ its `previouslyWaiting` transition set). `classifierSaysSessionDone` is now unused and was deleted. Every needs-you surface reads the one `lifecycleState` field; behaviour-preserving (E2E green - queue + badge + accent, all three states).
+- Remaining reader migration: the archive-suggestion pill still reads its own `classifierSaysDone` local + `status` - move it onto `isArchiveSuggestState(lifecycleState)`.
+- Then the override consolidation (design decision 3, PENDING Aidin): whether the state is a recompute/projection (current) or a persisted machine with guarded transitions + a reconcile-from-truth step (Aidin's lean). If persisted: move the acked-downgrade + live-turn override OUT of sessions:get INTO the transition function, and add `launching`. This is the part that changes HOW the field is computed - the reader migration above holds either way.
 
 ## What this buys
 
