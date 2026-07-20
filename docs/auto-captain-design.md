@@ -37,6 +37,24 @@ Card lifecycle: Open -> Auto (queued) -> In-progress [auto-running] -> Review.
 The manual flow (Open -> In-progress by the user) is untouched.
 Never auto -> Done.
 
+### Implementation refinement (2026-07-18): tag-based trigger, not a new status
+
+Building this, the trigger is a TAG named "auto" (case-insensitive), not a new Jot
+lifecycle status/lane. Adding a lane means making TodoStatus dynamic per list,
+which touches sorting + the board + the review flow (parked as thorny - Jot task
+ed4291d2). A tag is just as explicit an opt-in ("AI, take this") without that
+surgery. A visual "Auto" lane/view can be layered later (a filtered view over the
+tag); the tag is the durable trigger. State tags (needs-clarification, auto-running)
+carry status, matched by name so no Jot schema change is needed.
+
+Build status (2026-07-18): the auto-captain's PURE brain is built + tested, OFF by
+default (config.autoCaptain.enabled = false) - src/lib/autoCaptain.js does task
+selection (selectAutoQueuedTasks) + triage-verdict parsing (parseTriageVerdict),
+covered by test-auto-captain.mjs. NOT yet wired: the live Haiku triage call, the
+watch loop, the actual dispatch, and the auto-captain column / settings toggle UI.
+Those FIRE REAL WORK on the board + touch UI, so they're staged to run first under
+Aidin's eyes (flip the toggle, watch the first live run) rather than autonomously.
+
 ### The Auto lane itself is behind a Jot-settings toggle
 
 The Auto lane only means anything when Helm's auto-captain is watching, and not everyone wants it.

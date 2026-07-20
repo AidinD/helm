@@ -137,6 +137,12 @@ const DEFAULT_CONFIG = {
   // through Helm. Authoritative per model; the gauge prefers this over
   // the contextWindowTokens fallback. Grows as new models are used.
   modelContextWindows: {},
+  // Auto-captain (task ea0546d1): the automated dispatcher that picks up tasks
+  // tagged "auto" and dispatches them to crew. OFF by default - a consequential
+  // feature (it spawns work) stays opt-in; nothing auto-fires until enabled.
+  autoCaptain: {
+    enabled: false,
+  },
   jot: {
     enabled: true,
     // null = resolve portably (JOT_DATA_DIR, else the OS Jot data dir) via
@@ -177,6 +183,7 @@ export function loadConfig() {
       archiveSuggestions: { ...DEFAULT_CONFIG.archiveSuggestions, ...parsed.archiveSuggestions },
       orchestratorHelper: { ...DEFAULT_CONFIG.orchestratorHelper, ...parsed.orchestratorHelper },
       autoCompact: { ...DEFAULT_CONFIG.autoCompact, ...parsed.autoCompact },
+      autoCaptain: { ...DEFAULT_CONFIG.autoCaptain, ...parsed.autoCaptain },
       suggestionAccuracyCheck: { ...DEFAULT_CONFIG.suggestionAccuracyCheck, ...parsed.suggestionAccuracyCheck },
       jot: { ...DEFAULT_CONFIG.jot, ...parsed.jot },
     };
