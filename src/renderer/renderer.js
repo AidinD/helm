@@ -4910,9 +4910,17 @@ async function refresh() {
   const activeMatesForBinding = (matesResult?.ok ? matesResult.active : []).filter((m) => m.sessionId);
   mateSessionIds = new Set(activeMatesForBinding.map((m) => m.sessionId));
   mateBySessionId = new Map(activeMatesForBinding.map((m) => [m.sessionId, m]));
-  // Detect sessions newly transitioning INTO "waiting" (not already waiting
-  // before this poll) for away-from-desk attention delivery - fire once per
-  // transition, not on every poll tick a session happens to still be waiting.
+  // Detect sessions newly transitioning INTO the needs-you "waiting" state (not
+  // already there before this poll) for away-from-desk attention delivery - fire
+  // once per transition, not on every poll tick.
+  // NOTE (Epic f3d096fa): keyed on lifecycleState, not raw status. This is a small
+  // INTENTIONAL behaviour change (not a pure equivalence): a session that went
+  // wrapped (classifier said "done", toast suppressed) and then flips back to
+  // waiting - the async Fas-3 sweep re-tagging it "waiting_for_input" while status
+  // stays "waiting" - now fires the toast. The old status-keyed set silently
+  // swallowed that (it counted as "already waiting"), which was a false NEGATIVE -
+  // exactly the miss the prefer-false-positives rule says is the worse failure. So
+  // this surfaces a genuine wrapped->needs-you transition instead of hiding it.
   const previouslyWaiting = new Set(state.sessions.filter((s) => s.lifecycleState === "waiting").map((s) => s.sessionId));
   // A session "removed from Helm" must not fire an OS attention toast - that's
   // the most intrusive way a hidden session could leak back. Read the freshly
