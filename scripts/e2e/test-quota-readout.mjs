@@ -64,7 +64,12 @@ try {
   assert(r.warn.level === "warm" && /near limit/.test(r.warn.chipText), "allowed_warning -> warm + 'near limit'");
   assert(r.rejected.level === "hot" && /limited/.test(r.rejected.chipText), "rejected -> hot + 'limited'");
   assert(r.sevenDay.chipText === "7d limit · OK", `seven_day -> "7d limit" label (got ${JSON.stringify(r.sevenDay.chipText)})`);
-  assert(/resets in now|resets in .*now/.test(r.pastReset.barValueText) || r.pastReset.barValueText.includes("now"), "a past resetsAt reads as 'now'");
+  // bug bc6786c7: a reading whose reset window has already elapsed is STALE - it
+  // must NOT keep showing a confident "OK" (that's how a 2-day-old reading read
+  // "5h limit · OK" while the quota was spent).
+  assert(r.pastReset.stale === true, "a past-reset reading is flagged stale");
+  assert(!/OK/.test(r.pastReset.chipText) && r.pastReset.chipText.includes("—"), `a stale reading shows "—", not "OK" (got ${JSON.stringify(r.pastReset.chipText)})`);
+  assert(r.pastReset.level === "stale" && /stale/.test(r.pastReset.title), "stale reading has a stale level + explains it needs a fresh reading");
 
   // Future-proof: if utilization ever comes back, show the real %.
   assert(r.withUtil.hasPct === true && r.withUtil.pct === 62 && r.withUtil.chipText === "Quota 62%", `utilization present -> real % (got ${JSON.stringify(r.withUtil.chipText)})`);

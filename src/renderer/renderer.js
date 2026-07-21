@@ -1134,8 +1134,14 @@ function quotaReadout(q, nowMs) {
           ? String(q.rateLimitType).replace(/_/g, " ")
           : "usage limit";
   const util = typeof q.utilization === "number" && isFinite(q.utilization) ? q.utilization : null;
-  // Reset countdown from resetsAt (unix SECONDS).
+  // Reset countdown from resetsAt (unix SECONDS), and staleness. A rate-limit
+  // reading describes ONE window that ends at resetsAt; once resetsAt is in the
+  // past, that window has elapsed and its status/usage no longer describe reality
+  // (bug bc6786c7: a 2-day-old persisted reading showed "5h limit · OK" while the
+  // quota was actually spent). Treat a past-reset reading as STALE - we don't know
+  // the current window's state, so don't claim "OK".
   let resetText = null;
+  let stale = false;
   if (typeof q.resetsAt === "number" && q.resetsAt > 0) {
     const secs = Math.round(q.resetsAt - nowMs / 1000);
     if (secs > 0) {
@@ -1143,8 +1149,22 @@ function quotaReadout(q, nowMs) {
       const m = Math.floor((secs % 3600) / 60);
       resetText = h > 0 ? `${h}h ${m}m` : `${Math.max(1, m)}m`;
     } else {
-      resetText = "now";
+      stale = true;
     }
+  }
+  if (stale) {
+    return {
+      stale: true,
+      hasPct: false,
+      pct: null,
+      level: "stale",
+      label: typeLabel,
+      chipText: `${typeLabel} · —`,
+      barValueText: "no current reading",
+      title:
+        `Your last ${typeLabel} reading is stale - its reset window has already elapsed, so its status no longer reflects reality. ` +
+        "Run a turn to get a fresh reading (the API only reports quota alongside a request).",
+    };
   }
   if (util !== null) {
     const pct = Math.round(util * 100);
@@ -4727,16 +4747,19 @@ async function renderDashQuota() {
     return;
   }
   const q = state.quota;
-  if (q) {
+  const r = q ? quotaReadout(q, Date.now()) : null;
+  if (r && !r.stale) {
     // Real quota signal: a % when the API reports utilization, otherwise the limit
     // status + reset time (the API dropped the utilization field, so the old
     // `q.utilization || 0` always read a fabricated 0% - bug 1975093d).
-    const r = quotaReadout(q, Date.now());
     chip.textContent = r.chipText;
     chip.title = r.title;
     chip.className = "dash-quota-chip" + (r.level === "hot" ? " hot" : r.level === "warm" ? " warm" : "");
     return;
   }
+  // No fresh quota (never read this session, OR the last reading is STALE - its
+  // window elapsed, bug bc6786c7): don't show a confident "OK" from a dead reading.
+  // Fall through to Helm's OWN usage log, which is always current.
   // Fallback so the chip is never blank (bug 6ed0b09e: "I still don't see it" -
   // the API quota % is only present near a limit, so for a user with headroom it
   // was always empty -> hidden). Helm's OWN usage log (readUsageSummary) is
