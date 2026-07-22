@@ -66,19 +66,65 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 let mainWindow = null;
 let latestQuota = null;
-// Records the latest quota reading AND persists it (config.lastQuota), so the
-// Dashboard quota chip can show a last-known value immediately - even on a fresh
+// Accumulated last-known reading PER rate-limit window (bc6786c7 follow-up: show
+// the quota like the Claude desktop app's usage panel - 5-hour, weekly-all,
+// weekly-per-model all at once). The CLI's rate_limit_event only reports ONE
+// binding window per event, so a single latestQuota can never show them side by
+// side. We instead remember the most recent reading for each rateLimitType and
+// let the renderer stack them, each carrying its own "as of" freshness (so a
+// stale window greys out independently - the bc6786c7 rule, per window).
+// Keyed by rateLimitType (e.g. "five_hour", "seven_day_opus"); value { info, at }.
+const quotaWindows = new Map();
+// Seed the accumulator from persisted state at startup so the panel is populated
+// on a fresh launch before any turn has produced a live event. Migrates a
+// pre-accumulation single reading (config.lastQuota) into the by-window map.
+function seedQuotaWindows() {
+  try {
+    const cfg = loadConfig();
+    if (cfg.quotaWindows && typeof cfg.quotaWindows === "object") {
+      for (const [type, entry] of Object.entries(cfg.quotaWindows)) {
+        if (entry && entry.info) {
+          quotaWindows.set(type, { info: entry.info, at: typeof entry.at === "number" ? entry.at : null });
+        }
+      }
+    } else if (cfg.lastQuota) {
+      quotaWindows.set(cfg.lastQuota.rateLimitType || "unknown", { info: cfg.lastQuota, at: cfg.lastQuotaAt || null });
+    }
+    if (cfg.lastQuota && !latestQuota) {
+      latestQuota = cfg.lastQuota;
+    }
+  } catch {
+    // best-effort seeding - a live event will still populate the map
+  }
+}
+// A plain array snapshot of the accumulated windows for the renderer.
+function quotaWindowsSnapshot() {
+  const out = [];
+  for (const entry of quotaWindows.values()) {
+    out.push({ info: entry.info, at: entry.at });
+  }
+  return out;
+}
+// Records the latest quota reading AND persists it, so the Dashboard quota chip
+// (and the usage panel) can show a last-known value immediately - even on a fresh
 // launch with no active turn yet, which is exactly when it was invisible before
 // (6ed0b09e "kan inte se den": latestQuota was null until some turn produced a
-// rate_limit_event). Best-effort persistence; never lets a write failure throw.
+// rate_limit_event). Also upserts the by-window accumulator (see quotaWindows).
+// Best-effort persistence; never lets a write failure throw.
 function recordQuota(q) {
   if (!q) {
     return;
   }
   latestQuota = q;
+  const at = Date.now();
+  quotaWindows.set(q.rateLimitType || "unknown", { info: q, at });
   try {
     const cfg = loadConfig();
-    writeConfig({ ...cfg, lastQuota: q, lastQuotaAt: Date.now() });
+    const windows = {};
+    for (const [type, entry] of quotaWindows.entries()) {
+      windows[type] = { info: entry.info, at: entry.at };
+    }
+    writeConfig({ ...cfg, lastQuota: q, lastQuotaAt: at, quotaWindows: windows });
   } catch {
     // persistence is best-effort - the in-memory value still drives this session
   }
@@ -299,6 +345,8 @@ ipcMain.handle("sessions:get", () => {
     // value even before this launch has run a turn (6ed0b09e).
     quota: latestQuota || config.lastQuota || null,
     quotaAt: latestQuota ? Date.now() : config.lastQuotaAt || null,
+    // Accumulated per-window readings for the usage panel (bc6786c7): each { info, at }.
+    quotaWindows: quotaWindowsSnapshot(),
     generatedAt: Date.now(),
   };
 });
@@ -3618,6 +3666,7 @@ function runDueRoutines() {
 
 app.whenReady().then(() => {
   prunePastedImages();
+  seedQuotaWindows();
   createWindow();
   setInterval(runOrchestratorSweep, ORCHESTRATOR_SWEEP_INTERVAL_MS);
   setInterval(runStaleBuildCheck, STALE_BUILD_CHECK_INTERVAL_MS);

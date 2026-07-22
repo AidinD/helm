@@ -1319,6 +1319,15 @@ body.advanced .row-jot {
   background: var(--waiting);
 }
 
+/* Usage-panel severity fills (bc6786c7): amber near a limit, red at/over it. */
+.ctx-fill.warm {
+  background: var(--waiting);
+}
+
+.ctx-fill.hot {
+  background: var(--danger);
+}
+
 .ctx-label {
   min-width: 30px;
   text-align: right;
@@ -1364,6 +1373,35 @@ body.advanced .row-jot {
 
 .cpop-empty {
   font-size: 11.5px;
+  color: var(--text-faint);
+}
+
+/* Usage-limit panel (bc6786c7): a section header over the stacked windows, a
+   faint "as of" freshness line per window, and severity-tinted values. */
+.cpop-head {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  font-weight: 600;
+  margin-bottom: -2px;
+}
+
+.cpop-fresh {
+  font-size: 10.5px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.cpop-val.crit {
+  color: var(--danger);
+}
+
+.cpop-val.warn {
+  color: var(--waiting);
+}
+
+.cpop-val.faint {
   color: var(--text-faint);
 }
 

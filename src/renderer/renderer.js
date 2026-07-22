@@ -1121,18 +1121,32 @@ function closeContextPopover() {
 // the limit status + when the window resets - and only show a % when utilization
 // is genuinely a finite number (future-proof if it comes back). Pure + nowMs-
 // injected so it's unit-testable.
+// Human label for a rate-limit window. The CLI's rateLimitType enum grew beyond
+// five_hour/seven_day to per-model weekly windows (seven_day_opus/sonnet) and
+// overage - the same windows the Claude desktop usage panel lists as separate
+// rows (bc6786c7). Kept as its own fn so the chip, the panel, and tests agree.
+function quotaWindowLabel(type) {
+  switch (type) {
+    case "five_hour":
+      return "5-hour limit";
+    case "seven_day":
+      return "Weekly · all models";
+    case "seven_day_opus":
+      return "Weekly · Opus";
+    case "seven_day_sonnet":
+      return "Weekly · Sonnet";
+    case "overage":
+      return "Overage";
+    default:
+      return type ? String(type).replace(/_/g, " ") : "usage limit";
+  }
+}
+
 function quotaReadout(q, nowMs) {
   if (!q) {
     return null;
   }
-  const typeLabel =
-    q.rateLimitType === "five_hour"
-      ? "5h limit"
-      : q.rateLimitType === "seven_day"
-        ? "7d limit"
-        : q.rateLimitType
-          ? String(q.rateLimitType).replace(/_/g, " ")
-          : "usage limit";
+  const typeLabel = quotaWindowLabel(q.rateLimitType);
   const util = typeof q.utilization === "number" && isFinite(q.utilization) ? q.utilization : null;
   // Reset countdown from resetsAt (unix SECONDS), and staleness. A rate-limit
   // reading describes ONE window that ends at resetsAt; once resetsAt is in the
@@ -1168,10 +1182,15 @@ function quotaReadout(q, nowMs) {
   }
   if (util !== null) {
     const pct = Math.round(util * 100);
+    // Severity for prioritizing: red only when the window is effectively spent
+    // (>=90%) or the API says rejected; amber when it's tightening (>=70%);
+    // neutral below. Matches the mock Aidin approved (18% neutral, 86% amber,
+    // 100% red) - deliberately less alarmist than a plain >=80 red would be.
+    const level = q.status === "rejected" || pct >= 90 ? "hot" : pct >= 70 ? "warm" : "ok";
     return {
       hasPct: true,
       pct,
-      level: pct >= 80 ? "hot" : pct >= 50 ? "warm" : "ok",
+      level,
       label: typeLabel,
       chipText: `Quota ${pct}%`,
       barValueText: `${pct}% used`,
@@ -1195,6 +1214,82 @@ function quotaReadout(q, nowMs) {
       (resetText ? ` · resets in ${resetText}` : "") +
       ". The API no longer reports a % used, so Helm shows the limit status + reset time instead of a misleading 0%.",
   };
+}
+
+// "as of Xm ago" for an accumulated window whose reading is no longer fresh.
+// Returns null when the reading is recent enough that age is noise (< 90s) or
+// when there's no timestamp - the panel only annotates staleness worth flagging.
+function quotaFreshness(at, nowMs) {
+  if (typeof at !== "number" || at <= 0) {
+    return null;
+  }
+  const secs = Math.round((nowMs - at) / 1000);
+  if (secs < 90) {
+    return null;
+  }
+  const m = Math.floor(secs / 60);
+  if (m < 60) {
+    return `as of ${m}m ago`;
+  }
+  const h = Math.floor(m / 60);
+  if (h < 48) {
+    return `as of ${h}h ago`;
+  }
+  return `as of ${Math.floor(h / 24)}d ago`;
+}
+
+// Display order for the usage panel: the short binding window first, then the
+// weekly windows (all-models, then per-model), then overage/unknown last.
+const QUOTA_WINDOW_ORDER = ["five_hour", "seven_day", "seven_day_opus", "seven_day_sonnet", "overage"];
+
+// Turns the accumulated per-window readings (each { info, at }) into ordered row
+// models for the usage panel (bc6786c7). Each row is a quotaReadout plus the
+// window type and its "as of" freshness. Windows are remembered independently, so
+// each row's staleness is judged on its own reset (a spent 5-hour window can read
+// stale while the weekly window is still live).
+function quotaPanelRows(windows, nowMs) {
+  if (!Array.isArray(windows)) {
+    return [];
+  }
+  const rows = [];
+  for (const w of windows) {
+    if (!w || !w.info) {
+      continue;
+    }
+    const r = quotaReadout(w.info, nowMs);
+    if (!r) {
+      continue;
+    }
+    rows.push({ ...r, type: w.info.rateLimitType || "unknown", freshness: quotaFreshness(w.at, nowMs) });
+  }
+  rows.sort((a, b) => {
+    const ia = QUOTA_WINDOW_ORDER.indexOf(a.type);
+    const ib = QUOTA_WINDOW_ORDER.indexOf(b.type);
+    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+  });
+  return rows;
+}
+
+// The single most-constrained FRESH window, for the compact dashboard chip: the
+// chip should reflect the limit actually biting, not just whichever window fired
+// last. Stale windows are excluded (their status no longer reflects reality -
+// bc6786c7). Returns null when nothing fresh is known (chip falls back to Usage$).
+const QUOTA_LEVEL_RANK = { hot: 3, warm: 2, ok: 1 };
+function worstFreshQuotaRow(rows) {
+  let worst = null;
+  for (const row of rows) {
+    if (row.stale) {
+      continue;
+    }
+    if (
+      !worst ||
+      (QUOTA_LEVEL_RANK[row.level] || 0) > (QUOTA_LEVEL_RANK[worst.level] || 0) ||
+      ((QUOTA_LEVEL_RANK[row.level] || 0) === (QUOTA_LEVEL_RANK[worst.level] || 0) && (row.pct || 0) > (worst.pct || 0))
+    ) {
+      worst = row;
+    }
+  }
+  return worst;
 }
 
 // A plain label/value row for the context popover (no bar) - used when there's a
@@ -1235,6 +1330,52 @@ function cpopBarRow(labelText, valueText, pct, high) {
   return row;
 }
 
+// A severity-colored fill bar for the usage panel. level maps to a token:
+// ok -> accent, warm -> amber (--waiting), hot -> red (--danger).
+function quotaBar(pct, level) {
+  const bar = document.createElement("span");
+  bar.className = "ctx-bar";
+  const fill = document.createElement("span");
+  fill.className = "ctx-fill" + (level === "hot" ? " hot" : level === "warm" ? " warm" : "");
+  fill.style.width = `${Math.min(100, Math.max(0, pct))}%`;
+  bar.append(fill);
+  return bar;
+}
+
+// One usage-panel row for an accumulated window (bc6786c7). Shows the window
+// label + its readout value, a severity-colored bar (a real fill when the API
+// gave a %, a full colored bar for a definite limited/near status so severity
+// reads without a number, nothing for a stale window), and an "as of" line when
+// the reading is no longer fresh.
+function cpopWindowRow(row) {
+  const el = document.createElement("div");
+  el.className = "cpop-row";
+  const top = document.createElement("div");
+  top.className = "cpop-row-top";
+  const l = document.createElement("span");
+  l.textContent = row.label;
+  const v = document.createElement("span");
+  v.className = "cpop-val" + (row.level === "hot" ? " crit" : row.level === "warm" ? " warn" : row.level === "stale" ? " faint" : "");
+  v.textContent = row.barValueText;
+  top.append(l, v);
+  el.append(top);
+  if (row.hasPct) {
+    el.append(quotaBar(row.pct, row.level));
+  } else if (!row.stale && (row.level === "hot" || row.level === "warm")) {
+    el.append(quotaBar(100, row.level));
+  }
+  if (row.freshness) {
+    const f = document.createElement("div");
+    f.className = "cpop-fresh";
+    f.textContent = row.freshness;
+    el.append(f);
+  }
+  if (row.title) {
+    el.title = row.title;
+  }
+  return el;
+}
+
 function toggleContextPopover(anchor, pane) {
   const existing = document.querySelector(".context-popover");
   closeContextPopover();
@@ -1254,19 +1395,29 @@ function toggleContextPopover(anchor, pane) {
     pop.append(cpopBarRow("Context window", `${fmtK(pane.contextTokens)} / ${fmtWindow} (${pct}%)`, pct, pct >= 85));
   }
 
-  const q = state.quota;
-  if (q) {
-    const r = quotaReadout(q, Date.now());
-    if (r.hasPct) {
-      pop.append(cpopBarRow(`Quota · ${r.label}`, r.barValueText, r.pct, r.pct >= 80));
-    } else {
-      // No % from the API - show the real status + reset, not a misleading 0% bar.
-      pop.append(cpopTextRow(`Quota · ${r.label}`, r.barValueText));
+  // Usage-limit panel (bc6786c7): stack every accumulated window (5-hour, weekly-
+  // all, weekly-per-model) the way the Claude desktop usage panel does, instead of
+  // the single binding window. Each row carries its own freshness. Falls back to
+  // the single latest reading if the accumulator is empty (older persisted state).
+  const rows = quotaPanelRows(state.quotaWindows, Date.now());
+  if (rows.length === 0 && state.quota) {
+    const r = quotaReadout(state.quota, Date.now());
+    if (r) {
+      rows.push({ ...r, type: state.quota.rateLimitType || "unknown", freshness: quotaFreshness(state.quotaAt, Date.now()) });
+    }
+  }
+  if (rows.length > 0) {
+    const head = document.createElement("div");
+    head.className = "cpop-head";
+    head.textContent = "Usage limits";
+    pop.append(head);
+    for (const row of rows) {
+      pop.append(cpopWindowRow(row));
     }
   } else {
     const none = document.createElement("div");
     none.className = "cpop-empty";
-    none.textContent = "Quota: - (no data yet)";
+    none.textContent = "Usage limits: - (no data yet)";
     pop.append(none);
   }
 
@@ -4746,8 +4897,15 @@ async function renderDashQuota() {
   if (!chip) {
     return;
   }
-  const q = state.quota;
-  const r = q ? quotaReadout(q, Date.now()) : null;
+  // Summarize the most-constrained FRESH window across all accumulated limits
+  // (bc6786c7), not just whichever window fired last. Falls back to the single
+  // latest reading when the accumulator is empty (older persisted state).
+  const rows = quotaPanelRows(state.quotaWindows, Date.now());
+  let r = worstFreshQuotaRow(rows);
+  if (!r && state.quota) {
+    const single = quotaReadout(state.quota, Date.now());
+    r = single && !single.stale ? single : null;
+  }
   if (r && !r.stale) {
     // Real quota signal: a % when the API reports utilization, otherwise the limit
     // status + reset time (the API dropped the utilization field, so the old
@@ -4968,6 +5126,8 @@ async function refresh() {
   state.sessions = data.sessions;
   state.config = data.config;
   state.quota = data.quota;
+  state.quotaWindows = data.quotaWindows || [];
+  state.quotaAt = data.quotaAt || null;
   updateAttentionTaskbarCount();
   applyViewMode();
   applyTheme(state.config?.theme);
