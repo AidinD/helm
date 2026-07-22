@@ -22,6 +22,20 @@ ok(st("idle", tag("done_not_archived")) === "wrapped", "idle + done_not_archived
 ok(st(undefined) === "idle", "missing status -> idle (safe default)");
 ok(sessionLifecycleState(null) === "idle", "null session -> idle (no throw)");
 
+// --- bug 4cd7d592: a content signal that input is awaited beats the age-decay ---
+// deriveStatus buries an old assistant-ended session as "idle"; if the classifier
+// says it's actually awaiting input, promote it back to needs-you regardless of age.
+ok(st("idle", tag("waiting_for_input")) === "waiting", "idle + waiting_for_input -> waiting (age-decayed open question is still needs-you)");
+ok(st("idle", tag("stuck")) === "idle", "idle + stuck (not waiting_for_input) stays idle - only a clear await-input signal promotes");
+// ...unless the user explicitly acked it ("I'm done"): the ack overrides the signal.
+ok(sessionLifecycleState({ status: "idle", ...tag("waiting_for_input") }, { isAcked: true }) === "idle",
+  "idle + waiting_for_input + acked -> idle (the ack overrides the promotion)");
+ok(sessionLifecycleState({ status: "idle", ...tag("waiting_for_input") }, { isAcked: false }) === "waiting",
+  "idle + waiting_for_input + not acked -> waiting (explicit opts)");
+// The promotion must also take it OUT of archive-suggest (no needs-you + archive both).
+ok(isArchiveSuggestState(st("idle", tag("waiting_for_input"))) === false, "a promoted needs-you is NOT archive-suggested");
+ok(isNeedsYouState(st("idle", tag("waiting_for_input"))) === true, "a promoted needs-you reads as needs-you");
+
 // --- the decisions map behaviour-preservingly onto the state ---
 // today: needs-you  = status waiting && !classifierDone
 ok(isNeedsYouState(st("waiting")) === true && isNeedsYouState(st("waiting", tag("done_not_archived"))) === false,

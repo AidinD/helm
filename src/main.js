@@ -320,11 +320,13 @@ ipcMain.handle("sessions:get", () => {
     // never something that mutates status here. null when never classified
     // (helper disabled, or hasn't reached this session yet).
     session.orchestratorTag = sessionClassifications.get(session.sessionId) || null;
-    // lifecycleState (Epic f3d096fa, increment 1): the single "what is this doing"
-    // field, projected from status + orchestratorTag now that both are resolved.
-    // Additive - no surface reads it yet, so this is a zero-behaviour-change
-    // foundation for migrating the needs-you/working/archive reads onto one field.
-    session.lifecycleState = sessionLifecycleState(session);
+    // lifecycleState (Epic f3d096fa): the single "what is this doing" field,
+    // projected from status + orchestratorTag now that both are resolved. isAcked
+    // is passed so a content-driven needs-you promotion (an age-decayed open
+    // question, 4cd7d592) is still suppressed for a session the user acked.
+    session.lifecycleState = sessionLifecycleState(session, {
+      isAcked: acknowledged[session.sessionId] >= session.lastActivityAt,
+    });
     // autoCompacted: surfaced so an automatic (silent) compaction isn't a
     // total black box — the row shows a small note until the next real
     // activity grows the transcript past its post-compaction size.
