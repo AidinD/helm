@@ -77,6 +77,19 @@ try {
   assert(fired.nextRunAt > fireAt, "nextRunAt advances to the future (single catch-up, not one per missed slot)");
   assert(store.dueRoutines(Date.now()).length === 0, "not due again right after firing");
 
+  // f76ebb76: model/effort round-trip. Omitted -> "" (Helm passes no --model, so
+  // the CLI uses its own default model); set -> persisted; updatable/clearable.
+  assert(r.model === "" && r.effort === "", "omitted model/effort default to '' (CLI default model)");
+  const rm = store.createRoutine({ name: "Modelled", prompt: "x", cron: "0 * * * *", model: "claude-sonnet-5", effort: "high" });
+  assert(rm.model === "claude-sonnet-5" && rm.effort === "high", "createRoutine persists model + effort");
+  const um = store.updateRoutine(rm.id, { model: "claude-opus-4-8", effort: "" });
+  assert(um.model === "claude-opus-4-8" && um.effort === "", "updateRoutine changes model + clears effort");
+  assert(store.removeRoutine(rm.id) === true, "cleanup modelled routine");
+
+  // e7968b37: every quick cron preset offered in the form must be a valid cron.
+  const presetCrons = ["0 * * * *", "0 8 * * *", "0 8 * * 1-5", "0 8 * * 1", "0 8 1 * *"];
+  assert(presetCrons.every((c) => cron.validateCron(c).ok), "all cron presets are valid cron");
+
   assert(store.removeRoutine(r.id) === true && store.listRoutines().length === 0, "remove works");
 } catch (err) {
   exit = 1;
