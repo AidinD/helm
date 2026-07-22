@@ -245,7 +245,15 @@ export function startSession({ cwd, prompt, model, effort, permissionMode, resum
             // turn is in progress, ahead of the authoritative transcript.
             // filePath (Write/Edit/MultiEdit's file_path, when present) lets the
             // renderer notice a generated mockup and offer to open it in Plan.
-            emit({ kind: "tool_use", toolName: block.name, filePath: block.input?.file_path });
+            // skillName (the Skill tool's `skill` input) captures a skill the model
+            // invoked ON ITS OWN, so usage tracking sees autonomous skill use, not
+            // just leading-"/skill" prompts (task aa9f5238).
+            emit({
+              kind: "tool_use",
+              toolName: block.name,
+              filePath: block.input?.file_path,
+              skillName: block.name === "Skill" ? block.input?.skill || null : null,
+            });
             // Remember this call's id -> file_path so that once the matching
             // tool_result comes back (in a later "user" message, see below)
             // we know the write actually completed before telling the

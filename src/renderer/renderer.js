@@ -10974,14 +10974,15 @@ async function renderAnalysisPage() {
   skillUsageBlock.className = "analysis-block";
   const skillUsageH = document.createElement("h3");
   skillUsageH.textContent = "Skill usage (best-effort)";
-  skillUsageH.title = 'Guessed from a leading "/skill-name" in the prompt text - not a real event from the CLI, so this misses skills invoked any other way.';
+  skillUsageH.title =
+    'Counts skills a leading "/skill-name" prompt invoked AND skills the model invoked itself via the Skill tool (task aa9f5238), once per run each. Only runs Helm launched are observed - skills used in sessions started outside Helm aren\'t counted.';
   skillUsageBlock.append(skillUsageH);
   const skillEntries = Object.entries(summary.bySkill).sort((a, b) => b[1] - a[1]);
   const skillMax = skillEntries.length ? skillEntries[0][1] : 0;
   if (skillEntries.length === 0) {
     const empty = document.createElement("div");
     empty.className = "pane-empty";
-    empty.textContent = "No data yet - only counts prompts starting with /skill-name.";
+    empty.textContent = "No data yet - counts /skill-name prompts and skills the model invokes itself, across runs Helm launched.";
     skillUsageBlock.append(empty);
   } else {
     skillEntries.forEach(([s, c]) => skillUsageBlock.append(barRow(s, c, skillMax)));

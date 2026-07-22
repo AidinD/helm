@@ -89,10 +89,22 @@ export function readUsageSummary() {
     for (const tool of entry.toolsUsed || []) {
       summary.byTool[tool] = (summary.byTool[tool] || 0) + 1;
     }
-    // Text-pattern guess (leading "/skill-name" in the prompt), not a real
-    // event from the CLI — see the comment where this is set in main.js.
+    // Skills this run used, counted once per run each: the leading-"/skill-name"
+    // prompt guess (skillInvoked) UNION the skills the model invoked itself via
+    // the Skill tool (skillsUsed, task aa9f5238). The set dedupes the common case
+    // where a "/foo" prompt also surfaces as a Skill tool_use, so bySkill reads as
+    // "runs that used this skill" rather than double-counting one run.
+    const skillsThisRun = new Set();
     if (entry.skillInvoked) {
-      summary.bySkill[entry.skillInvoked] = (summary.bySkill[entry.skillInvoked] || 0) + 1;
+      skillsThisRun.add(entry.skillInvoked);
+    }
+    for (const skill of entry.skillsUsed || []) {
+      if (skill) {
+        skillsThisRun.add(skill);
+      }
+    }
+    for (const skill of skillsThisRun) {
+      summary.bySkill[skill] = (summary.bySkill[skill] || 0) + 1;
     }
     if (entry.launchId != null && entry.suggestedModel) {
       suggestedRunsByLaunchId.set(entry.launchId, entry);

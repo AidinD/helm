@@ -1715,7 +1715,7 @@ ipcMain.handle(
         mainWindow.webContents.send("session:event", { launchId, ...payload });
       }
     };
-    const meta = { toolsUsed: [], costUsd: 0, numTurns: 0, durationMs: null, totalTokens: null, outputTokens: null, actualModel: model || null, lastAssistantText: "", contextWindows: {} };
+    const meta = { toolsUsed: [], skillsInvoked: [], costUsd: 0, numTurns: 0, durationMs: null, totalTokens: null, outputTokens: null, actualModel: model || null, lastAssistantText: "", contextWindows: {} };
     // First-mate tier (design section 5): attach the dispatch MCP tools ONLY
     // when this launch is a first mate (rooted in the meta home). A dispatched
     // second-mate run is a runGoal (never routed through here) rooted in a
@@ -1895,6 +1895,11 @@ ipcMain.handle(
           recordQuota(evt.quota);
         } else if (evt.kind === "tool_use" && evt.toolName) {
           meta.toolsUsed.push(evt.toolName);
+          // A skill the model invoked itself (Skill tool), so usage tracking
+          // counts autonomous skill use, not just leading-"/skill" prompts (aa9f5238).
+          if (evt.skillName) {
+            meta.skillsInvoked.push(evt.skillName);
+          }
         } else if (evt.kind === "assistant" && evt.text) {
           meta.lastAssistantText = evt.text;
         } else if (evt.kind === "result") {
@@ -2035,6 +2040,8 @@ ipcMain.handle(
           numTurns: meta.numTurns,
           toolsUsed: meta.toolsUsed,
           skillInvoked: skillMatch ? skillMatch[1] : null,
+          // Skills the model invoked on its own during the run (aa9f5238).
+          skillsUsed: meta.skillsInvoked,
         });
 
         // Native OS notification (Windows plays its default sound with it, no
