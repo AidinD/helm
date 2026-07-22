@@ -5155,6 +5155,31 @@ button.primary {
 .routine-field textarea {
   resize: vertical;
 }
+/* Quick cron presets (e7968b37): a row of small quiet buttons under the cron
+   field that fill it, so a routine doesn't require hand-writing cron. */
+.routine-cron-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: -4px;
+}
+.cron-preset-btn {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 10px;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.cron-preset-btn:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+/* Model chip on a routine row - faint so it reads as metadata, not an alert. */
+.routine-model-tag {
+  color: var(--text-dim);
+}
 .routine-form-err:not(:empty) {
   color: var(--danger);
   font-size: 12px;

@@ -10043,7 +10043,13 @@ function routineRowEl(routine) {
   const tag = document.createElement("span");
   tag.className = "dash-goal-tag";
   tag.textContent = routine.cron;
-  top.append(title, tag);
+  // Which model this routine runs under (f76ebb76): explicit, so an unset one
+  // reads as "Default model" rather than looking like nothing was chosen.
+  const modelChip = document.createElement("span");
+  modelChip.className = "dash-goal-tag routine-model-tag";
+  const mopt = ROUTINE_MODEL_OPTIONS.find((o) => o.value === (routine.model || ""));
+  modelChip.textContent = routine.model ? (mopt ? mopt.label : routine.model) : "Default model";
+  top.append(title, tag, modelChip);
   qbody.append(top);
 
   const why = document.createElement("div");
@@ -10100,6 +10106,32 @@ function routineRowEl(routine) {
 }
 
 // Add/edit form for a routine. `routine` null -> create; else edit in place.
+// Model / effort choices for a routine. "" = Default, i.e. Helm passes no
+// --model/--effort and the Claude CLI uses whatever it's configured to (f76ebb76
+// "vad är default?"). The concrete ids match the fleet/suggest list elsewhere.
+const ROUTINE_MODEL_OPTIONS = [
+  { value: "", label: "Default (CLI model)" },
+  { value: "claude-sonnet-5", label: "Sonnet 5" },
+  { value: "claude-opus-4-8", label: "Opus 4.8" },
+  { value: "claude-haiku-4-5-20251001", label: "Haiku 4.5" },
+];
+const ROUTINE_EFFORT_OPTIONS = [
+  { value: "", label: "Default" },
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+];
+// Friendly presets so a routine doesn't need raw cron (e7968b37). Each fills the
+// cron field; the raw input stays for anything custom. Numeric 5-field cron to
+// match cron.js (min hour day-of-month month day-of-week).
+const CRON_PRESETS = [
+  { label: "Hourly", cron: "0 * * * *" },
+  { label: "Daily 08:00", cron: "0 8 * * *" },
+  { label: "Weekdays 08:00", cron: "0 8 * * 1-5" },
+  { label: "Weekly (Mon 08:00)", cron: "0 8 * * 1" },
+  { label: "Monthly (1st 08:00)", cron: "0 8 1 * *" },
+];
+
 function routineFormEl(routine) {
   const isEdit = !!routine;
   const form = document.createElement("div");
@@ -10135,9 +10167,31 @@ function routineFormEl(routine) {
   promptIn.value = routine?.prompt || "";
   promptIn.placeholder = "What to run, e.g. /health-coach";
 
+  // Quick cron presets (e7968b37): click to fill the cron field; raw input stays.
+  const presetRow = document.createElement("div");
+  presetRow.className = "routine-cron-presets";
+  CRON_PRESETS.forEach((p) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "cron-preset-btn";
+    b.textContent = p.label;
+    b.title = p.cron;
+    b.addEventListener("click", () => {
+      cronIn.value = p.cron;
+    });
+    presetRow.append(b);
+  });
+
+  // Model / effort (f76ebb76). Default = leave unset -> CLI's own model.
+  const modelPill = dropdownPill(routine?.model || "", ROUTINE_MODEL_OPTIONS, () => {});
+  const effortPill = dropdownPill(routine?.effort || "", ROUTINE_EFFORT_OPTIONS, () => {});
+
   form.append(
     field("Name", nameIn),
     field("Schedule (cron)", cronIn),
+    presetRow,
+    field("Model", modelPill.el),
+    field("Effort", effortPill.el),
     field("Folder", cwdIn),
     field("Prompt", promptIn)
   );
@@ -10158,6 +10212,8 @@ function routineFormEl(routine) {
       cron: cronIn.value.trim(),
       cwd: cwdIn.value.trim(),
       prompt: promptIn.value.trim(),
+      model: modelPill.value,
+      effort: effortPill.value,
     };
     if (!spec.name || !spec.cron || !spec.prompt) {
       err.textContent = "Name, schedule and prompt are all required.";
