@@ -23,11 +23,14 @@
 
 /**
  * @param {{status?: string, orchestratorTag?: {statusTag?: string}|null}} session
+ * @param {{isAcked?: boolean}} [opts]
  * @returns {"working"|"waiting"|"wrapped"|"idle"|"archived"}
  */
-export function sessionLifecycleState(session) {
+export function sessionLifecycleState(session, { isAcked = false } = {}) {
   const status = session?.status;
-  const classifierDone = session?.orchestratorTag?.statusTag === "done_not_archived";
+  const tag = session?.orchestratorTag?.statusTag;
+  const classifierDone = tag === "done_not_archived";
+  const classifierNeedsYou = tag === "waiting_for_input";
   if (status === "archived") {
     return "archived";
   }
@@ -39,7 +42,19 @@ export function sessionLifecycleState(session) {
     // wrapped, not needs-you - the same suppression the needs-you gate does today.
     return classifierDone ? "wrapped" : "waiting";
   }
-  // idle (includes the acked-downgrade). A done classifier tag reads as wrapped.
+  // idle: parked - age-decayed past the attention window, acked, or indeterminate.
+  // But the time heuristic (deriveStatus) buries an assistant-ended session as idle
+  // once it's older than the attention window, which silently drops a genuine open
+  // question to "idle" just because you didn't answer within a day (bug 4cd7d592:
+  // "Needs your input visas som idle"). A content signal that the last turn is
+  // actually awaiting input promotes it back to needs-you REGARDLESS of age - an
+  // unanswered question still needs you (the captain prefers false positives here). The
+  // one exception is a session you explicitly acked ("I'm done with this"): the ack
+  // is you overriding the signal, so it stays parked even if it ended on a question.
+  if (classifierNeedsYou && !isAcked) {
+    return "waiting";
+  }
+  // A done classifier tag reads as wrapped.
   return classifierDone ? "wrapped" : "idle";
 }
 

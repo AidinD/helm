@@ -1888,7 +1888,10 @@ function rowEl(session) {
   if (
     state.config.archiveSuggestions?.enabled === true &&
     !isOrchestratorSession(session) &&
-    (session.status === "idle" || classifierSaysDone) &&
+    // lifecycleState, not raw status (Epic f3d096fa): a session promoted back to
+    // needs-you (lifecycleState "waiting") must NOT also be offered for archive
+    // (bug 4cd7d592). wrapped/idle are the parked states worth suggesting.
+    (session.lifecycleState === "idle" || session.lifecycleState === "wrapped") &&
     !hasOpenJotWork &&
     !isArchiveProposalDismissed(session)
   ) {
@@ -6357,23 +6360,27 @@ function fleetSecondMateEl(sm) {
   if (isProposed) {
     now.append(document.createTextNode((sm.brief ? `${sm.brief.length > 60 ? sm.brief.slice(0, 60) + "…" : sm.brief} · ` : "") + "proposed - engage to start · "));
   } else if (sm.isSessionNode) {
-    const st = sess?.status;
-    if (st === "active") {
+    // Read lifecycleState, not raw status (Epic f3d096fa): a genuine open question
+    // that aged past the attention window decays to status "idle" but projects to
+    // lifecycleState "waiting", so this now says "waiting on you" instead of
+    // burying it as "idle" (bug 4cd7d592).
+    const ls = sess?.lifecycleState;
+    if (ls === "working") {
       const spin = document.createElement("span");
       spin.className = "fleet-spin";
       now.append(spin, document.createTextNode("working · "));
-    } else if (st === "waiting") {
+    } else if (ls === "waiting") {
       now.append(document.createTextNode("waiting on you · "));
     } else {
       now.append(document.createTextNode("idle · "));
     }
-  } else if (sess?.status === "active") {
+  } else if (sess?.lifecycleState === "working") {
     // The second mate's own session is running a turn - show that first, like the
     // in-motion list does, instead of a crew-only "idle" (bug 9ad82c28).
     const spin = document.createElement("span");
     spin.className = "fleet-spin";
     now.append(spin, document.createTextNode("working · "));
-  } else if (sess?.status === "waiting") {
+  } else if (sess?.lifecycleState === "waiting") {
     now.append(document.createTextNode("waiting on you · "));
   } else if (liveN > 0) {
     const spin = document.createElement("span");
@@ -7037,7 +7044,6 @@ function isArchiveProposalDismissed(session) {
 
 function dashboardProposalSessions() {
   const hasOpenJotWork = (s) => s.jot && (s.jot.review > 0 || s.jot.inProgress > 0 || s.jot.open > 0);
-  const classifierSaysDone = (s) => s.orchestratorTag?.statusTag === "done_not_archived";
   const suggestionsEnabled = state.config.archiveSuggestions?.enabled === true;
   if (!suggestionsEnabled) {
     return [];
@@ -7049,7 +7055,9 @@ function dashboardProposalSessions() {
       // A first mate is retired (with a handoff), never archived - keep it out
       // of the archive-suggestion pile entirely (the captain 2026-07-11).
       !isOrchestratorSession(s) &&
-      (s.status === "idle" || classifierSaysDone(s)) &&
+      // lifecycleState, not raw status (Epic f3d096fa): don't offer a promoted
+      // needs-you session (lifecycleState "waiting") for archive (bug 4cd7d592).
+      (s.lifecycleState === "idle" || s.lifecycleState === "wrapped") &&
       !hasOpenJotWork(s) &&
       !isArchiveProposalDismissed(s)
   );
