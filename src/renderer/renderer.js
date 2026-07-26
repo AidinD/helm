@@ -714,6 +714,98 @@ function showImageLightbox(fileUrl) {
   document.body.append(overlay);
 }
 
+// --- Scheduled prompts (task 7d9d2188) ---
+// A caret beside the send button, the way Slack schedules a message: queue this
+// prompt for later instead of sending it now. The headline option is "at quota
+// reset", because that is the actual case - the quota runs out mid-job and the
+// prompt you want to send is "fortsätt".
+function scheduleSendMenu(anchor, pane, promptText, sendControls) {
+  const text = (promptText || "").trim();
+  if (!text) {
+    showToast("Write the prompt first, then schedule it.");
+    return;
+  }
+  if (!pane.cwd) {
+    showToast("Pick a folder for this session first.");
+    return;
+  }
+  const now = Date.now();
+  const mkItem = (label, when) => ({
+    label,
+    onClick: async () => {
+      const res = await window.helm.addScheduledPrompt({
+        prompt: text,
+        cwd: pane.cwd,
+        resumeSessionId: pane.sessionId || pane.cliSessionId || null,
+        model: sendControls?.model || "",
+        effort: sendControls?.effort || "",
+        when,
+      });
+      if (!res?.ok) {
+        showToast(`Couldn't schedule: ${res?.error || "unknown"}`);
+        return;
+      }
+      showToast(`Queued ${res.entry.label}.`);
+      if (sendControls?.clear) {
+        sendControls.clear();
+      }
+      renderScheduledPromptBar();
+    },
+  });
+  const rect = anchor.getBoundingClientRect();
+  showContextMenu(rect.left, rect.bottom + 4, [
+    mkItem("Send when quota resets", "quota-reset"),
+    { sep: true },
+    mkItem("Send in 1 hour", now + 60 * 60 * 1000),
+    mkItem("Send in 3 hours", now + 3 * 60 * 60 * 1000),
+    mkItem("Send tomorrow 08:00", (() => {
+      const d = new Date(now);
+      d.setDate(d.getDate() + 1);
+      d.setHours(8, 0, 0, 0);
+      return d.getTime();
+    })()),
+  ]);
+}
+
+// A thin bar listing what's queued, so a scheduled prompt is never invisible.
+async function renderScheduledPromptBar() {
+  const host = document.getElementById("scheduledPromptBar");
+  if (!host) {
+    return;
+  }
+  const res = await window.helm.listScheduledPrompts();
+  const pending = res?.ok ? res.pending || [] : [];
+  host.replaceChildren();
+  host.classList.toggle("hidden", pending.length === 0);
+  if (pending.length === 0) {
+    return;
+  }
+  for (const p of pending) {
+    const row = document.createElement("div");
+    row.className = "sched-row";
+    const clock = document.createElement("span");
+    clock.className = "sched-clock";
+    clock.textContent = "⏱";
+    const label = document.createElement("span");
+    label.className = "sched-label";
+    // Overdue + waiting on quota is a real state, not a bug: it is parked until
+    // the window actually lifts (the queue re-checks rather than burning it).
+    const state = p.overdue && p.waitForQuota && res.quotaLimited ? "waiting for quota" : p.overdue ? "sending…" : p.label;
+    label.textContent = `${state} · ${p.prompt.length > 60 ? p.prompt.slice(0, 60) + "…" : p.prompt}`;
+    label.title = p.prompt;
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "text-btn";
+    cancel.textContent = "Cancel";
+    cancel.addEventListener("click", async () => {
+      await window.helm.cancelScheduledPrompt(p.id);
+      renderScheduledPromptBar();
+    });
+    row.append(clock, label, cancel);
+    host.append(row);
+  }
+}
+
 // --- Repo scripts (task 8bfae7a0) ---
 // Run a bound repo's package.json scripts (build, release, test...) straight
 // from the pane, with NO model turn - the point is to not spend tokens on
@@ -4565,7 +4657,26 @@ function paneComposerEl(index) {
   sendBtn.textContent = "➤";
   sendBtn.title = pane.sessionId ? "Continue (Enter)" : "Start session (Enter)";
 
-  controls.append(pickBtn, cwdInput, attachBtn, permissionDD.el, modelDD.el, effortDD.el, languageDD.el, micBtn, sendBtn);
+  // Schedule-send caret (task 7d9d2188), sitting against the send button the way
+  // Slack's does: same action, later. Deliberately a separate small control - the
+  // send button must stay a plain single-click send.
+  const scheduleBtn = document.createElement("button");
+  scheduleBtn.className = "schedule-caret";
+  scheduleBtn.type = "button";
+  scheduleBtn.textContent = "⌄";
+  scheduleBtn.title = "Schedule this prompt (e.g. when the quota resets)";
+  scheduleBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    scheduleSendMenu(scheduleBtn, pane, promptEl.value, {
+      model: modelDD.value === "auto" ? "" : modelDD.value,
+      effort: effortDD.value === "auto" ? "" : effortDD.value,
+      clear: () => {
+        promptEl.value = "";
+      },
+    });
+  });
+
+  controls.append(pickBtn, cwdInput, attachBtn, permissionDD.el, modelDD.el, effortDD.el, languageDD.el, micBtn, sendBtn, scheduleBtn);
   shell.append(controls);
 
   // Repo scripts (task 8bfae7a0): appended asynchronously (it has to read the
@@ -10035,6 +10146,14 @@ function goalEscalationCard(escalation, goalRunId) {
 }
 
 // Live goal-run events (own channel, parallel to session events). Each payload
+// Scheduled prompts (7d9d2188): keep the queued-prompt bar current - the main
+// process pushes a change when one fires or gets pushed out to a later reset.
+window.helm.onScheduledPromptsChanged(() => renderScheduledPromptBar());
+renderScheduledPromptBar();
+// Also refresh it on a slow tick so a countdown label ("in 2h") doesn't go stale
+// while nothing else happens.
+setInterval(renderScheduledPromptBar, 60 * 1000);
+
 // carries goalRunId; events from a stale run (a previous run, or after a new
 // one started) are ignored so late events can't clobber current state.
 window.helm.onGoalEvent((evt) => {

@@ -5443,3 +5443,40 @@ button.primary {
   padding: 10px 14px;
   border-top: 1px solid var(--border);
 }
+
+/* Scheduled prompts (task 7d9d2188): the send-caret and the queued bar. */
+.schedule-caret {
+  background: var(--accent);
+  color: var(--bg);
+  border: none;
+  border-radius: 0 6px 6px 0;
+  margin-left: -6px;
+  padding: 0 6px;
+  font-size: 12px;
+  line-height: 1;
+  align-self: stretch;
+  cursor: pointer;
+}
+.schedule-caret:hover { background: var(--accent-hover); }
+.sched-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-card);
+}
+.sched-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.sched-clock { color: var(--accent); }
+.sched-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
