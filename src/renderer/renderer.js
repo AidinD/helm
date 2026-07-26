@@ -2108,8 +2108,18 @@ const SUMMARIZE_TIMEOUT_MS = 5 * 60 * 1000;
 
 function summarizeSession(session) {
   return new Promise(async (resolve) => {
+    // session:start REFUSES an empty cwd, so a session with no folder could
+    // never even be summarized - which silently defeated the whole non-rooted
+    // handoff path (task 663ab4b6: the summarize failed, so nothing was ever
+    // written). Fall back to the meta-home, which is the working directory a
+    // folderless session effectively belongs to.
+    let cwd = session.cwd;
+    if (!cwd) {
+      const info = await window.helm.getOrchestratorInfo();
+      cwd = info?.cwd || "";
+    }
     const res = await window.helm.startSession({
-      cwd: session.cwd,
+      cwd,
       prompt: CARRY_OVER_PROMPT,
       model: "claude-sonnet-5",
       effort: "medium",
