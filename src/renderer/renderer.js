@@ -714,6 +714,184 @@ function showImageLightbox(fileUrl) {
   document.body.append(overlay);
 }
 
+// ========================== Review queue (task ce2d19ab) ==========================
+// The bottleneck was never producing work, it was reviewing it - and what made
+// review expensive is that every item looked equally heavy. So this page's whole
+// job is one distinction: which items actually need Aidin's judgment, and which
+// are settled and just need reading. Everything else here serves that.
+//
+// Ordering, evidence and the judgment/stamp split come from lib/reviewRecords.js;
+// this only paints them.
+
+function reviewChip(text, kind) {
+  const el = document.createElement("span");
+  el.className = "rev-chip" + (kind ? ` ${kind}` : "");
+  el.textContent = text;
+  return el;
+}
+
+/** One review item: what changed, the evidence, the gaps, and how to check it. */
+function reviewRowEl(row) {
+  const el = document.createElement("section");
+  el.className = `rev-item ${row.verdict}`;
+
+  const head = document.createElement("div");
+  head.className = "rev-head";
+  const title = document.createElement("span");
+  title.className = "rev-title";
+  title.textContent = row.title;
+  const id = document.createElement("span");
+  id.className = "rev-id";
+  id.textContent = row.taskId.slice(0, 8);
+  id.title = row.taskId;
+  head.append(title, id);
+  if (row.category) {
+    head.append(reviewChip(row.category));
+  }
+  if (typeof row.priority === "number") {
+    head.append(reviewChip(`p${row.priority}`));
+  }
+  el.append(head);
+
+  // An item with no record is the honest failure case: it is IN review but nobody
+  // wrote down what to check. Say so instead of rendering a confident empty card.
+  if (row.verdict === "unrecorded") {
+    const warn = document.createElement("div");
+    warn.className = "rev-warn";
+    warn.textContent = `No review record: ${row.problems.join("; ")}. Nothing here has been verified for you - treat it as unreviewed.`;
+    el.append(warn);
+    return el;
+  }
+
+  const rec = row.record;
+  const summary = document.createElement("p");
+  summary.className = "rev-summary";
+  summary.textContent = rec.summary;
+  el.append(summary);
+
+  if (rec.verdict === "judgment" && rec.ask) {
+    const ask = document.createElement("div");
+    ask.className = "rev-ask";
+    const label = document.createElement("b");
+    label.textContent = "Needs you: ";
+    ask.append(label, document.createTextNode(rec.ask));
+    el.append(ask);
+  }
+
+  const chips = document.createElement("div");
+  chips.className = "rev-chips";
+  for (const e of rec.evidence || []) {
+    chips.append(reviewChip(e.claim || String(e), "ok"));
+  }
+  // The gaps are the useful half - today a feature shipped whose tests all passed
+  // while the feature was broken, because they exercised the wrong layer.
+  for (const gap of rec.notVerified || []) {
+    chips.append(reviewChip(gap, "gap"));
+  }
+  if (rec.release) {
+    chips.append(reviewChip(`in ${rec.release}`, "rel"));
+  }
+  for (const c of rec.commits || []) {
+    chips.append(reviewChip(c, "commit"));
+  }
+  if (chips.children.length > 0) {
+    el.append(chips);
+  }
+
+  if (Array.isArray(rec.testSteps) && rec.testSteps.length > 0) {
+    const steps = document.createElement("ol");
+    steps.className = "rev-steps";
+    for (const s of rec.testSteps) {
+      const li = document.createElement("li");
+      const what = document.createElement("span");
+      what.className = "rev-step-do";
+      what.textContent = s.step;
+      const exp = document.createElement("span");
+      exp.className = "rev-step-expect";
+      exp.textContent = s.expect;
+      li.append(what, exp);
+      steps.append(li);
+    }
+    el.append(steps);
+  }
+  return el;
+}
+
+async function renderReviewPage() {
+  const page = document.getElementById("reviewPage");
+  if (!page) {
+    return;
+  }
+  const res = await window.helm.listReviews();
+  const rows = res?.rows || [];
+  const tally = res?.tally || { total: 0, judgment: 0, stamp: 0, unrecorded: 0 };
+
+  const frag = document.createDocumentFragment();
+  const topbar = document.createElement("div");
+  topbar.className = "dash-topbar";
+  const heading = document.createElement("div");
+  const h2 = document.createElement("h2");
+  h2.textContent = "Review";
+  const sub = document.createElement("div");
+  sub.className = "analysis-totals";
+  sub.style.marginBottom = "0";
+  sub.textContent =
+    tally.total === 0
+      ? "Nothing is waiting on your review."
+      : `${tally.judgment} need your judgment · ${tally.stamp} ready to stamp${tally.unrecorded > 0 ? ` · ${tally.unrecorded} with no record` : ""}`;
+  heading.append(h2, sub);
+  topbar.append(heading);
+  frag.append(topbar);
+
+  if (!res?.ok && res?.error) {
+    const err = document.createElement("div");
+    err.className = "rev-warn";
+    err.textContent = res.error;
+    frag.append(err);
+  }
+
+  const groups = [
+    { key: "judgment", label: "Needs your judgment", hint: "these can't be settled by a test" },
+    { key: "stamp", label: "Ready to stamp", hint: "verified end to end - read the evidence and move on" },
+    { key: "unrecorded", label: "No review record", hint: "in review, but nothing was written down to check" },
+  ];
+  for (const g of groups) {
+    const inGroup = rows.filter((r) => r.verdict === g.key);
+    if (inGroup.length === 0) {
+      continue;
+    }
+    const h = document.createElement("h3");
+    h.className = "rev-group";
+    h.textContent = g.label;
+    const hint = document.createElement("span");
+    hint.className = "rev-group-hint";
+    hint.textContent = `— ${g.hint}`;
+    h.append(hint);
+    frag.append(h);
+    for (const row of inGroup) {
+      frag.append(reviewRowEl(row));
+    }
+  }
+
+  if (tally.total === 0) {
+    const empty = document.createElement("div");
+    empty.className = "pane-empty";
+    empty.textContent = "When something moves to review on the Jot board, it lands here with its evidence and test steps.";
+    frag.append(empty);
+  }
+
+  page.replaceChildren(frag);
+
+  // Badge on the subnav: the count that actually needs him, not the total - a
+  // total would nag about work that is already settled.
+  const badge = document.getElementById("reviewBadge");
+  if (badge) {
+    const n = tally.judgment + tally.unrecorded;
+    badge.textContent = n > 0 ? String(n) : "";
+    badge.classList.toggle("hidden", n === 0);
+  }
+}
+
 // --- Scheduled prompts (task 7d9d2188) ---
 // A caret beside the send button, the way Slack schedules a message: queue this
 // prompt for later instead of sending it now. The headline option is "at quota
@@ -11094,7 +11272,7 @@ document.getElementById("settingsGear").innerHTML = GEAR_ICON;
 // counts toward the group so the primary tab stays lit while viewing it. Skills
 // (analysis) and Archive are reached from their own #headerUtilityNav, not
 // the Settings/gear group.
-const DASHBOARD_FACET_PAGES = ["dashboard", "goal", "routines", "focus"];
+const DASHBOARD_FACET_PAGES = ["dashboard", "goal", "routines", "focus", "review"];
 
 // Single source of truth for page navigation. Everything (the primary bar,
 // the gear, the sub-nav, and every programmatic jump) routes through here, so
@@ -11172,6 +11350,7 @@ function navigateToPage(page, opts = {}) {
   document.getElementById("goalPage").classList.toggle("hidden", page !== "goal");
   document.getElementById("lavishPage").classList.toggle("hidden", page !== "lavish");
   document.getElementById("routinesPage").classList.toggle("hidden", page !== "routines");
+  document.getElementById("reviewPage").classList.toggle("hidden", page !== "review");
   document.getElementById("analysisPage").classList.toggle("hidden", page !== "analysis");
   document.getElementById("archivePage").classList.toggle("hidden", page !== "archive");
   document.getElementById("settingsPage").classList.toggle("hidden", page !== "settings");
@@ -11224,6 +11403,8 @@ function navigateToPage(page, opts = {}) {
     renderLavishPage();
   } else if (page === "routines") {
     renderRoutinesPage();
+  } else if (page === "review") {
+    renderReviewPage();
   } else if (page === "analysis") {
     renderAnalysisPage();
   } else if (page === "archive") {

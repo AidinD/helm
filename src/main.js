@@ -12,7 +12,7 @@ import crypto from "node:crypto";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { readAllSessions, enrichWithJot, setSessionArchived, forkTranscriptAtUserMessage, switchSessionRootFolder } from "./lib/sessions.js";
-import { loadJot, loadGoals, addSubtask, formatJotSummaryForClassifier, projectBoardSummary } from "./lib/jot.js";
+import { loadJot, loadGoals, addSubtask, formatJotSummaryForClassifier, projectBoardSummary, reviewTasks } from "./lib/jot.js";
 import { loadConfig, writeConfig } from "./lib/config.js";
 import { startSession } from "./lib/launcher.js";
 import { createLiveSessionRegistry } from "./lib/liveSessions.js";
@@ -38,6 +38,7 @@ import {
   pruneScheduledPrompts,
   quotaResetFireAt,
 } from "./lib/scheduledPrompts.js";
+import { buildReviewQueue, listReviewRecords, reviewQueueTally } from "./lib/reviewRecords.js";
 import { listHandoffCategories, writeHandoff, readHandoff, resolveHandoffCategory, handoffPath } from "./lib/handoffStore.js";
 import { classifySessionStatus, classifyHandoffCategory, expectsUserInputHeuristic, estimateSessionContextTokens, compactSession, getTranscriptSize } from "./lib/orchestratorHelper.js";
 import { savePastedImage, prunePastedImages } from "./lib/images.js";
@@ -3931,6 +3932,18 @@ function runDueScheduledPrompts() {
     fireScheduledPrompt(entry);
   }
 }
+
+// --- Review queue (task ce2d19ab) ---
+// Jot decides WHAT is in review; a review record adds the evidence and the test
+// steps. Anything in review with no record is returned too, flagged - hiding it
+// would let unreviewed work pass as reviewed, which is the failure this exists to
+// prevent.
+ipcMain.handle("reviews:list", () => {
+  const config = loadConfig();
+  const board = reviewTasks(config.jot || {});
+  const rows = buildReviewQueue(board.tasks, listReviewRecords(resolveMetaHome()));
+  return { ok: board.ok, error: board.error || null, rows, tally: reviewQueueTally(rows) };
+});
 
 ipcMain.handle("scheduledPrompts:list", () => {
   return { ok: true, pending: pendingScheduledPrompts(Date.now()), quotaLimited: isQuotaCurrentlyLimited() };
