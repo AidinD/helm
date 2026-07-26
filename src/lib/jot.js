@@ -225,6 +225,42 @@ export function projectTodoForContext(todo) {
 }
 
 /**
+ * Every top-level task currently sitting in "review", with its category name -
+ * the input to Helm's review queue (task ce2d19ab).
+ *
+ * Deliberately DOES carry the task text, unlike the classifier summary above:
+ * this feeds a page the captain reads himself, where the whole point is knowing which
+ * item is which. Descriptions are still left out - they hold long free-text notes,
+ * and the structured evidence lives in a review record instead (reviewRecords.js).
+ *
+ * Subtasks are excluded: a subtask in review is part of its parent's story, not a
+ * separate thing to sign off.
+ */
+export function reviewTasks(jotConfig = {}) {
+  // Reads the board file directly, the same way loadGoals does. NOTE: loadJot()
+  // is a category INDEX (ok/path/categories/matchByTitle) and carries no todos -
+  // going through it silently returned an empty queue.
+  if (jotConfig.enabled === false) {
+    return { ok: false, error: "Jot is disabled in config", tasks: [] };
+  }
+  const jotPath = jotConfig.path || resolveJotTodosPath();
+  const data = readJotFile(jotPath);
+  if (!data) {
+    return { ok: false, error: `Couldn't read the Jot board at ${jotPath}`, tasks: [] };
+  }
+  const catName = new Map((Array.isArray(data.categories) ? data.categories : []).map((c) => [c.id, c.name]));
+  const tasks = (Array.isArray(data.todos) ? data.todos : [])
+    .filter((t) => t && t.status === "review" && !t.parentId)
+    .map((t) => ({
+      id: t.id,
+      title: t.text || "",
+      priority: typeof t.priority === "number" ? t.priority : null,
+      category: catName.get(t.categoryId) || null,
+    }));
+  return { ok: true, path: jotPath, tasks };
+}
+
+/**
  * Builds the one-line Jot summary the orchestrator helper's classifier prompt
  * embeds for a session (see orchestratorHelper.js's classifySessionStatus).
  * Takes the small per-session aggregate enrichWithJot already computed

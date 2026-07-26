@@ -70,8 +70,10 @@ contextBridge.exposeInMainWorld("helm", {
   getOrchestrationBudget: () => ipcRenderer.invoke("orchestration:budget"),
   setOrchestrationCeiling: (ceilingUsd) => ipcRenderer.invoke("orchestration:setCeiling", { ceilingUsd }),
   getOrchestratorInfo: () => ipcRenderer.invoke("orchestrator:info"),
-  // Repo scripts (task 8bfae7a0): run a bound repo's package.json scripts
-  // directly, with no model turn - output streams over "repo:scriptEvent".
+  // Review queue (task ce2d19ab): what is in review, judgment items first, each
+  // with its evidence and test steps. Read-only here - records are written by the
+  // agent that did the work, not from the UI.
+  listReviews: () => ipcRenderer.invoke("reviews:list"),
   // Scheduled prompts (task 7d9d2188): queue a prompt for later, or for whenever
   // the quota window resets. `when` is absolute ms or the string "quota-reset".
   listScheduledPrompts: () => ipcRenderer.invoke("scheduledPrompts:list"),
@@ -82,6 +84,8 @@ contextBridge.exposeInMainWorld("helm", {
     ipcRenderer.on("scheduledPrompts:changed", handler);
     return () => ipcRenderer.removeListener("scheduledPrompts:changed", handler);
   },
+  // Repo scripts (task 8bfae7a0): run a bound repo's package.json scripts
+  // directly, with no model turn - output streams over "repo:scriptEvent".
   listRepoScripts: (cwd) => ipcRenderer.invoke("repo:listScripts", { cwd }),
   runRepoScript: (cwd, script, runId) => ipcRenderer.invoke("repo:runScript", { cwd, script, runId }),
   stopRepoScript: (runId) => ipcRenderer.invoke("repo:stopScript", { runId }),
