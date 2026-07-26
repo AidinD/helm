@@ -987,15 +987,22 @@ async function archiveWithHandoff(session) {
   // its refresh, which is why it showed a spinner and archive didn't.)
   refreshDashboardIfVisible({ force: true });
   let saved = false;
+  let savedTopic = null;
+  let savedTopicIsNew = false;
   try {
     const res = await summarizeSession(session);
     if (res && res.text) {
       // HANDOFF.md (overwrite, latest-only) - NOT DECISIONS.md (append), which
       // this used to bloat with transient session narrative (the captain 2026-07-14).
-      const cap = await window.helm.saveHandoff(session.cwd, res.text.trim());
+      const cap = await window.helm.saveHandoff(session.cwd, res.text.trim(), session.title);
       saved = !!(cap && cap.ok);
       if (!saved) {
         showToast(`Handoff save failed: ${cap?.error || "unknown"} - archiving anyway.`);
+      } else if (cap.topicKeyed) {
+        // Name the topic it was filed under - the category is chosen for you, so
+        // it must never be invisible (task 663ab4b6).
+        savedTopic = cap.category;
+        savedTopicIsNew = !!cap.isNew;
       }
     } else if (res && res.error) {
       showToast(`Couldn't summarize handoff: ${res.error} - archiving anyway.`);
@@ -1011,7 +1018,11 @@ async function archiveWithHandoff(session) {
   // the fleet fingerprint).
   refreshDashboardIfVisible({ force: true });
   if (saved) {
-    showToast(`Handoff saved to HANDOFF.md; archiving "${session.title}".`);
+    showToast(
+      savedTopic
+        ? `Handoff filed under "${savedTopic}"${savedTopicIsNew ? " (new topic)" : ""}; archiving "${session.title}".`
+        : `Handoff saved to HANDOFF.md; archiving "${session.title}".`
+    );
   }
   archiveSession(session);
 }
@@ -1020,14 +1031,19 @@ async function archiveWithHandoff(session) {
 // archive (the Fleet button, the sidebar context menu, the "Archive?" pill,
 // the queue approve). `plainArchive` runs the caller's own no-handoff archive
 // so each flow keeps its specifics (e.g. the Fleet button's optimistic
-// removal). The handoff branch only appears when the session has a project cwd
-// to write into. NOT used for bulk "Archive all" - a per-session summarize
-// there would be N Sonnet calls (see its own inline note).
+// removal). The handoff branch is ALWAYS offered now: a session with a project
+// cwd writes its repo HANDOFF.md, and one without (a non-rooted second mate -
+// training, kombucha, job hunting) files a topic-keyed handoff in Helm's own
+// store instead of losing the knowledge entirely (task 663ab4b6).
+// NOT used for bulk "Archive all" - a per-session summarize there would be N
+// Sonnet calls (see its own inline note).
 function offerArchiveChoice(x, y, session, plainArchive) {
   showContextMenu(x, y, [
-    ...(session.cwd
-      ? [{ label: "Save handoff to DECISIONS.md + archive", danger: true, onClick: () => archiveWithHandoff(session) }]
-      : []),
+    {
+      label: session.cwd ? "Save handoff to HANDOFF.md + archive" : "Save handoff by topic + archive",
+      danger: true,
+      onClick: () => archiveWithHandoff(session),
+    },
     { label: "Archive without a handoff", danger: true, onClick: plainArchive },
   ]);
 }
@@ -2372,7 +2388,10 @@ async function saveSecondMateHandoffsFor(mate, busy = null) {
   let n = 0;
   for (const sm of children) {
     const session = state.sessions.find((x) => (x.cliSessionId || x.sessionId) === sm.sessionId);
-    if (!session || !session.cwd) {
+    // A non-rooted second mate (no repo - training, kombucha, job hunting) used
+    // to be SKIPPED here, so retiring its first mate silently discarded its
+    // handoff. It now files by topic instead (task 663ab4b6).
+    if (!session) {
       continue;
     }
     // Progress on the retire spinner: summarizing each child is a real Sonnet
@@ -2383,7 +2402,7 @@ async function saveSecondMateHandoffsFor(mate, busy = null) {
     try {
       const summary = await summarizeSession(session);
       if (summary && summary.text) {
-        await window.helm.saveHandoff(session.cwd, summary.text.trim());
+        await window.helm.saveHandoff(session.cwd, summary.text.trim(), session.title);
       }
     } catch {
       // best-effort - a failed child handoff must never block the retire
