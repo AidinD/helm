@@ -236,6 +236,102 @@ export function projectTodoForContext(todo) {
  * Subtasks are excluded: a subtask in review is part of its parent's story, not a
  * separate thing to sign off.
  */
+/**
+ * Read-modify-write the Jot board under the same compare-before-swap discipline
+ * addSubtask established: both Helm and the Jot app do whole-file writes with no
+ * lock, so a naive rename can silently REVERT the other's edit. Stat at read
+ * time, re-stat immediately before the atomic rename, and retry from a fresh read
+ * if the file moved in our window.
+ *
+ * Extracted rather than copied (task ce2d19ab needed a second writer, for review
+ * actions): a second hand-rolled copy of this loop is exactly how the two writers
+ * drift and one of them loses the guard.
+ *
+ * `mutate(data)` may return { ok: false, error } to abort, or mutate `data` in
+ * place and return { ok: true, result }.
+ */
+export function mutateJotFile(jotPath, mutate) {
+  const dir = path.dirname(jotPath);
+  const base = path.basename(jotPath);
+  const MAX_ATTEMPTS = 4;
+  let lastError = null;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    let statBefore;
+    try {
+      statBefore = fs.statSync(jotPath);
+    } catch (err) {
+      return { ok: false, error: `Could not stat Jot data: ${err.message}` };
+    }
+    const data = readJotFile(jotPath);
+    if (!data || !Array.isArray(data.todos)) {
+      return { ok: false, error: "Could not read Jot data." };
+    }
+    const verdict = mutate(data);
+    if (!verdict || verdict.ok === false) {
+      return verdict || { ok: false, error: "Refused by the mutator." };
+    }
+    const tmpPath = path.join(dir, `.${base}.${crypto.randomBytes(4).toString("hex")}.tmp`);
+    try {
+      // No BOM, 2-space, LF - exactly Jot's own writer's output.
+      fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), "utf8");
+      const statNow = fs.statSync(jotPath);
+      if (statNow.mtimeMs !== statBefore.mtimeMs || statNow.size !== statBefore.size) {
+        fs.unlinkSync(tmpPath);
+        lastError = "Jot file changed during write (concurrent edit)";
+        continue;
+      }
+      fs.renameSync(tmpPath, jotPath);
+      return { ok: true, ...(verdict.result !== undefined ? { result: verdict.result } : {}) };
+    } catch (err) {
+      try {
+        fs.unlinkSync(tmpPath);
+      } catch {
+        // best-effort cleanup; the write already failed
+      }
+      return { ok: false, error: `Failed to write Jot data: ${err.message}` };
+    }
+  }
+  return { ok: false, error: `Could not write to Jot: ${lastError || "the file kept changing"}. Try again.` };
+}
+
+const JOT_STATUSES = ["open", "in-progress", "review", "done"];
+
+/**
+ * Move a task to another status - the review page's actions (task ce2d19ab).
+ *
+ * "done" also stamps completedAt, matching what the Jot app itself writes, so a
+ * task finished from Helm is indistinguishable from one finished in Jot.
+ *
+ * `note` is appended to the task's description when given, because a task sent
+ * BACK from review without a reason is the thing that wastes the next session
+ * (the captain's own convention: write the reason in the description when parking or
+ * bouncing a task).
+ */
+export function setTaskStatus(jotConfig, taskId, status, note = "") {
+  if (!taskId) {
+    return { ok: false, error: "Missing task id." };
+  }
+  if (!JOT_STATUSES.includes(status)) {
+    return { ok: false, error: `Unknown status "${status}".` };
+  }
+  const jotPath = jotConfig.path || resolveJotTodosPath();
+  return mutateJotFile(jotPath, (data) => {
+    const todo = data.todos.find((t) => t.id === taskId);
+    if (!todo) {
+      return { ok: false, error: "Task not found on the board." };
+    }
+    const from = todo.status;
+    todo.status = status;
+    todo.updatedAt = Date.now();
+    todo.completedAt = status === "done" ? Date.now() : null;
+    const trimmed = String(note || "").trim();
+    if (trimmed) {
+      todo.description = `${todo.description || ""}${todo.description ? "\n\n" : ""}${trimmed}`;
+    }
+    return { ok: true, result: { from, to: status } };
+  });
+}
+
 export function reviewTasks(jotConfig = {}) {
   // Reads the board file directly, the same way loadGoals does. NOTE: loadJot()
   // is a category INDEX (ok/path/categories/matchByTitle) and carries no todos -
@@ -532,31 +628,8 @@ export function addSubtask(jotConfig, parentId, text) {
     return { ok: false, error: "Missing parent goal id." };
   }
   const jotPath = jotConfig.path || resolveJotTodosPath();
-  const dir = path.dirname(jotPath);
-  const base = path.basename(jotPath);
-
-  // Compare-before-swap against a lost-update race with the Jot app. Both
-  // processes do whole-file read-modify-write with no lock; if Jot flushes an
-  // edit in the window between our read and our rename, a naive rename would
-  // silently REVERT Jot's edit (review finding — file stays valid, but a real
-  // todo vanishes). Guard: stat the file at read time, and immediately before
-  // the atomic rename re-stat it; if mtime/size changed, someone wrote in our
-  // window, so we discard our temp and retry from a fresh read. A few attempts
-  // is plenty for a single user; if it somehow keeps changing, we abort rather
-  // than clobber.
-  const MAX_ATTEMPTS = 4;
-  let lastError = null;
-  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    let statBefore;
-    try {
-      statBefore = fs.statSync(jotPath);
-    } catch (err) {
-      return { ok: false, error: `Could not stat Jot data: ${err.message}` };
-    }
-    const data = readJotFile(jotPath);
-    if (!data || !Array.isArray(data.todos)) {
-      return { ok: false, error: "Could not read Jot data." };
-    }
+  let newId = null;
+  const res = mutateJotFile(jotPath, (data) => {
     const parent = data.todos.find((t) => t.id === parentId);
     if (!parent) {
       return { ok: false, error: "Parent goal not found." };
@@ -565,9 +638,9 @@ export function addSubtask(jotConfig, parentId, text) {
       // Jot nests exactly one level; refuse to create a grandchild.
       return { ok: false, error: "Cannot add a subtask under a subtask." };
     }
-
-    const newTodo = {
-      id: crypto.randomUUID(),
+    newId = crypto.randomUUID();
+    data.todos.push({
+      id: newId,
       text: trimmed,
       status: "open",
       description: "",
@@ -583,35 +656,8 @@ export function addSubtask(jotConfig, parentId, text) {
       parentId: parentId,
       createdAt: Date.now(),
       completedAt: null,
-    };
-    data.todos.push(newTodo);
-
-    const tmpPath = path.join(dir, `.${base}.${crypto.randomBytes(4).toString("hex")}.tmp`);
-    try {
-      // No BOM, 2-space, LF — exactly Jot's own writer's output.
-      fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), "utf8");
-      // Re-stat right before the swap: if the file changed since we read it,
-      // the Jot app wrote in our window — abandon this attempt and retry from
-      // its newer state rather than overwrite (revert) that write.
-      const statNow = fs.statSync(jotPath);
-      if (statNow.mtimeMs !== statBefore.mtimeMs || statNow.size !== statBefore.size) {
-        fs.unlinkSync(tmpPath);
-        lastError = "Jot file changed during write (concurrent edit)";
-        continue;
-      }
-      fs.renameSync(tmpPath, jotPath);
-      return { ok: true, id: newTodo.id };
-    } catch (err) {
-      try {
-        fs.unlinkSync(tmpPath);
-      } catch {
-        // best-effort cleanup; the write already failed
-      }
-      return { ok: false, error: `Failed to write Jot data: ${err.message}` };
-    }
-  }
-  return {
-    ok: false,
-    error: `Could not write subtask: ${lastError || "Jot file kept changing"}. Try again.`,
-  };
+    });
+    return { ok: true };
+  });
+  return res.ok ? { ok: true, id: newId } : res;
 }

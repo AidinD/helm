@@ -12,7 +12,7 @@ import crypto from "node:crypto";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { readAllSessions, enrichWithJot, setSessionArchived, forkTranscriptAtUserMessage, switchSessionRootFolder } from "./lib/sessions.js";
-import { loadJot, loadGoals, addSubtask, formatJotSummaryForClassifier, projectBoardSummary, reviewTasks } from "./lib/jot.js";
+import { loadJot, loadGoals, addSubtask, formatJotSummaryForClassifier, projectBoardSummary, reviewTasks, setTaskStatus } from "./lib/jot.js";
 import { loadConfig, writeConfig } from "./lib/config.js";
 import { startSession } from "./lib/launcher.js";
 import { createLiveSessionRegistry } from "./lib/liveSessions.js";
@@ -38,7 +38,7 @@ import {
   pruneScheduledPrompts,
   quotaResetFireAt,
 } from "./lib/scheduledPrompts.js";
-import { buildReviewQueue, listReviewRecords, reviewQueueTally } from "./lib/reviewRecords.js";
+import { buildReviewQueue, listReviewRecords, reviewQueueTally, readReviewRecord, recordCheckRun } from "./lib/reviewRecords.js";
 import { listHandoffCategories, writeHandoff, readHandoff, resolveHandoffCategory, handoffPath } from "./lib/handoffStore.js";
 import { classifySessionStatus, classifyHandoffCategory, expectsUserInputHeuristic, estimateSessionContextTokens, compactSession, getTranscriptSize } from "./lib/orchestratorHelper.js";
 import { savePastedImage, prunePastedImages } from "./lib/images.js";
@@ -3943,6 +3943,70 @@ ipcMain.handle("reviews:list", () => {
   const board = reviewTasks(config.jot || {});
   const rows = buildReviewQueue(board.tasks, listReviewRecords(resolveMetaHome()));
   return { ok: board.ok, error: board.error || null, rows, tally: reviewQueueTally(rows) };
+});
+
+// Review actions: move a task on the board from the review page itself, so
+// signing off doesn't mean leaving Helm for Jot. A bounce back to in-progress
+// takes a note, because a task sent back without a reason is what wastes the
+// next session.
+ipcMain.handle("reviews:setStatus", (_event, { taskId, status, note } = {}) => {
+  const config = loadConfig();
+  return setTaskStatus(config.jot || {}, taskId, status, note || "");
+});
+
+// Run a record's declared checks and stamp the REAL outcome (exit code + output
+// tail) into it - the gauntlet. This is the half of the evidence the author of
+// the work does not get to write (task bd5d7b4b / Uncle Bob's constraints).
+ipcMain.handle("reviews:runChecks", async (_event, { taskId } = {}) => {
+  const metaHome = resolveMetaHome();
+  const rec = readReviewRecord(metaHome, taskId);
+  if (!rec) {
+    return { ok: false, error: "No review record for that task." };
+  }
+  const checks = Array.isArray(rec.checks) ? rec.checks : [];
+  if (checks.length === 0) {
+    return { ok: false, error: "This record declares no checks to run." };
+  }
+  const results = [];
+  for (const check of checks) {
+    const cwd = check.cwd || metaHome;
+    const outcome = await new Promise((resolve) => {
+      let out = "";
+      let child;
+      try {
+        child = spawn(check.cmd, { cwd, shell: true, env: process.env });
+      } catch (err) {
+        resolve({ exitCode: null, tail: `could not start: ${err.message}` });
+        return;
+      }
+      // A check that hangs must not hang the review page.
+      const timer = setTimeout(() => {
+        killChildTree(child);
+        resolve({ exitCode: null, tail: out.slice(-1200) + "\n[timed out after 5 minutes]" });
+      }, 5 * 60 * 1000);
+      const grab = (d) => {
+        if (out.length < 200000) {
+          out += d.toString("utf8");
+        }
+      };
+      child.stdout?.on("data", grab);
+      child.stderr?.on("data", grab);
+      child.on("error", (err) => {
+        clearTimeout(timer);
+        resolve({ exitCode: null, tail: `error: ${err.message}` });
+      });
+      child.on("close", (code) => {
+        clearTimeout(timer);
+        resolve({ exitCode: code, tail: out.slice(-1200) });
+      });
+    });
+    recordCheckRun(metaHome, taskId, { label: check.label, cmd: check.cmd, ...outcome });
+    results.push({ label: check.label, exitCode: outcome.exitCode, ok: outcome.exitCode === 0 });
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("reviews:changed");
+    }
+  }
+  return { ok: true, results };
 });
 
 ipcMain.handle("scheduledPrompts:list", () => {

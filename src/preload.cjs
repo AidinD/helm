@@ -71,9 +71,18 @@ contextBridge.exposeInMainWorld("helm", {
   setOrchestrationCeiling: (ceilingUsd) => ipcRenderer.invoke("orchestration:setCeiling", { ceilingUsd }),
   getOrchestratorInfo: () => ipcRenderer.invoke("orchestrator:info"),
   // Review queue (task ce2d19ab): what is in review, judgment items first, each
-  // with its evidence and test steps. Read-only here - records are written by the
-  // agent that did the work, not from the UI.
+  // with its evidence and test steps. Records are AUTHORED by the agent that did
+  // the work, never from the UI - but the UI can sign off (setReviewStatus) and
+  // run the record's declared checks, whose real exit codes are the half of the
+  // evidence the author doesn't get to write.
   listReviews: () => ipcRenderer.invoke("reviews:list"),
+  setReviewStatus: (taskId, status, note) => ipcRenderer.invoke("reviews:setStatus", { taskId, status, note }),
+  runReviewChecks: (taskId) => ipcRenderer.invoke("reviews:runChecks", { taskId }),
+  onReviewsChanged: (cb) => {
+    const handler = () => cb();
+    ipcRenderer.on("reviews:changed", handler);
+    return () => ipcRenderer.removeListener("reviews:changed", handler);
+  },
   // Scheduled prompts (task 7d9d2188): queue a prompt for later, or for whenever
   // the quota window resets. `when` is absolute ms or the string "quota-reset".
   listScheduledPrompts: () => ipcRenderer.invoke("scheduledPrompts:list"),

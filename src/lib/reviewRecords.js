@@ -81,7 +81,80 @@ export function reviewRecordProblems(rec) {
   if (!Array.isArray(rec.notVerified)) {
     problems.push("notVerified must be an array - state the gaps, use [] only if there truly are none");
   }
+  if (rec.checks !== undefined) {
+    if (!Array.isArray(rec.checks)) {
+      problems.push("checks must be an array");
+    } else if (rec.checks.some((c) => !c || !String(c.label || "").trim() || !String(c.cmd || "").trim())) {
+      problems.push("every check needs a label and a cmd");
+    }
+  }
   return problems;
+}
+
+// --- The gauntlet (Uncle Bob, task bd5d7b4b) -------------------------------
+// `evidence` is what the agent CLAIMS. `checks` are commands, and `checkRuns`
+// are what actually happened when they ran - exit code, when, and the tail of
+// the output. Kept as separate fields on purpose: the whole reason review is
+// cheap-but-trustworthy is that some of the evidence is not the author's word.
+//
+// The failure this guards is real and recent: a feature shipped whose tests all
+// passed while the feature was broken, because the tests exercised the layer the
+// author had already reasoned about. A stored exit code cannot be talked around.
+
+/** Stamp the outcome of one executed check onto a record. */
+export function recordCheckRun(metaHome, taskId, run, { now = Date.now() } = {}) {
+  const rec = readReviewRecord(metaHome, taskId);
+  if (!rec) {
+    return { ok: false, error: "No review record for that task." };
+  }
+  if (!run || !String(run.label || "").trim()) {
+    return { ok: false, error: "A check run needs the label it ran for." };
+  }
+  const runs = Array.isArray(rec.checkRuns) ? rec.checkRuns.filter((r) => r.label !== run.label) : [];
+  runs.push({
+    label: String(run.label),
+    cmd: run.cmd ? String(run.cmd) : null,
+    exitCode: typeof run.exitCode === "number" ? run.exitCode : null,
+    ok: run.exitCode === 0,
+    ranAt: now,
+    tail: run.tail ? String(run.tail).slice(-1200) : null,
+  });
+  return writeReviewRecord(metaHome, { ...rec, checkRuns: runs }, { now });
+}
+
+/**
+ * How the gauntlet stands for a record: has every declared check been run since
+ * the record was last written, and did they pass?
+ *
+ * A run from BEFORE the record's last update is treated as stale, not as a pass -
+ * otherwise a green tick from an older version of the work keeps vouching for
+ * code that has since changed.
+ */
+export function gauntletStatus(rec) {
+  const checks = Array.isArray(rec?.checks) ? rec.checks : [];
+  if (checks.length === 0) {
+    return { declared: 0, passed: 0, failed: 0, stale: 0, unrun: 0, state: "none" };
+  }
+  const runs = Array.isArray(rec.checkRuns) ? rec.checkRuns : [];
+  const updatedAt = typeof rec.updatedAt === "number" ? rec.updatedAt : 0;
+  let passed = 0;
+  let failed = 0;
+  let stale = 0;
+  let unrun = 0;
+  for (const c of checks) {
+    const run = runs.find((r) => r.label === c.label);
+    if (!run) {
+      unrun += 1;
+    } else if ((run.ranAt || 0) < updatedAt) {
+      stale += 1;
+    } else if (run.ok) {
+      passed += 1;
+    } else {
+      failed += 1;
+    }
+  }
+  const state = failed > 0 ? "failing" : unrun + stale > 0 ? "incomplete" : "passing";
+  return { declared: checks.length, passed, failed, stale, unrun, state };
 }
 
 export function readReviewRecord(metaHome, taskId) {
@@ -192,6 +265,7 @@ export function buildReviewQueue(reviewTasks, records) {
       incomplete: problems.length > 0,
       problems,
       verdict: problems.length === 0 ? rec.verdict : "unrecorded",
+      gauntlet: rec ? gauntletStatus(rec) : { declared: 0, state: "none" },
     };
   });
   const rank = { judgment: 0, stamp: 1, unrecorded: 2 };

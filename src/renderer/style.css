@@ -5542,3 +5542,34 @@ button.primary {
 .rev-step-do { display: block; }
 .rev-step-expect { display: block; color: var(--text-dim); font-size: 12.5px; margin-top: 2px; }
 .rev-step-expect::before { content: "→ "; color: var(--good); }
+
+/* Review gauntlet + actions (ce2d19ab / bd5d7b4b): declared checks and their
+   REAL outcomes, shown apart from the author's own evidence claims. */
+.rev-gauntlet {
+  margin-top: 11px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.rev-gauntlet.passing { border-color: color-mix(in srgb, var(--good) 40%, var(--border)); }
+.rev-gauntlet.failing { border-color: color-mix(in srgb, var(--danger) 50%, var(--border)); }
+.rev-gauntlet.incomplete { border-color: color-mix(in srgb, var(--waiting) 40%, var(--border)); }
+.rev-gauntlet-head { display: flex; align-items: center; gap: 10px; font-size: 12.5px; }
+.rev-gauntlet-head b { font-weight: 620; }
+.rev-gauntlet.passing .rev-gauntlet-head b { color: var(--good); }
+.rev-gauntlet.failing .rev-gauntlet-head b { color: var(--danger); }
+.rev-gauntlet.incomplete .rev-gauntlet-head b { color: var(--waiting); }
+.rev-gauntlet-head .text-btn { margin-left: auto; }
+.rev-check { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.rev-check-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--text-faint); }
+.rev-check-dot.pass { background: var(--good); }
+.rev-check-dot.fail { background: var(--danger); }
+.rev-check-dot.stale { background: var(--waiting); }
+.rev-check-dot.unrun { background: var(--text-faint); }
+.rev-check-label { color: var(--text); }
+.rev-check-state { margin-left: auto; color: var(--text-dim); font-family: ui-monospace, Consolas, monospace; font-size: 10.5px; }
+.rev-actions { display: flex; gap: 8px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); }
