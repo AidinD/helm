@@ -2172,18 +2172,49 @@ ipcMain.handle("session:stop", (_event, { launchId }) => {
 // window.jot preload. Jot is a sibling repo (D:\Repo\Tools\jot) whose renderer is
 // built to out/renderer (dev). Returns ok:false with a clear reason if the build
 // isn't present, so the renderer can show a helpful message instead of a blank view.
-function jotRendererIndexPath() {
-  return path.join(__dirname, "..", "..", "jot", "out", "renderer", "index.html");
+// In DEV, Jot is the sibling repo (D:\Repo\Tools\jot) built to out/renderer. In a
+// PACKAGED build there is no sibling repo: __dirname is inside app.asar, so the
+// old relative walk resolved to <install>/resources/jot/... and nothing put it
+// there - the Jot tab was broken in the installed app while working fine in dev
+// (bug 914ca869). The build now ships Jot's built renderer AND the webview
+// preload as extraResources, and this resolves them under resourcesPath.
+// (The preload is shipped OUTSIDE the asar deliberately: a webview preload is
+// loaded by URL, which is not a path Electron's asar layer can serve.)
+function jotAssetPaths() {
+  if (app.isPackaged) {
+    const base = path.join(process.resourcesPath, "jot");
+    return {
+      index: path.join(base, "out", "renderer", "index.html"),
+      preload: path.join(base, "jot-webview-preload.cjs"),
+      packaged: true,
+    };
+  }
+  return {
+    index: path.join(__dirname, "..", "..", "jot", "out", "renderer", "index.html"),
+    preload: path.join(__dirname, "jot-webview-preload.cjs"),
+    packaged: false,
+  };
 }
 ipcMain.handle("jot:paths", () => {
-  const indexPath = jotRendererIndexPath();
-  if (!fs.existsSync(indexPath)) {
-    return { ok: false, error: `Jot's built renderer isn't at ${indexPath}. Run \`npm run build\` in the jot repo.` };
+  const { index, preload, packaged } = jotAssetPaths();
+  if (!fs.existsSync(index)) {
+    // Different audiences need different advice: in dev you build the sibling
+    // repo; in an installed build the bundle is missing, which is a packaging
+    // problem the user cannot fix with `npm run build`.
+    return {
+      ok: false,
+      error: packaged
+        ? `This Helm build didn't ship Jot's UI (expected at ${index}). Install a newer Helm build.`
+        : `Jot's built renderer isn't at ${index}. Run \`npm run build\` in the jot repo.`,
+    };
+  }
+  if (!fs.existsSync(preload)) {
+    return { ok: false, error: `Jot's webview preload is missing (expected at ${preload}).` };
   }
   return {
     ok: true,
-    src: pathToFileURL(indexPath).href,
-    preload: pathToFileURL(path.join(__dirname, "jot-webview-preload.cjs")).href,
+    src: pathToFileURL(index).href,
+    preload: pathToFileURL(preload).href,
   };
 });
 

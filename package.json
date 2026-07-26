@@ -52,6 +52,19 @@
         "repo": "helm",
         "releaseType": "release"
       }
+    ],
+    "extraResources": [
+      {
+        "from": "../jot/out/renderer",
+        "to": "jot/out/renderer",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "src/jot-webview-preload.cjs",
+        "to": "jot/jot-webview-preload.cjs"
+      }
     ]
   },
   "devDependencies": {
