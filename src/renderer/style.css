@@ -5353,3 +5353,36 @@ button.primary {
 .wd-goal-bar i { display: block; height: 100%; background: var(--accent); }
 .wd-goal-pct { font-size: 10.5px; color: var(--text-faint); font-variant-numeric: tabular-nums; min-width: 34px; text-align: right; }
 .wd-goal-spacer { flex: 1; }
+
+/* Embedded classic modules inside a widget (4bf2421c feedback): the widget head
+   already carries the title, so the module's own body sits flush with no extra
+   padding, and the widget provides the frame. */
+.wd-body > .dash-board-body.wd-embedded {
+  padding: 0;
+  gap: 8px;
+}
+/* Vertical needs-you: stack the rows instead of laying them across the width. */
+.wd-body .dash-queue-grid.wd-stacked {
+  grid-template-columns: 1fr;
+}
+/* A widget hosting a fleet card shouldn't double the card's own frame. */
+.wd-body > .fleet-card,
+.wd-body > .fleet-mate-card {
+  border: none;
+  background: none;
+  padding: 0;
+}
+.wd-opts {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--text-faint);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+  border-radius: 6px;
+}
+.wd-opts:hover { color: var(--text); background: var(--bg-card-hover); }
+.wd-grip[draggable="true"] { cursor: grab; }
+.wd-grip[draggable="true"]:active { cursor: grabbing; }
