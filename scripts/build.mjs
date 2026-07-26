@@ -54,6 +54,21 @@ if (existsSync(distDir)) {
   }
 }
 
+// The packaged app ships Jot's BUILT renderer as an extraResource (the embedded
+// Jot tab loads it). If the sibling repo hasn't been built, electron-builder
+// would happily produce an installer whose Jot tab is broken - which is exactly
+// how bug 914ca869 reached an installed build. Fail loudly instead.
+const jotRenderer = path.join(repoRoot, "..", "jot", "out", "renderer", "index.html");
+if (!existsSync(jotRenderer)) {
+  console.error(
+    `[build] ABORT: Jot's built renderer is missing at ${jotRenderer}.\n` +
+      `        The packaged Helm bundles it for the embedded Jot tab.\n` +
+      `        Run \`npm run build\` in the jot repo first.`
+  );
+  process.exit(1);
+}
+console.log("[build] bundling Jot's built renderer from ../jot/out/renderer");
+
 const args = ["electron-builder", `--config.extraMetadata.version=${version}`];
 if (process.argv.includes("--publish")) {
   args.push("--publish", "always");
