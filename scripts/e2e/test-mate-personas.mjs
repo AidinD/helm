@@ -24,19 +24,15 @@ function assert(cond, msg) {
 
 try {
   // ---- personas.js ----
-  // Assert the INVARIANTS, not the count: a hardcoded length just breaks every
-  // time a persona is legitimately added (it did, when "council" landed) without
-  // catching anything the well-formedness and uniqueness checks below don't.
+  // Assert the INVARIANTS, not the count: a hardcoded length breaks every time a
+  // persona is legitimately added or removed, without catching anything the
+  // well-formedness and uniqueness checks below don't.
   assert(personas.PERSONAS.length >= 4, "catalog is populated");
   assert(personas.PERSONAS.every((p) => p.key && p.label && p.blurb && p.overlay), "each persona has key/label/blurb/overlay");
   assert(new Set(personas.PERSONAS.map((p) => p.key)).size === personas.PERSONAS.length, "persona keys are unique");
   assert(personas.getPersona("architect")?.label === "Architect", "getPersona resolves a known key");
   assert(personas.getPersona("researcher")?.label === "Researcher", "getPersona resolves the researcher persona");
   assert(personas.personaOverlay("researcher").includes("Researcher"), "researcher overlay carries its persona text");
-  // The council persona must POINT AT the skill rather than restate its protocol
-  // (the catalogue's own "integrate, don't rebuild" convention).
-  assert(personas.getPersona("council")?.label === "Council", "getPersona resolves the council persona");
-  assert(personas.personaOverlay("council").includes("`council` skill"), "council overlay points at the council skill");
   assert(personas.getPersona("nope") === null, "getPersona returns null for unknown key");
   assert(personas.getPersona(null) === null, "getPersona(null) is null (plain coordinator)");
   assert(personas.personaOverlay("architect").includes("Architect"), "personaOverlay returns the overlay text");
