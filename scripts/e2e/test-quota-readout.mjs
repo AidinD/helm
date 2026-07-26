@@ -91,7 +91,11 @@ try {
   assert(r.real.hasPct === false, "real payload (no utilization field) -> NOT a percentage readout");
   assert(r.real.chipText === "5-hour limit · OK", `real payload chip shows the limit + status, not "0%" (got ${JSON.stringify(r.real.chipText)})`);
   assert(/resets in 2h 34m/.test(r.real.barValueText), `the readout shows the reset countdown (got ${JSON.stringify(r.real.barValueText)})`);
-  assert(/no longer reports a % used/.test(r.real.title), "the tooltip explains why there's no % (API dropped utilization)");
+  // Tooltip is deliberately terse: the limit + its reset, nothing else (the captain
+  // 2026-07-22 - the old one explained the API's utilization field, which he
+  // didn't want). It must NOT drag in the API-internals explanation.
+  assert(r.real.title === "5-hour limit · OK · resets in 2h 34m", `tooltip is just limit + status + reset (got ${JSON.stringify(r.real.title)})`);
+  assert(!/api|utilization|misleading/i.test(r.real.title), "tooltip carries no API-internals explanation");
   assert(r.real.level === "ok", "an 'allowed' status is a calm/ok level");
 
   assert(r.warn.level === "warm" && /near limit/.test(r.warn.chipText), "allowed_warning -> warm + 'near limit'");
@@ -102,7 +106,7 @@ try {
   // "5h limit · OK" while the quota was spent).
   assert(r.pastReset.stale === true, "a past-reset reading is flagged stale");
   assert(!/OK/.test(r.pastReset.chipText) && r.pastReset.chipText.includes("—"), `a stale reading shows "—", not "OK" (got ${JSON.stringify(r.pastReset.chipText)})`);
-  assert(r.pastReset.level === "stale" && /stale/.test(r.pastReset.title), "stale reading has a stale level + explains it needs a fresh reading");
+  assert(r.pastReset.level === "stale" && /no current reading/.test(r.pastReset.title), "stale reading has a stale level + a terse 'no current reading' tooltip");
 
   // Future-proof: if utilization ever comes back, show the real %.
   assert(r.withUtil.hasPct === true && r.withUtil.pct === 62 && r.withUtil.chipText === "Quota 62%", `utilization present -> real % (got ${JSON.stringify(r.withUtil.chipText)})`);
