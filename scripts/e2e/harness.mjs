@@ -118,8 +118,12 @@ async function waitForRendererTarget(port, timeoutMs, child) {
       const res = await fetch(`http://127.0.0.1:${port}/json/list`);
       if (res.ok) {
         const targets = await res.json();
+        // A DevTools window is itself a "page" target. Skip it - it is never the
+        // app under test, and picking it silently attaches the whole harness to
+        // the inspector instead (every selector then "not found"). Matters for
+        // any app that auto-opens DevTools in dev.
         const page = targets.find(
-          (t) => t.type === "page" && t.webSocketDebuggerUrl
+          (t) => t.type === "page" && t.webSocketDebuggerUrl && !String(t.url || "").startsWith("devtools://")
         );
         if (page) {
           return page;

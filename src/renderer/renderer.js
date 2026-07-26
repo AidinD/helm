@@ -1175,9 +1175,10 @@ function quotaReadout(q, nowMs) {
       label: typeLabel,
       chipText: `${typeLabel} · —`,
       barValueText: "no current reading",
-      title:
-        `Your last ${typeLabel} reading is stale - its reset window has already elapsed, so its status no longer reflects reality. ` +
-        "Run a turn to get a fresh reading (the API only reports quota alongside a request).",
+      // Tooltips stay to the point: the limit and its reset, nothing else (Aidin
+      // 2026-07-22 - "jag vill bara veta kvot och när det resetas"). A stale
+      // window has no live reset to show, so say only that it needs a fresh read.
+      title: `${typeLabel} · no current reading (window elapsed)`,
     };
   }
   if (util !== null) {
@@ -1194,7 +1195,7 @@ function quotaReadout(q, nowMs) {
       label: typeLabel,
       chipText: `Quota ${pct}%`,
       barValueText: `${pct}% used`,
-      title: `${pct}% of your ${typeLabel} used` + (resetText ? ` · resets in ${resetText}` : ""),
+      title: `${typeLabel} · ${pct}% used` + (resetText ? ` · resets in ${resetText}` : ""),
     };
   }
   // No percentage available - report status + reset instead of a misleading 0%.
@@ -1209,10 +1210,7 @@ function quotaReadout(q, nowMs) {
     label: typeLabel,
     chipText: `${typeLabel} · ${statusWord}`,
     barValueText: resetText ? `${statusWord} · resets in ${resetText}` : statusWord,
-    title:
-      `Your ${typeLabel}: ${statusWord}` +
-      (resetText ? ` · resets in ${resetText}` : "") +
-      ". The API no longer reports a % used, so Helm shows the limit status + reset time instead of a misleading 0%.",
+    title: `${typeLabel} · ${statusWord}` + (resetText ? ` · resets in ${resetText}` : ""),
   };
 }
 
