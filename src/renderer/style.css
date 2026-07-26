@@ -5386,3 +5386,60 @@ button.primary {
 .wd-opts:hover { color: var(--text); background: var(--bg-card-hover); }
 .wd-grip[draggable="true"] { cursor: grab; }
 .wd-grip[draggable="true"]:active { cursor: grabbing; }
+
+/* Repo-script run overlay (task 8bfae7a0): a watchable, stoppable output view
+   for a package.json script run directly - no model turn involved. */
+.script-run-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+}
+.script-run-box {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  width: min(900px, 100%);
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+.script-run-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.script-run-title { font-weight: 620; font-family: ui-monospace, Consolas, monospace; }
+.script-run-cwd { color: var(--text-faint); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.script-run-status { margin-left: auto; font-size: 11.5px; white-space: nowrap; }
+.script-run-status.running { color: var(--waiting); }
+.script-run-status.ok { color: var(--good); }
+.script-run-status.fail { color: var(--danger); }
+.script-run-out {
+  margin: 0;
+  padding: 12px 14px;
+  overflow: auto;
+  flex: 1;
+  min-height: 220px;
+  background: var(--bg-inset);
+  color: var(--text);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.script-run-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+}

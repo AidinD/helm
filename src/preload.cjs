@@ -70,6 +70,16 @@ contextBridge.exposeInMainWorld("helm", {
   getOrchestrationBudget: () => ipcRenderer.invoke("orchestration:budget"),
   setOrchestrationCeiling: (ceilingUsd) => ipcRenderer.invoke("orchestration:setCeiling", { ceilingUsd }),
   getOrchestratorInfo: () => ipcRenderer.invoke("orchestrator:info"),
+  // Repo scripts (task 8bfae7a0): run a bound repo's package.json scripts
+  // directly, with no model turn - output streams over "repo:scriptEvent".
+  listRepoScripts: (cwd) => ipcRenderer.invoke("repo:listScripts", { cwd }),
+  runRepoScript: (cwd, script, runId) => ipcRenderer.invoke("repo:runScript", { cwd, script, runId }),
+  stopRepoScript: (runId) => ipcRenderer.invoke("repo:stopScript", { runId }),
+  onRepoScriptEvent: (cb) => {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on("repo:scriptEvent", handler);
+    return () => ipcRenderer.removeListener("repo:scriptEvent", handler);
+  },
   // Stale-build indicator: getBuildStatus() returns the running build's own
   // identity plus whatever the last periodic on-disk check found; onBuildStaleUpdate
   // fires only when that check's result actually changes (see runStaleBuildCheck

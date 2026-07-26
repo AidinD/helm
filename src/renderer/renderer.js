@@ -714,6 +714,152 @@ function showImageLightbox(fileUrl) {
   document.body.append(overlay);
 }
 
+// --- Repo scripts (task 8bfae7a0) ---
+// Run a bound repo's package.json scripts (build, release, test...) straight
+// from the pane, with NO model turn - the point is to not spend tokens on
+// something a plain command does. Output streams into an overlay so a long
+// build is watchable, and can be stopped.
+let repoScriptRunSeq = 0;
+
+function showScriptRunOverlay(cwd, script) {
+  const runId = `script-${++repoScriptRunSeq}-${Date.now()}`;
+  const overlay = document.createElement("div");
+  overlay.className = "script-run-overlay";
+  const box = document.createElement("div");
+  box.className = "script-run-box";
+
+  const head = document.createElement("div");
+  head.className = "script-run-head";
+  const title = document.createElement("span");
+  title.className = "script-run-title";
+  title.textContent = `npm run ${script}`;
+  const where = document.createElement("span");
+  where.className = "script-run-cwd";
+  where.textContent = cwd;
+  const status = document.createElement("span");
+  status.className = "script-run-status running";
+  status.textContent = "running…";
+  head.append(title, where, status);
+
+  const out = document.createElement("pre");
+  out.className = "script-run-out";
+
+  const actions = document.createElement("div");
+  actions.className = "script-run-actions";
+  const stopBtn = document.createElement("button");
+  stopBtn.type = "button";
+  stopBtn.className = "text-btn";
+  stopBtn.textContent = "Stop";
+  const copyBtn = document.createElement("button");
+  copyBtn.type = "button";
+  copyBtn.className = "text-btn";
+  copyBtn.textContent = "Copy output";
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "text-btn";
+  closeBtn.textContent = "Close";
+  actions.append(stopBtn, copyBtn, closeBtn);
+
+  box.append(head, out, actions);
+  overlay.append(box);
+  document.body.append(overlay);
+
+  let unsubscribe = null;
+  let finished = false;
+  const close = () => {
+    if (!finished) {
+      // Closing while it runs would orphan the process - stop it first.
+      window.helm.stopRepoScript(runId);
+    }
+    unsubscribe?.();
+    overlay.remove();
+    document.removeEventListener("keydown", onKey);
+  };
+  const onKey = (e) => {
+    if (e.key === "Escape") {
+      close();
+    }
+  };
+  closeBtn.addEventListener("click", close);
+  document.addEventListener("keydown", onKey);
+  stopBtn.addEventListener("click", async () => {
+    stopBtn.disabled = true;
+    await window.helm.stopRepoScript(runId);
+  });
+  copyBtn.addEventListener("click", () => {
+    navigator.clipboard?.writeText(out.textContent || "");
+    showToast("Output copied.");
+  });
+  // Clicks on the backdrop (not the box) close it, like the image lightbox.
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) {
+      close();
+    }
+  });
+
+  unsubscribe = window.helm.onRepoScriptEvent((payload) => {
+    if (payload.runId !== runId) {
+      return;
+    }
+    if (payload.kind === "out") {
+      const atBottom = out.scrollTop + out.clientHeight >= out.scrollHeight - 20;
+      out.textContent += payload.text;
+      if (atBottom) {
+        out.scrollTop = out.scrollHeight;
+      }
+      return;
+    }
+    if (payload.kind === "done") {
+      finished = true;
+      stopBtn.disabled = true;
+      const okRun = payload.code === 0;
+      status.className = "script-run-status " + (okRun ? "ok" : "fail");
+      status.textContent = payload.error ? `failed: ${payload.error}` : okRun ? "finished (exit 0)" : `exit ${payload.code}`;
+    }
+  });
+
+  window.helm.runRepoScript(cwd, script, runId).then((res) => {
+    if (!res?.ok) {
+      finished = true;
+      status.className = "script-run-status fail";
+      status.textContent = res?.error || "couldn't start";
+    }
+  });
+}
+
+/**
+ * A "Scripts" pill for a pane whose folder has a package.json. Returns null when
+ * there is nothing to offer, so the control simply doesn't appear.
+ */
+async function repoScriptsPill(cwd) {
+  if (!cwd) {
+    return null;
+  }
+  const res = await window.helm.listRepoScripts(cwd);
+  if (!res?.ok || !res.scripts?.length) {
+    return null;
+  }
+  const btn = document.createElement("button");
+  btn.className = "meta-pill";
+  btn.type = "button";
+  btn.dataset.hasMenu = "1";
+  btn.textContent = "Scripts";
+  btn.title = `${res.scripts.length} script${res.scripts.length === 1 ? "" : "s"} in ${res.name || "package.json"} - runs directly, no model turn`;
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const rect = btn.getBoundingClientRect();
+    showContextMenu(
+      rect.left,
+      rect.bottom + 4,
+      res.scripts.map((s) => ({
+        label: s.name,
+        onClick: () => showScriptRunOverlay(cwd, s.name),
+      }))
+    );
+  });
+  return btn;
+}
+
 function relTime(ts) {
   if (!ts) {
     return "unknown";
@@ -4421,6 +4567,19 @@ function paneComposerEl(index) {
 
   controls.append(pickBtn, cwdInput, attachBtn, permissionDD.el, modelDD.el, effortDD.el, languageDD.el, micBtn, sendBtn);
   shell.append(controls);
+
+  // Repo scripts (task 8bfae7a0): appended asynchronously (it has to read the
+  // folder's package.json) and inserted before the mic so the send controls stay
+  // rightmost. Absent entirely when the folder has no scripts.
+  repoScriptsPill(pane.cwd)
+    .then((pill) => {
+      if (pill && controls.isConnected) {
+        controls.insertBefore(pill, micBtn);
+      }
+    })
+    .catch(() => {
+      // a missing/unreadable package.json just means no pill
+    });
 
   // Context-size gauge — a bar + %, under the model/effort row (Aidin's
   // placement). Clicking it opens a popover with the context detail AND the

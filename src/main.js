@@ -9,7 +9,7 @@ import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
 import crypto from "node:crypto";
-import { execFile, execFileSync } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { readAllSessions, enrichWithJot, setSessionArchived, forkTranscriptAtUserMessage, switchSessionRootFolder } from "./lib/sessions.js";
 import { loadJot, loadGoals, addSubtask, formatJotSummaryForClassifier, projectBoardSummary } from "./lib/jot.js";
@@ -2277,6 +2277,90 @@ ipcMain.handle("goal:suggestVerifyCommand", async (_event, { projectPath }) => {
   } catch {
     return { ok: true, command: "" };
   }
+});
+
+// --- Repo scripts (task 8bfae7a0) ---
+// A session bound to a repo can run that repo's package.json scripts DIRECTLY -
+// build, release, test - without spending a model turn on it ("för att inte
+// slösa tokens om man inte vill"). This is deliberately a plain child process,
+// not an agent: Helm just runs the command and streams its output back.
+ipcMain.handle("repo:listScripts", async (_event, { cwd } = {}) => {
+  if (!cwd) {
+    return { ok: false, error: "This session has no project folder.", scripts: [] };
+  }
+  try {
+    const raw = await fs.promises.readFile(path.join(cwd, "package.json"), "utf8");
+    const pkg = JSON.parse(raw);
+    const scripts = pkg && typeof pkg.scripts === "object" && pkg.scripts ? pkg.scripts : {};
+    return {
+      ok: true,
+      name: pkg?.name || null,
+      scripts: Object.entries(scripts).map(([name, command]) => ({ name, command: String(command) })),
+    };
+  } catch (err) {
+    // No package.json is the normal case for a non-node repo, not an error worth
+    // shouting about - the caller just doesn't show the control.
+    return { ok: false, error: err.code === "ENOENT" ? "No package.json in this folder." : err.message, scripts: [] };
+  }
+});
+
+// One script run at a time per runId, so a second click can't interleave output.
+const liveScriptRuns = new Map(); // runId -> child
+
+ipcMain.handle("repo:runScript", (_event, { cwd, script, runId } = {}) => {
+  if (!cwd || !script || !runId) {
+    return { ok: false, error: "Missing cwd, script or runId." };
+  }
+  // Only a script actually declared in that package.json may run - the renderer
+  // picks from the list above, and this re-checks server-side so a crafted
+  // channel call can't run an arbitrary command.
+  let declared = [];
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(cwd, "package.json"), "utf8"));
+    declared = Object.keys(pkg?.scripts || {});
+  } catch (err) {
+    return { ok: false, error: `Couldn't read package.json: ${err.message}` };
+  }
+  if (!declared.includes(script)) {
+    return { ok: false, error: `"${script}" isn't a script in this package.json.` };
+  }
+  if (liveScriptRuns.has(runId)) {
+    return { ok: false, error: "That run is already going." };
+  }
+  const send = (payload) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("repo:scriptEvent", { runId, ...payload });
+    }
+  };
+  let child;
+  try {
+    child = spawn("npm", ["run", script], { cwd, shell: true, env: process.env });
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+  liveScriptRuns.set(runId, child);
+  child.stdout?.on("data", (d) => send({ kind: "out", text: d.toString("utf8") }));
+  child.stderr?.on("data", (d) => send({ kind: "out", text: d.toString("utf8") }));
+  child.on("error", (err) => {
+    liveScriptRuns.delete(runId);
+    send({ kind: "done", code: null, error: err.message });
+  });
+  child.on("close", (code) => {
+    liveScriptRuns.delete(runId);
+    send({ kind: "done", code });
+  });
+  return { ok: true, pid: child.pid, command: `npm run ${script}` };
+});
+
+ipcMain.handle("repo:stopScript", (_event, { runId } = {}) => {
+  const child = liveScriptRuns.get(runId);
+  if (!child) {
+    return { ok: false, error: "Nothing running under that id." };
+  }
+  // Same tree-kill reasoning as the session launcher: npm spawns a shell which
+  // spawns the real tool, so signalling only the top process orphans the work.
+  killChildTree(child);
+  return { ok: true };
 });
 
 // Cross-instance liveness (ship-review data-safety): the goal-run history is a
