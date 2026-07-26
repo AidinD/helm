@@ -814,6 +814,115 @@ function reviewRowEl(row) {
     }
     el.append(steps);
   }
+
+  // The gauntlet: declared checks and what actually happened when they ran. Shown
+  // separately from `evidence` on purpose - one is the author's claim, this is an
+  // exit code.
+  const g = row.gauntlet || { declared: 0, state: "none" };
+  if (g.declared > 0) {
+    const box = document.createElement("div");
+    box.className = `rev-gauntlet ${g.state}`;
+    const head = document.createElement("div");
+    head.className = "rev-gauntlet-head";
+    const label = document.createElement("b");
+    label.textContent =
+      g.state === "passing"
+        ? `Checks passing (${g.passed}/${g.declared})`
+        : g.state === "failing"
+          ? `Checks FAILING (${g.failed} of ${g.declared})`
+          : `Checks not confirmed (${g.passed}/${g.declared} — ${g.unrun} unrun, ${g.stale} stale)`;
+    head.append(label);
+    const run = document.createElement("button");
+    run.type = "button";
+    run.className = "text-btn";
+    run.textContent = "Run checks";
+    run.addEventListener("click", async () => {
+      run.disabled = true;
+      run.textContent = "Running…";
+      const res = await window.helm.runReviewChecks(row.taskId);
+      if (!res?.ok) {
+        showToast(res?.error || "Couldn't run the checks.");
+        run.disabled = false;
+        run.textContent = "Run checks";
+        return;
+      }
+      const failed = (res.results || []).filter((r) => !r.ok);
+      showToast(failed.length === 0 ? "All checks passed." : `${failed.length} check(s) failed: ${failed.map((f) => f.label).join(", ")}`);
+      renderReviewPage();
+    });
+    head.append(run);
+    box.append(head);
+    for (const c of rec.checks || []) {
+      const runInfo = (rec.checkRuns || []).find((r) => r.label === c.label);
+      const line = document.createElement("div");
+      line.className = "rev-check";
+      const dot = document.createElement("span");
+      const fresh = runInfo && (runInfo.ranAt || 0) >= (rec.updatedAt || 0);
+      dot.className = "rev-check-dot " + (!runInfo ? "unrun" : !fresh ? "stale" : runInfo.ok ? "pass" : "fail");
+      const name = document.createElement("span");
+      name.className = "rev-check-label";
+      name.textContent = c.label;
+      name.title = c.cmd;
+      const state = document.createElement("span");
+      state.className = "rev-check-state";
+      state.textContent = !runInfo
+        ? "never run"
+        : !fresh
+          ? "stale — ran before the last change"
+          : runInfo.ok
+            ? `exit 0 · ${relTime(runInfo.ranAt)}`
+            : `exit ${runInfo.exitCode} · ${relTime(runInfo.ranAt)}`;
+      if (runInfo?.tail) {
+        state.title = runInfo.tail;
+      }
+      line.append(dot, name, state);
+      box.append(line);
+    }
+    el.append(box);
+  }
+
+  // Sign-off, so review doesn't mean leaving Helm for Jot.
+  const actions = document.createElement("div");
+  actions.className = "rev-actions";
+  const doneBtn = document.createElement("button");
+  doneBtn.type = "button";
+  doneBtn.className = "text-btn";
+  doneBtn.textContent = "Mark done";
+  doneBtn.addEventListener("click", async () => {
+    // A failing gauntlet is a real reason to stop and look, so make signing off
+    // over it deliberate rather than a reflex click.
+    const proceed = () =>
+      window.helm.setReviewStatus(row.taskId, "done").then((res) => {
+        showToast(res?.ok ? `"${row.title}" marked done.` : res?.error || "Couldn't update the board.");
+        renderReviewPage();
+      });
+    if (g.state === "failing") {
+      customConfirm(`"${row.title}" has failing checks. Mark it done anyway?`, "Mark done", proceed);
+      return;
+    }
+    proceed();
+  });
+  const backBtn = document.createElement("button");
+  backBtn.type = "button";
+  backBtn.className = "text-btn";
+  backBtn.textContent = "Send back";
+  backBtn.addEventListener("click", () => {
+    const note = window.prompt(`Send "${row.title}" back to in-progress. What needs changing?`);
+    if (note === null) {
+      return;
+    }
+    const trimmed = note.trim();
+    if (!trimmed) {
+      showToast("A reason is required - a bounce without one wastes the next session.");
+      return;
+    }
+    window.helm.setReviewStatus(row.taskId, "in-progress", `[Aidin ${new Date().toISOString().slice(0, 10)}] ${trimmed}`).then((res) => {
+      showToast(res?.ok ? `Sent back with your note.` : res?.error || "Couldn't update the board.");
+      renderReviewPage();
+    });
+  });
+  actions.append(doneBtn, backBtn);
+  el.append(actions);
   return el;
 }
 
