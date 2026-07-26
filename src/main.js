@@ -27,7 +27,7 @@ import { findTranscriptPath, projectsRoot, encodeProjectDir } from "./lib/paths.
 import { listSkills, skillMdPath } from "./lib/skills.js";
 import { appendUsageLog, readUsageSummary, computeSuggestionAccuracyVerdict } from "./lib/usage.js";
 import { judgeModelFit } from "./lib/judge.js";
-import { listHandoffCategories, writeHandoff, readHandoff, resolveHandoffCategory } from "./lib/handoffStore.js";
+import { listHandoffCategories, writeHandoff, readHandoff, resolveHandoffCategory, handoffPath } from "./lib/handoffStore.js";
 import { classifySessionStatus, classifyHandoffCategory, expectsUserInputHeuristic, estimateSessionContextTokens, compactSession, getTranscriptSize } from "./lib/orchestratorHelper.js";
 import { savePastedImage, prunePastedImages } from "./lib/images.js";
 import { computeVersionString, captureRunningBuildIdentity, checkForNewerBuild } from "./lib/version.js";
@@ -628,11 +628,13 @@ function resolveContextFile({ cwd, kind, name } = {}) {
     // the handoffs directory.
     const metaHome = resolveMetaHome();
     const slug = String(name || "").replace(/\.md$/, "");
-    const text = readHandoff(metaHome, slug);
-    if (text === null) {
+    // handoffPath re-slugs, so the path here can never diverge from the one the
+    // store actually writes (an ad-hoc strip here would mismatch on case).
+    const file = handoffPath(metaHome, slug);
+    if (!file || readHandoff(metaHome, slug) === null) {
       return { ok: false, error: "Handoff topic not found" };
     }
-    return { ok: true, file: path.join(metaHome, ".helm", "handoffs", `${slug.replace(/[^a-z0-9-]/gi, "")}.md`) };
+    return { ok: true, file };
   }
   if (kind === "projectDoc") {
     // Guarded to the known durable-doc names in the session's own cwd.
