@@ -27,7 +27,8 @@ import { findTranscriptPath, projectsRoot, encodeProjectDir } from "./lib/paths.
 import { listSkills, skillMdPath } from "./lib/skills.js";
 import { appendUsageLog, readUsageSummary, computeSuggestionAccuracyVerdict } from "./lib/usage.js";
 import { judgeModelFit } from "./lib/judge.js";
-import { classifySessionStatus, expectsUserInputHeuristic, estimateSessionContextTokens, compactSession, getTranscriptSize } from "./lib/orchestratorHelper.js";
+import { listHandoffCategories, writeHandoff, readHandoff, resolveHandoffCategory } from "./lib/handoffStore.js";
+import { classifySessionStatus, classifyHandoffCategory, expectsUserInputHeuristic, estimateSessionContextTokens, compactSession, getTranscriptSize } from "./lib/orchestratorHelper.js";
 import { savePastedImage, prunePastedImages } from "./lib/images.js";
 import { computeVersionString, captureRunningBuildIdentity, checkForNewerBuild } from "./lib/version.js";
 import { runGoal } from "./lib/goalOrchestrator.js";
@@ -564,6 +565,23 @@ ipcMain.handle("context:list", (_event, cwd) => {
       out.projectDocs.push({ kind: "projectDoc", name, path: p, exists: fs.existsSync(p) });
     }
   }
+  // Non-rooted sessions (no repo, or rooted at the meta-home) have no project
+  // docs; their continuity lives in the topic-keyed handoff store instead, so
+  // surface those so a fresh session on the same subject can actually find the
+  // last one (task 663ab4b6 - previously a non-rooted handoff had nowhere to go
+  // and nothing to read back).
+  if (!cwd || isMetaHomeRoot(cwd)) {
+    const metaHome = resolveMetaHome();
+    for (const slug of listHandoffCategories(metaHome)) {
+      out.projectDocs.push({
+        kind: "handoffTopic",
+        name: `${slug}.md`,
+        topic: slug,
+        path: path.join(metaHome, ".helm", "handoffs", `${slug}.md`),
+        exists: true,
+      });
+    }
+  }
   const memDir = memoryDirFor(cwd);
   out.memory.dir = memDir;
   if (memDir && fs.existsSync(memDir)) {
@@ -603,6 +621,18 @@ function resolveContextFile({ cwd, kind, name } = {}) {
     }
     const file = path.join(memoryDirFor(cwd), name);
     return fs.existsSync(file) ? { ok: true, file } : { ok: false, error: "Memory file not found" };
+  }
+  if (kind === "handoffTopic") {
+    // Topic handoffs live in Helm's own store, not in a session cwd. The slug is
+    // re-derived by the store (slugifyCategory), so a crafted name can't escape
+    // the handoffs directory.
+    const metaHome = resolveMetaHome();
+    const slug = String(name || "").replace(/\.md$/, "");
+    const text = readHandoff(metaHome, slug);
+    if (text === null) {
+      return { ok: false, error: "Handoff topic not found" };
+    }
+    return { ok: true, file: path.join(metaHome, ".helm", "handoffs", `${slug.replace(/[^a-z0-9-]/gi, "")}.md`) };
   }
   if (kind === "projectDoc") {
     // Guarded to the known durable-doc names in the session's own cwd.
@@ -707,9 +737,30 @@ ipcMain.handle("context:capture", (_event, { cwd, text } = {}) => {
 // with transient session narrative - Aidin 2026-07-14). Git history keeps prior
 // handoffs. Atomic temp+rename. Durable rationale still goes to DECISIONS.md; a
 // handoff should distill any genuinely new decision INTO DECISIONS.md separately. ---
-ipcMain.handle("context:saveHandoff", (_event, { cwd, text } = {}) => {
-  if (!cwd || !text || !text.trim()) {
+ipcMain.handle("context:saveHandoff", async (_event, { cwd, text, title, category } = {}) => {
+  if (!text || !text.trim()) {
     return { ok: false, error: "Nothing to save" };
+  }
+  // A session with NO project folder (a non-rooted second mate - training,
+  // kombucha, job hunting) has no HANDOFF.md to write, and meta-home-rooted
+  // ones would all fight over ONE shared file. File those by TOPIC instead
+  // (task 663ab4b6). Everything with a real repo keeps the repo-local file.
+  if (!cwd || isMetaHomeRoot(cwd)) {
+    const metaHome = resolveMetaHome();
+    const existing = listHandoffCategories(metaHome);
+    let proposed = category || null;
+    if (!proposed) {
+      // Classify against the topics already on file - match-first, so related
+      // sessions keep landing in the same readable document.
+      const verdict = await classifyHandoffCategory({ cwd: metaHome, title, text, existingCategories: existing });
+      proposed = verdict?.category || null;
+    }
+    const resolved = resolveHandoffCategory(proposed, existing, title || "general");
+    const written = writeHandoff(metaHome, resolved.category, text, { title });
+    if (!written.ok) {
+      return written;
+    }
+    return { ...written, category: resolved.category, isNew: resolved.isNew, topicKeyed: true };
   }
   const file = path.join(cwd, "HANDOFF.md");
   const date = new Date().toISOString().slice(0, 16).replace("T", " ");

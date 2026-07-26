@@ -263,6 +263,127 @@ export function classifySessionStatus({ cwd, cliSessionId, sessionId, title, jot
   });
 }
 
+// Structured output for the handoff categoriser (task 663ab4b6).
+const HANDOFF_CATEGORY_SCHEMA = JSON.stringify({
+  type: "object",
+  properties: {
+    category: { type: "string" },
+    reason: { type: "string" },
+  },
+  required: ["category", "reason"],
+});
+
+const HANDOFF_CATEGORY_PROMPT = [
+  "You file a session's handoff note under a TOPIC so a later session on the same subject can find it.",
+  "You are given the existing topics and the note.",
+  "",
+  "Rules:",
+  "- STRONGLY prefer an existing topic. Only invent one when the note clearly does not belong to any of them.",
+  "- A topic is a durable life/work subject (training, kombucha, job-search, finances), never a one-off task.",
+  "- Answer with a short lowercase kebab-case slug in English, 1-3 words.",
+  "- reason: one short sentence.",
+].join("\n");
+
+/**
+ * Pick the topic a non-rooted session's handoff should be filed under (task
+ * 663ab4b6). Same cost-optimised recipe as classifySessionStatus (Haiku, no
+ * tools, no MCP) - this is a one-line classification, not a conversation.
+ *
+ * Returns { category, reason, costUsd } or null; the CALLER decides what to do
+ * with it (see resolveHandoffCategory in handoffStore.js, which enforces the
+ * match-an-existing-topic-first rule deterministically rather than trusting the
+ * model to have obeyed it).
+ */
+export function classifyHandoffCategory({ cwd, title, text, existingCategories = [] }) {
+  return new Promise((resolve) => {
+    if (!text || !text.trim()) {
+      resolve(null);
+      return;
+    }
+    const summary = [
+      `Existing topics: ${existingCategories.length > 0 ? existingCategories.join(", ") : "(none yet)"}`,
+      `Session title: ${title || "(untitled)"}`,
+      "",
+      "Handoff note:",
+      truncate(text, 2000),
+      "",
+      "Which topic should this be filed under?",
+    ].join("\n");
+
+    const classifierSessionId = randomUUID();
+    const args = [
+      "-p",
+      summary,
+      "--model",
+      "claude-haiku-4-5-20251001",
+      "--effort",
+      "low",
+      "--session-id",
+      classifierSessionId,
+      "--output-format",
+      "json",
+      "--json-schema",
+      HANDOFF_CATEGORY_SCHEMA,
+      "--system-prompt",
+      HANDOFF_CATEGORY_PROMPT,
+      "--allowed-tools",
+      "",
+      "--mcp-config",
+      '{"mcpServers":{}}',
+      "--strict-mcp-config",
+    ];
+
+    const claudePath = resolveClaudeBinary();
+    let child;
+    try {
+      child = spawn(claudePath, args, {
+        cwd,
+        shell: !claudePath.toLowerCase().endsWith(".exe"),
+        env: process.env,
+      });
+    } catch {
+      resolve(null);
+      return;
+    }
+
+    let out = "";
+    let settled = false;
+    const finish = (result) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeoutId);
+      deleteOwnTranscript(cwd, classifierSessionId);
+      resolve(result);
+    };
+    const timeoutId = setTimeout(() => {
+      child.kill();
+      finish(null);
+    }, CLASSIFIER_TIMEOUT_MS);
+
+    child.stdout.on("data", (d) => {
+      if (out.length < MAX_OUTPUT_BYTES) {
+        out += d.toString("utf8");
+      }
+    });
+    child.on("error", () => finish(null));
+    child.on("close", () => {
+      try {
+        const parsed = JSON.parse(out);
+        const result = parsed.structured_output;
+        if (result && typeof result.category === "string" && result.category.trim()) {
+          finish({ category: result.category, reason: result.reason || "", costUsd: parsed.total_cost_usd || 0 });
+        } else {
+          finish(null);
+        }
+      } catch {
+        finish(null);
+      }
+    });
+  });
+}
+
 // Best-effort delete of a just-completed one-shot classifier call's own
 // transcript. `cwd` + `sessionId` together resolve the exact file path the
 // same way `findTranscriptPath` searches (paths.js's own `encodeProjectDir`

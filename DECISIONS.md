@@ -4408,3 +4408,42 @@ so they stay in DECISIONS.md. Clean separation = both files stay right-sized.
 Implemented: `context:saveHandoff` (atomic overwrite), archiveWithHandoff writes
 there, HANDOFF.md is first in the carry-over "read these" directive, and each
 project's CLAUDE.md points a fresh session at HANDOFF.md first.
+
+## 2026-07-26 - Non-rooted sessions file handoffs by TOPIC, not by path (663ab4b6)
+
+**Decision:** a session with no project repo files its handoff into a Helm-owned,
+topic-keyed store at `<meta-home>/.helm/handoffs/<slug>.md` - one latest-only
+markdown file per subject (training, kombucha, job-search).
+The topic is proposed by a cheap Haiku classifier that is shown the topics
+already on file, then resolved deterministically by `resolveHandoffCategory`,
+which reuses an existing topic whenever the proposal matches it word-wise.
+
+**Context:** the whole handoff mechanism was anchored to `cwd`.
+Writing went to `<cwd>/HANDOFF.md` and reading came from `<cwd>`, so a non-rooted
+second mate (Aidin's training/kost session is the reported case) had two broken
+outcomes: with an empty cwd the "save handoff" action was not even offered and
+the knowledge was silently dropped on retire; with a meta-home cwd every such
+session would overwrite ONE shared HANDOFF.md.
+Verified before building: there was no HANDOFF.md in the meta-home at all, i.e.
+no non-rooted session had ever produced a durable handoff.
+
+**Alternatives considered + declined:**
+- *Reuse the mate record's `pendingHandoff` (mates.js).* Declined: it is consumed
+  once, so it is a message to the next instance rather than a durable document
+  you can reopen later. The repo case gives you a readable file; the non-rooted
+  case should not be weaker.
+- *Key by session title slug.* Declined: titles get renamed, which would silently
+  fork a topic's history into two files.
+- *Ask for the category every time.* Declined as the default: it adds a prompt to
+  a flow whose whole point is that it happens automatically at retire/archive.
+  The chosen topic is instead shown in the toast, and `saveHandoff` takes an
+  explicit `category` so an override is possible.
+
+**Why topic-first with a deterministic resolver:** the model proposes but does not
+decide. `resolveHandoffCategory` enforces the match-an-existing-topic rule in
+plain code, so near-duplicates (training / training-log) collapse into one file
+instead of scattering, and a junk or unusable proposal can never create a stray
+or path-escaping file (slugs are ASCII kebab-case, separators stripped).
+Live-checked across five real subjects: Swedish "Träning och kost" and "CV och
+ansökningar" both reused the existing English topics, while a tax-return session
+correctly opened a new `finances` topic.

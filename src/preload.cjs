@@ -36,7 +36,9 @@ contextBridge.exposeInMainWorld("helm", {
   captureNote: (cwd, text) => ipcRenderer.invoke("context:capture", { cwd, text }),
   // Handoffs go here (OVERWRITE, latest-only) - not into DECISIONS.md (append),
   // which they used to bloat with transient session narrative.
-  saveHandoff: (cwd, text) => ipcRenderer.invoke("context:saveHandoff", { cwd, text }),
+  // title feeds the topic-keyed store's classifier + header (task 663ab4b6);
+  // category forces a topic instead of classifying (an override).
+  saveHandoff: (cwd, text, title, category) => ipcRenderer.invoke("context:saveHandoff", { cwd, text, title, category }),
   copyToClipboard: (text) => ipcRenderer.invoke("clipboard:write", text),
   saveImage: (base64Data, ext) => ipcRenderer.invoke("image:save", { base64Data, ext }),
   transcribeVoice: (samples, language) => ipcRenderer.invoke("voice:transcribe", { samples, language }),
