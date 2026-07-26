@@ -27,6 +27,17 @@ import { findTranscriptPath, projectsRoot, encodeProjectDir } from "./lib/paths.
 import { listSkills, skillMdPath } from "./lib/skills.js";
 import { appendUsageLog, readUsageSummary, computeSuggestionAccuracyVerdict } from "./lib/usage.js";
 import { judgeModelFit } from "./lib/judge.js";
+import {
+  listScheduledPrompts,
+  pendingScheduledPrompts,
+  scheduledPromptAdd,
+  cancelScheduledPrompt,
+  dueScheduledPrompts,
+  pushScheduledPrompt,
+  markScheduledPromptFired,
+  pruneScheduledPrompts,
+  quotaResetFireAt,
+} from "./lib/scheduledPrompts.js";
 import { listHandoffCategories, writeHandoff, readHandoff, resolveHandoffCategory, handoffPath } from "./lib/handoffStore.js";
 import { classifySessionStatus, classifyHandoffCategory, expectsUserInputHeuristic, estimateSessionContextTokens, compactSession, getTranscriptSize } from "./lib/orchestratorHelper.js";
 import { savePastedImage, prunePastedImages } from "./lib/images.js";
@@ -3841,6 +3852,117 @@ function runDueRoutines() {
   }
 }
 
+// --- Scheduled prompts (task 7d9d2188) ---
+// "Kvoten tar slut mitt under ett jobb, då måste jag vänta tills den resettat och
+// skriva fortsätt." So a prompt can be queued and sent later - at a chosen time,
+// or when the quota window has actually reset.
+//
+// Is the quota still spent right now? Read from the SAME accumulated windows the
+// usage panel uses (bc6786c7). Only a FRESH reading counts: a window whose reset
+// already elapsed says nothing about the present, so it must not be treated as
+// "still limited" (that would strand every queued prompt forever).
+function isQuotaCurrentlyLimited(now = Date.now()) {
+  for (const { info } of quotaWindowsSnapshot()) {
+    const resetsAtMs = typeof info?.resetsAt === "number" ? info.resetsAt * 1000 : null;
+    if (resetsAtMs === null || resetsAtMs <= now) {
+      continue; // stale/unknown - not evidence of a live limit
+    }
+    if (info.status === "rejected" || (typeof info.utilization === "number" && info.utilization >= 1)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function fireScheduledPrompt(entry) {
+  try {
+    const { done } = startSession({
+      cwd: entry.cwd,
+      prompt: entry.prompt,
+      model: entry.model || undefined,
+      effort: entry.effort || undefined,
+      permissionMode: "default",
+      resumeSessionId: entry.resumeSessionId || undefined,
+      onEvent: (evt) => {
+        if (evt.kind === "quota" && evt.quota) {
+          recordQuota(evt.quota);
+        }
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send("session:event", { launchId: entry.id, ...evt });
+        }
+      },
+    });
+    markScheduledPromptFired(entry.id, { ok: true });
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("scheduledPrompts:changed");
+    }
+    done
+      .then(() => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send("scheduledPrompts:changed");
+        }
+      })
+      .catch(() => {
+        // the turn's own failure is surfaced through session:event, not here
+      });
+  } catch (err) {
+    markScheduledPromptFired(entry.id, { ok: false, error: err?.message || String(err) });
+  }
+}
+
+function runDueScheduledPrompts() {
+  const now = Date.now();
+  const quotaLimited = isQuotaCurrentlyLimited(now);
+  // Push any quota-waiting entry that came due while the quota is STILL spent,
+  // rather than firing it into the same failure. Re-resolve from the current
+  // windows; if there is no usable future reset, wait a modest fixed interval.
+  if (quotaLimited) {
+    const nextReset = quotaResetFireAt(quotaWindowsSnapshot(), now) || now + 15 * 60 * 1000;
+    for (const entry of listScheduledPrompts()) {
+      if (entry.status === "pending" && entry.waitForQuota && (entry.fireAt || 0) <= now) {
+        pushScheduledPrompt(entry.id, nextReset, now);
+      }
+    }
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("scheduledPrompts:changed");
+    }
+  }
+  for (const entry of dueScheduledPrompts(now, { quotaLimited })) {
+    fireScheduledPrompt(entry);
+  }
+}
+
+ipcMain.handle("scheduledPrompts:list", () => {
+  return { ok: true, pending: pendingScheduledPrompts(Date.now()), quotaLimited: isQuotaCurrentlyLimited() };
+});
+
+// "when" is either a number (absolute ms) or the string "quota-reset".
+ipcMain.handle("scheduledPrompts:add", (_event, { prompt, cwd, resumeSessionId, model, effort, when } = {}) => {
+  try {
+    const now = Date.now();
+    let fireAt;
+    let waitForQuota = false;
+    if (when === "quota-reset") {
+      waitForQuota = true;
+      // No usable reading yet (the API only reports quota alongside a request):
+      // check back shortly rather than refusing to queue.
+      fireAt = quotaResetFireAt(quotaWindowsSnapshot(), now) || now + 10 * 60 * 1000;
+    } else if (typeof when === "number" && isFinite(when)) {
+      fireAt = when;
+    } else {
+      return { ok: false, error: "Give a time, or \"quota-reset\"." };
+    }
+    const entry = scheduledPromptAdd({ prompt, cwd, resumeSessionId, model, effort, fireAt, waitForQuota, now });
+    return { ok: true, entry };
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err) };
+  }
+});
+
+ipcMain.handle("scheduledPrompts:cancel", (_event, { id } = {}) => {
+  return { ok: cancelScheduledPrompt(id) };
+});
+
 app.whenReady().then(() => {
   prunePastedImages();
   seedQuotaWindows();
@@ -3852,6 +3974,12 @@ app.whenReady().then(() => {
   // while Helm was closed), then a check every minute.
   runDueRoutines();
   setInterval(runDueRoutines, 60 * 1000);
+  // Scheduled prompts (7d9d2188): a catch-up pass now, then every minute. The
+  // catch-up matters - a prompt queued for a quota reset that happened while Helm
+  // was closed should go as soon as it opens.
+  pruneScheduledPrompts();
+  runDueScheduledPrompts();
+  setInterval(runDueScheduledPrompts, 60 * 1000);
   // Auto-update: no-op in dev (app.isPackaged false); checks GitHub Releases in
   // the packaged build. See lib/autoUpdate.js + docs/installer-and-auto-update.md.
   initAutoUpdate();

@@ -72,6 +72,16 @@ contextBridge.exposeInMainWorld("helm", {
   getOrchestratorInfo: () => ipcRenderer.invoke("orchestrator:info"),
   // Repo scripts (task 8bfae7a0): run a bound repo's package.json scripts
   // directly, with no model turn - output streams over "repo:scriptEvent".
+  // Scheduled prompts (task 7d9d2188): queue a prompt for later, or for whenever
+  // the quota window resets. `when` is absolute ms or the string "quota-reset".
+  listScheduledPrompts: () => ipcRenderer.invoke("scheduledPrompts:list"),
+  addScheduledPrompt: (spec) => ipcRenderer.invoke("scheduledPrompts:add", spec),
+  cancelScheduledPrompt: (id) => ipcRenderer.invoke("scheduledPrompts:cancel", { id }),
+  onScheduledPromptsChanged: (cb) => {
+    const handler = () => cb();
+    ipcRenderer.on("scheduledPrompts:changed", handler);
+    return () => ipcRenderer.removeListener("scheduledPrompts:changed", handler);
+  },
   listRepoScripts: (cwd) => ipcRenderer.invoke("repo:listScripts", { cwd }),
   runRepoScript: (cwd, script, runId) => ipcRenderer.invoke("repo:runScript", { cwd, script, runId }),
   stopRepoScript: (runId) => ipcRenderer.invoke("repo:stopScript", { runId }),
