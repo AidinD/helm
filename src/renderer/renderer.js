@@ -6756,6 +6756,12 @@ async function fillDashboardSections({ force = false } = {}) {
   if (bailIfPressed()) {
     return;
   }
+  // Widget dashboard owns its own rendering (4bf2421c) and has no section slots.
+  // Returning here also protects an in-flight widget drag / edit session from
+  // being torn out by a poll tick.
+  if (state.config?.dashboardWidgets?.enabled === true) {
+    return;
+  }
   if (!document.getElementById("dashQueueSlot")) {
     if (isDashboardVisible()) {
       await renderDashboardPage();
@@ -6867,10 +6873,515 @@ async function fillDashboardSections({ force = false } = {}) {
   }
 }
 
+// ======================= Widget dashboard (task 4bf2421c) =======================
+// The Dashboard as a drag-and-drop grid of widgets instead of the fixed section
+// stack, per the mock Aidin approved: quota, needs-you, captain+auto, one widget
+// PER first mate (add as many as you like), autopilot/goals. Lives behind
+// config.dashboardWidgets.enabled with the classic dashboard untouched beside
+// it, so switching is reversible and the daily surface is never destroyed.
+//
+// The widgets deliberately reuse the SAME data the classic sections read
+// (dashboardInMotionRows, listMates, getJotGoals, quotaPanelRows,
+// orchestrationChipContent) - this is a re-presentation, not a second source of
+// truth that could drift from what the rest of the app shows.
+
+// Widget catalogue. `perMate` types are instantiated once per first mate and
+// carry a mateId; everything else is a singleton.
+const WIDGET_CATALOG = {
+  quota: { label: "Quota", span: 4, accent: "grn", singleton: true },
+  needsYou: { label: "Needs you", span: 5, accent: "acc", singleton: true },
+  captainAuto: { label: "Captain + Auto", span: 3, accent: "mate", singleton: true },
+  firstMate: { label: "First mate", span: 4, accent: "mate", perMate: true },
+  goals: { label: "Autopilot", span: 4, accent: "blue", singleton: true },
+};
+const WIDGET_SPANS = [3, 4, 5, 6, 7];
+
+let widgetEditMode = false;
+let widgetDragId = null;
+
+/** The saved layout, or a seeded default (one first-mate widget per active mate). */
+function widgetLayout(mates) {
+  const saved = state.config?.dashboardWidgets?.layout;
+  if (Array.isArray(saved) && saved.length > 0) {
+    return saved;
+  }
+  const layout = [
+    { id: "w-quota", type: "quota", span: 4 },
+    { id: "w-needs", type: "needsYou", span: 5 },
+    { id: "w-capauto", type: "captainAuto", span: 3 },
+  ];
+  for (const mate of mates || []) {
+    layout.push({ id: `w-mate-${mate.mateId}`, type: "firstMate", span: 4, mateId: mate.mateId });
+  }
+  layout.push({ id: "w-goals", type: "goals", span: 4 });
+  return layout;
+}
+
+async function saveWidgetLayout(layout) {
+  const next = { ...(state.config?.dashboardWidgets || {}), layout };
+  state.config = { ...state.config, dashboardWidgets: next };
+  await window.helm.setConfig({ dashboardWidgets: next });
+}
+
+async function setWidgetDashboardEnabled(enabled) {
+  const next = { ...(state.config?.dashboardWidgets || {}), enabled };
+  state.config = { ...state.config, dashboardWidgets: next };
+  await window.helm.setConfig({ dashboardWidgets: next });
+  widgetEditMode = false;
+  await renderDashboardPage();
+}
+
+/** A labelled stat block ("4 / own sessions") used by the captain+auto widget. */
+function widgetStat(label, value, note, variant) {
+  const col = document.createElement("div");
+  col.className = "wd-stat" + (variant ? ` ${variant}` : "");
+  const l = document.createElement("div");
+  l.className = "wd-stat-label";
+  l.textContent = label;
+  const v = document.createElement("div");
+  v.className = "wd-stat-value";
+  v.textContent = value;
+  const n = document.createElement("div");
+  n.className = "wd-stat-note";
+  n.textContent = note;
+  col.append(l, v, n);
+  return col;
+}
+
+function widgetEmpty(text) {
+  const d = document.createElement("div");
+  d.className = "wd-empty";
+  d.textContent = text;
+  return d;
+}
+
+// --- per-type body builders. Each gets the shared data bundle. ---
+function widgetBodyQuota(data) {
+  const frag = document.createDocumentFragment();
+  const rows = quotaPanelRows(state.quotaWindows, Date.now());
+  const worst = worstFreshQuotaRow(rows);
+  const head = document.createElement("div");
+  head.className = "wd-quota-head";
+  head.textContent = worst ? worst.chipText : "No current reading";
+  const sub = document.createElement("div");
+  sub.className = "wd-quota-sub";
+  sub.textContent = worst ? worst.barValueText : "run a turn to get a fresh reading";
+  frag.append(head, sub);
+  if (worst && worst.hasPct) {
+    frag.append(quotaBar(worst.pct, worst.level));
+  }
+  // Every other accumulated window, compact - the desktop-style stack (bc6786c7).
+  for (const row of rows) {
+    if (worst && row.type === worst.type) {
+      continue;
+    }
+    const line = document.createElement("div");
+    line.className = "wd-quota-line";
+    const l = document.createElement("span");
+    l.textContent = row.label;
+    const v = document.createElement("span");
+    v.className = "wd-quota-val" + (row.level === "hot" ? " crit" : row.level === "warm" ? " warn" : row.stale ? " faint" : "");
+    v.textContent = row.barValueText;
+    line.append(l, v);
+    frag.append(line);
+  }
+  const spend = orchestrationChipContent(data.budget);
+  if (!spend.hidden) {
+    const line = document.createElement("div");
+    line.className = "wd-quota-line spend";
+    const l = document.createElement("span");
+    l.textContent = "Fleet spend (est.)";
+    const v = document.createElement("span");
+    v.className = "wd-quota-val";
+    v.textContent = spend.labelText.replace(/^Fleet spend \(est\.\)\s*/, "");
+    v.title = spend.title;
+    line.append(l, v);
+    frag.append(line);
+  }
+  return frag;
+}
+
+function widgetBodyNeedsYou(data) {
+  const frag = document.createDocumentFragment();
+  const rows = data.inMotion.filter((r) => r.needsAction);
+  if (rows.length === 0) {
+    frag.append(widgetEmpty("Nothing is waiting on you."));
+    return frag;
+  }
+  for (const row of rows.slice(0, 6)) {
+    const el = document.createElement("button");
+    el.type = "button";
+    el.className = "wd-need-row";
+    const dot = document.createElement("span");
+    dot.className = "wd-need-dot";
+    const t = document.createElement("span");
+    t.className = "wd-need-title";
+    const kind = document.createElement("span");
+    kind.className = "wd-need-kind";
+    if (row.kind === "session") {
+      t.textContent = row.session?.title || "(untitled)";
+      // Same labelling the queue uses: which tier is actually asking.
+      kind.textContent = secondMateForSession(row.session) ? "2nd mate" : firstMateForSession(row.session) ? "1st mate" : "session";
+      el.addEventListener("click", () => openSessionInPane(row.session));
+    } else {
+      t.textContent = row.run?.goalText || row.run?.title || "autopilot run";
+      kind.textContent = "goal run";
+    }
+    el.append(dot, t, kind);
+    frag.append(el);
+  }
+  return frag;
+}
+
+function widgetBodyCaptainAuto(data) {
+  const wrap = document.createElement("div");
+  wrap.className = "wd-stats";
+  const captainCount = state.sessions.filter((s) => !s.isArchived && !isHiddenFromHelm(s) && isOrchestratorSession(s)).length;
+  const autoOn = state.config?.autoCaptain?.enabled === true;
+  wrap.append(
+    widgetStat("Captain", String(captainCount), captainCount === 1 ? "own session" : "own sessions"),
+    widgetStat("Auto", autoOn ? String(data.autoDispatchCount || 0) : "off", autoOn ? "dispatches" : "not enabled", "auto")
+  );
+  return wrap;
+}
+
+function widgetBodyFirstMate(data, widget) {
+  const frag = document.createDocumentFragment();
+  const mate = (data.mates || []).find((m) => m.mateId === widget.mateId);
+  if (!mate) {
+    frag.append(widgetEmpty("This first mate is no longer on watch. Remove the widget or arrange a new one."));
+    return frag;
+  }
+  const name = document.createElement("div");
+  name.className = "wd-mate-name";
+  name.textContent = mate.name || "First mate";
+  frag.append(name);
+  const session = state.sessions.find((s) => s.sessionId === mate.sessionId || s.cliSessionId === mate.sessionId) || null;
+  const crew = (data.secondMates || []).filter((sm) => sm.firstMateId === mate.mateId);
+  if (session && typeof session.contextTokens === "number") {
+    const windowTokens = state.config?.contextWindowTokens || 1000000;
+    const pct = Math.min(100, Math.round((session.contextTokens / windowTokens) * 100));
+    const gauge = document.createElement("div");
+    gauge.className = "wd-gauge";
+    const fill = document.createElement("i");
+    fill.style.width = `${pct}%`;
+    gauge.append(fill);
+    const sub = document.createElement("div");
+    sub.className = "wd-mate-sub";
+    sub.textContent = `${pct}% context · ${crew.length} second mate${crew.length === 1 ? "" : "s"}`;
+    frag.append(gauge, sub);
+  } else {
+    const sub = document.createElement("div");
+    sub.className = "wd-mate-sub";
+    sub.textContent = `${crew.length} second mate${crew.length === 1 ? "" : "s"}`;
+    frag.append(sub);
+  }
+  const state_ = session?.lifecycleState;
+  if (state_ === "waiting" || state_ === "working") {
+    const chip = document.createElement("div");
+    chip.className = "wd-mate-crew";
+    const dot = document.createElement("span");
+    dot.className = "wd-crew-dot" + (state_ === "waiting" ? " need" : "");
+    const label = document.createElement("span");
+    label.textContent = state_ === "waiting" ? "waiting on you" : "working";
+    chip.append(dot, label);
+    frag.append(chip);
+  }
+  return frag;
+}
+
+function widgetBodyGoals(data) {
+  const frag = document.createDocumentFragment();
+  const goals = data.goals || [];
+  if (goals.length === 0) {
+    frag.append(widgetEmpty("No autopilot goals running."));
+    return frag;
+  }
+  for (const goal of goals.slice(0, 6)) {
+    const row = document.createElement("div");
+    row.className = "wd-goal-row";
+    const t = document.createElement("span");
+    t.className = "wd-goal-title";
+    t.textContent = goal.category ? `${goal.category}: ${goal.text}` : goal.text || "(goal)";
+    t.title = t.textContent;
+    row.append(t);
+    // Only an epic has subtask progress to show. A plain goal used to render a
+    // full-width EMPTY track, which read as "0% done" rather than "no subtasks".
+    if (goal.isEpic) {
+      const bar = document.createElement("span");
+      bar.className = "wd-goal-bar";
+      const fill = document.createElement("i");
+      fill.style.width = `${goalProgressPercent(goal)}%`;
+      bar.append(fill);
+      const p = document.createElement("span");
+      p.className = "wd-goal-pct";
+      p.textContent = `${goal.subtaskDone}/${goal.subtaskTotal}`;
+      row.append(bar, p);
+    } else {
+      const spacer = document.createElement("span");
+      spacer.className = "wd-goal-spacer";
+      const p = document.createElement("span");
+      p.className = "wd-goal-pct";
+      p.textContent = goal.status === "in-progress" ? "active" : "";
+      row.append(spacer, p);
+    }
+    frag.append(row);
+  }
+  return frag;
+}
+
+/** Percent complete for a Jot goal, from its subtask counts (epics only). */
+function goalProgressPercent(goal) {
+  const total = Number(goal.subtaskTotal || 0);
+  if (!total) {
+    return 0;
+  }
+  return Math.max(0, Math.min(100, (Number(goal.subtaskDone || 0) / total) * 100));
+}
+
+const WIDGET_BODIES = {
+  quota: widgetBodyQuota,
+  needsYou: widgetBodyNeedsYou,
+  captainAuto: widgetBodyCaptainAuto,
+  firstMate: widgetBodyFirstMate,
+  goals: widgetBodyGoals,
+};
+
+/** One widget card: head (grip, title, badge, remove) + a type-specific body. */
+function widgetEl(widget, data) {
+  const spec = WIDGET_CATALOG[widget.type];
+  const el = document.createElement("section");
+  el.className = `wd wd-span-${widget.span || spec?.span || 4}`;
+  el.dataset.widgetId = widget.id;
+  const head = document.createElement("div");
+  head.className = "wd-head";
+  if (widgetEditMode) {
+    const grip = document.createElement("span");
+    grip.className = "wd-grip";
+    grip.textContent = "⠿";
+    grip.title = "Drag to rearrange";
+    head.append(grip);
+  }
+  const title = document.createElement("span");
+  title.className = `wd-title ${spec?.accent || ""}`;
+  let label = spec?.label || widget.type;
+  if (widget.type === "firstMate") {
+    const mate = (data.mates || []).find((m) => m.mateId === widget.mateId);
+    label = mate ? `First mate · ${mate.name}` : "First mate";
+  }
+  title.textContent = label;
+  head.append(title);
+  if (widgetEditMode) {
+    const sizer = document.createElement("select");
+    sizer.className = "wd-size";
+    sizer.title = "Width (grid columns)";
+    for (const span of WIDGET_SPANS) {
+      const opt = document.createElement("option");
+      opt.value = String(span);
+      opt.textContent = `${span}/12`;
+      if ((widget.span || spec?.span) === span) {
+        opt.selected = true;
+      }
+      sizer.append(opt);
+    }
+    sizer.addEventListener("change", async () => {
+      const layout = widgetLayout(data.mates).map((w) => (w.id === widget.id ? { ...w, span: Number(sizer.value) } : w));
+      await saveWidgetLayout(layout);
+      await renderDashboardPage();
+    });
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "wd-remove";
+    remove.textContent = "×";
+    remove.title = "Remove widget";
+    remove.addEventListener("click", async () => {
+      const layout = widgetLayout(data.mates).filter((w) => w.id !== widget.id);
+      await saveWidgetLayout(layout);
+      await renderDashboardPage();
+    });
+    head.append(sizer, remove);
+  }
+  el.append(head);
+  const body = document.createElement("div");
+  body.className = "wd-body";
+  const build = WIDGET_BODIES[widget.type];
+  if (build) {
+    body.append(build(data, widget));
+  } else {
+    body.append(widgetEmpty(`Unknown widget "${widget.type}".`));
+  }
+  el.append(body);
+
+  // Reordering is edit-mode only, so a normal click on a widget's contents can
+  // never be swallowed by a drag.
+  if (widgetEditMode) {
+    el.draggable = true;
+    el.classList.add("wd-draggable");
+    el.addEventListener("dragstart", (e) => {
+      widgetDragId = widget.id;
+      el.classList.add("wd-dragging");
+      e.dataTransfer.effectAllowed = "move";
+      // Firefox/Chromium need data set for a drag to start at all.
+      e.dataTransfer.setData("text/plain", widget.id);
+    });
+    el.addEventListener("dragend", () => {
+      widgetDragId = null;
+      el.classList.remove("wd-dragging");
+      document.querySelectorAll(".wd-drop-before, .wd-drop-after").forEach((n) => n.classList.remove("wd-drop-before", "wd-drop-after"));
+    });
+    el.addEventListener("dragover", (e) => {
+      if (!widgetDragId || widgetDragId === widget.id) {
+        return;
+      }
+      e.preventDefault();
+      // Insertion side from the pointer's position within this widget, so the
+      // line marks exactly where it will land (the same lesson as Jot 67ebdd45).
+      const rect = el.getBoundingClientRect();
+      const after = e.clientX > rect.left + rect.width / 2;
+      el.classList.toggle("wd-drop-after", after);
+      el.classList.toggle("wd-drop-before", !after);
+    });
+    el.addEventListener("dragleave", () => {
+      el.classList.remove("wd-drop-before", "wd-drop-after");
+    });
+    el.addEventListener("drop", async (e) => {
+      e.preventDefault();
+      const after = el.classList.contains("wd-drop-after");
+      el.classList.remove("wd-drop-before", "wd-drop-after");
+      if (!widgetDragId || widgetDragId === widget.id) {
+        return;
+      }
+      const layout = widgetLayout(data.mates);
+      const from = layout.findIndex((w) => w.id === widgetDragId);
+      const target = layout.findIndex((w) => w.id === widget.id);
+      if (from === -1 || target === -1) {
+        return;
+      }
+      const moved = layout[from];
+      const rest = layout.filter((_, i) => i !== from);
+      const insertAt = rest.findIndex((w) => w.id === widget.id) + (after ? 1 : 0);
+      rest.splice(insertAt, 0, moved);
+      await saveWidgetLayout(rest);
+      await renderDashboardPage();
+    });
+  }
+  return el;
+}
+
+/** The "+ Add widget" tile and its picker (edit mode only). */
+function widgetAddTile(data) {
+  const tile = document.createElement("button");
+  tile.type = "button";
+  tile.className = "wd-add";
+  tile.textContent = "+ Add widget";
+  tile.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const layout = widgetLayout(data.mates);
+    const items = [];
+    for (const [type, spec] of Object.entries(WIDGET_CATALOG)) {
+      if (spec.perMate) {
+        for (const mate of data.mates || []) {
+          const id = `w-mate-${mate.mateId}`;
+          if (layout.some((w) => w.id === id)) {
+            continue;
+          }
+          items.push({
+            label: `First mate · ${mate.name}`,
+            onClick: async () => {
+              await saveWidgetLayout([...layout, { id, type: "firstMate", span: spec.span, mateId: mate.mateId }]);
+              await renderDashboardPage();
+            },
+          });
+        }
+        continue;
+      }
+      if (spec.singleton && layout.some((w) => w.type === type)) {
+        continue;
+      }
+      items.push({
+        label: spec.label,
+        onClick: async () => {
+          await saveWidgetLayout([...layout, { id: `w-${type}`, type, span: spec.span }]);
+          await renderDashboardPage();
+        },
+      });
+    }
+    if (items.length === 0) {
+      items.push({ label: "Every widget is already on the board", onClick: () => {} });
+    }
+    const rect = tile.getBoundingClientRect();
+    showContextMenu(rect.left, rect.bottom + 4, items);
+  });
+  return tile;
+}
+
+/** Builds the whole widget grid into #dashboardPage. */
+async function renderWidgetDashboard(page) {
+  const [matesResult, secondMatesResult, goalsResult, budget] = await Promise.all([
+    window.helm.listMates(),
+    window.helm.listSecondMates(),
+    window.helm.getJotGoals(),
+    window.helm.getOrchestrationBudget?.() ?? Promise.resolve(null),
+  ]);
+  const data = {
+    mates: matesResult?.ok ? matesResult.active : [],
+    secondMates: secondMatesResult?.ok ? secondMatesResult.secondMates || [] : [],
+    goals: goalsResult?.ok ? goalsResult.goals || [] : [],
+    inMotion: dashboardInMotionRows(),
+    budget: budget?.ok ? budget.budget : budget,
+    autoDispatchCount: 0,
+  };
+
+  const topbar = document.createElement("div");
+  topbar.className = "dash-topbar";
+  const heading = document.createElement("div");
+  const h2 = document.createElement("h2");
+  h2.textContent = "Dashboard";
+  heading.append(h2);
+  const actions = document.createElement("div");
+  actions.className = "dash-topbar-actions";
+  const arrange = document.createElement("button");
+  arrange.type = "button";
+  arrange.className = "wd-editbtn" + (widgetEditMode ? " on" : "");
+  arrange.textContent = widgetEditMode ? "Done arranging" : "⋮⋮ Arrange widgets";
+  arrange.addEventListener("click", async () => {
+    widgetEditMode = !widgetEditMode;
+    await renderDashboardPage();
+  });
+  const classic = document.createElement("button");
+  classic.type = "button";
+  classic.className = "text-btn";
+  classic.textContent = "Classic layout";
+  classic.title = "Switch back to the section dashboard (nothing is lost - your widget layout is kept).";
+  classic.addEventListener("click", () => setWidgetDashboardEnabled(false));
+  actions.append(arrange, classic, focusModeToggleEl());
+  topbar.append(heading, actions);
+  page.append(topbar);
+
+  const grid = document.createElement("div");
+  grid.className = "wd-grid" + (widgetEditMode ? " editing" : "");
+  const layout = widgetLayout(data.mates);
+  for (const widget of layout) {
+    grid.append(widgetEl(widget, data));
+  }
+  if (widgetEditMode) {
+    grid.append(widgetAddTile(data));
+  }
+  page.append(grid);
+}
+
 async function renderDashboardPage() {
   const page = document.getElementById("dashboardPage");
   page.innerHTML = "";
   page.className = "analysis-page dashboard-page";
+
+  // Widget dashboard (4bf2421c) when enabled; the classic section stack below is
+  // left completely intact so the toggle is reversible.
+  if (state.config?.dashboardWidgets?.enabled === true) {
+    dashSectionFingerprints = { onboarding: null, queue: null, report: null, fleet: null, goals: null, newSession: null };
+    await renderWidgetDashboard(page);
+    return;
+  }
 
   const topbar = document.createElement("div");
   topbar.className = "dash-topbar";
@@ -6895,7 +7406,14 @@ async function renderDashboardPage() {
   const orchChip = document.createElement("div");
   orchChip.id = "dashOrchestrationChip";
   orchChip.className = "dash-orch-chip";
-  topbarActions.append(quotaChip, orchChip, focusModeToggleEl());
+  // Opt into the widget dashboard (4bf2421c). Reversible from there.
+  const widgetToggle = document.createElement("button");
+  widgetToggle.type = "button";
+  widgetToggle.className = "text-btn";
+  widgetToggle.textContent = "Widget layout";
+  widgetToggle.title = "Switch the dashboard to a drag-and-drop widget grid. Reversible - this layout stays as it is.";
+  widgetToggle.addEventListener("click", () => setWidgetDashboardEnabled(true));
+  topbarActions.append(quotaChip, orchChip, widgetToggle, focusModeToggleEl());
   topbar.append(heading, topbarActions);
   page.append(topbar);
   renderDashQuota();

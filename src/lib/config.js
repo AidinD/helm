@@ -143,6 +143,15 @@ const DEFAULT_CONFIG = {
   autoCaptain: {
     enabled: false,
   },
+  // Widget dashboard (task 4bf2421c): the Dashboard as a drag-and-drop grid of
+  // widgets instead of the fixed section stack. OFF by default and fully
+  // reversible - the classic dashboard stays intact behind the same toggle, so
+  // enabling this never destroys the layout Aidin works in every day.
+  // layout: ordered [{ id, type, span, mateId? }]; null = seed the default set.
+  dashboardWidgets: {
+    enabled: false,
+    layout: null,
+  },
   jot: {
     enabled: true,
     // null = resolve portably (JOT_DATA_DIR, else the OS Jot data dir) via
@@ -184,6 +193,7 @@ export function loadConfig() {
       orchestratorHelper: { ...DEFAULT_CONFIG.orchestratorHelper, ...parsed.orchestratorHelper },
       autoCompact: { ...DEFAULT_CONFIG.autoCompact, ...parsed.autoCompact },
       autoCaptain: { ...DEFAULT_CONFIG.autoCaptain, ...parsed.autoCaptain },
+      dashboardWidgets: { ...DEFAULT_CONFIG.dashboardWidgets, ...parsed.dashboardWidgets },
       suggestionAccuracyCheck: { ...DEFAULT_CONFIG.suggestionAccuracyCheck, ...parsed.suggestionAccuracyCheck },
       jot: { ...DEFAULT_CONFIG.jot, ...parsed.jot },
     };

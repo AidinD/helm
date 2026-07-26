@@ -5195,3 +5195,161 @@ button.primary {
 .dash-queue-actions .text-btn.danger {
   color: var(--danger);
 }
+
+/* ===================== Widget dashboard (task 4bf2421c) =====================
+   A 12-column drag-and-drop grid, per the approved mock. Colours come from
+   Helm's own tokens rather than the mock's palette so it matches every theme. */
+.wd-grid {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 14px;
+  margin-top: 14px;
+  /* Size each widget to its content instead of stretching it to the tallest in
+     the row - otherwise a compact widget beside a long list is mostly dead space. */
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .wd-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+.wd {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 13px 14px;
+  position: relative;
+  min-height: 96px;
+  grid-column: span 4;
+}
+.wd-span-3 { grid-column: span 3; }
+.wd-span-4 { grid-column: span 4; }
+.wd-span-5 { grid-column: span 5; }
+.wd-span-6 { grid-column: span 6; }
+.wd-span-7 { grid-column: span 7; }
+@media (max-width: 900px) {
+  .wd, .wd-span-3, .wd-span-4, .wd-span-5, .wd-span-6, .wd-span-7 { grid-column: span 2; }
+}
+
+.wd-head { display: flex; align-items: center; gap: 8px; margin-bottom: 11px; }
+.wd-grip { color: var(--text-faint); font-size: 13px; cursor: grab; letter-spacing: -2px; }
+.wd-title {
+  font-size: 11px;
+  font-weight: 640;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wd-title.acc { color: var(--accent); }
+.wd-title.mate { color: var(--accent); }
+.wd-title.blue { color: var(--text-dim); }
+.wd-title.grn { color: var(--good); }
+.wd-body { display: flex; flex-direction: column; gap: 7px; }
+
+/* edit mode */
+.wd-draggable { cursor: grab; }
+.wd-dragging { opacity: 0.4; }
+.wd-grid.editing .wd { border-style: dashed; }
+.wd-size {
+  margin-left: auto;
+  background: var(--bg);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 10.5px;
+  padding: 1px 4px;
+}
+.wd-remove {
+  background: none;
+  border: none;
+  color: var(--text-faint);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+.wd-remove:hover { color: var(--danger); }
+/* insertion marker while rearranging - same idea as Jot 67ebdd45 */
+.wd-drop-before::before, .wd-drop-after::after {
+  content: "";
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  width: 3px;
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 0 10px 1px var(--accent);
+}
+.wd-drop-before::before { left: -8px; }
+.wd-drop-after::after { right: -8px; }
+.wd-add {
+  grid-column: span 3;
+  min-height: 96px;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  background: none;
+  color: var(--text-faint);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.wd-add:hover { color: var(--text); border-color: var(--accent); }
+.wd-editbtn {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  color: var(--accent);
+  border-radius: 8px;
+  padding: 5px 11px;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.wd-editbtn.on { background: var(--accent); color: var(--bg); }
+
+/* widget bodies */
+.wd-empty { color: var(--text-faint); font-size: 12px; }
+.wd-quota-head { font-size: 22px; font-weight: 680; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.wd-quota-sub { color: var(--text-faint); font-size: 12px; margin-top: -4px; }
+.wd-quota-line { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; color: var(--text-dim); }
+.wd-quota-line.spend { border-top: 1px solid var(--border); padding-top: 6px; margin-top: 2px; }
+.wd-quota-val { color: var(--text); font-variant-numeric: tabular-nums; }
+.wd-quota-val.crit { color: var(--danger); }
+.wd-quota-val.warn { color: var(--waiting); }
+.wd-quota-val.faint { color: var(--text-faint); }
+.wd-need-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  text-align: left;
+  padding: 8px 9px;
+  border-radius: 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  cursor: pointer;
+}
+.wd-need-row:hover { background: var(--bg-card-hover); }
+.wd-need-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; }
+.wd-need-title { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wd-need-kind { margin-left: auto; font-size: 9.5px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.05em; flex: none; }
+.wd-stats { display: flex; gap: 10px; }
+.wd-stat { flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 9px 10px; }
+.wd-stat.auto { border-color: color-mix(in srgb, var(--accent) 38%, var(--border)); }
+.wd-stat-label { font-size: 10px; font-weight: 640; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-faint); }
+.wd-stat.auto .wd-stat-label { color: var(--accent); }
+.wd-stat-value { font-size: 20px; font-weight: 680; margin-top: 3px; font-variant-numeric: tabular-nums; }
+.wd-stat-note { color: var(--text-dim); font-size: 11.5px; margin-top: 2px; }
+.wd-mate-name { font-weight: 620; letter-spacing: -0.01em; }
+.wd-gauge { height: 5px; border-radius: 999px; background: var(--bg-inset); overflow: hidden; }
+.wd-gauge i { display: block; height: 100%; background: var(--accent); border-radius: 999px; }
+.wd-mate-sub { color: var(--text-faint); font-size: 11.5px; }
+.wd-mate-crew { display: flex; align-items: center; gap: 8px; padding: 7px 9px; background: var(--bg); border: 1px solid var(--border); border-radius: 7px; font-size: 12px; color: var(--text-dim); }
+.wd-crew-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--good); }
+.wd-crew-dot.need { background: var(--waiting); }
+.wd-goal-row { display: flex; align-items: center; gap: 9px; font-size: 12.5px; }
+.wd-goal-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 55%; }
+.wd-goal-bar { flex: 1; height: 5px; background: var(--bg-inset); border-radius: 999px; overflow: hidden; }
+.wd-goal-bar i { display: block; height: 100%; background: var(--accent); }
+.wd-goal-pct { font-size: 10.5px; color: var(--text-faint); font-variant-numeric: tabular-nums; min-width: 34px; text-align: right; }
+.wd-goal-spacer { flex: 1; }
