@@ -96,6 +96,46 @@ try {
   const launchingRows = rows.filter((s) => s.lifecycleState === "launching");
   ok(launchingRows.every((s) => s.helmOwned), `any launching row is helm-owned (${launchingRows.length} launching)`);
 
+  // REGRESSION GUARD (ship-review finding, high confidence). Adding `launching`
+  // made the Fleet rows print "idle ·" for a session Helm had just spawned: the
+  // readers there string-compared lifecycleState === "working", so a new state
+  // fell through to the idle else-branch - reintroducing the exact "idle while
+  // working" display this epic exists to remove. The projection was right and the
+  // unit tests were green; only the RENDERER was wrong, which is why this checks
+  // the rendered text and not the state.
+  const rendered = await app.eval(`(() => {
+    const out = {};
+    for (const ls of ["launching", "working", "waiting", "idle", "wrapped"]) {
+      out[ls] = {
+        working: isWorkingLifecycle(ls),
+        // the archive-suggest reader, which must never offer a launching session
+        archiveSuggest: (ls === "idle" || ls === "wrapped")
+      };
+    }
+    return out;
+  })()`);
+  ok(rendered.launching.working === true, "the renderer treats launching as working - not as the idle fallback (the regression this guards)");
+  ok(rendered.working.working === true, "working still reads as working");
+  ok(rendered.waiting.working === false && rendered.idle.working === false, "waiting and idle are not working");
+  ok(rendered.launching.archiveSuggest === false, "a launching session is never offered for archive");
+  // And no reader may go back to string-comparing it: that is the bug itself, and
+  // the next state added would reintroduce it silently. Source-level, because it
+  // is a property of the code, not of any one render.
+  const rendererSrc = fs
+    .readFileSync(new URL("../../src/renderer/renderer.js", import.meta.url), "utf8")
+    .split("\n")
+    // Comments are allowed to name the anti-pattern; code is not.
+    .filter((l) => !l.trim().startsWith("//"))
+    .join("\n");
+  const rawWorking = [...rendererSrc.matchAll(/lifecycleState\s*===\s*"working"/g)].length;
+  const rawLs = [...rendererSrc.matchAll(/\bls\s*===\s*"working"/g)].length;
+  ok(rawWorking + rawLs === 0, `no renderer site string-compares lifecycleState against "working" (found ${rawWorking + rawLs}) - they must go through isWorkingLifecycle`);
+  // The renderer mirror and the shared helper must agree, since the renderer is a
+  // classic script and cannot import the real one.
+  const mirrored = await app.eval(`[...WORKING_LIFECYCLE_STATES].sort().join(",")`);
+  const authoritative = ["working", "launching"].filter((s) => isWorkingState(s)).sort().join(",");
+  ok(mirrored === authoritative, `the renderer's mirror matches sessionState.js's isWorkingState (renderer "${mirrored}" vs lib "${authoritative}")`);
+
   const errs = app.getConsoleErrors();
   ok(errs.length === 0, `no console errors${errs.length ? ": " + errs[0].text.slice(0, 240) : ""}`);
 } catch (e) {

@@ -1930,8 +1930,12 @@ ipcMain.handle(
           markSessionLive(liveTurnId);
           liveSessions.bindLaunch(launchId, liveTurnId);
         }
-        // First real output ends the launching window - it is working now.
+        // First real output ends the launching window - it is working now. Without
+        // this the window would last the whole turn, which is not what the state
+        // means ("spawned, nothing back yet") and would make it co-extensive with
+        // isLive - i.e. a pure relabel of a state already resolved correctly.
         if (!internal && (evt.kind === "assistant" || evt.kind === "tool_use" || evt.kind === "result")) {
+          liveSessions.clearLaunching(launchId);
         }
         if (evt.kind === "session" && evt.sessionId && !internal) {
           // Record into Helm's own index the moment the session id appears, so
@@ -3889,6 +3893,14 @@ function fireRoutine(routine) {
         if (evt.kind === "session" && evt.sessionId && !liveTurnId) {
           liveTurnId = evt.sessionId;
           markSessionLive(liveTurnId);
+          // Without this bind the launching entry keeps its null session id, so
+          // isLaunching() can never match it and the routine's launching window
+          // is silently inert.
+          liveSessions.bindLaunch(launchId, liveTurnId);
+        }
+        // First real output ends the launching window (same rule as session:start).
+        if (evt.kind === "assistant" || evt.kind === "tool_use" || evt.kind === "result") {
+          liveSessions.clearLaunching(launchId);
         }
         if (evt.kind === "session" && evt.sessionId && !recorded) {
           recorded = true;
@@ -3912,7 +3924,7 @@ function fireRoutine(routine) {
       .then((summary) => {
         liveChildren.delete(launchId);
         markSessionDone(liveTurnId);
-      liveSessions.clearLaunching(launchId);
+        liveSessions.clearLaunching(launchId);
         send({ kind: "done", summary });
         if (summary.sessionId) {
           recordHelmSession(summary.sessionId, { createIfAbsent: false });
@@ -3924,9 +3936,13 @@ function fireRoutine(routine) {
       .catch(() => {
         liveChildren.delete(launchId);
         markSessionDone(liveTurnId);
-      liveSessions.clearLaunching(launchId);
+        liveSessions.clearLaunching(launchId);
       });
   } catch (err) {
+    // startSession can throw synchronously (e.g. the CLI binary can't be
+    // resolved). Without this clear, a misconfigured routine leaves a dead
+    // launching entry behind on every scheduled fire, forever.
+    liveSessions.clearLaunching(launchId);
     console.error("[helm] failed to fire routine:", routine?.name, err);
   }
 }
