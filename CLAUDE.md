@@ -8,6 +8,11 @@ in this repo, not in global memory.
 `docs/USING-HELM.md` is the day-to-day usage guide (the daily loop, when
 to reach for Chat vs Autopilot vs an orchestrator session, the keyboard
 layer) - point Aidin at it if he asks how to use the app.
+`docs/review-pipe-status.md` is the CURRENT standing of the review pipe - how far
+it can be trusted, what is hardened, what is knowingly open, and the two rules for
+changing it. Read that before touching anything under review records, the gauntlet,
+acceptance criteria or the criticality gradient; DECISIONS.md holds the
+chronological reasoning but does not say where things stand.
 `docs/orchestration-model.md` is the conceptual model the app is built around
 (captain / first mate / second mate / crew tiers; ephemeral by tier; the
 first-mate capability gap) - read it before any orchestration/dispatch work.
