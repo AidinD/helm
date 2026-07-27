@@ -4740,3 +4740,71 @@ re-discovered, not ported.
 the permanent-lock path returned the raw errno rather than the diagnosable message.
 The test was asserting the right thing and the code was wrong, which is the correct
 way round for once.
+
+## 2026-07-27 - Intent before the work, and criticality drives what evidence is required (bd5d7b4b)
+
+Two changes that belong together: they are the supply and the demand side of moving
+Aidin's attention upstream so he can stop reading diffs.
+
+### Acceptance criteria as `AC:` lines on the Jot task
+
+**The gap, in one example.** The "Jump in" button shipped doing nothing visible, and
+the test that covered it COUNTED the buttons.
+It was green because it asserted that the code did what its author wrote - not that
+the user lands in the session.
+One line written in advance ("clicking Jump in lands me in that project's session")
+would have forced the click.
+
+**So test steps written at HANDOFF describe the implementation; the same sentence
+written when the task is TAKEN constrains it.**
+Same words, opposite direction, and only one of them can catch a wrong-intent bug.
+Two of the four review findings today were intent holes of exactly this shape, not
+test holes.
+
+**Where they live: in the Jot task's own description.**
+Rejected a new field on `todos.json` (Jot is a shipped public app; Helm must not
+bolt private schema onto its data) and a separate file under the meta-home (then
+Aidin cannot see or CORRECT a criterion before the work starts, which is the whole
+point). Parsed strictly as a trailer, the way a git trailer is - not prose.
+
+**Coverage is by EXPLICIT LINK (`step.ac`), never by counting.**
+Counting is gameable: five vague steps would "cover" five criteria while checking
+none of them. `reviewRecordProblems` refuses a record with an uncovered criterion,
+and also refuses a step claiming to cover a criterion that does not exist.
+
+**The record snapshots the criteria rather than reading them live.**
+A record is a snapshot of a claim, so a task edited afterwards must not retroactively
+change what was claimed. The cost is drift, which is surfaced (`acceptanceDrift`,
+shown on the card) rather than silently adopted or silently ignored.
+
+### The criticality gradient
+
+Aidin: "störst effort borde ligga på systemkritiska moment. security issues borde
+t.ex aldrig slinka igenom, medans en front end bugg är mer acceptabelt."
+
+So `criticality` is REQUIRED on every record, with no default - a missing tier is the
+author declining to say how much it costs to be wrong, which is precisely the
+judgement the gradient exists to force. It changes what evidence is required:
+
+- `critical` (security, auth, data loss, money, irreversible/outward-facing):
+  needs runnable checks AND `independentReview {by, summary, findings}`. The author's
+  own passing tests are explicitly not evidence at this tier.
+- `core` (state or behaviour other work depends on): needs at least one runnable check.
+- `cosmetic` (visual/front-end): no check required; a bug here is recoverable.
+
+**The gate earned its keep immediately.** Marking the review pipe itself `critical`
+was REFUSED, because nothing independent had reviewed it - I wrote the summary, the
+test steps, the checks, ran the gauntlet AND fixed the gauntlet. That is the exact
+failure mode the ticket names, caught by the rule rather than by luck.
+
+### Two smaller corrections that came out of building it
+
+**"incomplete" is now a distinct verdict from "unrecorded".** Both used to read as
+"unrecorded", which hid the more alarming case: a record exists, so somebody claimed
+this was reviewed, but the claim is inadmissible. Nobody-wrote-one and
+somebody-wrote-a-bad-one need different reactions.
+
+**Queue ordering is now stated, not inherited.** A critical item that claims to be
+reviewed but isn't admissible sorts to the TOP, alongside judgment items - even
+though fixing it is my job, not his. Sorting it below a batch of cheap cosmetic
+stamps buried exactly the alarm the gradient exists to raise.

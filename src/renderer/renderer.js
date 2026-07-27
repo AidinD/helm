@@ -761,6 +761,18 @@ function reviewRowEl(row) {
   if (typeof row.priority === "number") {
     head.append(reviewChip(`p${row.priority}`));
   }
+  // Criticality up front: it tells you how much of your attention this deserves
+  // before you read a word of it, which is the entire point of the gradient.
+  if (row.criticality) {
+    const chip = reviewChip(row.criticality, row.criticality === "critical" ? "gap" : row.criticality === "core" ? "rel" : "ok");
+    chip.title =
+      row.criticality === "critical"
+        ? "Security, data, money, or something irreversible. An independent pass is required - my own passing tests don't count here."
+        : row.criticality === "core"
+          ? "State or behaviour other work depends on. Needs at least one runnable check."
+          : "Visual/front-end only. A bug here is recoverable.";
+    head.append(chip);
+  }
   el.append(head);
 
   // An item with no record is the honest failure case: it is IN review but nobody
@@ -771,6 +783,26 @@ function reviewRowEl(row) {
     warn.textContent = `No review record: ${row.problems.join("; ")}. Nothing here has been verified for you - treat it as unreviewed.`;
     el.append(warn);
     return el;
+  }
+
+  // A record EXISTS but doesn't meet the bar. Louder than "no record", because
+  // somebody claimed this was reviewed and the claim is inadmissible - most often a
+  // critical item with nothing independent behind it. The rest of the card still
+  // renders below, so the claim can be read; it just isn't vouched for.
+  if (row.verdict === "incomplete") {
+    const warn = document.createElement("div");
+    warn.className = "rev-warn";
+    warn.textContent = `This record does not meet the bar for a ${row.criticality || "?"} item: ${row.problems.join("; ")}. Read it, but do not treat it as verified.`;
+    el.append(warn);
+  }
+
+  // The acceptance criteria moved after the record was written. Neither side can be
+  // auto-resolved: either the work needs revisiting or the record does.
+  if (row.drift?.drifted) {
+    const warn = document.createElement("div");
+    warn.className = "rev-warn";
+    warn.textContent = `The task's acceptance criteria changed after this record was written (${row.drift.snapshot.length} then, ${row.drift.live.length} now) - the evidence may be answering the old question.`;
+    el.append(warn);
   }
 
   const rec = row.record;
@@ -808,6 +840,26 @@ function reviewRowEl(row) {
     el.append(chips);
   }
 
+  // What was agreed BEFORE the work, shown above the steps that claim to satisfy it.
+  // Order matters: the criteria are the question, the steps are the answer, and the
+  // failure this closes is an answer nobody checked against the question.
+  if (Array.isArray(rec.acceptanceCriteria) && rec.acceptanceCriteria.length > 0) {
+    const box = document.createElement("div");
+    box.className = "rev-acceptance";
+    const label = document.createElement("div");
+    label.className = "rev-acceptance-label";
+    label.textContent = "Agreed up front";
+    box.append(label);
+    const list = document.createElement("ol");
+    for (const c of rec.acceptanceCriteria) {
+      const li = document.createElement("li");
+      li.textContent = typeof c === "string" ? c : c.text;
+      list.append(li);
+    }
+    box.append(list);
+    el.append(box);
+  }
+
   if (Array.isArray(rec.testSteps) && rec.testSteps.length > 0) {
     const steps = document.createElement("ol");
     steps.className = "rev-steps";
@@ -820,6 +872,15 @@ function reviewRowEl(row) {
       exp.className = "rev-step-expect";
       exp.textContent = s.expect;
       li.append(what, exp);
+      // Which agreed criterion this step is answering - the explicit link is what
+      // makes coverage checkable instead of a matter of opinion.
+      if (s.ac !== undefined && s.ac !== null) {
+        const ref = document.createElement("span");
+        ref.className = "rev-step-ac";
+        ref.textContent = `AC ${[].concat(s.ac).join(", ")}`;
+        ref.title = "The criterion agreed before the work that this step checks.";
+        li.append(ref);
+      }
       steps.append(li);
     }
     el.append(steps);
@@ -943,7 +1004,7 @@ async function renderReviewPage() {
   }
   const res = await window.helm.listReviews();
   const rows = res?.rows || [];
-  const tally = res?.tally || { total: 0, judgment: 0, stamp: 0, unrecorded: 0 };
+  const tally = res?.tally || { total: 0, judgment: 0, stamp: 0, unrecorded: 0, incomplete: 0 };
 
   const frag = document.createDocumentFragment();
   const topbar = document.createElement("div");
@@ -957,7 +1018,7 @@ async function renderReviewPage() {
   sub.textContent =
     tally.total === 0
       ? "Nothing is waiting on your review."
-      : `${tally.judgment} need your judgment · ${tally.stamp} ready to stamp${tally.unrecorded > 0 ? ` · ${tally.unrecorded} with no record` : ""}`;
+      : `${tally.judgment} need your judgment · ${tally.stamp} ready to stamp${tally.incomplete > 0 ? ` · ${tally.incomplete} below the bar` : ""}${tally.unrecorded > 0 ? ` · ${tally.unrecorded} with no record` : ""}`;
   heading.append(h2, sub);
   topbar.append(heading);
   frag.append(topbar);
@@ -972,6 +1033,7 @@ async function renderReviewPage() {
   const groups = [
     { key: "judgment", label: "Needs your judgment", hint: "these can't be settled by a test" },
     { key: "stamp", label: "Ready to stamp", hint: "verified end to end - read the evidence and move on" },
+    { key: "incomplete", label: "Below the bar", hint: "a record exists, but it does not meet the bar for its criticality - read it, do not trust it" },
     { key: "unrecorded", label: "No review record", hint: "in review, but nothing was written down to check" },
   ];
   for (const g of groups) {
