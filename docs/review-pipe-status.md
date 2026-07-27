@@ -33,8 +33,11 @@ testing (disable a guard, see whether the suite notices) and most mutations WERE
    `cosmetic` needs no check and no independent pass. Since the gradient is what the
    whole "I stop reading diffs" claim rests on, this is the largest open hole - and
    there is no honest fix that does not involve reading the diff, which is the thing we
-   are trying to stop doing. **Recommended mitigation: let the independent reviewer set
-   the tier, not the author.**
+   are trying to stop doing. **Mitigation in place since 2026-07-27: the `ship-review`
+   skill now asks the independent reviewer to set the level and to propose the checks,
+   without being told what the author had in mind, and a higher level from the reviewer
+   wins. That is a process guard, not a code guard - nothing stops a record written
+   without running ship-review from under-declaring.**
 3. **The signing oracle is narrowed, not closed.** `recordCheckRun` is exported and
    accepts a caller-supplied exit code, so an agent that imports the module can stamp a
    result it never observed. What changed is that the lie must now be about a SPECIFIC
@@ -78,14 +81,18 @@ testing (disable a guard, see whether the suite notices) and most mutations WERE
     node scripts/e2e/test-atomic-write.mjs            # no store keeps a private rename
     node scripts/e2e/test-jot-writers.mjs             # sign-off writes + the done-without-record audit
 
-## Known annoyance, filed not softened
+## Coarse commit pinning - RESOLVED 2026-07-27
 
-Commit pinning is coarse: ANY commit stales every check, including a docs-only one.
-Safe (false red) but during an active session the whole board reads stale, and a
-warning you always see stops being a warning. Jot task `2bffffed`, priority 1, with a
-recommendation (exempt docs-only commits + a "re-run everything stale" button).
-Deliberately NOT widened here - the hole the pin closed was a fix after a send-back
-keeping its old green.
+Pinning a pass to a commit used to mean ANY commit staled every check, including one
+that only edited a markdown file. Now the comparison asks whether anything other than
+documentation changed between the commit a check ran at and the current one, and the
+Review page has a "Re-run N unconfirmed" button so a board that did go stale can be
+cleared without opening every card.
+
+Unknown still counts as changed (missing commit, rewritten history, no git, no recorded
+commit), and the default resolver stays strict, so a caller that forgets to pass one
+gets the safe behaviour. The hole the pin closed - a fix after a send-back keeping its
+old green - is untouched.
 
 ## If you change this pipe
 
