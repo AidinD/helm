@@ -346,27 +346,50 @@ export function gauntletStatus(rec, metaHome = null) {
   // second stamp silently overwrote the first: a suite with a failing check and a
   // passing one under the same name read as 2/2 passing. Refuse to score duplicates.
   const seenLabels = new Set();
+  // Per-check state is returned, not just tallied, so no OTHER surface has to derive
+  // it a second time. The renderer did, with a different rule (`runInfo.ok`), which
+  // meant a forged run drew a GREEN dot reading "exit 0" while the header said
+  // incomplete - the detail contradicting the summary, in the unsafe direction.
+  const perCheck = [];
   for (const c of checks) {
     const label = String(c?.label || "");
+    const run = runs.find((r) => r.label === label) || null;
+    let state;
     if (seenLabels.has(label)) {
-      unverified += 1;
-      continue;
-    }
-    seenLabels.add(label);
-    const run = runs.find((r) => r.label === label);
-    if (!run) {
-      unrun += 1;
-      continue;
-    }
-    // Provenance BEFORE outcome. A run the app did not stamp is not a result at all -
-    // pass or fail - so it can neither vouch for the work nor condemn it.
-    if (typeof run.ranAt !== "number" || typeof run.exitCode !== "number" || !verifyCheckRun(metaHome, rec.taskId, run)) {
-      unverified += 1;
+      // Duplicate labels cannot be scored apart: runs are keyed by label, so the
+      // second stamp overwrites the first and a failure disappears.
+      state = "unverified";
+    } else if (!run) {
+      state = "unrun";
+    } else if (typeof run.ranAt !== "number" || typeof run.exitCode !== "number" || !verifyCheckRun(metaHome, rec.taskId, run)) {
+      // Provenance BEFORE outcome. A run the app did not stamp is not a result at
+      // all - pass or fail - so it can neither vouch for the work nor condemn it.
+      state = "unverified";
     } else if (run.ranAt < updatedAt) {
-      stale += 1;
+      state = "stale";
     } else if (run.exitCode === 0) {
       // Derived from the exit code, never from run.ok - a boolean in a file the
       // author writes is worth nothing, and it was trusted for exactly that reason.
+      state = "passed";
+    } else {
+      state = "failed";
+    }
+    seenLabels.add(label);
+    perCheck.push({
+      label,
+      cmd: c?.cmd || null,
+      state,
+      exitCode: run && typeof run.exitCode === "number" ? run.exitCode : null,
+      ranAt: run && typeof run.ranAt === "number" ? run.ranAt : null,
+      tail: run?.tail || null,
+    });
+    if (state === "unverified") {
+      unverified += 1;
+    } else if (state === "unrun") {
+      unrun += 1;
+    } else if (state === "stale") {
+      stale += 1;
+    } else if (state === "passed") {
       passed += 1;
     } else {
       failed += 1;
@@ -376,7 +399,7 @@ export function gauntletStatus(rec, metaHome = null) {
   // Anything else is not a pass, and unverified is called out separately from stale
   // so "nobody ran this" can't hide inside "this is a bit out of date".
   const state = failed > 0 ? "failing" : unrun + stale + unverified > 0 ? "incomplete" : "passing";
-  return { declared: checks.length, passed, failed, stale, unrun, unverified, state };
+  return { declared: checks.length, passed, failed, stale, unrun, unverified, state, perCheck };
 }
 
 /** Duplicate check labels are unscoreable, so they are a record-level defect. */
@@ -557,10 +580,17 @@ export function buildReviewQueue(reviewTasks, records, metaHome = null) {
 
 /** Counts for the page header, so the shape of the queue reads at a glance. */
 export function reviewQueueTally(rows) {
+  // A stamp whose DECLARED checks have not passed is counted apart from a real stamp.
+  // Otherwise the header says "N ready to stamp" while the section below it says
+  // "Claimed, not confirmed" about the same item - and the header is the line that
+  // gets skimmed. Items declaring no checks (legitimately, at cosmetic tier) are
+  // still stamps.
+  const unconfirmed = (r) => r.verdict === "stamp" && (r.gauntlet?.declared || 0) > 0 && r.gauntlet.state !== "passing";
   return {
     total: rows.length,
     judgment: rows.filter((r) => r.verdict === "judgment").length,
-    stamp: rows.filter((r) => r.verdict === "stamp").length,
+    stamp: rows.filter((r) => r.verdict === "stamp" && !unconfirmed(r)).length,
+    unconfirmed: rows.filter(unconfirmed).length,
     unrecorded: rows.filter((r) => r.verdict === "unrecorded").length,
     // A record that exists but is inadmissible - counted apart from "nobody wrote
     // one", because it needs a different reaction.
