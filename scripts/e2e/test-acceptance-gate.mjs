@@ -63,6 +63,9 @@ const base = (over) => ({
   evidence: [],
   notVerified: [],
   criticality: "cosmetic",
+  // The cosmetic tier now has to be argued for - it is the one that buys its way out
+  // of requiring any evidence at all.
+  whyNotCritical: "a dashboard row and its button - a bug here is visible on sight",
   projectPath: "D:/Repo/Tools/helm",
   ...over,
 });

@@ -5631,10 +5631,15 @@ button.primary {
   background: color-mix(in srgb, var(--text) 5%, transparent);
   border-radius: 3px;
   padding: 0 5px;
-  max-width: 44ch;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* Wraps instead of truncating: a 44ch ellipsis hid the tail of the command, which
+     is exactly where a "|| exit 0" would sit. */
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.rev-check-cmd.forced {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  font-weight: 600;
 }
 .rev-check-dot.unverified { background: var(--danger); box-shadow: 0 0 0 2px color-mix(in srgb, var(--danger) 25%, transparent); }
 /* Rails per BAND, not per verdict. incomplete and unconfirmed had no rule at all, so
@@ -5670,3 +5675,23 @@ button.primary {
 .rev-independent-label { font-size: 11.5px; font-weight: 600; color: var(--text); }
 .rev-independent.zero .rev-independent-label { color: var(--waiting); }
 .rev-independent-body { font-size: 12.5px; color: var(--text-dim); margin-top: 3px; }
+/* What a record rests on when what it rests on is an absence. Amber, because it is a
+   caveat and not a failure - but present, because the alternative was rendering
+   nothing at all for a record with no executed check. */
+.rev-caveats {
+  margin-top: 10px;
+  padding: 7px 10px;
+  border-left: 2px solid var(--waiting);
+  background: color-mix(in srgb, var(--waiting) 7%, transparent);
+  border-radius: 0 4px 4px 0;
+}
+.rev-caveats-label {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  color: var(--waiting);
+}
+.rev-caveats ul { margin: 3px 0 0; padding-left: 16px; }
+.rev-caveats li { font-size: 12.5px; color: var(--text-dim); }
+.rev-whynot { margin-top: 7px; font-size: 12px; color: var(--text-faint); font-style: italic; }
