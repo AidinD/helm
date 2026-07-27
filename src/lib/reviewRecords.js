@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { parseAcceptanceCriteria, acceptanceCoverage } from "./acceptance.js";
 
 // Review records (task ce2d19ab).
@@ -147,6 +148,19 @@ function criticalityProblems(rec) {
   if (!tier) {
     return [`criticality must be one of ${CRITICALITY_LEVELS.join(" | ")} - say how much it costs to be wrong here`];
   }
+  // A tier you have to ARGUE for is much harder to under-declare than one you tick.
+  // `cosmetic` is the escape hatch in the whole design - it requires no check, no
+  // independent pass, and renders no gauntlet box at all - so it is the one tier that
+  // has to cost the author a sentence. The sentence is also the thing Aidin can
+  // disagree with; "cosmetic" on its own gives him nothing to push back on.
+  if (rec.criticality === "cosmetic") {
+    const why = String(rec.whyNotCritical || "").trim();
+    if (why.length < 15) {
+      problems.push(
+        "a cosmetic item must state whyNotCritical - one line on why being wrong here is cheap. This tier requires no evidence at all, so it is the one that has to be argued for"
+      );
+    }
+  }
   const checks = Array.isArray(rec.checks) ? rec.checks : [];
   if (tier.requiresChecks && checks.length === 0) {
     problems.push(`a ${rec.criticality} item needs at least one runnable check - "${tier.what}" cannot rest on prose alone`);
@@ -176,6 +190,39 @@ function criticalityProblems(rec) {
  * that would have caught the "Jump in" bug: the criterion was "I land in the
  * session", the test COUNTED buttons, and nothing connected the two.
  */
+/**
+ * Ways a record can be admissible and still be resting entirely on the author's word.
+ * Not validity errors - they are true statements ABOUT the record that the reader
+ * needs on screen, because their signature is an ABSENCE and an absence renders as
+ * nothing at all.
+ *
+ * The case that prompted this: a `cosmetic` record with no checks and no acceptance
+ * criteria is fully valid. gauntletStatus returns "none", so the card shows no
+ * gauntlet box, no Run checks button, nothing amber - and lands under "Ready to
+ * stamp". Cosmetic should buy speed, not silence.
+ */
+export function recordCaveats(rec) {
+  const caveats = [];
+  if (!rec) {
+    return caveats;
+  }
+  const checks = Array.isArray(rec.checks) ? rec.checks : [];
+  if (checks.length === 0) {
+    caveats.push("No executed check at all - everything here rests on the author's word.");
+  }
+  if (!Array.isArray(rec.acceptanceCriteria)) {
+    // Distinct from an empty array, which is an explicit claim that the task had none.
+    caveats.push("No acceptance criteria were agreed before the work, so nothing here is checked against a stated intent.");
+  } else if (rec.acceptanceCriteria.length === 0) {
+    caveats.push("The task had no acceptance criteria (explicitly recorded as none).");
+  }
+  const forced = checks.map((c) => ({ label: c?.label, why: passForcingReason(c?.cmd) })).filter((f) => f.why);
+  for (const f of forced) {
+    caveats.push(`Check "${f.label}" cannot fail (${f.why}) - a green result from it means nothing.`);
+  }
+  return caveats;
+}
+
 function acceptanceRecordProblems(rec) {
   const raw = Array.isArray(rec.acceptanceCriteria) ? rec.acceptanceCriteria : null;
   // Re-index by POSITION. A record is hand-authored, and duplicated index values let
@@ -265,8 +312,17 @@ function runKey(metaHome) {
   }
 }
 
-/** The signature a genuine run carries. Covers everything a reader would trust. */
-export function signCheckRun(metaHome, taskId, run) {
+/**
+ * The signature a genuine run carries.
+ *
+ * `declaredCmd` is the command as it stands in `rec.checks`, NOT what the run says it
+ * ran. Runs used to be matched to checks by LABEL alone, with nothing comparing the
+ * two commands - so a run stamped for `exit 0` could score a check whose displayed
+ * command was a real e2e script. The field the code called "the fact" was not the
+ * thing that produced the exit code. Binding the signature to the declared command
+ * means a pass can only ever be claimed for the command the reader is looking at.
+ */
+export function signCheckRun(metaHome, taskId, run, declaredCmd = undefined) {
   const key = runKey(metaHome);
   if (!key) {
     return null;
@@ -274,26 +330,100 @@ export function signCheckRun(metaHome, taskId, run) {
   const payload = JSON.stringify([
     String(taskId || ""),
     String(run?.label || ""),
-    String(run?.cmd || ""),
+    // Falls back to the run's own cmd only when no declared command was supplied, so
+    // existing callers keep working; every real caller passes the declared one.
+    String(declaredCmd !== undefined ? declaredCmd || "" : run?.cmd || ""),
     typeof run?.exitCode === "number" ? run.exitCode : null,
     typeof run?.ranAt === "number" ? run.ranAt : null,
+    // The commit it ran against, so an old pass cannot be re-pinned to new code.
+    run?.head || null,
   ]);
   return crypto.createHmac("sha256", key).update(payload).digest("hex");
 }
 
-/** Did this run actually come from the app? */
-export function verifyCheckRun(metaHome, taskId, run) {
+/**
+ * Shell tricks that turn a real command into a guaranteed pass. `reviews:runChecks`
+ * spawns with `shell: true`, so `node test.mjs || exit 0` exits 0 whatever the test
+ * does - a GENUINE signed green. And the command was truncated in the UI, so the
+ * tail that did the work was rendered off the end of the line.
+ *
+ * Deliberately a heuristic and deliberately non-blocking: it flags rather than
+ * refuses, because a legitimate command can contain a pipe, and a check that refuses
+ * to run is a check that gets deleted. The point is that the reader SEES it.
+ */
+const PASS_FORCING_PATTERNS = [
+  { re: /\|\|/, why: "|| always-succeeds fallback" },
+  { re: /;\s*(exit\s+0|true)\b/, why: "; exit 0 appended" },
+  { re: /\|\s*true\b/, why: "piped to true" },
+  { re: /--passWithNoTests\b/, why: "--passWithNoTests" },
+  { re: /\bexit\s+0\s*$/, why: "ends in exit 0" },
+];
+
+/**
+ * The commit a check run was made against, so a pass stops applying when the code
+ * moves (task filed 2026-07-27).
+ *
+ * The hole: staleness was measured only against `contentUpdatedAt` - an internal field
+ * of the record's own file. Nothing bound a record to a commit. So the ordinary second
+ * lap broke it: Aidin sends a task back, the next session fixes the code and moves the
+ * task back to review WITHOUT rewriting the record, and the pre-fix green run still
+ * vouches for it. Worse, it created a perverse incentive - any record edit correctly
+ * ages out its runs, so an agent wanting green after a late fix was better off NOT
+ * updating the record.
+ *
+ * Returns null when the project isn't a git repo or git is unavailable: unknown must
+ * not masquerade as verified, so gauntletStatus treats a run with no recorded head as
+ * verifiable-but-unpinned rather than fresh.
+ */
+export function currentHead(projectPath) {
+  if (!projectPath) {
+    return null;
+  }
+  try {
+    const sha = execFileSync("git", ["-C", projectPath, "rev-parse", "HEAD"], { encoding: "utf8", windowsHide: true }).trim();
+    if (!/^[0-9a-f]{40}$/.test(sha)) {
+      return null;
+    }
+    // Uncommitted work means the sha does not describe what actually ran, so it is
+    // recorded as dirty rather than silently treated as a clean pin.
+    const dirty = execFileSync("git", ["-C", projectPath, "status", "--porcelain"], { encoding: "utf8", windowsHide: true }).trim().length > 0;
+    return { sha, dirty };
+  } catch {
+    return null;
+  }
+}
+
+/** Why this command cannot be trusted to fail, or null. */
+export function passForcingReason(cmd) {
+  const s = String(cmd || "");
+  for (const { re, why } of PASS_FORCING_PATTERNS) {
+    if (re.test(s)) {
+      return why;
+    }
+  }
+  return null;
+}
+
+/** Did this run actually come from the app, for the command as declared? */
+export function verifyCheckRun(metaHome, taskId, run, declaredCmd = undefined) {
   if (!run || typeof run.sig !== "string") {
     return false;
   }
-  const expected = signCheckRun(metaHome, taskId, run);
+  const expected = signCheckRun(metaHome, taskId, run, declaredCmd);
   if (!expected || expected.length !== run.sig.length) {
     return false;
   }
   return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(run.sig));
 }
 
-/** Stamp the outcome of one executed check onto a record. */
+/**
+ * Stamp the outcome of one executed check onto a record.
+ *
+ * The run is bound to the DECLARED check: the label must match one of `rec.checks`,
+ * and the signature covers that check's command. A stamp for a label the record
+ * doesn't declare is refused outright, so a run cannot be parked under a name the
+ * reader never sees.
+ */
 export function recordCheckRun(metaHome, taskId, run, { now = Date.now() } = {}) {
   const rec = readReviewRecord(metaHome, taskId);
   if (!rec) {
@@ -302,12 +432,23 @@ export function recordCheckRun(metaHome, taskId, run, { now = Date.now() } = {})
   if (!run || !String(run.label || "").trim()) {
     return { ok: false, error: "A check run needs the label it ran for." };
   }
+  const declared = (Array.isArray(rec.checks) ? rec.checks : []).find((c) => String(c?.label || "") === String(run.label));
+  if (!declared) {
+    return { ok: false, error: `This record declares no check labelled "${run.label}" - a run must belong to a declared check.` };
+  }
   const runs = Array.isArray(rec.checkRuns) ? rec.checkRuns.filter((r) => r.label !== run.label) : [];
+  const head = currentHead(rec.projectPath);
   const stamped = {
     label: String(run.label),
-    cmd: run.cmd ? String(run.cmd) : null,
+    // What was DECLARED, not what the caller says it ran. Storing the caller's
+    // version would put a second, unverified "cmd" on screen next to the real one.
+    cmd: declared.cmd ? String(declared.cmd) : null,
     exitCode: typeof run.exitCode === "number" ? run.exitCode : null,
     ranAt: now,
+    // The commit this ran against. Covered by the signature, so it cannot be edited
+    // afterwards to make an old pass look current.
+    head: head ? head.sha : null,
+    headDirty: head ? head.dirty : null,
   };
   runs.push({
     ...stamped,
@@ -315,7 +456,7 @@ export function recordCheckRun(metaHome, taskId, run, { now = Date.now() } = {})
     // ignores this - a boolean is trivially wrong in a hand-written record, and it
     // was trusted for exactly that reason before.
     ok: run.exitCode === 0,
-    sig: signCheckRun(metaHome, taskId, stamped),
+    sig: signCheckRun(metaHome, taskId, stamped, declared.cmd),
     tail: run.tail ? String(run.tail).slice(-1200) : null,
   });
   // isRunStamp: recording an outcome must not move the staleness baseline.
@@ -330,7 +471,7 @@ export function recordCheckRun(metaHome, taskId, run, { now = Date.now() } = {})
  * otherwise a green tick from an older version of the work keeps vouching for
  * code that has since changed.
  */
-export function gauntletStatus(rec, metaHome = null) {
+export function gauntletStatus(rec, metaHome = null, { head = undefined } = {}) {
   const checks = Array.isArray(rec?.checks) ? rec.checks : [];
   if (checks.length === 0) {
     return { declared: 0, passed: 0, failed: 0, stale: 0, unrun: 0, unverified: 0, state: "none" };
@@ -361,11 +502,18 @@ export function gauntletStatus(rec, metaHome = null) {
       state = "unverified";
     } else if (!run) {
       state = "unrun";
-    } else if (typeof run.ranAt !== "number" || typeof run.exitCode !== "number" || !verifyCheckRun(metaHome, rec.taskId, run)) {
+    } else if (typeof run.ranAt !== "number" || typeof run.exitCode !== "number" || !verifyCheckRun(metaHome, rec.taskId, run, c?.cmd)) {
       // Provenance BEFORE outcome. A run the app did not stamp is not a result at
       // all - pass or fail - so it can neither vouch for the work nor condemn it.
+      // Verified against the DECLARED command, so a run signed for a different
+      // command cannot score the check the reader is looking at.
       state = "unverified";
     } else if (run.ranAt < updatedAt) {
+      state = "stale";
+    } else if (head !== undefined && head !== null && run.head && run.head !== head) {
+      // Ran against a different commit. The code moved after the pass, which is the
+      // ordinary second-lap case: sent back, fixed, returned to review, old green
+      // still on the card.
       state = "stale";
     } else if (run.exitCode === 0) {
       // Derived from the exit code, never from run.ok - a boolean in a file the
@@ -378,6 +526,8 @@ export function gauntletStatus(rec, metaHome = null) {
     perCheck.push({
       label,
       cmd: c?.cmd || null,
+      // A command that cannot fail is not a check, however green it goes.
+      passForced: passForcingReason(c?.cmd),
       state,
       exitCode: run && typeof run.exitCode === "number" ? run.exitCode : null,
       ranAt: run && typeof run.ranAt === "number" ? run.ranAt : null,
@@ -523,6 +673,18 @@ export function removeReviewRecord(metaHome, taskId) {
  * is a gap in MY process, and hiding it would let it pass as reviewed.
  */
 export function buildReviewQueue(reviewTasks, records, metaHome = null) {
+  // One git call per distinct project, not per row.
+  const headCache = new Map();
+  const headFor = (projectPath) => {
+    if (!projectPath) {
+      return null;
+    }
+    if (!headCache.has(projectPath)) {
+      const h = currentHead(projectPath);
+      headCache.set(projectPath, h ? h.sha : null);
+    }
+    return headCache.get(projectPath);
+  };
   const byId = new Map((records || []).map((r) => [String(r.taskId).toLowerCase(), r]));
   const rows = (reviewTasks || []).map((t) => {
     const rec = byId.get(String(t.id).toLowerCase()) || null;
@@ -543,9 +705,13 @@ export function buildReviewQueue(reviewTasks, records, metaHome = null) {
       problems,
       verdict,
       criticality: rec?.criticality || null,
+      whyNotCritical: rec?.whyNotCritical || null,
+      // True statements about the record whose signature is an ABSENCE, so the page
+      // can show them instead of rendering nothing at all.
+      caveats: rec ? recordCaveats(rec) : [],
       // Did the task's acceptance criteria move after the record snapshotted them?
       drift: rec ? acceptanceDrift(rec, t.description || "") : { drifted: false, snapshot: [], live: [] },
-      gauntlet: rec ? gauntletStatus(rec, metaHome) : { declared: 0, state: "none" },
+      gauntlet: rec ? gauntletStatus(rec, metaHome, { head: headFor(rec.projectPath) }) : { declared: 0, state: "none" },
     };
   });
   // Ordering is an attention model, so it gets stated rather than inherited:

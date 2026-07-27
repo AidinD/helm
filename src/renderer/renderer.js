@@ -820,6 +820,37 @@ function reviewRowEl(row, band = null) {
   summary.textContent = rec.summary;
   el.append(summary);
 
+  // What this record is resting on, when what it rests on is an ABSENCE. A cosmetic
+  // record with no checks and no criteria is fully valid and used to render NOTHING
+  // to that effect: no gauntlet box, no button, nothing amber, filed under "Ready to
+  // stamp". Cosmetic buys speed, not silence.
+  if (row.caveats?.length > 0) {
+    const box = document.createElement("div");
+    box.className = "rev-caveats";
+    const label = document.createElement("div");
+    label.className = "rev-caveats-label";
+    label.textContent = "Resting on the author's word";
+    box.append(label);
+    const list = document.createElement("ul");
+    for (const c of row.caveats) {
+      const li = document.createElement("li");
+      li.textContent = c;
+      list.append(li);
+    }
+    box.append(list);
+    el.append(box);
+  }
+
+  // The argument for calling it cosmetic - the tier that requires no evidence. Shown
+  // so it is something Aidin can disagree with; the word alone gives him nothing to
+  // push back on.
+  if (row.whyNotCritical) {
+    const why = document.createElement("div");
+    why.className = "rev-whynot";
+    why.textContent = `Why not critical: ${row.whyNotCritical}`;
+    el.append(why);
+  }
+
   // The certificate that gates the critical tier, SHOWN. It was rendered nowhere -
   // grep for independentReview in this file returned nothing - so the record could
   // claim "reviewed by a fresh-context agent, 0 findings" and the reader had no way
@@ -996,8 +1027,15 @@ function reviewRowEl(row, band = null) {
       // "auth e2e (34 assertions)" whose cmd is `exit 0` rendered as an
       // authoritative green tick with the truth hidden in a tooltip.
       const cmd = document.createElement("code");
-      cmd.className = "rev-check-cmd";
+      // NOT truncated. It was capped at 44ch with an ellipsis, and real commands in
+      // this repo already exceed that - so a `|| exit 0` tail, which turns any check
+      // into a guaranteed pass, was rendered off the end of the line. The command you
+      // are about to execute has to be readable in full.
+      cmd.className = "rev-check-cmd" + (info.passForced ? " forced" : "");
       cmd.textContent = c.cmd;
+      if (info.passForced) {
+        cmd.title = `This command cannot fail (${info.passForced}), so a green result here means nothing.`;
+      }
       const state = document.createElement("span");
       state.className = "rev-check-state";
       state.textContent =
@@ -1007,7 +1045,11 @@ function reviewRowEl(row, band = null) {
             ? "NOT VERIFIED — this outcome was not stamped by the app"
             : info.state === "stale"
               ? "stale — ran before the last change"
-              : `exit ${info.exitCode} · ${relTime(info.ranAt)}`;
+              : // A pass-forcing command outranks its own exit code in the wording: the
+                // exit code is real, it just cannot mean anything.
+                info.passForced
+                ? `exit ${info.exitCode}, but THIS COMMAND CANNOT FAIL (${info.passForced})`
+                : `exit ${info.exitCode} · ${relTime(info.ranAt)}`;
       if (info.tail) {
         state.title = info.tail;
       }

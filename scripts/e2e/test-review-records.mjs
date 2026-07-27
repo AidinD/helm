@@ -6,6 +6,7 @@
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
+import { execFileSync } from "node:child_process";
 import {
   reviewsDir,
   reviewRecordPath,
@@ -20,6 +21,9 @@ import {
   gauntletStatus,
   signCheckRun,
   verifyCheckRun,
+  passForcingReason,
+  recordCaveats,
+  currentHead,
   acceptanceDrift,
   CRITICALITY_LEVELS,
 } from "../../src/lib/reviewRecords.js";
@@ -49,6 +53,8 @@ const complete = (over = {}) => ({
   // Required since 2026-07-27: criticality has no default, because a missing tier
   // is the author declining to say how much it costs to be wrong.
   criticality: "cosmetic",
+  // Required since 2026-07-27: the tier that needs no evidence has to be argued for.
+  whyNotCritical: "a caret in the composer - a bug here is visible and reversible",
   ...over,
 });
 
@@ -283,6 +289,136 @@ try {
   fs.writeFileSync(legacyFile, JSON.stringify(legacy), "utf8");
   ok(gauntletStatus(readReviewRecord(metaHome, G), metaHome).state === "passing",
     "a record without contentUpdatedAt falls back to updatedAt rather than reading as all-stale");
+
+  // --- a run is pinned to the commit it ran against --------------------------
+  // The ordinary second lap used to break the gauntlet: Aidin sends a task back, the
+  // next session fixes the code and returns the task to review WITHOUT rewriting the
+  // record, and the pre-fix green run still vouches for it. Staleness only looked at
+  // the record's own contentUpdatedAt, so nothing noticed the code had moved.
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "helm-head-"));
+  const git = (...args) => execFileSync("git", ["-C", repo, ...args], { encoding: "utf8", windowsHide: true });
+  execFileSync("git", ["init", "-b", "main", repo], { windowsHide: true });
+  git("config", "user.email", "t@t.t");
+  git("config", "user.name", "T");
+  git("config", "commit.gpgsign", "false");
+  fs.writeFileSync(path.join(repo, "a.txt"), "one\n");
+  git("add", "-A");
+  git("commit", "-m", "first");
+  const sha1 = git("rev-parse", "HEAD").trim();
+
+  const HEADID = "ffffffff-6666-4666-8666-666666666666";
+  writeReviewRecord(metaHome, complete({
+    taskId: HEADID,
+    criticality: "core",
+    checks: [{ label: "suite", cmd: "node -e 0" }],
+    projectPath: repo,
+  }));
+  recordCheckRun(metaHome, HEADID, { label: "suite", exitCode: 0 });
+  const pinned = readReviewRecord(metaHome, HEADID);
+  ok(pinned.checkRuns[0].head === sha1, `the run records the commit it ran against (${pinned.checkRuns[0].head?.slice(0, 8)})`);
+  ok(pinned.checkRuns[0].headDirty === false, "and whether the tree was dirty at the time");
+  ok(gauntletStatus(pinned, metaHome, { head: sha1 }).state === "passing", "at that commit it passes");
+
+  // The second lap: code moves, record untouched.
+  fs.writeFileSync(path.join(repo, "a.txt"), "two\n");
+  git("add", "-A");
+  git("commit", "-m", "the fix after the send-back");
+  const sha2 = git("rev-parse", "HEAD").trim();
+  const afterFix = gauntletStatus(readReviewRecord(metaHome, HEADID), metaHome, { head: sha2 });
+  ok(afterFix.state !== "passing", `after a new commit the old pass no longer vouches (${afterFix.state})`);
+  ok(afterFix.stale === 1, `it reads as stale, not as a pass (${JSON.stringify(afterFix)})`);
+
+  // Re-running at the new commit clears it - the mechanism has to be usable.
+  recordCheckRun(metaHome, HEADID, { label: "suite", exitCode: 0 });
+  ok(gauntletStatus(readReviewRecord(metaHome, HEADID), metaHome, { head: sha2 }).state === "passing",
+    "re-running at the current commit restores the pass");
+
+  // The head is covered by the signature, so it cannot be edited to fake currency.
+  const repinned = readReviewRecord(metaHome, HEADID);
+  const forgedPin = { ...repinned, checkRuns: [{ ...repinned.checkRuns[0], head: sha1 }] };
+  ok(gauntletStatus(forgedPin, metaHome, { head: sha1 }).unverified === 1,
+    "editing the recorded commit breaks the signature - a pass cannot be re-pinned by hand");
+
+  // No git, or a project that isn't a repo: unknown must not read as verified-fresh,
+  // but it also must not break a machine without git.
+  ok(currentHead(path.join(repo, "nope")) === null, "a non-repo path yields no head rather than throwing");
+  ok(currentHead(null) === null, "no project path yields no head");
+  const unpinned = gauntletStatus(readReviewRecord(metaHome, HEADID), metaHome, { head: null });
+  ok(unpinned.state === "passing", "when the current head is unknown, an existing pass is not invented away - the pin is a bonus signal, not a requirement");
+  fs.rmSync(repo, { recursive: true, force: true });
+
+  // --- cosmetic must be argued for, and absences must be visible -------------
+  // The most likely path to false trust was not a trick: a `cosmetic` record with no
+  // checks and no criteria is fully valid, renders NO gauntlet box at all (so nothing
+  // amber, no Run checks button), and lands under "Ready to stamp".
+  ok(reviewRecordProblems(complete({ whyNotCritical: undefined })).some((p) => /must state whyNotCritical/.test(p)),
+    "a cosmetic record with no stated reason is refused - the tier that needs no evidence has to be argued for");
+  ok(reviewRecordProblems(complete({ whyNotCritical: "ui only" })).some((p) => /must state whyNotCritical/.test(p)),
+    "a two-word hand-wave doesn't count as an argument");
+  ok(reviewRecordProblems(complete({ criticality: "core", checks: [{ label: "x", cmd: "node -e 0" }], whyNotCritical: undefined })).length === 0,
+    "core and critical don't need it - only the tier that buys its way out of evidence");
+
+  // Caveats are TRUE STATEMENTS about the record, not validity errors: their signature
+  // is an absence, and an absence renders as nothing at all unless something says so.
+  const bare = complete();
+  ok(reviewRecordProblems(bare).length === 0, "a bare cosmetic record with a stated reason is still admissible");
+  const cav = recordCaveats(bare);
+  ok(cav.some((c) => /No executed check at all/.test(c)), `...but it is reported as resting on the author's word (${JSON.stringify(cav)})`);
+  ok(cav.some((c) => /No acceptance criteria were agreed/.test(c)), "and as having no agreed intent to check against");
+  ok(recordCaveats(complete({ acceptanceCriteria: [] })).some((c) => /explicitly recorded as none/.test(c)),
+    "an explicitly empty criteria list reads differently from a missing one - one is a claim, the other is a gap");
+  const withReal = complete({ criticality: "core", checks: [{ label: "u", cmd: "node -e 0" }], acceptanceCriteria: [] });
+  ok(!recordCaveats(withReal).some((c) => /No executed check/.test(c)), "a record with a real check is not flagged for having none");
+  ok(recordCaveats(complete({ criticality: "core", checks: [{ label: "u", cmd: "npm test || exit 0" }] }))
+    .some((c) => /cannot fail/.test(c)), "a pass-forcing check is named in the caveats too");
+  ok(recordCaveats(null).length === 0, "recordCaveats(null) is a safe empty list");
+
+  // --- the run must belong to the DECLARED check -----------------------------
+  // Runs used to be matched to checks by LABEL alone, with nothing comparing the two
+  // commands - so a run stamped for `exit 0` could score a check whose displayed
+  // command was a real e2e script. The field the code called "the fact" was not the
+  // thing that produced the exit code.
+  const BIND = "eeeeeeee-5555-4555-8555-555555555555";
+  writeReviewRecord(metaHome, complete({
+    taskId: BIND,
+    criticality: "core",
+    checks: [{ label: "e2e suite", cmd: "node scripts/e2e/test-real-thing.mjs" }],
+  }));
+  // A stamp for a label the record doesn't declare is refused outright.
+  const strayLabel = recordCheckRun(metaHome, BIND, { label: "some other check", cmd: "exit 0", exitCode: 0 });
+  ok(strayLabel.ok === false && /declares no check labelled/.test(strayLabel.error || ""),
+    `a run for an undeclared label is refused (${strayLabel.error?.slice(0, 70)})`);
+
+  // A stamp that CLAIMS a different command gets the declared command stored and
+  // signed, so it cannot smuggle its own version onto the card.
+  recordCheckRun(metaHome, BIND, { label: "e2e suite", cmd: "exit 0", exitCode: 0 });
+  const bound = readReviewRecord(metaHome, BIND);
+  ok(bound.checkRuns[0].cmd === "node scripts/e2e/test-real-thing.mjs",
+    `the stored run carries the DECLARED command, not the caller's (${bound.checkRuns[0].cmd})`);
+  ok(gauntletStatus(bound, metaHome).state === "passing", "a genuine stamp for a declared check still passes");
+
+  // Now swap the declared command underneath a signed run: the signature covers the
+  // declared command, so the pass stops applying to the new one.
+  const swapped = { ...bound, checks: [{ label: "e2e suite", cmd: "exit 0" }] };
+  ok(gauntletStatus(swapped, metaHome).unverified === 1,
+    "changing the declared command invalidates the run signed for the old one - a pass cannot be moved onto a different command");
+
+  // --- commands that cannot fail ---------------------------------------------
+  // reviews:runChecks spawns with shell:true, so `node test.mjs || exit 0` exits 0
+  // whatever the test does - a GENUINE signed green.
+  ok(passForcingReason("node scripts/e2e/x.mjs || exit 0") === "|| always-succeeds fallback", "an || fallback is flagged");
+  ok(passForcingReason("npm test ; exit 0") === "; exit 0 appended", "a ; exit 0 tail is flagged");
+  ok(passForcingReason("npm test | true") === "piped to true", "a pipe to true is flagged");
+  ok(passForcingReason("jest --passWithNoTests") === "--passWithNoTests", "--passWithNoTests is flagged");
+  ok(passForcingReason("node scripts/e2e/test-review-records.mjs") === null, "an ordinary command is not flagged");
+  ok(passForcingReason("") === null && passForcingReason(null) === null, "empty input does not throw or flag");
+  // It FLAGS rather than refuses - a check that refuses to run is a check that gets
+  // deleted - but the flag has to reach the reader.
+  const forcedRec = complete({ taskId: BIND, criticality: "core", checks: [{ label: "e2e suite", cmd: "npm test || exit 0" }] });
+  ok(reviewRecordProblems(forcedRec).length === 0, "a pass-forcing command is not a validity error (it flags, it doesn't refuse)");
+  const forcedStatus = gauntletStatus(forcedRec, metaHome);
+  ok(forcedStatus.perCheck[0].passForced === "|| always-succeeds fallback",
+    `the flag is carried on perCheck so the page can show it (${forcedStatus.perCheck[0].passForced})`);
 
   // --- duplicate check labels ------------------------------------------------
   // Runs are keyed by label, so two checks sharing one collapsed to a single run and
