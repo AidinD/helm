@@ -288,10 +288,50 @@ export function mutateJotFile(jotPath, mutate) {
       } catch {
         // best-effort cleanup; the write already failed
       }
+      // The atomic rename fails with EPERM while the sync client holds the file -
+      // and the Jot data dir is ALWAYS in Dropbox, so this is the normal setup,
+      // not an edge case. Observed live 2026-07-27: a board update from Helm
+      // returned "Failed to write Jot data: EPERM" and the change was simply lost.
+      // The retry loop above only covered the concurrent-EDIT case, so a locked
+      // file bailed on the first attempt.
+      //
+      // A synchronous sleep is deliberate here despite blocking the main process:
+      // this path is rare, bounded to a few hundred ms in total, and the
+      // alternative is silently dropping a write the user asked for. (Contrast the
+      // docs-drift sweep, which had to go async precisely because it ran on EVERY
+      // tick - frequency is what makes blocking unacceptable, not blocking itself.)
+      if (isTransientLock(err)) {
+        if (attempt < MAX_ATTEMPTS - 1) {
+          lastError = `${err.code} (file locked, likely Dropbox sync)`;
+          sleepSync(60 * (attempt + 1));
+          continue;
+        }
+        // Out of attempts. Name the likely CAUSE, not just the errno - "operation
+        // not permitted" reads like a bug in Helm, when the actionable fact is
+        // that something else is holding the file.
+        return {
+          ok: false,
+          error: `Could not write to Jot: the file stayed locked (${err.code}) after ${MAX_ATTEMPTS} attempts - Dropbox may be syncing it. Nothing was changed; try again.`,
+        };
+      }
       return { ok: false, error: `Failed to write Jot data: ${err.message}` };
     }
   }
   return { ok: false, error: `Could not write to Jot: ${lastError || "the file kept changing"}. Try again.` };
+}
+
+/** Is this a "someone else has the file right now" error, rather than a real one? */
+function isTransientLock(err) {
+  return err?.code === "EPERM" || err?.code === "EBUSY" || err?.code === "EACCES";
+}
+
+/** Block for ms without burning CPU. Only for the bounded retry path above. */
+function sleepSync(ms) {
+  try {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  } catch {
+    // SharedArrayBuffer unavailable - skip the backoff rather than failing the write
+  }
 }
 
 const JOT_STATUSES = ["open", "in-progress", "review", "done"];

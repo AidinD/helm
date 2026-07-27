@@ -4706,3 +4706,37 @@ Its coverage lived in a scratch file that was never committed - the same miss as
 something verified once, by hand, and then assumed.
 `test-review-records.mjs` now covers unrun/passing/failing/stale, the legacy
 fallback for records written before `contentUpdatedAt`, and the refusals.
+
+## 2026-07-27 - Jot writes were lost when Dropbox held the file
+
+**Found by hitting it**, not by testing: a board update from Helm returned
+`Failed to write Jot data: EPERM ... rename` and the change was simply gone.
+
+**Why it slipped through.** `mutateJotFile` already had a retry loop, so it looked
+covered - but the loop only handled the concurrent-EDIT case (mtime/size changed
+between read and write, `continue`). A failed atomic RENAME went straight to the
+catch and returned on the first attempt. The Jot data dir is always in Dropbox
+(`JOT_DATA_DIR` -> `<your-jot-data-dir>`), so the sync client holding the file
+mid-rename is the normal operating condition, not an edge case.
+
+**Fix:** treat `EPERM`/`EBUSY`/`EACCES` as transient, back off (60/120/180ms) and
+retry within the existing attempt budget. A lock that never clears still FAILS -
+and now says the likely cause ("the file stayed locked ... Dropbox may be syncing
+it") instead of the raw errno, which reads like a bug in Helm.
+
+**A blocking sleep, deliberately.** `mutateJotFile` is synchronous (called straight
+from IPC handlers), so the backoff blocks the main process. That is the opposite of
+the call made for the docs-drift sweep the same day, and the difference is
+FREQUENCY, not blocking: the sweep ran on every dashboard tick, this path is a rare
+failure bounded to a few hundred milliseconds, and the alternative is silently
+dropping a write the user asked for. Frequency is what makes blocking unacceptable.
+
+**The captain's standing rule in action** (2026-07-27): every bug, idea, miss or gap gets
+closed as soon as it's found, especially in Helm, and written down - because the
+essential parts are destined for Halyard, and an undocumented finding can only be
+re-discovered, not ported.
+
+**Also worth noting:** the new test found a second defect the fix had introduced -
+the permanent-lock path returned the raw errno rather than the diagnosable message.
+The test was asserting the right thing and the code was wrong, which is the correct
+way round for once.
