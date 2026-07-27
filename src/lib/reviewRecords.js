@@ -400,6 +400,46 @@ export function currentHead(projectPath) {
   }
 }
 
+// Which files, if they change, could plausibly change what a check does. Everything
+// else - documentation, notes, this file's own decision log - cannot.
+//
+// Why this exists: pinning a check to a commit made ANY commit invalidate every check,
+// including one that only edited a markdown file. That is safe in the sense that it
+// errs towards "not verified", but during an active session it left the whole board
+// reading stale, and a warning you always see stops being a warning at all.
+const DOC_FILE = /\.(md|markdown|txt)$/i;
+
+/**
+ * Did anything that is not documentation change between two commits?
+ *
+ * Returns true when it cannot tell (missing commits, no git, a rewritten history), so
+ * the unknown case still counts as "the code may have moved" - a false stale is
+ * annoying, a false fresh is the failure this whole mechanism exists to prevent.
+ */
+export function codeChangedBetween(projectPath, fromSha, toSha) {
+  if (!projectPath || !fromSha || !toSha) {
+    return true;
+  }
+  if (fromSha === toSha) {
+    return false;
+  }
+  try {
+    const out = execFileSync("git", ["-C", projectPath, "diff", "--name-only", `${fromSha}`, `${toSha}`], {
+      encoding: "utf8",
+      windowsHide: true,
+    });
+    const files = out.split(/\r?\n/).map((f) => f.trim()).filter(Boolean);
+    if (files.length === 0) {
+      // Different shas, no differing files: a commit that changed nothing tracked
+      // (an empty or metadata-only commit). Nothing a check could notice.
+      return false;
+    }
+    return files.some((f) => !DOC_FILE.test(f));
+  } catch {
+    return true;
+  }
+}
+
 /** Why this command cannot be trusted to fail, or null. */
 export function passForcingReason(cmd) {
   const s = String(cmd || "");
@@ -480,7 +520,7 @@ export function recordCheckRun(metaHome, taskId, run, { now = Date.now() } = {})
  * otherwise a green tick from an older version of the work keeps vouching for
  * code that has since changed.
  */
-export function gauntletStatus(rec, metaHome = null, { head = undefined } = {}) {
+export function gauntletStatus(rec, metaHome = null, { head = undefined, codeChanged = () => true } = {}) {
   const checks = Array.isArray(rec?.checks) ? rec.checks : [];
   if (checks.length === 0) {
     return { declared: 0, passed: 0, failed: 0, stale: 0, unrun: 0, unverified: 0, unusable: 0, state: "none", perCheck: [] };
@@ -542,7 +582,7 @@ export function gauntletStatus(rec, metaHome = null, { head = undefined } = {}) 
       // since. This was recorded and then never read: "fix it, don't commit, re-run
       // nothing" kept an old green.
       state = "stale";
-    } else if (head !== undefined && head !== null && run.head && run.head !== head) {
+    } else if (head !== undefined && head !== null && run.head && run.head !== head && codeChanged(run.head, head)) {
       // Ran against a different commit. The code moved after the pass, which is the
       // ordinary second-lap case: sent back, fixed, returned to review, old green
       // still on the card.
@@ -762,6 +802,14 @@ export function buildReviewQueue(reviewTasks, records, metaHome = null) {
     }
     return headCache.get(projectPath);
   };
+  const codeChangedCache = new Map();
+  const codeChangedFor = (projectPath, from, to) => {
+    const key = `${projectPath}|${from}|${to}`;
+    if (!codeChangedCache.has(key)) {
+      codeChangedCache.set(key, codeChangedBetween(projectPath, from, to));
+    }
+    return codeChangedCache.get(key);
+  };
   const byId = new Map((records || []).map((r) => [String(r.taskId).toLowerCase(), r]));
   const rows = (reviewTasks || []).map((t) => {
     const rec = byId.get(String(t.id).toLowerCase()) || null;
@@ -793,7 +841,15 @@ export function buildReviewQueue(reviewTasks, records, metaHome = null) {
       caveats: [...(rec ? recordCaveats(rec) : []), ...taskAcceptanceCaveats(t.description)],
       // Did the task's acceptance criteria move after the record snapshotted them?
       drift: rec ? acceptanceDrift(rec, t.description || "") : { drifted: false, snapshot: [], live: [] },
-      gauntlet: rec ? gauntletStatus(rec, metaHome, { head: headFor((rec.checks || [])[0]?.cwd || rec.projectPath) }) : { declared: 0, state: "none" },
+      gauntlet: rec
+        ? gauntletStatus(rec, metaHome, {
+            head: headFor((rec.checks || [])[0]?.cwd || rec.projectPath),
+            // A commit that only touched documentation cannot have changed what a
+            // check does, so it must not stale one. Cached per commit pair: without
+            // it this would be a git call per check per render.
+            codeChanged: (from, to) => codeChangedFor((rec.checks || [])[0]?.cwd || rec.projectPath, from, to),
+          })
+        : { declared: 0, state: "none" },
     };
   });
   // Sorted by BAND, using the same function the page groups by - see reviewBand.

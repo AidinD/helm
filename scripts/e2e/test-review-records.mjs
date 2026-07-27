@@ -25,6 +25,7 @@ import {
   recordCaveats,
   currentHead,
   reviewBand,
+  codeChangedBetween,
   acceptanceDrift,
 } from "../../src/lib/reviewRecords.js";
 
@@ -346,6 +347,65 @@ try {
   const unpinned = gauntletStatus(readReviewRecord(metaHome, HEADID), metaHome, { head: null });
   ok(unpinned.state === "passing", "when the current head is unknown, an existing pass is not invented away - the pin is a bonus signal, not a requirement");
   fs.rmSync(repo, { recursive: true, force: true });
+
+  // --- a documentation commit must not invalidate a code check ---------------
+  // Pinning a pass to a commit made ANY commit stale every check, including one that
+  // only edited a markdown file. Safe in direction, but it left the whole board reading
+  // stale during an active session - and a warning that is always on stops being a
+  // warning. So the comparison asks whether anything OTHER than docs changed.
+  const dRepo = fs.mkdtempSync(path.join(os.tmpdir(), "helm-docs-"));
+  const dg = (...args) => execFileSync("git", ["-C", dRepo, ...args], { encoding: "utf8", windowsHide: true });
+  execFileSync("git", ["init", "-b", "main", dRepo], { windowsHide: true });
+  dg("config", "user.email", "t@t.t");
+  dg("config", "user.name", "T");
+  dg("config", "commit.gpgsign", "false");
+  fs.writeFileSync(path.join(dRepo, "code.js"), "export const a = 1;\n");
+  fs.writeFileSync(path.join(dRepo, "NOTES.md"), "# notes\n");
+  dg("add", "-A");
+  dg("commit", "-m", "init");
+  const base = dg("rev-parse", "HEAD").trim();
+
+  fs.writeFileSync(path.join(dRepo, "NOTES.md"), "# notes\n\nmore prose\n");
+  dg("add", "-A");
+  dg("commit", "-m", "docs only");
+  const afterDocs = dg("rev-parse", "HEAD").trim();
+  ok(codeChangedBetween(dRepo, base, afterDocs) === false, "a commit touching only a .md file does NOT count as a code change");
+
+  fs.writeFileSync(path.join(dRepo, "code.js"), "export const a = 2;\n");
+  dg("add", "-A");
+  dg("commit", "-m", "real change");
+  const afterCode = dg("rev-parse", "HEAD").trim();
+  ok(codeChangedBetween(dRepo, afterDocs, afterCode) === true, "a commit touching code DOES count");
+  ok(codeChangedBetween(dRepo, base, afterCode) === true, "and a range containing both counts - the docs commit cannot mask the code one");
+  ok(codeChangedBetween(dRepo, base, base) === false, "the same commit is not a change");
+  // Unknown must never read as "nothing changed" - a false stale is annoying, a false
+  // fresh is the failure the pin exists to prevent.
+  ok(codeChangedBetween(dRepo, base, "0".repeat(40)) === true, "an unknown commit counts as changed rather than unchanged");
+  ok(codeChangedBetween(null, base, afterCode) === true, "no project path counts as changed");
+  ok(codeChangedBetween(dRepo, null, afterCode) === true, "a run with no recorded commit counts as changed");
+
+  // End to end through gauntletStatus: the same pass survives a docs commit and dies
+  // on a code commit.
+  const DOCPIN = "77777777-9999-4999-8999-999999999999";
+  const docChecks = [{ label: "suite", cmd: "node -e \"process.exit(0)\"" }];
+  writeReviewRecord(metaHome, complete({ taskId: DOCPIN, criticality: "core", checks: docChecks, projectPath: dRepo }));
+  // Stamp a run pinned to `base` by hand-signing it the way recordCheckRun would.
+  const pinRun = { label: "suite", cmd: docChecks[0].cmd, exitCode: 0, ranAt: Date.now() + 30000, head: base, headDirty: false };
+  const pinned2 = {
+    ...readReviewRecord(metaHome, DOCPIN),
+    checkRuns: [{ ...pinRun, ok: true, sig: signCheckRun(metaHome, DOCPIN, pinRun, docChecks[0].cmd) }],
+    contentUpdatedAt: 1,
+  };
+  const changed = (from, to) => codeChangedBetween(dRepo, from, to);
+  ok(gauntletStatus(pinned2, metaHome, { head: afterDocs, codeChanged: changed }).state === "passing",
+    "a pass survives a documentation-only commit");
+  ok(gauntletStatus(pinned2, metaHome, { head: afterCode, codeChanged: changed }).stale === 1,
+    "and still goes stale on a code commit");
+  // The DEFAULT resolver must stay strict: a caller that forgets to pass one gets the
+  // safe behaviour, not the lenient one.
+  ok(gauntletStatus(pinned2, metaHome, { head: afterDocs }).stale === 1,
+    "with no resolver supplied, any different commit is stale - the safe default");
+  fs.rmSync(dRepo, { recursive: true, force: true });
 
   // --- cosmetic must be argued for, and absences must be visible -------------
   // The most likely path to false trust was not a trick: a `cosmetic` record with no
