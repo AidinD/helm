@@ -741,9 +741,13 @@ function reviewChip(text, kind) {
 }
 
 /** One review item: what changed, the evidence, the gaps, and how to check it. */
-function reviewRowEl(row) {
+function reviewRowEl(row, band = null) {
   const el = document.createElement("section");
-  el.className = `rev-item ${row.verdict}`;
+  // The rail colour follows the BAND, not the verdict. Driving it off verdict meant a
+  // card in "Claimed, not confirmed" still wore the green stamp rail, because its
+  // verdict is technically still "stamp" - so the one visual cue a skimming reader
+  // takes in contradicted the heading directly above it.
+  el.className = `rev-item ${band || row.verdict}`;
 
   const head = document.createElement("div");
   head.className = "rev-head";
@@ -764,7 +768,12 @@ function reviewRowEl(row) {
   // Criticality up front: it tells you how much of your attention this deserves
   // before you read a word of it, which is the entire point of the gradient.
   if (row.criticality) {
-    const chip = reviewChip(row.criticality, row.criticality === "critical" ? "gap" : row.criticality === "core" ? "rel" : "ok");
+    // Colours were actively misleading: `critical` used the same amber as a
+    // notVerified gap (so the highest-stakes tier read as a minor caveat) and
+    // `cosmetic` used green (so the tier that requires NO evidence read as a pass).
+    // critical now gets its own emphatic style; cosmetic is deliberately neutral -
+    // it is a statement about scope, not a verdict.
+    const chip = reviewChip(row.criticality, row.criticality === "critical" ? "crit" : row.criticality === "core" ? "rel" : "neutral");
     chip.title =
       row.criticality === "critical"
         ? "Security, data, money, or something irreversible. An independent pass is required - my own passing tests don't count here."
@@ -810,6 +819,33 @@ function reviewRowEl(row) {
   summary.className = "rev-summary";
   summary.textContent = rec.summary;
   el.append(summary);
+
+  // The certificate that gates the critical tier, SHOWN. It was rendered nowhere -
+  // grep for independentReview in this file returned nothing - so the record could
+  // claim "reviewed by a fresh-context agent, 0 findings" and the reader had no way
+  // to see who looked, what they said, or that zero was claimed rather than earned.
+  // A gate whose evidence is invisible is a gate on the author's honour.
+  if (rec.independentReview) {
+    const ind = rec.independentReview;
+    const box = document.createElement("div");
+    box.className = "rev-independent" + (ind.findings === 0 ? " zero" : "");
+    const label = document.createElement("div");
+    label.className = "rev-independent-label";
+    label.textContent =
+      ind.findings === 0
+        ? `Independent pass claims ZERO findings — ${ind.by || "unnamed reviewer"}`
+        : `Independent pass: ${ind.findings} finding${ind.findings === 1 ? "" : "s"} — ${ind.by || "unnamed reviewer"}`;
+    if (ind.findings === 0) {
+      // Zero is the value most worth distrusting: it is what an author writes when
+      // no reviewer was ever run.
+      label.title = "Zero findings is the easiest thing to claim without doing. Check that a reviewer actually ran.";
+    }
+    const body = document.createElement("div");
+    body.className = "rev-independent-body";
+    body.textContent = ind.summary || "(no summary given)";
+    box.append(label, body);
+    el.append(box);
+  }
 
   if (rec.verdict === "judgment" && rec.ask) {
     const ask = document.createElement("div");
@@ -1069,33 +1105,47 @@ async function renderReviewPage() {
   // demanding a green gauntlet from it would make the gradient meaningless in the
   // other direction.
   const unconfirmedStamp = (r) => r.verdict === "stamp" && (r.gauntlet?.declared || 0) > 0 && r.gauntlet.state !== "passing";
-  const groups = [
-    { key: "judgment", label: "Needs your judgment", hint: "these can't be settled by a test" },
-    {
-      key: "unconfirmed",
+  const BANDS = {
+    judgment: { label: "Needs your judgment", hint: "these can't be settled by a test" },
+    unconfirmed: {
       label: "Claimed, not confirmed",
       hint: "the record says it's done, but its own declared checks have not passed - run them before you trust this",
     },
-    { key: "stamp", label: "Ready to stamp", hint: "the evidence holds up - read it and move on" },
-    { key: "incomplete", label: "Below the bar", hint: "a record exists, but it does not meet the bar for its criticality - read it, do not trust it" },
-    { key: "unrecorded", label: "No review record", hint: "in review, but nothing was written down to check" },
-  ];
-  for (const g of groups) {
-    const inGroup = rows.filter((r) => (g.key === "unconfirmed" ? unconfirmedStamp(r) : r.verdict === g.key && !unconfirmedStamp(r)));
-    if (inGroup.length === 0) {
-      continue;
+    stamp: { label: "Ready to stamp", hint: "the evidence holds up - read it and move on" },
+    incomplete: { label: "Below the bar", hint: "a record exists, but it does not meet the bar for its criticality - read it, do not trust it" },
+    unrecorded: { label: "No review record", hint: "in review, but nothing was written down to check" },
+  };
+  const bandOf = (r) => (unconfirmedStamp(r) ? "unconfirmed" : r.verdict);
+
+  // Render in the order the QUEUE decided, emitting a heading whenever the band
+  // changes - instead of re-filtering rows into a fixed heading sequence.
+  //
+  // The old loop silently discarded buildReviewQueue's ordering. That ordering exists
+  // for one reason: a CRITICAL record that claims to be reviewed but isn't admissible
+  // is put in band 0, above every stamp, with a comment saying burying it "hides
+  // exactly the alarm the gradient exists to raise". The page then rendered it FOURTH,
+  // below the cosmetic stamps, because "incomplete" came fourth in the hardcoded list.
+  //
+  // Worse, the test I wrote to prevent exactly this asserted the order of the IPC rows
+  // and then, on the page, only COUNTED elements - never their order. That is the
+  // count-the-buttons failure again, in the test written to stop it. The e2e now
+  // asserts rendered DOM order.
+  let lastBand = null;
+  for (const row of rows) {
+    const band = bandOf(row);
+    if (band !== lastBand) {
+      lastBand = band;
+      const spec = BANDS[band] || { label: band, hint: "" };
+      const h = document.createElement("h3");
+      h.className = "rev-group";
+      h.textContent = spec.label;
+      const hint = document.createElement("span");
+      hint.className = "rev-group-hint";
+      hint.textContent = spec.hint ? `— ${spec.hint}` : "";
+      h.append(hint);
+      frag.append(h);
     }
-    const h = document.createElement("h3");
-    h.className = "rev-group";
-    h.textContent = g.label;
-    const hint = document.createElement("span");
-    hint.className = "rev-group-hint";
-    hint.textContent = `— ${g.hint}`;
-    h.append(hint);
-    frag.append(h);
-    for (const row of inGroup) {
-      frag.append(reviewRowEl(row));
-    }
+    frag.append(reviewRowEl(row, band));
   }
 
   if (tally.total === 0) {
