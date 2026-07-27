@@ -256,11 +256,18 @@ export function mutateJotFile(jotPath, mutate) {
   const MAX_ATTEMPTS = 4;
   let lastError = null;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    let statBefore;
+    // A CONTENT HASH, not size+mtime. The old guard could not see a same-size edit
+    // made inside the read->write window, and that is the common shape of a real
+    // concurrent edit from the Jot app: a drag-reorder is a pure array permutation
+    // (byte-identical size) and a subtask "open"->"done" is the same length. On top
+    // of that, Windows' clock tick (~15.6ms) is coarser than the window, so mtime
+    // often matched too - measured at 250 of 400 same-size writes being invisible.
+    // Helm would then rename over the user's edit and report success.
+    let hashBefore;
     try {
-      statBefore = fs.statSync(jotPath);
+      hashBefore = fileHash(jotPath);
     } catch (err) {
-      return { ok: false, error: `Could not stat Jot data: ${err.message}` };
+      return { ok: false, error: `Could not read Jot data: ${err.message}` };
     }
     const data = readJotFile(jotPath);
     if (!data || !Array.isArray(data.todos)) {
@@ -274,8 +281,7 @@ export function mutateJotFile(jotPath, mutate) {
     try {
       // No BOM, 2-space, LF - exactly Jot's own writer's output.
       fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), "utf8");
-      const statNow = fs.statSync(jotPath);
-      if (statNow.mtimeMs !== statBefore.mtimeMs || statNow.size !== statBefore.size) {
+      if (fileHash(jotPath) !== hashBefore) {
         fs.unlinkSync(tmpPath);
         lastError = "Jot file changed during write (concurrent edit)";
         continue;
@@ -318,6 +324,11 @@ export function mutateJotFile(jotPath, mutate) {
     }
   }
   return { ok: false, error: `Could not write to Jot: ${lastError || "the file kept changing"}. Try again.` };
+}
+
+/** Hash of the file's raw bytes - the only reliable "did this change" signal here. */
+function fileHash(filePath) {
+  return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
 }
 
 /** Is this a "someone else has the file right now" error, rather than a real one? */

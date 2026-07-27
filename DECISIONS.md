@@ -4808,3 +4808,99 @@ somebody-wrote-a-bad-one need different reactions.
 reviewed but isn't admissible sorts to the TOP, alongside judgment items - even
 though fixing it is my job, not his. Sorting it below a batch of cheap cosmetic
 stamps buried exactly the alarm the gradient exists to raise.
+
+## 2026-07-27 - The review pipe could report unverified work as verified (independent review, 11 findings)
+
+Marking the pipe `critical` under the new gradient refused its own record, because
+nothing independent had reviewed it - I had written the summary, the test steps, the
+checks, run the gauntlet AND fixed the gauntlet.
+So an independent reviewer went at it with one standard: **can this thing report
+something as verified when it isn't?**
+It found 11 issues, and one was fatal to the premise.
+
+### The fatal one: the gauntlet was forgeable, and so was the whole claim
+
+`writeReviewRecord` - the function holding every refusal in this file - **is not on
+any production path.**
+Records are authored by an agent writing JSON directly. And `gauntletStatus` trusted
+an `ok: true` FIELD without ever looking at the exit code.
+So this, written by hand, read as "Checks passing (1/1), ready to stamp":
+
+    checks:    [{ label: "auth e2e (34 assertions)", cmd: "exit 0" }]
+    checkRuns: [{ label: "auth e2e (34 assertions)", ok: true }]
+
+No command was ever executed.
+The gauntlet's entire selling point - the half the author cannot talk around - did not
+hold: the author wrote the checks, the labels AND the outcomes, in one file they
+control.
+
+**Fix, in two parts.**
+1. A check run now carries an HMAC signed by the process that spawned the command.
+`gauntletStatus` checks provenance BEFORE outcome, derives pass/fail from `exitCode`
+(never from `ok`), and requires a numeric `ranAt`.
+An unsigned, edited, or transplanted run counts as `unverified` - a new bucket,
+separate from stale, so "nobody ran this" cannot hide inside "this is a bit out of
+date".
+2. Validation moved from advisory to enforced on READ: `buildReviewQueue` re-validates
+every record, so a hand-written inadmissible one renders as `incomplete` with its
+reasons rather than as a confident card.
+
+**Stated limit, because this file is the one that has to be honest.**
+The key lives at `<meta-home>/.helm/run-key`, so an agent with filesystem access can
+read it and forge a signature.
+This is tamper-EVIDENT, not tamper-proof.
+What it actually buys is the line between "the app ran this and stamped it" and "the
+author wrote down an outcome they believed" - and the second is the failure that keeps
+happening.
+A hard guarantee needs the runner outside the author's reach (CI); that is not built.
+
+### The other nine
+
+- Duplicate check labels scored 2/2 passing while one check exited 7.
+Runs are keyed by label, so the second stamp overwrote the first and the failure
+vanished. Now refused at the record level, and scored as unverified if it slips through.
+- `runChecks` said "All checks passed" while persisting nothing.
+`recordCheckRun` goes through validation, so after criticality became mandatory 9 of
+11 live records could not be stamped at all - a regression I introduced an hour
+earlier by adding a required field without backfilling.
+The return value was discarded. Now the handler reports `stored`, and the toast says
+the outcome could not be stored rather than claiming success. All 11 records backfilled.
+- Duplicate acceptance `index` values let one linked step cover several criteria.
+Indices are now re-derived by position: the author does not get to choose the numbering
+the coverage check keys on.
+- The per-check dots used `updatedAt` while the header used `contentUpdatedAt`, so
+every check but the last read "stale" under a green header. The un-migrated half of my
+own earlier fix.
+- The check LABEL was shown and the command hidden in a tooltip.
+A label reading "auth e2e (34 assertions)" over `cmd: "exit 0"` looked authoritative.
+The command is now rendered next to the label - the label is author prose, the command
+is the fact.
+- The subnav badge omitted `incomplete` - the case my own code comment calls "the more
+alarming" raised no badge at all. Under-flagging an attention signal, which is the
+failure mode the captain explicitly rejects.
+- `mutateJotFile`'s size+mtime guard missed same-size concurrent edits.
+Measured: 250 of 400 same-size writes were invisible, because a drag-reorder is a pure
+permutation and Windows' ~15.6ms clock tick is coarser than the read-write window.
+Helm renamed over the user's edit and reported success. Now a content hash.
+- Two of my own tests were defective.
+One "concurrency guard" test appended two spaces to the competing write, changing the
+file SIZE - so it only ever exercised the easy case and never the failing one.
+Another assertion (`raced.ok === false || after.todos.length >= before + 1`) could not
+fail: both the guarded and the clobbered outcome satisfy the disjunction.
+A third asserted that an unsigned `ok: true` run should read as passing - locking in
+the forgery.
+- The check subprocess port was derived per-invocation, so two concurrent "Run checks"
+handed their children the same port, reintroducing the wrong-app-attach bug across
+invocations. Now a monotonic cursor.
+
+### What remains open, deliberately
+
+**Tier gaming is an honour system.**
+Nothing correlates the declared criticality with the diff, the touched paths, or the
+commits.
+A security change labelled `cosmetic` needs no check and no independent pass and
+renders under "Ready to stamp".
+Since the gradient is what "I stop reading diffs" rests on, this is the largest
+remaining hole, and I have no honest fix that doesn't involve inspecting the diff -
+which is the thing we are trying to stop doing.
+Recorded on the record's own `notVerified` so it is visible where the trust is given.

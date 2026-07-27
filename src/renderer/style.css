@@ -5622,3 +5622,18 @@ button.primary {
 .rev-check-label { color: var(--text); }
 .rev-check-state { margin-left: auto; color: var(--text-dim); font-family: ui-monospace, Consolas, monospace; font-size: 10.5px; }
 .rev-actions { display: flex; gap: 8px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); }
+/* The actual command a check runs. Shown, not hidden in a tooltip: the label is
+   author prose, this is the fact. */
+.rev-check-cmd {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 10.5px;
+  color: var(--text-faint);
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  border-radius: 3px;
+  padding: 0 5px;
+  max-width: 44ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rev-check-dot.unverified { background: var(--danger); box-shadow: 0 0 0 2px color-mix(in srgb, var(--danger) 25%, transparent); }

@@ -93,17 +93,37 @@ try {
   seed();
   const before = read().todos.length;
   const raced = mutateJotFile(jotPath, (data) => {
-    // Simulate the Jot app writing in our window: touch the file mid-mutation so
-    // the pre-rename re-stat sees a different mtime/size.
+    // Simulate the Jot app writing inside our read->write window.
+    //
+    // NOTE, and this is why the guard changed: the earlier version of this test
+    // appended two spaces to the competing write, which changed the file SIZE - so
+    // it only ever exercised the easy case. The realistic concurrent edit from the
+    // Jot app is byte-identical in length (a drag-reorder is a pure permutation; a
+    // subtask "open"->"done" is the same 4 chars), and Windows' ~15.6ms clock tick
+    // meant mtime often matched too. Measured: 250 of 400 same-size writes were
+    // invisible to the old size+mtime guard, and Helm renamed straight over them.
+    // So the write below is deliberately the SAME LENGTH as what we would produce.
     data.todos.push({ id: "33333333-3333-4333-8333-333333333333", text: "ours", status: "open", categoryId: CAT, parentId: null });
     const other = read();
-    other.todos.push({ id: "44444444-4444-4444-8444-444444444444", text: "theirs", status: "open", categoryId: CAT, parentId: null });
-    fs.writeFileSync(jotPath, JSON.stringify(other, null, 2) + "  ", "utf8");
+    other.todos.push({ id: "44444444-4444-4444-8444-444444444444", text: "ours", status: "open", categoryId: CAT, parentId: null });
+    fs.writeFileSync(jotPath, JSON.stringify(other, null, 2), "utf8");
     return { ok: true };
   });
   const after = read();
-  ok(after.todos.some((t) => t.text === "theirs"), "the CONCURRENT write survives - it is not silently reverted");
-  ok(raced.ok === false || after.todos.length >= before + 1, `the racing write either retried or aborted, never clobbered (ok=${raced.ok})`);
+  ok(after.todos.some((t) => t.id === "44444444-4444-4444-8444-444444444444"), "the CONCURRENT write survives - it is not silently reverted");
+  // The old assertion here was `raced.ok === false || after.todos.length >= before + 1`,
+  // which cannot fail: the guard working gives before+2 and a clobber gives before+1,
+  // and both satisfy the disjunction. State the actual requirement instead - our own
+  // write must have either been retried on top of theirs, or abandoned.
+  // (The competing write re-runs on every retry attempt, so the total count grows by
+  // more than one - the count is not the invariant. What matters is whether OUR
+  // write landed, and that it only landed if the call reported success.)
+  const ours = after.todos.filter((t) => t.id === "33333333-3333-4333-8333-333333333333").length;
+  if (raced.ok) {
+    ok(ours === 1, `a successful race wrote ours exactly once, on top of the other write (found ${ours})`);
+  } else {
+    ok(ours === 0, `an aborted race did NOT write ours - no silent clobber (found ${ours}, ${after.todos.length} todos total)`);
+  }
 
   const mutatorRefusal = mutateJotFile(jotPath, () => ({ ok: false, error: "nope" }));
   ok(mutatorRefusal.ok === false && mutatorRefusal.error === "nope", "a mutator can abort and its error passes through");
