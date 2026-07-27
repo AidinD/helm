@@ -173,6 +173,29 @@ try {
   ok(ui.warns.some((w) => /acceptance criteria changed/i.test(w)), "and so is the drift");
   ok(ui.critChips.length >= 1, `criticality shows as a chip (${JSON.stringify(ui.critChips)})`);
 
+  // THE ASSERTION THIS TEST WAS MISSING. It checked the order of the IPC rows above,
+  // then came to the page and only COUNTED elements - so it stayed green while the
+  // renderer re-sorted everything into a hardcoded heading sequence and put the
+  // critical-but-inadmissible card FOURTH, below the cosmetic stamps. Counting instead
+  // of checking the actual outcome is the same failure as the button-counting test that
+  // let a dead "Jump in" ship. Assert the RENDERED order.
+  const domOrder = await app.eval(`(() => {
+    const p = document.getElementById("reviewPage");
+    return {
+      items: [...p.querySelectorAll(".rev-item")].map(e => e.className.replace("rev-item", "").trim()),
+      headings: [...p.querySelectorAll("h3.rev-group")].map(h => h.firstChild?.textContent?.trim()),
+      // Interleaved, so a heading can be matched to the cards under it.
+      sequence: [...p.querySelectorAll("h3.rev-group, .rev-item")].map(e =>
+        e.tagName === "H3" ? "H:" + e.firstChild?.textContent?.trim() : "C:" + e.className.replace("rev-item", "").trim())
+    };
+  })()`);
+  ok(domOrder.items[0] === "incomplete", `the critical-but-inadmissible card is rendered FIRST on the page, not just first in the data (order: ${domOrder.items.join(" | ")})`);
+  ok(domOrder.headings[0] === "Below the bar", `and its heading comes first too (${JSON.stringify(domOrder.headings)})`);
+  // The rail must match the band: an unconfirmed stamp wearing the green stamp rail
+  // was the visual cue contradicting its own heading.
+  ok(!domOrder.items.includes("stamp") || domOrder.sequence.indexOf("H:Ready to stamp") < domOrder.sequence.indexOf("C:stamp"),
+    `every stamp card sits under the stamp heading (${domOrder.sequence.join(" ")})`);
+
   // THE CHECK THAT MATTERS MOST, through the real app: a hand-written green
   // gauntlet must not read as passing. Before run signing, this exact record read
   // "Checks passing (1/1) - ready to stamp" with no command ever executed.
