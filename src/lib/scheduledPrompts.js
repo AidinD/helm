@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { writeJsonAtomicSync } from "./atomicWrite.js";
 
 // Scheduled prompts (task 7d9d2188).
 //
@@ -42,21 +43,13 @@ function readAll() {
 }
 
 function writeAll(list) {
-  const file = storePath();
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  // Atomic temp+rename, same discipline as the other stores: an interrupted write
-  // must never leave a torn queue.
-  const tmp = file + "." + crypto.randomBytes(4).toString("hex") + ".tmp";
-  try {
-    fs.writeFileSync(tmp, JSON.stringify(list, null, 2) + "\n", "utf8");
-    fs.renameSync(tmp, file);
-  } catch (err) {
-    try {
-      fs.unlinkSync(tmp);
-    } catch {
-      // best-effort cleanup
-    }
-    throw err;
+  // Shared atomic write with the Dropbox-lock retry (task efcaf486): the previous
+  // private copy re-threw EPERM, so a queued prompt could vanish while the sync
+  // client held the file - and a prompt that silently never fires is indistinguishable
+  // from one that was never queued.
+  const res = writeJsonAtomicSync(storePath(), list);
+  if (!res.ok) {
+    throw new Error(`Could not write the scheduled-prompt queue: ${res.error}`);
   }
 }
 

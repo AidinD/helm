@@ -3,6 +3,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { findSessionsDir, findTranscriptPath, encodeProjectDir, projectsRoot } from "./paths.js";
 import { loadConfig } from "./config.js";
+import { writeFileAtomicSync } from "./atomicWrite.js";
 
 // Default scoring weights for the attention ranking. Overridable via
 // config.jot.weights. "review" is weighted highest because in Aidin's Jot
@@ -259,19 +260,14 @@ function patchSessionMeta(sessionId, patchFn) {
       patchFn(freshMeta);
       // Matches the app's own compact (non-pretty-printed) format, so this
       // write doesn't needlessly reformat a file another app owns.
-      const tmpPath = path.join(dir, `.${file}.${crypto.randomBytes(4).toString("hex")}.tmp`);
-      try {
-        fs.writeFileSync(tmpPath, JSON.stringify(freshMeta), "utf8");
-        fs.renameSync(tmpPath, filePath);
-      } catch (err) {
-        // Don't leave a stray .tmp file sitting in the desktop app's own
-        // session directory if the rename step is what failed.
-        try {
-          fs.unlinkSync(tmpPath);
-        } catch {
-          // best-effort; the write itself already failed, this is just cleanup
-        }
-        throw err;
+      // Shared atomic write with the transient-lock retry (task efcaf486). This one is
+      // the most contended of the lot: it writes into the Desktop app's OWN live
+      // session file, so the other app really can be holding it - which is exactly the
+      // case the private rename dropped. Compact JSON, matching the app's own format,
+      // so this write doesn't needlessly reformat a file another app owns.
+      const res = writeFileAtomicSync(filePath, JSON.stringify(freshMeta));
+      if (!res.ok) {
+        return { ok: false, error: `Failed to write session file: ${res.error}` };
       }
       return { ok: true };
     } catch (err) {
