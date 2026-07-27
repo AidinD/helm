@@ -901,7 +901,17 @@ function reviewRowEl(row) {
         ? `Checks passing (${g.passed}/${g.declared})`
         : g.state === "failing"
           ? `Checks FAILING (${g.failed} of ${g.declared})`
-          : `Checks not confirmed (${g.passed}/${g.declared} — ${g.unrun} unrun, ${g.stale} stale)`;
+          : // The breakdown must name the REASON. It listed unrun and stale but not
+            // unverified, so a record whose only check was a forgery summarised as
+            // "0 unrun, 0 stale" - technically true, and silent about the one thing
+            // that mattered.
+            `Checks not confirmed (${g.passed}/${g.declared} — ${[
+              g.unverified > 0 ? `${g.unverified} NOT VERIFIED` : null,
+              g.unrun > 0 ? `${g.unrun} unrun` : null,
+              g.stale > 0 ? `${g.stale} stale` : null,
+            ]
+              .filter(Boolean)
+              .join(", ")})`;
     head.append(label);
     const run = document.createElement("button");
     run.type = "button";
@@ -931,16 +941,17 @@ function reviewRowEl(row) {
     head.append(run);
     box.append(head);
     for (const c of rec.checks || []) {
-      const runInfo = (rec.checkRuns || []).find((r) => r.label === c.label);
       const line = document.createElement("div");
       line.className = "rev-check";
       const dot = document.createElement("span");
-      // contentUpdatedAt, matching gauntletStatus. Using updatedAt meant every stamp
-      // aged out the previous check, so the dots read "stale" while the header read
-      // "passing" - the un-migrated half of the staleness fix.
-      const baseline = typeof rec.contentUpdatedAt === "number" ? rec.contentUpdatedAt : rec.updatedAt || 0;
-      const fresh = runInfo && (runInfo.ranAt || 0) >= baseline;
-      dot.className = "rev-check-dot " + (!runInfo ? "unrun" : !fresh ? "stale" : runInfo.ok ? "pass" : "fail");
+      // The state comes from gauntletStatus's perCheck, NOT re-derived here. Deriving
+      // it a second time is how the dots ended up contradicting the header: this used
+      // `runInfo.ok`, a field the record's author writes, so a forged run drew a green
+      // dot reading "exit 0" while the header correctly said incomplete. One rule,
+      // one place - and the renderer cannot verify a signature anyway.
+      const info = (row.gauntlet?.perCheck || []).find((p) => p.label === c.label) || { state: "unrun" };
+      const DOT_CLASS = { passed: "pass", failed: "fail", stale: "stale", unrun: "unrun", unverified: "unverified" };
+      dot.className = "rev-check-dot " + (DOT_CLASS[info.state] || "unrun");
       const name = document.createElement("span");
       name.className = "rev-check-label";
       name.textContent = c.label;
@@ -953,15 +964,16 @@ function reviewRowEl(row) {
       cmd.textContent = c.cmd;
       const state = document.createElement("span");
       state.className = "rev-check-state";
-      state.textContent = !runInfo
-        ? "never run"
-        : !fresh
-          ? "stale — ran before the last change"
-          : runInfo.ok
-            ? `exit 0 · ${relTime(runInfo.ranAt)}`
-            : `exit ${runInfo.exitCode} · ${relTime(runInfo.ranAt)}`;
-      if (runInfo?.tail) {
-        state.title = runInfo.tail;
+      state.textContent =
+        info.state === "unrun"
+          ? "never run"
+          : info.state === "unverified"
+            ? "NOT VERIFIED — this outcome was not stamped by the app"
+            : info.state === "stale"
+              ? "stale — ran before the last change"
+              : `exit ${info.exitCode} · ${relTime(info.ranAt)}`;
+      if (info.tail) {
+        state.title = info.tail;
       }
       line.append(dot, name, cmd, state);
       box.append(line);
@@ -1035,7 +1047,7 @@ async function renderReviewPage() {
   sub.textContent =
     tally.total === 0
       ? "Nothing is waiting on your review."
-      : `${tally.judgment} need your judgment · ${tally.stamp} ready to stamp${tally.incomplete > 0 ? ` · ${tally.incomplete} below the bar` : ""}${tally.unrecorded > 0 ? ` · ${tally.unrecorded} with no record` : ""}`;
+      : `${tally.judgment} need your judgment · ${tally.stamp} ready to stamp${tally.unconfirmed > 0 ? ` · ${tally.unconfirmed} claimed but unconfirmed` : ""}${tally.incomplete > 0 ? ` · ${tally.incomplete} below the bar` : ""}${tally.unrecorded > 0 ? ` · ${tally.unrecorded} with no record` : ""}`;
   heading.append(h2, sub);
   topbar.append(heading);
   frag.append(topbar);
@@ -1047,14 +1059,29 @@ async function renderReviewPage() {
     frag.append(err);
   }
 
+  // A stamp whose DECLARED checks aren't confirmed is not ready to stamp, and must
+  // not sit under a heading that says "verified end to end". Found by rendering a
+  // fabricated record: its one check showed NOT VERIFIED on its own line while the
+  // heading above it still promised verification - and the heading is what a skimming
+  // reader takes on trust.
+  //
+  // Only DECLARED checks count here: a cosmetic item legitimately declares none, and
+  // demanding a green gauntlet from it would make the gradient meaningless in the
+  // other direction.
+  const unconfirmedStamp = (r) => r.verdict === "stamp" && (r.gauntlet?.declared || 0) > 0 && r.gauntlet.state !== "passing";
   const groups = [
     { key: "judgment", label: "Needs your judgment", hint: "these can't be settled by a test" },
-    { key: "stamp", label: "Ready to stamp", hint: "verified end to end - read the evidence and move on" },
+    {
+      key: "unconfirmed",
+      label: "Claimed, not confirmed",
+      hint: "the record says it's done, but its own declared checks have not passed - run them before you trust this",
+    },
+    { key: "stamp", label: "Ready to stamp", hint: "the evidence holds up - read it and move on" },
     { key: "incomplete", label: "Below the bar", hint: "a record exists, but it does not meet the bar for its criticality - read it, do not trust it" },
     { key: "unrecorded", label: "No review record", hint: "in review, but nothing was written down to check" },
   ];
   for (const g of groups) {
-    const inGroup = rows.filter((r) => r.verdict === g.key);
+    const inGroup = rows.filter((r) => (g.key === "unconfirmed" ? unconfirmedStamp(r) : r.verdict === g.key && !unconfirmedStamp(r)));
     if (inGroup.length === 0) {
       continue;
     }
@@ -1088,7 +1115,9 @@ async function renderReviewPage() {
     // comment calls "the more alarming" - a record EXISTS, so something claims to be
     // reviewed, but the claim is inadmissible - raised no badge at all. Under-flagging
     // an attention signal is the failure mode the captain explicitly rejects.
-    const n = tally.judgment + tally.unrecorded + (tally.incomplete || 0);
+    // Unconfirmed counts too: a record claiming done whose own checks have not
+    // passed is something he needs to know about, not something already settled.
+    const n = tally.judgment + tally.unrecorded + (tally.incomplete || 0) + (tally.unconfirmed || 0);
     badge.textContent = n > 0 ? String(n) : "";
     badge.classList.toggle("hidden", n === 0);
   }
