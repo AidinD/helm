@@ -1035,7 +1035,7 @@ function reviewRowEl(row, band = null) {
     });
     head.append(run);
     box.append(head);
-    for (const c of rec.checks || []) {
+    (rec.checks || []).forEach((c, i) => {
       const line = document.createElement("div");
       line.className = "rev-check";
       const dot = document.createElement("span");
@@ -1044,7 +1044,12 @@ function reviewRowEl(row, band = null) {
       // `runInfo.ok`, a field the record's author writes, so a forged run drew a green
       // dot reading "exit 0" while the header correctly said incomplete. One rule,
       // one place - and the renderer cannot verify a signature anyway.
-      const info = (row.gauntlet?.perCheck || []).find((p) => p.label === c.label) || { state: "unrun" };
+      // Matched BY POSITION, not by label. perCheck is built by walking rec.checks in
+      // order, so index i is exactly this check - whereas find(p => p.label === c.label)
+      // returned the FIRST match, so two checks sharing a label both drew the first
+      // one's state: a green "exit 0" dot for a command that never ran, under a header
+      // correctly saying "not confirmed".
+      const info = (row.gauntlet?.perCheck || [])[i] || { state: "unrun" };
       const DOT_CLASS = { passed: "pass", failed: "fail", stale: "stale", unrun: "unrun", unverified: "unverified", unusable: "unverified" };
       dot.className = "rev-check-dot " + (DOT_CLASS[info.state] || "unrun");
       const name = document.createElement("span");
@@ -1089,7 +1094,7 @@ function reviewRowEl(row, band = null) {
       }
       line.append(dot, name, cmd, state);
       box.append(line);
-    }
+    });
     el.append(box);
   }
 
