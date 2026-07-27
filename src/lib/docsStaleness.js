@@ -60,3 +60,44 @@ export function docsStaleness(projectPath, { threshold = DOCS_STALE_THRESHOLD } 
   }
   return result;
 }
+
+/**
+ * The same signal, but across a whole list of project paths - so the drift can be
+ * a dashboard nudge ("these projects need reconciling") instead of only a pill you
+ * see once you've already opened the project (task 0831417b).
+ *
+ * Returns ONLY the stale ones, worst first. Deliberately no auto-reconcile and no
+ * writes: this tells you where to jump in, it does not decide to fix anything.
+ *
+ * @param {string[]} projectPaths - candidate paths; duplicates and falsy entries are dropped.
+ * @param {{threshold?: number, limit?: number}} [opts]
+ * @returns {{path: string, commitsSince: number, threshold: number}[]}
+ */
+export function staleProjects(projectPaths, { threshold = DOCS_STALE_THRESHOLD, limit = 0 } = {}) {
+  const seen = new Set();
+  const out = [];
+  for (const p of projectPaths || []) {
+    if (!p) {
+      continue;
+    }
+    // Case-insensitively deduped: on Windows the same repo shows up as both
+    // D:\Repo\... and d:/Repo/... across sessions, and listing one project twice
+    // would read as two projects drifting.
+    const key = path.resolve(p).toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    let res;
+    try {
+      res = docsStaleness(p, { threshold });
+    } catch {
+      continue;
+    }
+    if (res.stale) {
+      out.push({ path: path.resolve(p), commitsSince: res.commitsSince, threshold: res.threshold });
+    }
+  }
+  out.sort((a, b) => b.commitsSince - a.commitsSince);
+  return limit > 0 ? out.slice(0, limit) : out;
+}

@@ -4503,3 +4503,59 @@ tracked half at all, and would have passed while ownership was completely broken
 - and my first version of that assertion was a tautology that could not fail.
 The test now seeds its own config with one known session marked as Helm-launched,
 so both halves of the hybrid are exercised through the real IPC.
+
+## 2026-07-27 - Docs drift as an ACTIVE nudge, on both dashboards (task 0831417b)
+
+**Decision:** the docs-drift signal becomes a board-level nudge listing the
+projects whose PLAN/DECISIONS have fallen behind, with jump-in - and it lives on
+the CLASSIC dashboard as well as being a widget.
+
+**Why the pane-header pill wasn't enough.**
+The pill only tells you once you've already opened the project, which is exactly
+backwards for drift on a project you've stopped thinking about.
+The whole failure mode being addressed is docs going stale on work that has moved
+on, so the signal has to reach you where you decide what to look at next.
+
+**Why the classic dashboard too, not just a widget.**
+Building it as a widget alone looked right - widgets are the newer surface - until
+the E2E showed the real config has `dashboardWidgets.enabled: false`.
+A widget-only nudge would have been invisible on the board actually in use.
+An attention signal that never fires is worse than no signal, because you come to
+trust the quiet.
+Both surfaces share one `driftLineEl` row builder, so they cannot drift apart.
+
+**Jump-in only, deliberately.**
+The ticket floated dispatching a doc-reconcile turn.
+Rejected for now: rewriting a project's DECISIONS.md unsupervised is a much
+bigger promise than pointing at it, and getting it wrong quietly corrupts the
+durable record the nudge exists to protect.
+It points; you decide.
+
+**Seeded once onto an existing layout, then yours.**
+A widget added only to the DEFAULT layout is invisible to anyone who has already
+arranged their board, and an attention signal you have to find in the Add-widget
+menu is a weak one.
+So `seedNewWidgets` appends it once, gated on a per-type `seeded` flag rather than
+on "is it in the layout" - otherwise removing the widget would just bring it back,
+which would make "remove" a suggestion rather than a decision.
+
+**Cached for 60s.** Staleness costs two git calls per repo and the dashboard
+refreshes on a poll tick; drift measured in commits does not move second to
+second. The classic section additionally carries a fingerprint so a tick doesn't
+rebuild it.
+
+**Quiet when clean, but never silently quiet on failure.**
+The classic section returns null when nothing has drifted (no empty module on a
+clean board), while the widget - which you placed on purpose - says "Docs are
+current". A read that FAILED says so explicitly in both, rather than rendering the
+all-clear: a nudge that can't look must not claim there is nothing to see.
+
+**What it found immediately.** On the real board: `nw-snack-tidepool` 252
+commits behind, `loom` 15. The 252 is worth acting on - that is a project whose
+durable record has been left behind entirely.
+
+**Testing note.** The renderer stubs go through injected `fetchStale` / `save`
+parameters rather than reassigning `window.helm.*`: the bridge is contextBridge-
+exposed and therefore NOT writable, so the first version's stubs silently did
+nothing and the test was quietly asserting against live machine data instead of
+the empty and error states it claimed to cover.
