@@ -4962,3 +4962,45 @@ accepts an exit code, so the honest claim is that a forgery now has to lie about
 specific declared command at a specific commit, not that it is impossible. A real
 guarantee needs the runner outside the author's reach, which is CI, which is a project
 rather than a task.
+
+### The verification pass on the verification pass (2026-07-27, evening)
+
+An independent agent checked the previous round's fix claims with mutation testing -
+copying the lib and tests to a temp tree, disabling a guard, and seeing whether the
+suite noticed. That is the strongest technique used on this codebase so far and it
+should be reused: most mutations WERE caught (signature verification, head comparison,
+the staleness baseline, the whyNotCritical gate, the undeclared-label refusal,
+passForcingReason), which is the first real evidence that the suite has teeth. One was
+not, and that assertion was worthless.
+
+**The worst finding was one line from working.** `passForcingReason` detected a
+pass-forcing command and then nothing consumed the detection: `state` came from the
+exit code alone, so `node test.mjs || exit 0` - genuinely run, correctly signed -
+read "Checks passing (1/1)", banded as a stamp, counted zero in `tally.unconfirmed`,
+raised no badge, and signed off on one click. Detection without consequence is worse
+than no detection, because the code reads as though the case is handled. There is now
+an `unusable` state that blocks `passing` and names itself everywhere the reader looks.
+
+**Two of my own tests asserted the hole was correct**, using `exit 0` as their fixture
+command. A test written against a convenient fixture will happily enshrine the very
+behaviour the feature exists to prevent.
+
+**A scripted string-replacement put a fix in the wrong function** - the `onCancel`
+guard landed in `showImageLightbox`, where the variable does not exist, producing a
+live ReferenceError on Escape while `customConfirm` never got the guard at all. That
+is the third time today. The rule that follows: apply behavioural patches with an
+editor that fails on a bad match, not with a regex over the whole file.
+
+**Coarse commit pinning is a real cost, recorded rather than hidden.** Pinning a pass
+to a HEAD sha means ANY commit invalidates every check - including a commit that only
+touches DECISIONS.md. It is safe (a false red) but it will nag, and during an active
+session it makes the whole board perpetually stale. Filed as a task rather than
+softened here, because the fix (compare the files a check plausibly depends on, or at
+least ignore commits touching only docs) is a design decision, and quietly widening
+the rule would put us back where we started.
+
+**What is still open after all of this.** Tier gaming remains an honour system: nothing
+correlates the declared criticality with the diff. The signing oracle is narrowed to
+"a forgery must lie about a specific declared command at a specific commit", not
+closed. Both are on the relevant records' own `notVerified`, which is where a reader
+gives trust and therefore where the limits belong.
