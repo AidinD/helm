@@ -136,6 +136,28 @@ export function readAllSessions(options = {}) {
     sessions.push(buildSession(applyArchiveOverlay(meta), attentionWindowMs));
   }
 
+  // Ownership (Epic f3d096fa, the design's "hybrid" caveat): Helm only knows the
+  // real lifecycle of sessions it LAUNCHED. For those, tracked signals (the live
+  // registry, launch events) are authoritative; for a foreign Desktop session it
+  // has nothing but the transcript heuristic. Marking it here makes that split
+  // explicit instead of leaving every surface to assume the heuristic is truth.
+  //
+  // Keyed on presence in config.helmSessions, not on which source won the id
+  // collision: a Desktop session later resumed THROUGH Helm is Helm-tracked from
+  // that point on, so it belongs in the tracked half.
+  const ownedIds = new Set();
+  for (const meta of Object.values(helmSessions)) {
+    if (meta?.sessionId) {
+      ownedIds.add(meta.sessionId);
+    }
+    if (meta?.cliSessionId) {
+      ownedIds.add(meta.cliSessionId);
+    }
+  }
+  for (const s of sessions) {
+    s.helmOwned = ownedIds.has(s.sessionId) || (!!s.cliSessionId && ownedIds.has(s.cliSessionId));
+  }
+
   return { error: null, sessions };
 }
 

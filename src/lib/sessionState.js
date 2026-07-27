@@ -17,17 +17,28 @@
 //   idle     - parked (old, acknowledged, or indeterminate). archive-suggest.
 //   archived - removed from the active board.
 //
-// (`launching` from the design sketch folds into `working` here - sessions:get has
-// no distinct pre-first-output signal to key it on; it can be added when the
-// override logic moves in.)
+//   launching - Helm spawned it and nothing has come back yet (increment 5).
+//
+// (Increment 1 folded `launching` into `working`, because sessions:get had no
+// pre-first-output signal to key it on. Increment 5 added one - the launch
+// registry in liveSessions.js - so it is now a state of its own.)
 
 /**
  * @param {{status?: string, orchestratorTag?: {statusTag?: string}|null}} session
  * @param {{isAcked?: boolean}} [opts]
  * @returns {"working"|"waiting"|"wrapped"|"idle"|"archived"}
  */
-export function sessionLifecycleState(session, { isAcked = false } = {}) {
+export function sessionLifecycleState(session, { isAcked = false, isLaunching = false } = {}) {
   const status = session?.status;
+  // launching: Helm spawned this and nothing has come back yet. Only ever true for
+  // a Helm-OWNED session, because it is the launch itself that proves it - a
+  // foreign Desktop session has no launch Helm could know about. Checked before
+  // everything else: a brand-new session's transcript says nothing, so the
+  // heuristic would read it as idle, which is the exact "idle while working" class
+  // of bug this epic exists to close (Epic f3d096fa).
+  if (isLaunching && status !== "archived") {
+    return "launching";
+  }
   const tag = session?.orchestratorTag?.statusTag;
   const classifierDone = tag === "done_not_archived";
   const classifierNeedsYou = tag === "waiting_for_input";
@@ -61,8 +72,31 @@ export function sessionLifecycleState(session, { isAcked = false } = {}) {
 // The decisions each surface makes today, expressed against the state - so the
 // reader migration is a mechanical, behaviour-preserving swap.
 export const isNeedsYouState = (s) => s === "waiting";
-export const isWorkingState = (s) => s === "working";
+// launching counts as working: something IS happening, it just hasn't spoken yet.
+export const isWorkingState = (s) => s === "working" || s === "launching";
+// A launching session must never be offered for archive - it has barely started.
 export const isArchiveSuggestState = (s) => s === "wrapped" || s === "idle";
+
+/**
+ * Where a session's state actually came from - the design's "hybrid" caveat made
+ * explicit (Epic f3d096fa).
+ *
+ * "tracked"  - Helm launched this session, so live-turn and launch signals are
+ *              authoritative. This is the half where "idle while working" cannot
+ *              happen, because working is a transition Helm observes directly.
+ * "derived"  - a foreign (Desktop) session. Helm has nothing but the transcript
+ *              heuristic: last role plus age. Still useful, but it is a guess, and
+ *              anything reading it should know that.
+ *
+ * Exposed rather than inferred so a surface (or a future bug report) can tell the
+ * difference instead of assuming the heuristic is truth everywhere.
+ */
+export function sessionStateSource(session, { isLive = false, isLaunching = false } = {}) {
+  if (!session?.helmOwned) {
+    return "derived";
+  }
+  return isLive || isLaunching ? "tracked" : "derived";
+}
 
 // FSM increment 4 (Epic f3d096fa): the ONE place that applies the status
 // OVERRIDES - the manual-ack downgrade and the live-turn override - that

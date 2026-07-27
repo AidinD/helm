@@ -4447,3 +4447,59 @@ or path-escaping file (slugs are ASCII kebab-case, separators stripped).
 Live-checked across five real subjects: Swedish "Träning och kost" and "CV och
 ansökningar" both reused the existing English topics, while a tax-return session
 correctly opened a new `finances` topic.
+
+## 2026-07-27 - Session-status FSM increment 5: `launching`, and the hybrid made explicit (Epic f3d096fa)
+
+**Decision:** close out the FSM epic with the two things the design named as
+remaining, and nothing more.
+`launching` becomes a real state, and `stateSource` ("tracked" | "derived") makes
+the design's hybrid caveat a readable field rather than an assumption.
+
+**Why `launching` needed its own state.**
+Increment 1 folded it into `working` because sessions:get had no pre-first-output
+signal to key it on.
+That was honest at the time but left the epic's worst case open: a session Helm
+has just spawned has an empty transcript, so `deriveStatus` reads it as `idle` -
+"idle while working" at the exact moment Helm knows the truth for certain,
+because it did the spawning.
+So `liveSessions` now tracks in-flight launches and the projection checks
+`isLaunching` first, before the archive/active/waiting branches and before the
+needs-you promotion (a session that has not spoken cannot be awaiting you).
+
+**Keyed by launchId, not session id.**
+A fresh launch has no session id until the CLI reports one - which is precisely
+the window this state covers.
+Keying on the session id would mean the state could only start existing after the
+gap it was built to cover had already closed.
+`bindLaunch` attaches the id when it arrives; `bindLaunch` on an
+already-cleared launch is deliberately a no-op, so a late event cannot resurrect
+a finished launch.
+
+**`stateSource` is exposed, not inferred.**
+For a Helm-launched session with a turn in flight, "working" is something Helm
+observed; for a foreign Desktop session it is a guess from last-role-plus-age.
+Both are useful, but a surface (or a future bug report) should be able to tell
+them apart instead of treating the heuristic as truth everywhere.
+Ownership alone is deliberately NOT enough to read "tracked": an owned session
+with nothing in flight still got its status from the file heuristic, so it reads
+`derived`.
+
+**Alternative rejected: persist the state machine.**
+Same reason as increment 4 - a persisted transition machine needs a
+reconcile-from-truth step that re-derives this anyway, which makes the transition
+layer vestigial for Helm's poll-per-read model.
+Recompute stays stateless and drift-free.
+
+**What the testing actually caught (worth recording, because it is the recurring
+failure mode).**
+The unit test on the pure projection passed immediately - it always does, because
+it tests the layer I had just finished reasoning about.
+The E2E through real IPC then reported 0 of 75 sessions as Helm-owned.
+That was not an ownership bug: the E2E harness hands the app a throwaway config
+so tests can't pollute the dev repo's, so `helmSessions` is empty and every row
+is legitimately foreign.
+But it means a test that only inspects the live board can never observe the
+tracked half at all, and would have passed while ownership was completely broken
+- and my first version of that assertion was a tautology that could not fail.
+The test now seeds its own config with one known session marked as Helm-launched,
+so both halves of the hybrid are exercised through the real IPC.
