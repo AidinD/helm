@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { resolveJotTodosPath } from "./jotDataDir.js";
+import { writeFileAtomicSync } from "./atomicWrite.js";
 
 /**
  * Reads and parses Jot's todos.json, tolerating a leading UTF-8 BOM.
@@ -251,79 +252,40 @@ export function projectTodoForContext(todo) {
  * place and return { ok: true, result }.
  */
 export function mutateJotFile(jotPath, mutate) {
-  const dir = path.dirname(jotPath);
-  const base = path.basename(jotPath);
-  const MAX_ATTEMPTS = 4;
-  let lastError = null;
-  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    // A CONTENT HASH, not size+mtime. The old guard could not see a same-size edit
-    // made inside the read->write window, and that is the common shape of a real
-    // concurrent edit from the Jot app: a drag-reorder is a pure array permutation
-    // (byte-identical size) and a subtask "open"->"done" is the same length. On top
-    // of that, Windows' clock tick (~15.6ms) is coarser than the window, so mtime
-    // often matched too - measured at 250 of 400 same-size writes being invisible.
-    // Helm would then rename over the user's edit and report success.
-    let hashBefore;
-    try {
-      hashBefore = fileHash(jotPath);
-    } catch (err) {
-      return { ok: false, error: `Could not read Jot data: ${err.message}` };
-    }
-    const data = readJotFile(jotPath);
-    if (!data || !Array.isArray(data.todos)) {
-      return { ok: false, error: "Could not read Jot data." };
-    }
-    const verdict = mutate(data);
-    if (!verdict || verdict.ok === false) {
-      return verdict || { ok: false, error: "Refused by the mutator." };
-    }
-    const tmpPath = path.join(dir, `.${base}.${crypto.randomBytes(4).toString("hex")}.tmp`);
-    try {
-      // No BOM, 2-space, LF - exactly Jot's own writer's output.
-      fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), "utf8");
-      if (fileHash(jotPath) !== hashBefore) {
-        fs.unlinkSync(tmpPath);
-        lastError = "Jot file changed during write (concurrent edit)";
-        continue;
-      }
-      fs.renameSync(tmpPath, jotPath);
-      return { ok: true, ...(verdict.result !== undefined ? { result: verdict.result } : {}) };
-    } catch (err) {
-      try {
-        fs.unlinkSync(tmpPath);
-      } catch {
-        // best-effort cleanup; the write already failed
-      }
-      // The atomic rename fails with EPERM while the sync client holds the file -
-      // and the Jot data dir is ALWAYS in Dropbox, so this is the normal setup,
-      // not an edge case. Observed live 2026-07-27: a board update from Helm
-      // returned "Failed to write Jot data: EPERM" and the change was simply lost.
-      // The retry loop above only covered the concurrent-EDIT case, so a locked
-      // file bailed on the first attempt.
-      //
-      // A synchronous sleep is deliberate here despite blocking the main process:
-      // this path is rare, bounded to a few hundred ms in total, and the
-      // alternative is silently dropping a write the user asked for. (Contrast the
-      // docs-drift sweep, which had to go async precisely because it ran on EVERY
-      // tick - frequency is what makes blocking unacceptable, not blocking itself.)
-      if (isTransientLock(err)) {
-        if (attempt < MAX_ATTEMPTS - 1) {
-          lastError = `${err.code} (file locked, likely Dropbox sync)`;
-          sleepSync(60 * (attempt + 1));
-          continue;
-        }
-        // Out of attempts. Name the likely CAUSE, not just the errno - "operation
-        // not permitted" reads like a bug in Helm, when the actionable fact is
-        // that something else is holding the file.
-        return {
-          ok: false,
-          error: `Could not write to Jot: the file stayed locked (${err.code}) after ${MAX_ATTEMPTS} attempts - Dropbox may be syncing it. Nothing was changed; try again.`,
-        };
-      }
-      return { ok: false, error: `Failed to write Jot data: ${err.message}` };
-    }
+  // A CONTENT HASH, not size+mtime. The old guard could not see a same-size edit made
+  // inside the read->write window, and that is the common shape of a real concurrent
+  // edit from the Jot app: a drag-reorder is a pure array permutation (byte-identical
+  // size) and a subtask "open"->"done" is the same length. Windows' ~15.6ms clock tick
+  // is also coarser than the window, so mtime often matched too - measured at 250 of
+  // 400 same-size writes being invisible. Helm would then rename over the user's edit
+  // and report success.
+  //
+  // The Dropbox-lock retry now lives in atomicWrite.js, shared with the six other
+  // durable stores that had the same unprotected rename. This function keeps only what
+  // is specific to Jot: read, mutate, and re-check the hash immediately before the
+  // rename (the onBeforeRename hook).
+  let hashBefore;
+  try {
+    hashBefore = fileHash(jotPath);
+  } catch (err) {
+    return { ok: false, error: `Could not read Jot data: ${err.message}` };
   }
-  return { ok: false, error: `Could not write to Jot: ${lastError || "the file kept changing"}. Try again.` };
+  const data = readJotFile(jotPath);
+  if (!data || !Array.isArray(data.todos)) {
+    return { ok: false, error: "Could not read Jot data." };
+  }
+  const verdict = mutate(data);
+  if (!verdict || verdict.ok === false) {
+    return verdict || { ok: false, error: "Refused by the mutator." };
+  }
+  // No BOM, 2-space, LF - exactly Jot's own writer's output.
+  const res = writeFileAtomicSync(jotPath, JSON.stringify(data, null, 2), {
+    onBeforeRename: () => (fileHash(jotPath) !== hashBefore ? "the Jot file changed during the write (concurrent edit)" : null),
+  });
+  if (!res.ok) {
+    return { ok: false, error: `Could not write to Jot: ${res.error}` };
+  }
+  return { ok: true, ...(verdict.result !== undefined ? { result: verdict.result } : {}) };
 }
 
 /** Hash of the file's raw bytes - the only reliable "did this change" signal here. */
@@ -331,19 +293,6 @@ function fileHash(filePath) {
   return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
 }
 
-/** Is this a "someone else has the file right now" error, rather than a real one? */
-function isTransientLock(err) {
-  return err?.code === "EPERM" || err?.code === "EBUSY" || err?.code === "EACCES";
-}
-
-/** Block for ms without burning CPU. Only for the bounded retry path above. */
-function sleepSync(ms) {
-  try {
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-  } catch {
-    // SharedArrayBuffer unavailable - skip the backoff rather than failing the write
-  }
-}
 
 const JOT_STATUSES = ["open", "in-progress", "review", "done"];
 

@@ -3,6 +3,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { nextRun, validateCron } from "./cron.js";
+import { writeJsonAtomicSync } from "./atomicWrite.js";
 
 // Helm-OWNED routines: recurring `claude -p` launches Helm schedules and fires
 // itself, stored in a plain readable JSON on D:\ beside the app's other stores
@@ -37,9 +38,13 @@ function readAll() {
 }
 
 function writeAll(routines) {
-  const tmp = routinesPath + "." + crypto.randomBytes(4).toString("hex") + ".tmp";
-  fs.writeFileSync(tmp, JSON.stringify(routines, null, 2) + "\n", "utf8");
-  fs.renameSync(tmp, routinesPath);
+  // Shared atomic write with the Dropbox-lock retry (task efcaf486). The private
+  // tmp+rename this replaced let an EPERM throw straight through, so a routine edit
+  // could be lost while the sync client held the file.
+  const res = writeJsonAtomicSync(routinesPath, routines);
+  if (!res.ok) {
+    throw new Error(`Could not write routines: ${res.error}`);
+  }
 }
 
 /** All routines, in creation order. */

@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import { writeJsonAtomicSync } from "./atomicWrite.js";
 
 // First-mate tier dispatch queue (docs/first-mate-tier-design.md, section 1
 // verdict "A1": a stdio MCP server over an on-disk request/report queue). This
@@ -78,11 +79,13 @@ export function ensureDispatchDirs(metaHome) {
  * collide on the temp file itself.
  */
 function writeJsonAtomic(filePath, value) {
-  const dir = path.dirname(filePath);
-  fs.mkdirSync(dir, { recursive: true });
-  const tmp = path.join(dir, `.${path.basename(filePath)}.${crypto.randomUUID()}.tmp`);
-  fs.writeFileSync(tmp, JSON.stringify(value, null, 2) + "\n", "utf8");
-  fs.renameSync(tmp, filePath);
+  // Shared atomic write with the Dropbox-lock retry (task efcaf486). The dispatch
+  // queue lives under the Dropbox-synced meta-home, so a lost write here means a
+  // dispatch that silently never happened.
+  const res = writeJsonAtomicSync(filePath, value);
+  if (!res.ok) {
+    throw new Error(`Could not write ${path.basename(filePath)}: ${res.error}`);
+  }
 }
 
 /** Tolerant JSON read: returns null on a missing/corrupt/half-written file. */

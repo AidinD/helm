@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import { writeFileAtomicSync } from "./atomicWrite.js";
 
 // Durable handoffs for sessions that have NO project repo (task 663ab4b6).
 //
@@ -109,18 +110,12 @@ export function writeHandoff(metaHome, slug, text, { title = null, now = Date.no
     text.trim() +
     "\n";
   try {
-    fs.mkdirSync(dir, { recursive: true });
-    const tmp = file + "." + crypto.randomBytes(4).toString("hex") + ".tmp";
-    try {
-      fs.writeFileSync(tmp, body, "utf8");
-      fs.renameSync(tmp, file);
-    } catch (err) {
-      try {
-        fs.unlinkSync(tmp);
-      } catch {
-        // best-effort cleanup
-      }
-      throw err;
+    // Shared atomic write with the Dropbox-lock retry (task efcaf486). A handoff is
+    // written precisely when a session is about to end, so losing it to a sync lock
+    // loses the one artefact meant to survive the session.
+    const res = writeFileAtomicSync(file, body);
+    if (!res.ok) {
+      return { ok: false, error: `Could not write the handoff: ${res.error}` };
     }
     return { ok: true, path: file, category: safe };
   } catch (err) {

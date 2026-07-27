@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import { writeJsonAtomicSync } from "./atomicWrite.js";
 
 // Phase-2 guardrail (docs/orchestration-phase2-plan.md, Slice 0): a per-fleet
 // token/cost ceiling + a kill switch, so the tiered orchestration (first mate ->
@@ -38,11 +39,12 @@ function freshState() {
 }
 
 function writeJsonAtomic(filePath, value) {
-  const dir = path.dirname(filePath);
-  fs.mkdirSync(dir, { recursive: true });
-  const tmp = path.join(dir, `.${path.basename(filePath)}.${crypto.randomUUID()}.tmp`);
-  fs.writeFileSync(tmp, JSON.stringify(value, null, 2) + "\n", "utf8");
-  fs.renameSync(tmp, filePath);
+  // Shared atomic write with the Dropbox-lock retry (task efcaf486); the private
+  // tmp+rename this replaced dropped the write on EPERM.
+  const res = writeJsonAtomicSync(filePath, value);
+  if (!res.ok) {
+    throw new Error(`Could not write ${path.basename(filePath)}: ${res.error}`);
+  }
 }
 
 /**

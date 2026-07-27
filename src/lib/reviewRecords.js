@@ -3,6 +3,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { parseAcceptanceCriteria, acceptanceCoverage, acceptanceProblems } from "./acceptance.js";
+import { writeJsonAtomicSync } from "./atomicWrite.js";
 
 // Review records (task ce2d19ab).
 //
@@ -712,18 +713,13 @@ export function writeReviewRecord(metaHome, rec, { now = Date.now(), isRunStamp 
     contentUpdatedAt: isRunStamp && typeof existing?.contentUpdatedAt === "number" ? existing.contentUpdatedAt : now,
   };
   try {
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    const tmp = file + "." + crypto.randomBytes(4).toString("hex") + ".tmp";
-    try {
-      fs.writeFileSync(tmp, JSON.stringify(body, null, 2) + "\n", "utf8");
-      fs.renameSync(tmp, file);
-    } catch (err) {
-      try {
-        fs.unlinkSync(tmp);
-      } catch {
-        // best-effort cleanup
-      }
-      throw err;
+    // Shared atomic write with the Dropbox-lock retry (task efcaf486). This one matters
+    // most of the seven: a record IS the evidence, and a stamp lost to a sync lock is a
+    // check that really ran and then reads as "never run" - the mechanism whose whole
+    // purpose is to be trustworthy, quietly losing its own proof.
+    const res = writeJsonAtomicSync(file, body);
+    if (!res.ok) {
+      return { ok: false, error: res.error };
     }
     return { ok: true, path: file, record: body };
   } catch (err) {

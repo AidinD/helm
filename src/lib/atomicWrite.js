@@ -1,0 +1,107 @@
+import fs from "node:fs";
+import path from "node:path";
+import crypto from "node:crypto";
+
+// One atomic write, used by every durable store (task efcaf486).
+//
+// The discipline - write a temp file, then rename over the target - was copied into
+// seven modules, and all seven copies had the same hole: on Windows the rename fails
+// with EPERM while another process holds the target, and every copy let that throw
+// straight through as a lost write.
+//
+// This is not an edge case here. Helm's durable state lives under a Dropbox-synced
+// meta-home, so the sync client holding a file mid-rename is the normal operating
+// condition. Observed for real on 2026-07-27: a board update returned
+// "Failed to write Jot data: EPERM ... rename" and the change was simply gone. The
+// stores at risk are the ones it hurts most to lose - the dispatch queue, routines,
+// handoffs, the orchestration budget, scheduled prompts, and the REVIEW RECORDS
+// themselves, i.e. the mechanism whose whole job is to be trustworthy evidence.
+//
+// Fixed once, here, rather than seven times.
+
+const MAX_ATTEMPTS = 4;
+
+/** Is this "someone else has the file right now", rather than a real failure? */
+export function isTransientLock(err) {
+  return err?.code === "EPERM" || err?.code === "EBUSY" || err?.code === "EACCES";
+}
+
+/**
+ * Block for ms without burning CPU.
+ *
+ * A synchronous sleep is deliberate: these writers are all sync (they are called
+ * straight from IPC handlers), the path is rare, and the total is bounded to a few
+ * hundred milliseconds. The alternative is silently dropping a write the user asked
+ * for. Frequency is what makes blocking unacceptable, not blocking itself - contrast
+ * the docs-drift sweep, which had to go async precisely because it ran on every tick.
+ */
+export function sleepSync(ms) {
+  try {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  } catch {
+    // SharedArrayBuffer unavailable - skip the backoff rather than failing the write.
+  }
+}
+
+/**
+ * Write `contents` to `filePath` atomically, retrying while the target is locked.
+ *
+ * Returns { ok: true } or { ok: false, error } - it does NOT throw, because every
+ * caller here has a meaningful "the write did not happen" path and a throw was how
+ * these failures got lost in the first place.
+ *
+ * @param {string} filePath
+ * @param {string} contents
+ * @param {{ onBeforeRename?: () => string|null }} [opts] - a hook to re-check
+ *   preconditions immediately before the rename (jot.js uses it for its
+ *   concurrent-edit guard); return a reason string to abort the attempt and retry.
+ */
+export function writeFileAtomicSync(filePath, contents, { onBeforeRename = null } = {}) {
+  const dir = path.dirname(filePath);
+  const base = path.basename(filePath);
+  let lastError = null;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    const tmp = path.join(dir, `.${base}.${crypto.randomBytes(4).toString("hex")}.tmp`);
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(tmp, contents, "utf8");
+      if (onBeforeRename) {
+        const abort = onBeforeRename();
+        if (abort) {
+          fs.unlinkSync(tmp);
+          lastError = abort;
+          continue;
+        }
+      }
+      fs.renameSync(tmp, filePath);
+      return { ok: true };
+    } catch (err) {
+      try {
+        fs.unlinkSync(tmp);
+      } catch {
+        // best-effort cleanup; the write already failed
+      }
+      if (isTransientLock(err)) {
+        if (attempt < MAX_ATTEMPTS - 1) {
+          lastError = `${err.code} (file locked, likely Dropbox sync)`;
+          sleepSync(60 * (attempt + 1));
+          continue;
+        }
+        // Out of attempts. Name the likely CAUSE, not just the errno - "operation not
+        // permitted" reads like a bug in Helm, when the actionable fact is that
+        // something else is holding the file.
+        return {
+          ok: false,
+          error: `the file stayed locked (${err.code}) after ${MAX_ATTEMPTS} attempts - Dropbox may be syncing it. Nothing was changed; try again.`,
+        };
+      }
+      return { ok: false, error: err.message };
+    }
+  }
+  return { ok: false, error: lastError || "the file kept changing during the write" };
+}
+
+/** The common case: pretty-printed JSON with a trailing newline. */
+export function writeJsonAtomicSync(filePath, value) {
+  return writeFileAtomicSync(filePath, JSON.stringify(value, null, 2) + "\n");
+}
