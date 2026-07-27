@@ -3069,6 +3069,11 @@ ipcMain.handle("docs:staleness", (_event, { cwd }) => {
 // docsStaleness swallows a missing git per repo - so the first version turned both
 // into a confident `rows: []`, which the UI renders as "docs are current". A nudge
 // that can't look must not claim there is nothing to see.
+// Monotonic across invocations, not per-run: deriving the port from a per-call index
+// meant two "Run checks" clicked at once handed their first child the same port, so
+// one attached to the other's app - the wrong-app-attach bug, reintroduced across
+// invocations instead of within one.
+let checkPortCursor = 0;
 let staleProjectsCache = { at: 0, rows: [], unchecked: 0, considered: 0, error: null };
 let staleProjectsRefreshing = null;
 const STALE_PROJECTS_TTL_MS = 60_000;
@@ -4111,7 +4116,10 @@ function runDueScheduledPrompts() {
 ipcMain.handle("reviews:list", () => {
   const config = loadConfig();
   const board = reviewTasks(config.jot || {});
-  const rows = buildReviewQueue(board.tasks, listReviewRecords(resolveMetaHome()));
+  const metaHome = resolveMetaHome();
+  // metaHome is threaded in so the queue can VERIFY that each check run was stamped
+  // by the app rather than written into the record by hand.
+  const rows = buildReviewQueue(board.tasks, listReviewRecords(metaHome), metaHome);
   return { ok: board.ok, error: board.error || null, rows, tally: reviewQueueTally(rows) };
 });
 
@@ -4164,7 +4172,7 @@ ipcMain.handle("reviews:runChecks", async (_event, { taskId } = {}) => {
         child = spawn(check.cmd, {
           cwd,
           shell: true,
-          env: { ...process.env, HELM_E2E_PORT: String(9400 + (results.length % 50)) },
+          env: { ...process.env, HELM_E2E_PORT: String(9400 + (checkPortCursor++ % 50)) },
         });
       } catch (err) {
         resolve({ exitCode: null, tail: `could not start: ${err.message}` });
@@ -4191,13 +4199,33 @@ ipcMain.handle("reviews:runChecks", async (_event, { taskId } = {}) => {
         resolve({ exitCode: code, tail: out.slice(-1200) });
       });
     });
-    recordCheckRun(metaHome, taskId, { label: check.label, cmd: check.cmd, ...outcome });
-    results.push({ label: check.label, exitCode: outcome.exitCode, ok: outcome.exitCode === 0 });
+    // The stamp can FAIL - recordCheckRun goes through reviewRecordProblems, so a
+    // record that doesn't meet the bar cannot be stamped at all. Discarding this
+    // return value meant the handler answered "All checks passed" while persisting
+    // nothing: a failing check was announced once in a transient toast and then
+    // vanished, and a reload showed "never run". A result that wasn't stored is not
+    // a result, so it is reported as such.
+    const stamp = recordCheckRun(metaHome, taskId, { label: check.label, cmd: check.cmd, ...outcome });
+    results.push({
+      label: check.label,
+      exitCode: outcome.exitCode,
+      ok: outcome.exitCode === 0,
+      stored: stamp.ok === true,
+      storeError: stamp.ok ? null : stamp.error || "could not store the result",
+    });
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send("reviews:changed");
     }
   }
-  return { ok: true, results };
+  const unstored = results.filter((r) => !r.stored);
+  return {
+    ok: true,
+    results,
+    // Surfaced at the top level so the renderer cannot show a green summary over
+    // results that were never written.
+    stored: unstored.length === 0,
+    storeError: unstored.length > 0 ? unstored[0].storeError : null,
+  };
 });
 
 ipcMain.handle("scheduledPrompts:list", () => {

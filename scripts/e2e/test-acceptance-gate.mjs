@@ -173,6 +173,31 @@ try {
   ok(ui.warns.some((w) => /acceptance criteria changed/i.test(w)), "and so is the drift");
   ok(ui.critChips.length >= 1, `criticality shows as a chip (${JSON.stringify(ui.critChips)})`);
 
+  // THE CHECK THAT MATTERS MOST, through the real app: a hand-written green
+  // gauntlet must not read as passing. Before run signing, this exact record read
+  // "Checks passing (1/1) - ready to stamp" with no command ever executed.
+  const forgedPath = path.join(metaHome, ".helm", "reviews", `${COVERED}.json`);
+  const forged = JSON.parse(fs.readFileSync(forgedPath, "utf8"));
+  forged.checks = [{ label: "auth e2e (34 assertions)", cmd: "exit 0" }];
+  forged.checkRuns = [{ label: "auth e2e (34 assertions)", cmd: "exit 0", ok: true, exitCode: 0, ranAt: Date.now() + 1000 }];
+  fs.writeFileSync(forgedPath, JSON.stringify(forged), "utf8");
+  const res3 = await app.eval(`window.helm.listReviews()`);
+  const forgedRow = (res3.rows || []).find((r) => r.taskId === COVERED);
+  ok(forgedRow?.gauntlet?.state !== "passing", `a fabricated green run does NOT read as passing through the real IPC (got ${forgedRow?.gauntlet?.state})`);
+  ok(forgedRow?.gauntlet?.unverified === 1, `it is reported as unverified (${JSON.stringify(forgedRow?.gauntlet)})`);
+
+  // And a genuine run of the same check DOES pass - the mechanism has to be usable.
+  const realRun = await app.eval(`window.helm.runReviewChecks(${JSON.stringify(COVERED)})`);
+  ok(realRun?.ok === true && realRun.stored === true, `running the check for real stores the outcome (stored=${realRun?.stored}, err=${realRun?.storeError})`);
+  const res4 = await app.eval(`window.helm.listReviews()`);
+  const realRow = (res4.rows || []).find((r) => r.taskId === COVERED);
+  ok(realRow?.gauntlet?.state === "passing", `the same check, actually run by the app, reads as passing (got ${realRow?.gauntlet?.state})`);
+
+  // A record that cannot be stamped must not produce a success message.
+  const cantStore = await app.eval(`window.helm.runReviewChecks(${JSON.stringify(CRIT)})`);
+  ok(cantStore?.stored === false && /independentReview|criticality/.test(cantStore?.storeError || ""),
+    `checks on an inadmissible record report that the outcome could NOT be stored (${cantStore?.storeError?.slice(0, 70)})`);
+
   const errs = app.getConsoleErrors();
   ok(errs.length === 0, `no console errors${errs.length ? ": " + errs[0].text.slice(0, 200) : ""}`);
 } catch (e) {

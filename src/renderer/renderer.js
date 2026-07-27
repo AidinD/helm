@@ -918,7 +918,14 @@ function reviewRowEl(row) {
         return;
       }
       const failed = (res.results || []).filter((r) => !r.ok);
-      showToast(failed.length === 0 ? "All checks passed." : `${failed.length} check(s) failed: ${failed.map((f) => f.label).join(", ")}`);
+      // A result that was not STORED is not a result: the record card would still say
+      // "never run" after a reload, so saying "all checks passed" here would be the
+      // page lying about its own evidence.
+      if (res.stored === false) {
+        showToast(`Checks ran, but the outcome could NOT be stored: ${res.storeError}`);
+      } else {
+        showToast(failed.length === 0 ? "All checks passed." : `${failed.length} check(s) failed: ${failed.map((f) => f.label).join(", ")}`);
+      }
       renderReviewPage();
     });
     head.append(run);
@@ -928,12 +935,22 @@ function reviewRowEl(row) {
       const line = document.createElement("div");
       line.className = "rev-check";
       const dot = document.createElement("span");
-      const fresh = runInfo && (runInfo.ranAt || 0) >= (rec.updatedAt || 0);
+      // contentUpdatedAt, matching gauntletStatus. Using updatedAt meant every stamp
+      // aged out the previous check, so the dots read "stale" while the header read
+      // "passing" - the un-migrated half of the staleness fix.
+      const baseline = typeof rec.contentUpdatedAt === "number" ? rec.contentUpdatedAt : rec.updatedAt || 0;
+      const fresh = runInfo && (runInfo.ranAt || 0) >= baseline;
       dot.className = "rev-check-dot " + (!runInfo ? "unrun" : !fresh ? "stale" : runInfo.ok ? "pass" : "fail");
       const name = document.createElement("span");
       name.className = "rev-check-label";
       name.textContent = c.label;
       name.title = c.cmd;
+      // The label is author prose; the COMMAND is the fact. A check labelled
+      // "auth e2e (34 assertions)" whose cmd is `exit 0` rendered as an
+      // authoritative green tick with the truth hidden in a tooltip.
+      const cmd = document.createElement("code");
+      cmd.className = "rev-check-cmd";
+      cmd.textContent = c.cmd;
       const state = document.createElement("span");
       state.className = "rev-check-state";
       state.textContent = !runInfo
@@ -946,7 +963,7 @@ function reviewRowEl(row) {
       if (runInfo?.tail) {
         state.title = runInfo.tail;
       }
-      line.append(dot, name, state);
+      line.append(dot, name, cmd, state);
       box.append(line);
     }
     el.append(box);
@@ -1067,7 +1084,11 @@ async function renderReviewPage() {
   // total would nag about work that is already settled.
   const badge = document.getElementById("reviewBadge");
   if (badge) {
-    const n = tally.judgment + tally.unrecorded;
+    // `incomplete` counts too. It was omitted, which meant the case my own code
+    // comment calls "the more alarming" - a record EXISTS, so something claims to be
+    // reviewed, but the claim is inadmissible - raised no badge at all. Under-flagging
+    // an attention signal is the failure mode Aidin explicitly rejects.
+    const n = tally.judgment + tally.unrecorded + (tally.incomplete || 0);
     badge.textContent = n > 0 ? String(n) : "";
     badge.classList.toggle("hidden", n === 0);
   }

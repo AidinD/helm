@@ -120,6 +120,13 @@ export function reviewRecordProblems(rec) {
       problems.push("checks must be an array");
     } else if (rec.checks.some((c) => !c || !String(c.label || "").trim() || !String(c.cmd || "").trim())) {
       problems.push("every check needs a label and a cmd");
+    } else {
+      const dupes = duplicateCheckLabels(rec);
+      if (dupes.length > 0) {
+        // Runs are keyed by label, so duplicates cannot be scored separately - the
+        // second stamp overwrites the first and a failing check disappears.
+        problems.push(`check labels must be unique - "${dupes[0]}" appears more than once, so their runs would overwrite each other`);
+      }
     }
   }
   problems.push(...criticalityProblems(rec));
@@ -170,7 +177,12 @@ function criticalityProblems(rec) {
  * session", the test COUNTED buttons, and nothing connected the two.
  */
 function acceptanceRecordProblems(rec) {
-  const criteria = Array.isArray(rec.acceptanceCriteria) ? rec.acceptanceCriteria : null;
+  const raw = Array.isArray(rec.acceptanceCriteria) ? rec.acceptanceCriteria : null;
+  // Re-index by POSITION. A record is hand-authored, and duplicated index values let
+  // one linked step satisfy several criteria at once (`[{index:1,...},{index:1,...}]`
+  // with a single `ac: 1` read as fully covered). The author does not get to decide
+  // the numbering that the coverage check keys on.
+  const criteria = raw ? raw.map((c, i) => ({ index: i + 1, text: typeof c === "string" ? c : String(c?.text || "") })) : null;
   if (!criteria) {
     // Not every record has criteria yet (they only exist for work taken after this
     // landed), so their ABSENCE is not a refusal - but a present-and-empty array is
@@ -211,6 +223,76 @@ export function acceptanceDrift(rec, taskDescription) {
 // passed while the feature was broken, because the tests exercised the layer the
 // author had already reasoned about. A stored exit code cannot be talked around.
 
+// --- Run provenance: "the app ran this" vs "someone typed this" -------------
+//
+// The gauntlet's whole claim is that part of the evidence is not the author's word.
+// As first built, that was false: writeReviewRecord (and all its refusals) is not on
+// any production path - records are authored by an agent writing JSON directly - and
+// gauntletStatus trusted a `ok: true` field without ever looking at the exit code.
+// So a hand-written record with
+//     checks:    [{ label: "auth e2e (34 assertions)", cmd: "exit 0" }]
+//     checkRuns: [{ label: "auth e2e (34 assertions)", ok: true }]
+// read as "Checks passing (1/1), ready to stamp" with no command ever executed.
+//
+// So a check run now carries an HMAC written ONLY by the process that actually
+// spawned the command. An unsigned or mis-signed run is not evidence.
+//
+// HONEST LIMIT, stated because this file is the thing that is supposed to be honest:
+// the key sits on disk in the meta-home, so an agent with filesystem access can read
+// it and forge a signature. This is tamper-EVIDENT, not tamper-proof. What it
+// actually buys is the line between "the app ran this and stamped the result" and
+// "the author wrote down an outcome they believed" - and the second one is the
+// failure that keeps happening. A real guarantee needs the runner outside the
+// author's reach (CI), which is not built.
+const RUN_KEY_FILE = path.join(".helm", "run-key");
+
+function runKey(metaHome) {
+  if (!metaHome) {
+    return null;
+  }
+  const file = path.join(metaHome, RUN_KEY_FILE);
+  try {
+    if (fs.existsSync(file)) {
+      const key = fs.readFileSync(file, "utf8").trim();
+      return key.length >= 32 ? key : null;
+    }
+    const key = crypto.randomBytes(32).toString("hex");
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, key + "\n", { encoding: "utf8", mode: 0o600 });
+    return key;
+  } catch {
+    return null;
+  }
+}
+
+/** The signature a genuine run carries. Covers everything a reader would trust. */
+export function signCheckRun(metaHome, taskId, run) {
+  const key = runKey(metaHome);
+  if (!key) {
+    return null;
+  }
+  const payload = JSON.stringify([
+    String(taskId || ""),
+    String(run?.label || ""),
+    String(run?.cmd || ""),
+    typeof run?.exitCode === "number" ? run.exitCode : null,
+    typeof run?.ranAt === "number" ? run.ranAt : null,
+  ]);
+  return crypto.createHmac("sha256", key).update(payload).digest("hex");
+}
+
+/** Did this run actually come from the app? */
+export function verifyCheckRun(metaHome, taskId, run) {
+  if (!run || typeof run.sig !== "string") {
+    return false;
+  }
+  const expected = signCheckRun(metaHome, taskId, run);
+  if (!expected || expected.length !== run.sig.length) {
+    return false;
+  }
+  return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(run.sig));
+}
+
 /** Stamp the outcome of one executed check onto a record. */
 export function recordCheckRun(metaHome, taskId, run, { now = Date.now() } = {}) {
   const rec = readReviewRecord(metaHome, taskId);
@@ -221,12 +303,19 @@ export function recordCheckRun(metaHome, taskId, run, { now = Date.now() } = {})
     return { ok: false, error: "A check run needs the label it ran for." };
   }
   const runs = Array.isArray(rec.checkRuns) ? rec.checkRuns.filter((r) => r.label !== run.label) : [];
-  runs.push({
+  const stamped = {
     label: String(run.label),
     cmd: run.cmd ? String(run.cmd) : null,
     exitCode: typeof run.exitCode === "number" ? run.exitCode : null,
-    ok: run.exitCode === 0,
     ranAt: now,
+  };
+  runs.push({
+    ...stamped,
+    // Kept for readability, but gauntletStatus derives pass/fail from exitCode and
+    // ignores this - a boolean is trivially wrong in a hand-written record, and it
+    // was trusted for exactly that reason before.
+    ok: run.exitCode === 0,
+    sig: signCheckRun(metaHome, taskId, stamped),
     tail: run.tail ? String(run.tail).slice(-1200) : null,
   });
   // isRunStamp: recording an outcome must not move the staleness baseline.
@@ -241,10 +330,10 @@ export function recordCheckRun(metaHome, taskId, run, { now = Date.now() } = {})
  * otherwise a green tick from an older version of the work keeps vouching for
  * code that has since changed.
  */
-export function gauntletStatus(rec) {
+export function gauntletStatus(rec, metaHome = null) {
   const checks = Array.isArray(rec?.checks) ? rec.checks : [];
   if (checks.length === 0) {
-    return { declared: 0, passed: 0, failed: 0, stale: 0, unrun: 0, state: "none" };
+    return { declared: 0, passed: 0, failed: 0, stale: 0, unrun: 0, unverified: 0, state: "none" };
   }
   const runs = Array.isArray(rec.checkRuns) ? rec.checkRuns : [];
   const updatedAt = typeof rec.contentUpdatedAt === "number" ? rec.contentUpdatedAt : typeof rec.updatedAt === "number" ? rec.updatedAt : 0;
@@ -252,20 +341,56 @@ export function gauntletStatus(rec) {
   let failed = 0;
   let stale = 0;
   let unrun = 0;
+  let unverified = 0;
+  // Two checks sharing a label collapse to one run (runs are keyed by label), so the
+  // second stamp silently overwrote the first: a suite with a failing check and a
+  // passing one under the same name read as 2/2 passing. Refuse to score duplicates.
+  const seenLabels = new Set();
   for (const c of checks) {
-    const run = runs.find((r) => r.label === c.label);
+    const label = String(c?.label || "");
+    if (seenLabels.has(label)) {
+      unverified += 1;
+      continue;
+    }
+    seenLabels.add(label);
+    const run = runs.find((r) => r.label === label);
     if (!run) {
       unrun += 1;
-    } else if ((run.ranAt || 0) < updatedAt) {
+      continue;
+    }
+    // Provenance BEFORE outcome. A run the app did not stamp is not a result at all -
+    // pass or fail - so it can neither vouch for the work nor condemn it.
+    if (typeof run.ranAt !== "number" || typeof run.exitCode !== "number" || !verifyCheckRun(metaHome, rec.taskId, run)) {
+      unverified += 1;
+    } else if (run.ranAt < updatedAt) {
       stale += 1;
-    } else if (run.ok) {
+    } else if (run.exitCode === 0) {
+      // Derived from the exit code, never from run.ok - a boolean in a file the
+      // author writes is worth nothing, and it was trusted for exactly that reason.
       passed += 1;
     } else {
       failed += 1;
     }
   }
-  const state = failed > 0 ? "failing" : unrun + stale > 0 ? "incomplete" : "passing";
-  return { declared: checks.length, passed, failed, stale, unrun, state };
+  // "passing" requires every declared check to be a verified, fresh, zero-exit run.
+  // Anything else is not a pass, and unverified is called out separately from stale
+  // so "nobody ran this" can't hide inside "this is a bit out of date".
+  const state = failed > 0 ? "failing" : unrun + stale + unverified > 0 ? "incomplete" : "passing";
+  return { declared: checks.length, passed, failed, stale, unrun, unverified, state };
+}
+
+/** Duplicate check labels are unscoreable, so they are a record-level defect. */
+function duplicateCheckLabels(rec) {
+  const seen = new Set();
+  const dupes = new Set();
+  for (const c of Array.isArray(rec?.checks) ? rec.checks : []) {
+    const label = String(c?.label || "").trim();
+    if (seen.has(label)) {
+      dupes.add(label);
+    }
+    seen.add(label);
+  }
+  return [...dupes];
 }
 
 export function readReviewRecord(metaHome, taskId) {
@@ -374,7 +499,7 @@ export function removeReviewRecord(metaHome, taskId) {
  * which is surfaced rather than hidden, because a task in review with no record
  * is a gap in MY process, and hiding it would let it pass as reviewed.
  */
-export function buildReviewQueue(reviewTasks, records) {
+export function buildReviewQueue(reviewTasks, records, metaHome = null) {
   const byId = new Map((records || []).map((r) => [String(r.taskId).toLowerCase(), r]));
   const rows = (reviewTasks || []).map((t) => {
     const rec = byId.get(String(t.id).toLowerCase()) || null;
@@ -397,7 +522,7 @@ export function buildReviewQueue(reviewTasks, records) {
       criticality: rec?.criticality || null,
       // Did the task's acceptance criteria move after the record snapshotted them?
       drift: rec ? acceptanceDrift(rec, t.description || "") : { drifted: false, snapshot: [], live: [] },
-      gauntlet: rec ? gauntletStatus(rec) : { declared: 0, state: "none" },
+      gauntlet: rec ? gauntletStatus(rec, metaHome) : { declared: 0, state: "none" },
     };
   });
   // Ordering is an attention model, so it gets stated rather than inherited:

@@ -18,6 +18,8 @@ import {
   reviewQueueTally,
   recordCheckRun,
   gauntletStatus,
+  signCheckRun,
+  verifyCheckRun,
   acceptanceDrift,
   CRITICALITY_LEVELS,
 } from "../../src/lib/reviewRecords.js";
@@ -203,8 +205,8 @@ try {
     ],
   };
   writeReviewRecord(metaHome, gRec);
-  ok(gauntletStatus(readReviewRecord(metaHome, G)).state === "incomplete", "declared-but-unrun reads as incomplete, never as passing");
-  ok(gauntletStatus(readReviewRecord(metaHome, G)).unrun === 2, "both unrun checks are counted");
+  ok(gauntletStatus(readReviewRecord(metaHome, G), metaHome).state === "incomplete", "declared-but-unrun reads as incomplete, never as passing");
+  ok(gauntletStatus(readReviewRecord(metaHome, G), metaHome).unrun === 2, "both unrun checks are counted");
 
   // THE BUG: stamping a run is itself a write. When the baseline was the record's
   // updatedAt, the second stamp moved it past the FIRST run, so run 1 read as
@@ -212,13 +214,13 @@ try {
   // green the checks were. Staleness now measures against contentUpdatedAt.
   recordCheckRun(metaHome, G, { label: "first", cmd: "x", exitCode: 0 });
   recordCheckRun(metaHome, G, { label: "second", cmd: "x", exitCode: 0 });
-  const afterBoth = gauntletStatus(readReviewRecord(metaHome, G));
+  const afterBoth = gauntletStatus(readReviewRecord(metaHome, G), metaHome);
   ok(afterBoth.state === "passing", `two passing checks make a PASSING gauntlet (got ${afterBoth.state}: pass ${afterBoth.passed}, stale ${afterBoth.stale})`);
   ok(afterBoth.passed === 2 && afterBoth.stale === 0, `both runs count as fresh (pass ${afterBoth.passed}, stale ${afterBoth.stale})`);
 
   // A red check cannot be talked around.
   recordCheckRun(metaHome, G, { label: "second", cmd: "x", exitCode: 7 });
-  const withFail = gauntletStatus(readReviewRecord(metaHome, G));
+  const withFail = gauntletStatus(readReviewRecord(metaHome, G), metaHome);
   ok(withFail.state === "failing" && withFail.failed === 1, `a non-zero exit makes the gauntlet FAILING (got ${withFail.state})`);
   ok(readReviewRecord(metaHome, G).checkRuns.find((r) => r.label === "second").exitCode === 7, "the real exit code is stored, not just a boolean");
 
@@ -226,21 +228,69 @@ try {
   // vouching for work that has since changed. This is the failure mode the
   // isRunStamp split had to avoid re-introducing in the other direction.
   recordCheckRun(metaHome, G, { label: "second", cmd: "x", exitCode: 0 });
-  ok(gauntletStatus(readReviewRecord(metaHome, G)).state === "passing", "back to passing after the check is re-run green");
+  ok(gauntletStatus(readReviewRecord(metaHome, G), metaHome).state === "passing", "back to passing after the check is re-run green");
   const edited = { ...readReviewRecord(metaHome, G), summary: "changed after the checks ran" };
   writeReviewRecord(metaHome, edited, { now: Date.now() + 5000 });
-  const afterEdit = gauntletStatus(readReviewRecord(metaHome, G));
+  const afterEdit = gauntletStatus(readReviewRecord(metaHome, G), metaHome);
   ok(afterEdit.state === "incomplete" && afterEdit.stale === 2, `editing the record makes every earlier run stale (got ${afterEdit.state}, stale ${afterEdit.stale})`);
   ok(afterEdit.passed === 0, "a stale run is not counted as a pass");
 
-  // Records written before contentUpdatedAt existed must not all read as stale.
+  // --- run provenance: "the app ran this" vs "someone typed this" ------------
+  // The finding that mattered most in the independent review of this file:
+  // writeReviewRecord (and all its refusals) is not on any production path, records
+  // are authored by an agent writing JSON directly, and gauntletStatus trusted an
+  // `ok: true` FIELD. So a hand-written record with a plausible label and no command
+  // ever executed read as "Checks passing (1/1), ready to stamp".
   const legacyFile = reviewRecordPath(metaHome, G);
+  const fabricated = JSON.parse(fs.readFileSync(legacyFile, "utf8"));
+  fabricated.checks = [{ label: "auth e2e (34 assertions)", cmd: "exit 0" }];
+  fabricated.checkRuns = [{ label: "auth e2e (34 assertions)", ok: true }];
+  fs.writeFileSync(legacyFile, JSON.stringify(fabricated), "utf8");
+  let g = gauntletStatus(readReviewRecord(metaHome, G), metaHome);
+  ok(g.state !== "passing", `a hand-written run with ok:true and no command ever run does NOT read as passing (got ${g.state})`);
+  ok(g.unverified === 1 && g.passed === 0, `it is counted as unverified, not as a pass (unverified ${g.unverified}, passed ${g.passed})`);
+
+  // Even a fully plausible forgery - exit code, timestamp, the works - fails without
+  // the signature only the running app can produce.
+  fabricated.checkRuns = [{ label: "auth e2e (34 assertions)", ok: true, exitCode: 0, ranAt: Date.now() }];
+  fs.writeFileSync(legacyFile, JSON.stringify(fabricated), "utf8");
+  g = gauntletStatus(readReviewRecord(metaHome, G), metaHome);
+  ok(g.unverified === 1, "a run with a plausible exit code and timestamp but no signature is still unverified");
+
+  // A signature from a DIFFERENT record can't be transplanted.
+  const rec2 = readReviewRecord(metaHome, G);
+  const otherSig = signCheckRun(metaHome, ID_B, { label: "auth e2e (34 assertions)", cmd: "exit 0", exitCode: 0, ranAt: 5000 });
+  fabricated.checkRuns = [{ label: "auth e2e (34 assertions)", cmd: "exit 0", exitCode: 0, ranAt: 5000, sig: otherSig }];
+  fs.writeFileSync(legacyFile, JSON.stringify(fabricated), "utf8");
+  ok(gauntletStatus(readReviewRecord(metaHome, G), metaHome).unverified === 1, "a signature made for another task does not verify here");
+
+  // And a genuine signed run does verify - the mechanism has to be usable, not just strict.
+  const realRun = { label: "auth e2e (34 assertions)", cmd: "exit 0", exitCode: 0, ranAt: 6000 };
+  ok(verifyCheckRun(metaHome, G, { ...realRun, sig: signCheckRun(metaHome, G, realRun) }) === true, "a run signed for this record verifies");
+  ok(verifyCheckRun(metaHome, G, { ...realRun, exitCode: 1, sig: signCheckRun(metaHome, G, realRun) }) === false,
+    "changing the exit code after signing breaks the signature - the outcome is covered, not just the label");
+  ok(verifyCheckRun(metaHome, G, realRun) === false, "an unsigned run never verifies");
+  ok(verifyCheckRun(null, G, { ...realRun, sig: "x" }) === false, "with no metaHome nothing can be verified, so nothing is trusted");
+
+  // Records written before contentUpdatedAt existed must not all read as stale -
+  // but they still need genuine, signed runs.
   const legacy = JSON.parse(fs.readFileSync(legacyFile, "utf8"));
   delete legacy.contentUpdatedAt;
   legacy.updatedAt = 1000;
-  legacy.checkRuns = legacy.checkRuns.map((r) => ({ ...r, ranAt: 2000, ok: true, exitCode: 0 }));
+  legacy.checks = [{ label: "legacy check", cmd: "exit 0" }];
+  const legacyRun = { label: "legacy check", cmd: "exit 0", exitCode: 0, ranAt: 2000 };
+  legacy.checkRuns = [{ ...legacyRun, ok: true, sig: signCheckRun(metaHome, G, legacyRun) }];
   fs.writeFileSync(legacyFile, JSON.stringify(legacy), "utf8");
-  ok(gauntletStatus(readReviewRecord(metaHome, G)).state === "passing", "a record without contentUpdatedAt falls back to updatedAt rather than reading as all-stale");
+  ok(gauntletStatus(readReviewRecord(metaHome, G), metaHome).state === "passing",
+    "a record without contentUpdatedAt falls back to updatedAt rather than reading as all-stale");
+
+  // --- duplicate check labels ------------------------------------------------
+  // Runs are keyed by label, so two checks sharing one collapsed to a single run and
+  // a FAILING check disappeared behind a passing one - reported as 2/2 passing.
+  const dupeRec = complete({ taskId: ID_B, criticality: "core", checks: [{ label: "e2e", cmd: "exit 7" }, { label: "e2e", cmd: "exit 0" }] });
+  ok(reviewRecordProblems(dupeRec).some((p) => /labels must be unique/.test(p)), "duplicate check labels are refused at the record level");
+  ok(gauntletStatus({ taskId: ID_B, checks: dupeRec.checks, checkRuns: [] }, metaHome).state !== "passing",
+    "and even if such a record exists, the duplicate is scored as unverified rather than passing");
 
   ok(gauntletStatus({ taskId: G }).state === "none", "a record declaring no checks has no gauntlet, rather than a fake pass");
   ok(gauntletStatus(null).state === "none", "gauntletStatus(null) is a safe no-op");
