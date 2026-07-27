@@ -710,18 +710,9 @@ function showImageLightbox(fileUrl) {
   const img = document.createElement("img");
   img.src = fileUrl;
   overlay.append(img);
-  let settled = false;
-  // Every dismissal path funnels through close(), and onCancel must fire exactly once -
-  // otherwise a caller awaiting an answer hangs on Escape.
-  const close = (confirmed = false) => {
+  const close = () => {
     overlay.remove();
     document.removeEventListener("keydown", onKey);
-    if (!settled) {
-      settled = true;
-      if (!confirmed && onCancel) {
-        onCancel();
-      }
-    }
   };
   const onKey = (e) => {
     if (e.key === "Escape") {
@@ -990,6 +981,7 @@ function reviewRowEl(row, band = null) {
             // "0 unrun, 0 stale" - technically true, and silent about the one thing
             // that mattered.
             `Checks not confirmed (${g.passed}/${g.declared} — ${[
+              g.unusable > 0 ? `${g.unusable} CANNOT FAIL` : null,
               g.unverified > 0 ? `${g.unverified} NOT VERIFIED` : null,
               g.unrun > 0 ? `${g.unrun} unrun` : null,
               g.stale > 0 ? `${g.stale} stale` : null,
@@ -1053,7 +1045,7 @@ function reviewRowEl(row, band = null) {
       // dot reading "exit 0" while the header correctly said incomplete. One rule,
       // one place - and the renderer cannot verify a signature anyway.
       const info = (row.gauntlet?.perCheck || []).find((p) => p.label === c.label) || { state: "unrun" };
-      const DOT_CLASS = { passed: "pass", failed: "fail", stale: "stale", unrun: "unrun", unverified: "unverified" };
+      const DOT_CLASS = { passed: "pass", failed: "fail", stale: "stale", unrun: "unrun", unverified: "unverified", unusable: "unverified" };
       dot.className = "rev-check-dot " + (DOT_CLASS[info.state] || "unrun");
       const name = document.createElement("span");
       name.className = "rev-check-label";
@@ -1077,14 +1069,20 @@ function reviewRowEl(row, band = null) {
       state.textContent =
         info.state === "unrun"
           ? "never run"
-          : info.state === "unverified"
-            ? "NOT VERIFIED — this outcome was not stamped by the app"
-            : info.state === "stale"
-              ? "stale — ran before the last change"
-              : // A pass-forcing command outranks its own exit code in the wording: the
-                // exit code is real, it just cannot mean anything.
-                info.passForced
-                ? `exit ${info.exitCode}, but THIS COMMAND CANNOT FAIL (${info.passForced})`
+          : info.state === "unusable"
+            ? // Not a forgery: the command is real and may well have run. It simply
+              // cannot fail, so its result carries no information either way.
+              info.passForced
+              ? `THIS COMMAND CANNOT FAIL (${info.passForced}) — a green result here means nothing`
+              : "no command declared — there is nothing to verify against"
+            : info.state === "unverified"
+              ? // Reserved for a genuine provenance problem. Kept distinct from "could
+                // not start", so the one wording that means forgery isn't diluted.
+                info.exitCode === null && info.ranAt
+                ? `could not run · ${relTime(info.ranAt)}`
+                : "NOT VERIFIED — this outcome was not stamped by the app"
+              : info.state === "stale"
+                ? "stale — ran before the last change"
                 : `exit ${info.exitCode} · ${relTime(info.ranAt)}`;
       if (info.tail) {
         state.title = info.tail;
@@ -1117,9 +1115,11 @@ function reviewRowEl(row, band = null) {
     const reason =
       g.state === "failing"
         ? `has FAILING checks`
-        : g.unverified > 0
-          ? `has ${g.unverified} check(s) whose outcome was never stamped by the app`
-          : row.verdict === "incomplete"
+        : g.unusable > 0
+          ? `has ${g.unusable} check(s) that cannot fail, or declare no command - a green result there means nothing`
+          : g.unverified > 0
+            ? `has ${g.unverified} check(s) whose outcome was never stamped by the app`
+            : row.verdict === "incomplete"
             ? `has a record that does not meet the bar for a ${row.criticality || "?"} item`
             : g.state === "incomplete"
               ? `has declared checks that have not passed (${g.unrun} unrun, ${g.stale} stale)`
@@ -1200,7 +1200,9 @@ async function renderReviewPage() {
   // Only DECLARED checks count here: a cosmetic item legitimately declares none, and
   // demanding a green gauntlet from it would make the gradient meaningless in the
   // other direction.
-  const unconfirmedStamp = (r) => r.verdict === "stamp" && (r.gauntlet?.declared || 0) > 0 && r.gauntlet.state !== "passing";
+  // reviewBand comes from the queue's own module (exposed on each row as row.band), so
+  // the page can no longer group by a different rule than the queue sorted by. That
+  // mismatch fragmented headings and discarded the queue's ordering.
   const BANDS = {
     judgment: { label: "Needs your judgment", hint: "these can't be settled by a test" },
     unconfirmed: {
@@ -1211,7 +1213,7 @@ async function renderReviewPage() {
     incomplete: { label: "Below the bar", hint: "a record exists, but it does not meet the bar for its criticality - read it, do not trust it" },
     unrecorded: { label: "No review record", hint: "in review, but nothing was written down to check" },
   };
-  const bandOf = (r) => (unconfirmedStamp(r) ? "unconfirmed" : r.verdict);
+  const bandOf = (r) => r.band || r.verdict;
 
   // Render in the order the QUEUE decided, emitting a heading whenever the band
   // changes - instead of re-filtering rows into a fixed heading sequence.
@@ -6557,9 +6559,22 @@ function customConfirm(message, confirmLabel, onConfirm, { deliberate = false, o
       close();
     }
   };
-  const close = () => {
+  // Every dismissal path funnels through close(), and onCancel fires exactly once -
+  // otherwise a caller awaiting an answer hangs on Escape. (This block was written
+  // once already and a blunt string-replacement put it in showImageLightbox instead,
+  // where `onCancel` is not in scope: a live ReferenceError on Escape, and this guard
+  // silently absent. Third time today that a scripted replace hit the wrong site.)
+  let settled = false;
+  const close = (confirmed = false) => {
     overlay.remove();
     document.removeEventListener("keydown", onKey);
+    if (settled) {
+      return;
+    }
+    settled = true;
+    if (!confirmed && onCancel) {
+      onCancel();
+    }
   };
   cancel.addEventListener("click", (e) => {
     e.stopPropagation();

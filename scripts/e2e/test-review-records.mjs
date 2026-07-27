@@ -24,8 +24,8 @@ import {
   passForcingReason,
   recordCaveats,
   currentHead,
+  reviewBand,
   acceptanceDrift,
-  CRITICALITY_LEVELS,
 } from "../../src/lib/reviewRecords.js";
 
 let exit = 0;
@@ -249,7 +249,7 @@ try {
   // ever executed read as "Checks passing (1/1), ready to stamp".
   const legacyFile = reviewRecordPath(metaHome, G);
   const fabricated = JSON.parse(fs.readFileSync(legacyFile, "utf8"));
-  fabricated.checks = [{ label: "auth e2e (34 assertions)", cmd: "exit 0" }];
+  fabricated.checks = [{ label: "auth e2e (34 assertions)", cmd: "node -e \"process.exit(0)\"" }];
   fabricated.checkRuns = [{ label: "auth e2e (34 assertions)", ok: true }];
   fs.writeFileSync(legacyFile, JSON.stringify(fabricated), "utf8");
   let g = gauntletStatus(readReviewRecord(metaHome, G), metaHome);
@@ -265,13 +265,13 @@ try {
 
   // A signature from a DIFFERENT record can't be transplanted.
   const rec2 = readReviewRecord(metaHome, G);
-  const otherSig = signCheckRun(metaHome, ID_B, { label: "auth e2e (34 assertions)", cmd: "exit 0", exitCode: 0, ranAt: 5000 });
-  fabricated.checkRuns = [{ label: "auth e2e (34 assertions)", cmd: "exit 0", exitCode: 0, ranAt: 5000, sig: otherSig }];
+  const otherSig = signCheckRun(metaHome, ID_B, { label: "auth e2e (34 assertions)", cmd: "node -e \"process.exit(0)\"", exitCode: 0, ranAt: 5000 });
+  fabricated.checkRuns = [{ label: "auth e2e (34 assertions)", cmd: "node -e \"process.exit(0)\"", exitCode: 0, ranAt: 5000, sig: otherSig }];
   fs.writeFileSync(legacyFile, JSON.stringify(fabricated), "utf8");
   ok(gauntletStatus(readReviewRecord(metaHome, G), metaHome).unverified === 1, "a signature made for another task does not verify here");
 
   // And a genuine signed run does verify - the mechanism has to be usable, not just strict.
-  const realRun = { label: "auth e2e (34 assertions)", cmd: "exit 0", exitCode: 0, ranAt: 6000 };
+  const realRun = { label: "auth e2e (34 assertions)", cmd: "node -e \"process.exit(0)\"", exitCode: 0, ranAt: 6000 };
   ok(verifyCheckRun(metaHome, G, { ...realRun, sig: signCheckRun(metaHome, G, realRun) }) === true, "a run signed for this record verifies");
   ok(verifyCheckRun(metaHome, G, { ...realRun, exitCode: 1, sig: signCheckRun(metaHome, G, realRun) }) === false,
     "changing the exit code after signing breaks the signature - the outcome is covered, not just the label");
@@ -283,8 +283,8 @@ try {
   const legacy = JSON.parse(fs.readFileSync(legacyFile, "utf8"));
   delete legacy.contentUpdatedAt;
   legacy.updatedAt = 1000;
-  legacy.checks = [{ label: "legacy check", cmd: "exit 0" }];
-  const legacyRun = { label: "legacy check", cmd: "exit 0", exitCode: 0, ranAt: 2000 };
+  legacy.checks = [{ label: "legacy check", cmd: "node -e \"process.exit(0)\"" }];
+  const legacyRun = { label: "legacy check", cmd: "node -e \"process.exit(0)\"", exitCode: 0, ranAt: 2000 };
   legacy.checkRuns = [{ ...legacyRun, ok: true, sig: signCheckRun(metaHome, G, legacyRun) }];
   fs.writeFileSync(legacyFile, JSON.stringify(legacy), "utf8");
   ok(gauntletStatus(readReviewRecord(metaHome, G), metaHome).state === "passing",
@@ -355,6 +355,11 @@ try {
     "a cosmetic record with no stated reason is refused - the tier that needs no evidence has to be argued for");
   ok(reviewRecordProblems(complete({ whyNotCritical: "ui only" })).some((p) => /must state whyNotCritical/.test(p)),
     "a two-word hand-wave doesn't count as an argument");
+  // A pure LENGTH gate accepted these; the word-count requirement is what rejects them.
+  ok(reviewRecordProblems(complete({ whyNotCritical: "..............." })).some((p) => /must state whyNotCritical/.test(p)),
+    "fifteen dots is not an argument");
+  ok(reviewRecordProblems(complete({ whyNotCritical: "n/a n/a n/a n/a" })).some((p) => /must state whyNotCritical/.test(p)),
+    "nor is a placeholder repeated to length");
   ok(reviewRecordProblems(complete({ criticality: "core", checks: [{ label: "x", cmd: "node -e 0" }], whyNotCritical: undefined })).length === 0,
     "core and critical don't need it - only the tier that buys its way out of evidence");
 
@@ -373,6 +378,38 @@ try {
     .some((c) => /cannot fail/.test(c)), "a pass-forcing check is named in the caveats too");
   ok(recordCaveats(null).length === 0, "recordCaveats(null) is a safe empty list");
 
+  // --- a command that cannot fail is not a pass ------------------------------
+  // The worst finding of the whole day, and it was mine: passForcingReason DETECTED a
+  // pass-forcing command and then nothing acted on it. `state` came purely from the
+  // exit code, so `node test.mjs || exit 0`, genuinely run and signed by the app, read
+  // "Checks passing (1/1)", landed under "Ready to stamp", counted zero in
+  // tally.unconfirmed, raised no badge, and signed off on ONE CLICK. It is the exact
+  // attack the pattern list was written for, and two of these tests asserted it was
+  // correct behaviour.
+  const FORCED = "88888888-8888-4888-8888-888888888888";
+  const forcedChecks = [{ label: "auth suite (34 assertions)", cmd: "node scripts/e2e/test-auth.mjs || exit 0" }];
+  const forcedRun = { label: forcedChecks[0].label, cmd: forcedChecks[0].cmd, exitCode: 0, ranAt: Date.now() + 20000 };
+  const forcedLive = {
+    taskId: FORCED,
+    checks: forcedChecks,
+    checkRuns: [{ ...forcedRun, ok: true, sig: signCheckRun(metaHome, FORCED, forcedRun, forcedChecks[0].cmd) }],
+    contentUpdatedAt: 1,
+  };
+  const fs2 = gauntletStatus(forcedLive, metaHome);
+  ok(fs2.state !== "passing", `a GENUINELY RUN, correctly signed check whose command cannot fail does NOT read as passing (got ${fs2.state})`);
+  ok(fs2.unusable === 1 && fs2.passed === 0, `it is counted as unusable, not as a pass (${JSON.stringify({ unusable: fs2.unusable, passed: fs2.passed })})`);
+  ok(fs2.perCheck[0].passForced === "|| always-succeeds fallback", "and the reason is carried for the page to show");
+  // The tally and band must agree - the header used to say "1 ready to stamp".
+  const forcedRow = { verdict: "stamp", criticality: "core", gauntlet: fs2 };
+  ok(reviewBand(forcedRow) === "unconfirmed", `such a row bands as unconfirmed, not stamp (${reviewBand(forcedRow)})`);
+  ok(reviewQueueTally([{ ...forcedRow, band: reviewBand(forcedRow) }]).unconfirmed === 1, "and the header counts it apart from real stamps");
+
+  // A check with no declared command at all: verification would otherwise fall back to
+  // run.cmd, a field in the file the author writes, so DELETING checks[].cmd turned a
+  // forged run back into a pass.
+  const noCmd = gauntletStatus({ ...forcedLive, checks: [{ label: forcedChecks[0].label }] }, metaHome);
+  ok(noCmd.state !== "passing" && noCmd.unusable === 1, `a check with no declared command is unusable, never a pass (${noCmd.state})`);
+
   // --- the run must belong to the DECLARED check -----------------------------
   // Runs used to be matched to checks by LABEL alone, with nothing comparing the two
   // commands - so a run stamped for `exit 0` could score a check whose displayed
@@ -385,13 +422,13 @@ try {
     checks: [{ label: "e2e suite", cmd: "node scripts/e2e/test-real-thing.mjs" }],
   }));
   // A stamp for a label the record doesn't declare is refused outright.
-  const strayLabel = recordCheckRun(metaHome, BIND, { label: "some other check", cmd: "exit 0", exitCode: 0 });
+  const strayLabel = recordCheckRun(metaHome, BIND, { label: "some other check", cmd: "node -e \"process.exit(0)\"", exitCode: 0 });
   ok(strayLabel.ok === false && /declares no check labelled/.test(strayLabel.error || ""),
     `a run for an undeclared label is refused (${strayLabel.error?.slice(0, 70)})`);
 
   // A stamp that CLAIMS a different command gets the declared command stored and
   // signed, so it cannot smuggle its own version onto the card.
-  recordCheckRun(metaHome, BIND, { label: "e2e suite", cmd: "exit 0", exitCode: 0 });
+  recordCheckRun(metaHome, BIND, { label: "e2e suite", cmd: "node -e \"process.exit(0)\"", exitCode: 0 });
   const bound = readReviewRecord(metaHome, BIND);
   ok(bound.checkRuns[0].cmd === "node scripts/e2e/test-real-thing.mjs",
     `the stored run carries the DECLARED command, not the caller's (${bound.checkRuns[0].cmd})`);
@@ -399,7 +436,7 @@ try {
 
   // Now swap the declared command underneath a signed run: the signature covers the
   // declared command, so the pass stops applying to the new one.
-  const swapped = { ...bound, checks: [{ label: "e2e suite", cmd: "exit 0" }] };
+  const swapped = { ...bound, checks: [{ label: "e2e suite", cmd: "node -e \"process.exit(0)\"" }] };
   ok(gauntletStatus(swapped, metaHome).unverified === 1,
     "changing the declared command invalidates the run signed for the old one - a pass cannot be moved onto a different command");
 
@@ -423,10 +460,27 @@ try {
   // --- duplicate check labels ------------------------------------------------
   // Runs are keyed by label, so two checks sharing one collapsed to a single run and
   // a FAILING check disappeared behind a passing one - reported as 2/2 passing.
-  const dupeRec = complete({ taskId: ID_B, criticality: "core", checks: [{ label: "e2e", cmd: "exit 7" }, { label: "e2e", cmd: "exit 0" }] });
+  const dupeRec = complete({ taskId: ID_B, criticality: "core", checks: [{ label: "e2e", cmd: "exit 7" }, { label: "e2e", cmd: "node -e \"process.exit(0)\"" }] });
   ok(reviewRecordProblems(dupeRec).some((p) => /labels must be unique/.test(p)), "duplicate check labels are refused at the record level");
-  ok(gauntletStatus({ taskId: ID_B, checks: dupeRec.checks, checkRuns: [] }, metaHome).state !== "passing",
-    "and even if such a record exists, the duplicate is scored as unverified rather than passing");
+  // The previous version of this assertion passed `checkRuns: []`, which cannot fail:
+  // with no runs at all nothing could be passing whatever the duplicate rule does.
+  // Proven by mutation - disabling the duplicate-label guard produced zero failures.
+  // So give the duplicate a REAL signed passing run and require the record to still
+  // refuse to read as passing.
+  const DUPE = "99999999-7777-4777-8777-777777777777";
+  const dupeChecks = [{ label: "e2e", cmd: "node -e \"process.exit(0)\"" }, { label: "e2e", cmd: "node -e \"process.exit(7)\"" }];
+  const dupeRun = { label: "e2e", cmd: dupeChecks[0].cmd, exitCode: 0, ranAt: Date.now() + 10000 };
+  const dupeLive = {
+    taskId: DUPE,
+    checks: dupeChecks,
+    checkRuns: [{ ...dupeRun, ok: true, sig: signCheckRun(metaHome, DUPE, dupeRun, dupeChecks[0].cmd) }],
+    contentUpdatedAt: 1,
+  };
+  const dupeStatus = gauntletStatus(dupeLive, metaHome);
+  ok(dupeStatus.state !== "passing",
+    `a duplicate label does not read as passing even with a genuine signed green run for it (got ${dupeStatus.state})`);
+  ok(dupeStatus.passed === 1 && dupeStatus.unverified === 1,
+    `the first is scored, the duplicate is unverified (passed ${dupeStatus.passed}, unverified ${dupeStatus.unverified})`);
 
   ok(gauntletStatus({ taskId: G }).state === "none", "a record declaring no checks has no gauntlet, rather than a fake pass");
   ok(gauntletStatus(null).state === "none", "gauntletStatus(null) is a safe no-op");

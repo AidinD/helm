@@ -146,7 +146,14 @@ try {
   const subRow = (q.tasks || []).find((t) => t.id === SUB);
   ok(!!subRow, "a SUBTASK in review appears in the queue - it used to be filtered out and so needed no record at all");
   ok(subRow?.parentTitle === "An epic", `and it names its parent so the row reads as belonging somewhere (${subRow?.parentTitle})`);
-  ok((q.tasks || []).every((t) => t.status !== "done"), "done tasks are not in the review queue");
+  // This used to read `every(t => t.status !== "done")` - which CANNOT FAIL, because
+  // reviewTasks maps to {id,title,priority,category,description,parentTitle} and has no
+  // `status` field at all, so the predicate was `undefined !== "done"`. It would have
+  // stayed green if the status filter were deleted outright. Assert on the ids instead.
+  const queued = new Set((q.tasks || []).map((t) => t.id));
+  ok(!queued.has(DONE_NO_REC), "a DONE task is not in the review queue (checked by id, since rows carry no status field)");
+  ok(!queued.has(EPIC), "nor is an in-progress parent");
+  ok(queued.has(SUB), "only tasks whose status is review are queued");
 
   // The audit. A direct board write cannot be prevented from here, only detected.
   const audit = signedOffWithoutRecord({ enabled: true, path: jotPath }, () => false);

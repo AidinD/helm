@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { parseAcceptanceCriteria, acceptanceCoverage } from "./acceptance.js";
+import { parseAcceptanceCriteria, acceptanceCoverage, acceptanceProblems } from "./acceptance.js";
 
 // Review records (task ce2d19ab).
 //
@@ -155,7 +155,13 @@ function criticalityProblems(rec) {
   // disagree with; "cosmetic" on its own gives him nothing to push back on.
   if (rec.criticality === "cosmetic") {
     const why = String(rec.whyNotCritical || "").trim();
-    if (why.length < 15) {
+    // Length, word count AND distinct words. A pure length gate accepted
+    // "..............."; adding a word count still accepted "n/a n/a n/a n/a". None of
+    // this checks whether the sentence is TRUE - nothing here can - it only makes a
+    // placeholder cost about as much to write as the real thing, which is the whole
+    // mechanism this tier relies on.
+    const words = why.toLowerCase().split(/\s+/).filter((w) => /[a-z0-9]/i.test(w));
+    if (why.length < 15 || words.length < 4 || new Set(words).size < 3) {
       problems.push(
         "a cosmetic item must state whyNotCritical - one line on why being wrong here is cheap. This tier requires no evidence at all, so it is the one that has to be argued for"
       );
@@ -437,7 +443,9 @@ export function recordCheckRun(metaHome, taskId, run, { now = Date.now() } = {})
     return { ok: false, error: `This record declares no check labelled "${run.label}" - a run must belong to a declared check.` };
   }
   const runs = Array.isArray(rec.checkRuns) ? rec.checkRuns.filter((r) => r.label !== run.label) : [];
-  const head = currentHead(rec.projectPath);
+  // Same resolution order the runner uses (check.cwd || rec.projectPath), so a record
+  // cannot dodge pinning by putting cwd on the check.
+  const head = currentHead(declared.cwd || rec.projectPath);
   const stamped = {
     label: String(run.label),
     // What was DECLARED, not what the caller says it ran. Storing the caller's
@@ -474,7 +482,7 @@ export function recordCheckRun(metaHome, taskId, run, { now = Date.now() } = {})
 export function gauntletStatus(rec, metaHome = null, { head = undefined } = {}) {
   const checks = Array.isArray(rec?.checks) ? rec.checks : [];
   if (checks.length === 0) {
-    return { declared: 0, passed: 0, failed: 0, stale: 0, unrun: 0, unverified: 0, state: "none" };
+    return { declared: 0, passed: 0, failed: 0, stale: 0, unrun: 0, unverified: 0, unusable: 0, state: "none", perCheck: [] };
   }
   const runs = Array.isArray(rec.checkRuns) ? rec.checkRuns : [];
   const updatedAt = typeof rec.contentUpdatedAt === "number" ? rec.contentUpdatedAt : typeof rec.updatedAt === "number" ? rec.updatedAt : 0;
@@ -483,6 +491,7 @@ export function gauntletStatus(rec, metaHome = null, { head = undefined } = {}) 
   let stale = 0;
   let unrun = 0;
   let unverified = 0;
+  let unusable = 0;
   // Two checks sharing a label collapse to one run (runs are keyed by label), so the
   // second stamp silently overwrote the first: a suite with a failing check and a
   // passing one under the same name read as 2/2 passing. Refuse to score duplicates.
@@ -495,11 +504,27 @@ export function gauntletStatus(rec, metaHome = null, { head = undefined } = {}) 
   for (const c of checks) {
     const label = String(c?.label || "");
     const run = runs.find((r) => r.label === label) || null;
+    const forced = passForcingReason(c?.cmd);
     let state;
     if (seenLabels.has(label)) {
       // Duplicate labels cannot be scored apart: runs are keyed by label, so the
       // second stamp overwrites the first and a failure disappears.
       state = "unverified";
+    } else if (forced) {
+      // A command that cannot fail is not a check, so it cannot be a pass - however
+      // green it went and however genuinely the app ran it.
+      //
+      // This was DETECTED and then ignored: passForced was carried on perCheck for the
+      // renderer while `state` came purely from the exit code, so `node test.mjs ||
+      // exit 0` read "Checks passing (1/1)", landed under "Ready to stamp", counted
+      // zero in tally.unconfirmed, raised no badge, and signed off on ONE CLICK. It is
+      // the exact attack the pattern list was written for, and it needed no forgery.
+      state = "unusable";
+    } else if (!c?.cmd || !String(c.cmd).trim()) {
+      // No declared command to verify against. verifyCheckRun's fallback would
+      // otherwise sign against run.cmd - a field in the file the author writes - so
+      // deleting checks[].cmd turned a stale/forged run back into a pass.
+      state = "unusable";
     } else if (!run) {
       state = "unrun";
     } else if (typeof run.ranAt !== "number" || typeof run.exitCode !== "number" || !verifyCheckRun(metaHome, rec.taskId, run, c?.cmd)) {
@@ -510,10 +535,22 @@ export function gauntletStatus(rec, metaHome = null, { head = undefined } = {}) 
       state = "unverified";
     } else if (run.ranAt < updatedAt) {
       state = "stale";
+    } else if (run.headDirty === true) {
+      // The pass was earned on an uncommitted tree, so the recorded sha does not
+      // describe what actually ran and nothing can tell whether the code has moved
+      // since. This was recorded and then never read: "fix it, don't commit, re-run
+      // nothing" kept an old green.
+      state = "stale";
     } else if (head !== undefined && head !== null && run.head && run.head !== head) {
       // Ran against a different commit. The code moved after the pass, which is the
       // ordinary second-lap case: sent back, fixed, returned to review, old green
       // still on the card.
+      state = "stale";
+    } else if (head !== undefined && head !== null && !run.head) {
+      // The current commit is known but the run recorded none, so it cannot be
+      // compared. A record could otherwise DECLINE pinning (put cwd on the check and
+      // omit projectPath) and thereby never go stale - the same hole the pin closes,
+      // reached from the other side.
       state = "stale";
     } else if (run.exitCode === 0) {
       // Derived from the exit code, never from run.ok - a boolean in a file the
@@ -527,7 +564,7 @@ export function gauntletStatus(rec, metaHome = null, { head = undefined } = {}) 
       label,
       cmd: c?.cmd || null,
       // A command that cannot fail is not a check, however green it goes.
-      passForced: passForcingReason(c?.cmd),
+      passForced: forced,
       state,
       exitCode: run && typeof run.exitCode === "number" ? run.exitCode : null,
       ranAt: run && typeof run.ranAt === "number" ? run.ranAt : null,
@@ -535,6 +572,8 @@ export function gauntletStatus(rec, metaHome = null, { head = undefined } = {}) 
     });
     if (state === "unverified") {
       unverified += 1;
+    } else if (state === "unusable") {
+      unusable += 1;
     } else if (state === "unrun") {
       unrun += 1;
     } else if (state === "stale") {
@@ -545,11 +584,53 @@ export function gauntletStatus(rec, metaHome = null, { head = undefined } = {}) 
       failed += 1;
     }
   }
-  // "passing" requires every declared check to be a verified, fresh, zero-exit run.
-  // Anything else is not a pass, and unverified is called out separately from stale
-  // so "nobody ran this" can't hide inside "this is a bit out of date".
-  const state = failed > 0 ? "failing" : unrun + stale + unverified > 0 ? "incomplete" : "passing";
-  return { declared: checks.length, passed, failed, stale, unrun, unverified, state, perCheck };
+  // "passing" requires every declared check to be a verified, fresh, zero-exit run of a
+  // command that could actually have failed. Anything else is not a pass, and each
+  // reason is counted separately so none can hide inside another.
+  const state = failed > 0 ? "failing" : unrun + stale + unverified + unusable > 0 ? "incomplete" : "passing";
+  return { declared: checks.length, passed, failed, stale, unrun, unverified, unusable, state, perCheck };
+}
+
+/**
+ * Which band a queue row belongs in - the ONE definition, used both to sort the queue
+ * and to group the page. It was previously three-way here and five-way in the
+ * renderer, and the mismatch fragmented the page's headings while throwing away this
+ * side's ordering.
+ *
+ * Ordered by how much attention the row needs, not by how it was produced:
+ *
+ *   judgment    - needs a decision only he can make.
+ *   incomplete  - a record EXISTS, so something claims to be reviewed, but the claim
+ *                 is inadmissible. Above stamps deliberately: it is the more alarming
+ *                 case even though fixing it is the author's job, not his.
+ *   unconfirmed - the record says done, but its own declared checks have not passed.
+ *   stamp       - the evidence holds up; read it and move on.
+ *   unrecorded  - in review with nothing written down at all.
+ */
+export const BAND_ORDER = { judgment: 0, incomplete: 1, unconfirmed: 2, stamp: 3, unrecorded: 4 };
+
+export function reviewBand(row) {
+  // Only DECLARED checks count: a cosmetic item legitimately declares none, and
+  // demanding a green gauntlet from it would make the gradient meaningless the other
+  // way round.
+  if (row?.verdict === "stamp" && (row.gauntlet?.declared || 0) > 0 && row.gauntlet.state !== "passing") {
+    return "unconfirmed";
+  }
+  return row?.verdict || "unrecorded";
+}
+
+/**
+ * What the TASK failed to state, phrased for the review card. Uses the same rules as
+ * the take-time nudge, which otherwise had no production surface at all - it was
+ * exported, tested, and called from nowhere.
+ */
+function taskAcceptanceCaveats(description) {
+  const problems = acceptanceProblems(description || "");
+  return problems.map((p) =>
+    /no acceptance criteria/.test(p)
+      ? "The task itself never stated acceptance criteria, so there was no agreed definition of done to check against."
+      : `The task's own acceptance criteria are weak: ${p}`
+  );
 }
 
 /** Duplicate check labels are unscoreable, so they are a record-level defect. */
@@ -710,34 +791,29 @@ export function buildReviewQueue(reviewTasks, records, metaHome = null) {
       whyNotCritical: rec?.whyNotCritical || null,
       // True statements about the record whose signature is an ABSENCE, so the page
       // can show them instead of rendering nothing at all.
-      caveats: rec ? recordCaveats(rec) : [],
+      // Record-side absences, plus what the TASK itself failed to state. The two are
+      // different: the record can carry criteria the task never had (that is drift),
+      // and the task can state vague ones nobody could fail (that is this).
+      caveats: [...(rec ? recordCaveats(rec) : []), ...taskAcceptanceCaveats(t.description)],
       // Did the task's acceptance criteria move after the record snapshotted them?
       drift: rec ? acceptanceDrift(rec, t.description || "") : { drifted: false, snapshot: [], live: [] },
-      gauntlet: rec ? gauntletStatus(rec, metaHome, { head: headFor(rec.projectPath) }) : { declared: 0, state: "none" },
+      gauntlet: rec ? gauntletStatus(rec, metaHome, { head: headFor((rec.checks || [])[0]?.cwd || rec.projectPath) }) : { declared: 0, state: "none" },
     };
   });
-  // Ordering is an attention model, so it gets stated rather than inherited:
-  //
-  //   0. things needing a decision (judgment), AND any CRITICAL item that claims to
-  //      be reviewed but isn't admissible. The second one belongs at the top even
-  //      though the fix is mine, not his: it means something on the expensive tier
-  //      is being presented as verified when nothing independent has looked. Sorting
-  //      it below a batch of cheap cosmetic stamps buries exactly the alarm the
-  //      gradient exists to raise.
-  //   1. stamps - cheap, safe, read the evidence and move on.
-  //   2. everything else inadmissible or unwritten - informational; it tells him I
-  //      have work left, not that he does.
+  // Sorted by BAND, using the same function the page groups by - see reviewBand.
+  // Previously the queue sorted by its own three-way band while the renderer grouped
+  // by a hardcoded five-way list, so the two disagreed: the same heading could be
+  // emitted twice with other rows in between, and the "critical items first"
+  // promotion was silently discarded by the page.
   //
   // Within a band: criticality, then board priority.
-  const band = (r) => {
-    if (r.verdict === "judgment" || (r.verdict === "incomplete" && r.criticality === "critical")) {
-      return 0;
-    }
-    return r.verdict === "stamp" ? 1 : 2;
-  };
   const critRank = { critical: 0, core: 1, cosmetic: 2 };
+  // Stamped on the row so the page groups by exactly what the queue sorted by.
+  for (const row of rows) {
+    row.band = reviewBand(row);
+  }
   return rows.sort((a, b) => {
-    const d = band(a) - band(b);
+    const d = BAND_ORDER[a.band] - BAND_ORDER[b.band];
     if (d !== 0) {
       return d;
     }
@@ -753,12 +829,13 @@ export function reviewQueueTally(rows) {
   // "Claimed, not confirmed" about the same item - and the header is the line that
   // gets skimmed. Items declaring no checks (legitimately, at cosmetic tier) are
   // still stamps.
-  const unconfirmed = (r) => r.verdict === "stamp" && (r.gauntlet?.declared || 0) > 0 && r.gauntlet.state !== "passing";
+  // Uses reviewBand, so the header cannot disagree with the sections below it.
+  const inBand = (name) => (r) => reviewBand(r) === name;
   return {
     total: rows.length,
     judgment: rows.filter((r) => r.verdict === "judgment").length,
-    stamp: rows.filter((r) => r.verdict === "stamp" && !unconfirmed(r)).length,
-    unconfirmed: rows.filter(unconfirmed).length,
+    stamp: rows.filter(inBand("stamp")).length,
+    unconfirmed: rows.filter(inBand("unconfirmed")).length,
     unrecorded: rows.filter((r) => r.verdict === "unrecorded").length,
     // A record that exists but is inadmissible - counted apart from "nobody wrote
     // one", because it needs a different reaction.

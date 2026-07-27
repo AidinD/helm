@@ -59,8 +59,8 @@ fs.writeFileSync(
     evidence: ["34 assertions covering the rotation path"],
     notVerified: [],
     testSteps: [{ step: "Rotate a key", expect: "the old key stops working" }],
-    checks: [{ label: "auth e2e (34 assertions)", cmd: "exit 0" }],
-    checkRuns: [{ label: "auth e2e (34 assertions)", cmd: "exit 0", ok: true, exitCode: 0, ranAt: now }],
+    checks: [{ label: "auth e2e (34 assertions)", cmd: "node -e \"process.exit(0)\"" }],
+    checkRuns: [{ label: "auth e2e (34 assertions)", cmd: "node -e \"process.exit(0)\"", ok: true, exitCode: 0, ranAt: now }],
     updatedAt: now - 1000,
     contentUpdatedAt: now - 1000,
   }),
@@ -101,13 +101,70 @@ try {
   ok(/unverified/.test(ui.dot), `the per-check dot uses the unverified state, not a green pass (${ui.dot})`);
   ok(/NOT VERIFIED/.test(ui.state), `and the line says so in words (${ui.state})`);
   ok(!/exit 0 ·/.test(ui.state), "it does NOT present the forged exit code as a result");
-  ok(ui.cmd === "exit 0", `the real command is on screen next to the impressive label (${ui.cmd})`);
+  ok(ui.cmd === `node -e "process.exit(0)"`, `the real command is on screen next to the impressive label (${ui.cmd})`);
   ok(ui.label === "auth e2e (34 assertions)", "the label is still shown - the point is that both are visible");
   ok(/NOT VERIFIED/.test(ui.header), `the summary line names the reason rather than just a count (${ui.header})`);
   ok(!/passing/i.test(ui.header), "the summary line does not say passing");
   ok(ui.bands.some((b) => /Claimed, not confirmed/.test(b)), `it sits under its own honest heading (${JSON.stringify(ui.bands)})`);
-  ok(!ui.bands.some((b) => /verified end to end/.test(b)), "no heading on the page promises 'verified end to end'");
+  // This used to assert the absence of "verified end to end" - a phrase no heading has
+  // contained since the wording changed, so it asserted the absence of something that
+  // never existed. Assert the real requirement: the ONLY heading present is the honest
+  // one, and the reassuring stamp heading is not on the page at all.
+  ok(ui.bands.length === 1, `only one band renders for a single item (${JSON.stringify(ui.bands)})`);
+  ok(!ui.bands.some((b) => /Ready to stamp/.test(b)), "the reassuring 'Ready to stamp' heading is not on the page for an unconfirmed item");
   ok(ui.badge === "1", `the subnav badge counts it as needing attention (got "${ui.badge}")`);
+
+  // THE SAME ATTACK WITHOUT ANY FORGERY. A check whose command cannot fail is
+  // genuinely run and correctly signed by the app - and for a while it read "Checks
+  // passing (1/1)", banded as a stamp, counted zero in tally.unconfirmed, raised no
+  // badge and signed off on one click. passForcingReason detected it and nothing acted
+  // on the detection.
+  const FORCED = "bbbbbbbb-2222-4222-8222-222222222222";
+  const board = JSON.parse(fs.readFileSync(path.join(jotDir, "todos.json"), "utf8"));
+  board.todos.push({ id: FORCED, text: "Rotate the other key", status: "review", categoryId: "c1", priority: 1, parentId: null, description: "" });
+  fs.writeFileSync(path.join(jotDir, "todos.json"), JSON.stringify(board), "utf8");
+  fs.writeFileSync(
+    path.join(metaHome, ".helm", "reviews", `${FORCED}.json`),
+    JSON.stringify({
+      taskId: FORCED,
+      title: "Rotate the other key",
+      verdict: "stamp",
+      summary: "Done and covered by the auth suite.",
+      criticality: "core",
+      projectPath: process.cwd(),
+      evidence: [],
+      notVerified: [],
+      testSteps: [{ step: "Rotate a key", expect: "the old key stops working" }],
+      checks: [{ label: "auth suite (34 assertions)", cmd: 'node -e "process.exit(0)" || exit 0' }],
+      updatedAt: now - 1000,
+      contentUpdatedAt: now - 1000,
+    }),
+    "utf8"
+  );
+  const ranForReal = await app.eval(`window.helm.runReviewChecks(${JSON.stringify(FORCED)})`);
+  ok(ranForReal?.results?.[0]?.exitCode === 0, `the pass-forcing command really does exit 0 (${ranForReal?.results?.[0]?.exitCode})`);
+  const res2 = await app.eval(`window.helm.listReviews()`);
+  const forcedRow = (res2.rows || []).find((r) => r.taskId === FORCED);
+  ok(forcedRow?.gauntlet?.state !== "passing", `a genuinely-run, correctly-signed check that CANNOT FAIL does not read as passing (${forcedRow?.gauntlet?.state})`);
+  ok(forcedRow?.gauntlet?.unusable === 1 && forcedRow?.gauntlet?.passed === 0, `it is counted as unusable, not as a pass (${JSON.stringify(forcedRow?.gauntlet)})`);
+  ok(forcedRow?.band === "unconfirmed", `it bands as unconfirmed rather than stamp (${forcedRow?.band})`);
+  ok(res2.tally?.stamp === 0, `the header does not count it as ready to stamp (${JSON.stringify(res2.tally)})`);
+
+  await app.eval(`renderReviewPage()`);
+  await new Promise((r) => setTimeout(r, 900));
+  const forcedUi = await app.eval(`(() => {
+    const p = document.getElementById("reviewPage");
+    const line = [...p.querySelectorAll(".rev-check")].find(l => /CANNOT FAIL/i.test(l.textContent));
+    return {
+      found: !!line,
+      cmdClass: line?.querySelector(".rev-check-cmd")?.className || "",
+      state: line?.querySelector(".rev-check-state")?.textContent || "",
+      headers: [...p.querySelectorAll(".rev-gauntlet-head b")].map(b => b.textContent)
+    };
+  })()`);
+  ok(forcedUi.found === true, "the line says the command cannot fail");
+  ok(/forced/.test(forcedUi.cmdClass), `the command itself is marked (${forcedUi.cmdClass})`);
+  ok(forcedUi.headers.some((h) => /CANNOT FAIL/.test(h)), `and the summary line names it (${JSON.stringify(forcedUi.headers)})`);
 
   const errs = app.getConsoleErrors();
   ok(errs.length === 0, `no console errors${errs.length ? ": " + errs[0].text.slice(0, 200) : ""}`);
