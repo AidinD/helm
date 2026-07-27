@@ -4545,6 +4545,10 @@ second. The classic section additionally carries a fingerprint so a tick doesn't
 rebuild it.
 
 **Quiet when clean, but never silently quiet on failure.**
+(CORRECTED 2026-07-27, see the ship-review section below: as first committed this was
+an aspiration, not the behaviour. The classic section returned null on failure,
+which on that surface is indistinguishable from all-clear, and a missing sessions
+dir or missing git arrived as a confident empty list. Now true.)
 The classic section returns null when nothing has drifted (no empty module on a
 clean board), while the widget - which you placed on purpose - says "Docs are
 current". A read that FAILED says so explicitly in both, rather than rendering the
@@ -4603,3 +4607,61 @@ It costs a real turn, which is why it isn't in the fast suite - but a state you
 have never seen appear is a state you have not tested, and that is what the
 notVerified field on the review record was trying to say before the reviewer
 proved it.
+
+### Ship-review of the docs-drift nudge (same day) - eight findings, seven fixed
+
+An independent reviewer in a fresh context went at the commit above.
+Three findings were serious enough to change the design, not just the code.
+
+**1. The nudge blocked the whole app once a minute (the worst one).**
+The handler called the SYNCHRONOUS sweep straight from the Electron main process:
+four git spawns per repo (not two, as my comment claimed), measured at ~1.1s for 13
+projects, growing with the number of distinct session cwds - which only ever grows.
+While that ran, every window's IPC, session polling and stream handling stalled.
+Fixed properly rather than papered over: `staleProjectsAsync` runs the repos in
+parallel with `execFile`, and the handler is stale-while-revalidate - past the TTL
+it kicks off a background refresh and returns last-known rows immediately.
+Measured after: 203ms wall and 13 event-loop ticks during the sweep, versus 574ms
+and ZERO ticks for the sync version. A limit was considered and rejected: capping
+the project count would silently drop a drifting project, which is the one failure
+this signal must not have.
+
+**2. A failed check rendered as "everything is current".**
+This is the exact failure the commit message called worse than no signal, and it
+was the shipped behaviour.
+Three separate paths: `readAllSessions` reports a missing sessions dir in an
+`error` FIELD rather than throwing; `docsStaleness` swallows a missing git per
+repo and returns not-stale; and on the classic board "clean" is rendered as the
+ABSENCE of the section, so returning null on failure was indistinguishable from
+all-clear.
+Now the sweep reports `unchecked`/`considered`, `docsStalenessAsync` returns
+`checked` so "couldn't look" is distinct from "looked, it's fine", and both
+surfaces say so explicitly. My own E2E had asserted the wrong behaviour
+(`brokeIsNull === true`), locking it in - that assertion is now inverted.
+
+**3. Jump in did nothing at all from the Dashboard.**
+It called `openSessionInPane` without `navigateToPage("chat")` first, and that
+function writes into the hidden `#chatPage` and focuses a hidden composer - both
+no-ops while chat is hidden. So the one interactive affordance of the feature
+silently did nothing on the surface the commit went out of its way to support.
+Every other jump-in in the app navigates first; this one didn't.
+My test had only COUNTED the buttons, never clicked one - it now clicks and asserts
+the page actually changed.
+
+**Also fixed:** the section head was hand-rolled instead of using the shared
+`dashBoardHead`, so the title matched no CSS rule and read as a different visual
+language beside its neighbours; the fingerprint omitted `sessionId`, so a project
+whose commit count hadn't moved kept a Jump-in target that could have been archived
+out from under it; the jump target didn't exclude archived or Helm-hidden sessions,
+so it could re-open a session you had explicitly removed from Helm; `path.resolve`
+sat outside its try, so one corrupt cwd could take the entire list with it (and for
+an attention signal, that means every drifting project silently vanishing).
+
+**One inherited blind spot fixed, one flagged.**
+Fixed: an uncommitted doc edit meant "reconciling right now" unconditionally, so an
+edit abandoned months ago silenced that project permanently. Now it only counts as
+active reconciling if the file was touched within ~36 hours.
+Flagged, not fixed: a session rooted in a SUBDIRECTORY of a repo contributes a
+candidate with no docs, so that repo never appears. No live instance on this
+machine, and walking up to the git root would change which project a session is
+attributed to - worth doing deliberately, not as a review afterthought.

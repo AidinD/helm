@@ -46,7 +46,7 @@ import { computeVersionString, captureRunningBuildIdentity, checkForNewerBuild }
 import { runGoal } from "./lib/goalOrchestrator.js";
 import { loadGoalRunHistory, upsertGoalRunRecord, removeGoalRunRecord } from "./lib/goalRunHistory.js";
 import { removeWorktree, isBranchMerged, deleteBranch } from "./lib/worktree.js";
-import { docsStaleness, staleProjects } from "./lib/docsStaleness.js";
+import { docsStaleness, staleProjectsAsync } from "./lib/docsStaleness.js";
 import { loadDomains, registerDomain, removeDomain } from "./lib/domains.js";
 import { ensureMates, activeMates, findMateById, loadMates, renameMate, retireAndRespawn, bindMateSession, consumeMateHandoff, setMatePersona, rethemeMateNames } from "./lib/mates.js";
 import { personaOverlay, PERSONAS } from "./lib/personas.js";
@@ -3053,52 +3053,117 @@ ipcMain.handle("docs:staleness", (_event, { cwd }) => {
 // pointing at it, and getting that wrong quietly corrupts the durable record this
 // whole nudge exists to protect.
 //
-// Cached for a minute: staleness needs two git calls per repo, the dashboard
-// refreshes often, and drift measured in commits does not move second to second.
-let staleProjectsCache = { at: 0, rows: [] };
+// NEVER BLOCKING, and never silently reassuring - the two things a review of the
+// first cut caught.
+//
+// (1) The sweep is async (staleProjectsAsync) and served stale-while-revalidate.
+// The first version called the SYNC sweep straight from the handler: four git
+// spawns per repo, measured at ~1.1s for 13 projects, executed on the Electron
+// main thread - which stalls every window's IPC, session polling and stream
+// handling for that whole time, once a minute, growing with your project count.
+// Now a request past the TTL kicks off a background refresh and returns the
+// last-known rows immediately.
+//
+// (2) The reply distinguishes "looked, nothing drifting" from "could not look".
+// readAllSessions returns its failure in an `error` FIELD rather than throwing, and
+// docsStaleness swallows a missing git per repo - so the first version turned both
+// into a confident `rows: []`, which the UI renders as "docs are current". A nudge
+// that can't look must not claim there is nothing to see.
+let staleProjectsCache = { at: 0, rows: [], unchecked: 0, considered: 0, error: null };
+let staleProjectsRefreshing = null;
 const STALE_PROJECTS_TTL_MS = 60_000;
-ipcMain.handle("docs:staleProjects", (_event, { force = false } = {}) => {
+
+async function refreshStaleProjects() {
+  // Candidate projects = where you've actually been working. An archived session's
+  // project still counts: archiving the session is what leaves the docs as the only
+  // record, so that is when drift matters MOST.
+  const all = readAllSessions();
+  const sessions = all.sessions || [];
+  const hidden = new Set(loadConfig().hiddenSessions || []);
+  const newestByPath = new Map();
+  for (const s of sessions) {
+    if (!s.cwd) {
+      continue;
+    }
+    // Keyed on the RESOLVED path, matching what the sweep returns - the same repo
+    // appears as both D:\Repo\... and d:/Repo/... across sessions, and a raw-string
+    // key would both split one project in two and fail the lookup below.
+    let key;
+    try {
+      key = path.resolve(s.cwd).toLowerCase();
+    } catch {
+      continue;
+    }
+    // Any session makes the project a CANDIDATE, but only a session you can
+    // actually open is a jump-in target: re-opening a session you explicitly
+    // removed from Helm would be the app overruling that removal.
+    const jumpable = !s.isArchived && !hidden.has(s.sessionId);
+    const prev = newestByPath.get(key);
+    if (!prev) {
+      newestByPath.set(key, { cwd: s.cwd, jumpTarget: jumpable ? s : null });
+      continue;
+    }
+    if (jumpable && (!prev.jumpTarget || (s.lastActivityAt || 0) > (prev.jumpTarget.lastActivityAt || 0))) {
+      prev.jumpTarget = s;
+    }
+  }
+  const swept = await staleProjectsAsync([...newestByPath.values()].map((v) => v.cwd));
+  const rows = swept.rows.map((row) => {
+    const target = newestByPath.get(row.path.toLowerCase())?.jumpTarget;
+    return {
+      ...row,
+      name: path.basename(row.path),
+      sessionId: target?.sessionId || null,
+      lastActivityAt: target?.lastActivityAt || 0,
+    };
+  });
+  staleProjectsCache = {
+    at: Date.now(),
+    rows,
+    unchecked: swept.unchecked,
+    considered: swept.considered,
+    // A sessions-dir failure means the candidate list itself is empty for the
+    // wrong reason - report it rather than letting it look like a clean board.
+    error: all.error || null,
+  };
+  return staleProjectsCache;
+}
+
+ipcMain.handle("docs:staleProjects", async (_event, { force = false } = {}) => {
   try {
-    if (!force && Date.now() - staleProjectsCache.at < STALE_PROJECTS_TTL_MS) {
-      return { ok: true, rows: staleProjectsCache.rows, cached: true };
+    const fresh = Date.now() - staleProjectsCache.at < STALE_PROJECTS_TTL_MS;
+    if (force) {
+      const c = await (staleProjectsRefreshing || (staleProjectsRefreshing = refreshStaleProjects().finally(() => {
+        staleProjectsRefreshing = null;
+      })));
+      return { ok: !c.error, error: c.error, rows: c.rows, unchecked: c.unchecked, considered: c.considered, cached: false, pending: false };
     }
-    // Candidate projects = where you've actually been working. An archived
-    // session's project still counts: archiving the session is what leaves the
-    // docs as the only record, so that is when drift matters MOST.
-    const sessions = readAllSessions().sessions || [];
-    const newestByPath = new Map();
-    for (const s of sessions) {
-      if (!s.cwd) {
-        continue;
-      }
-      // Keyed on the RESOLVED path, matching what staleProjects returns - the same
-      // repo appears as both D:\Repo\... and d:/Repo/... across sessions, and a
-      // raw-string key would both split one project in two and fail the lookup below.
-      let key;
-      try {
-        key = path.resolve(s.cwd).toLowerCase();
-      } catch {
-        continue;
-      }
-      const prev = newestByPath.get(key);
-      if (!prev || (s.lastActivityAt || 0) > (prev.lastActivityAt || 0)) {
-        newestByPath.set(key, s);
-      }
+    if (!fresh && !staleProjectsRefreshing) {
+      // Fire and forget: the next poll picks up the result. A failure here must not
+      // become an unhandled rejection.
+      staleProjectsRefreshing = refreshStaleProjects()
+        .catch((err) => {
+          staleProjectsCache = { ...staleProjectsCache, at: Date.now(), error: err?.message || String(err) };
+          return staleProjectsCache;
+        })
+        .finally(() => {
+          staleProjectsRefreshing = null;
+        });
     }
-    const stale = staleProjects([...newestByPath.values()].map((s) => s.cwd));
-    const rows = stale.map((row) => {
-      const newest = newestByPath.get(row.path.toLowerCase());
-      return {
-        ...row,
-        name: path.basename(row.path),
-        sessionId: newest?.sessionId || null,
-        lastActivityAt: newest?.lastActivityAt || 0,
-      };
-    });
-    staleProjectsCache = { at: Date.now(), rows };
-    return { ok: true, rows, cached: false };
+    const c = staleProjectsCache;
+    return {
+      ok: !c.error,
+      error: c.error,
+      rows: c.rows,
+      unchecked: c.unchecked,
+      considered: c.considered,
+      cached: fresh,
+      // Nothing has ever been measured yet, so an empty list means "not known",
+      // not "all current".
+      pending: c.at === 0,
+    };
   } catch (err) {
-    return { ok: false, error: err?.message || String(err), rows: [] };
+    return { ok: false, error: err?.message || String(err), rows: [], unchecked: 0, considered: 0, pending: false };
   }
 });
 

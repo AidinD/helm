@@ -90,7 +90,7 @@ try {
   // the IPC derives its candidate list from real session cwds, which no temp repo
   // can appear in - so the list-building and the rendering are checked at their
   // own layers rather than being assumed from one end-to-end call.
-  const { staleProjects } = await import("../../src/lib/docsStaleness.js");
+  const { staleProjects, staleProjectsAsync } = await import("../../src/lib/docsStaleness.js");
   const rows = staleProjects([staleRepo, freshRepo, midRepo]);
   assert(rows.length === 2, `only the stale repos are returned (${rows.length} of 3)`);
   assert(rows[0].commitsSince >= rows[1].commitsSince, `worst drift first (${rows.map((r) => r.commitsSince).join(" > ")})`);
@@ -103,6 +103,47 @@ try {
   assert(staleProjects([null, undefined, "", "Z:/definitely/not/here"]).length === 0, "junk and missing paths are dropped, not thrown on");
   assert(staleProjects([]).length === 0 && staleProjects(null).length === 0, "an empty or missing list is an empty result");
 
+  // The ASYNC sweep - the one the nudge actually uses, because the sync version
+  // blocks the Electron main thread. This is the review finding that mattered most:
+  // four git spawns per repo, on the main thread, once a minute, unbounded in
+  // project count - stalling every window's IPC, not just the dashboard.
+  const asyncRes = await staleProjectsAsync([staleRepo, freshRepo, midRepo]);
+  assert(asyncRes.rows.length === 2, `the async sweep finds the same stale repos (${asyncRes.rows.length})`);
+  assert(asyncRes.rows[0].commitsSince >= asyncRes.rows[1].commitsSince, "worst drift first");
+  assert(asyncRes.considered === 3 && asyncRes.unchecked === 0, `it reports what it considered and what it couldn't check (${asyncRes.unchecked}/${asyncRes.considered})`);
+  // A path that isn't a git repo at all must count as UNCHECKED, not as clean -
+  // conflating those two is how a nudge silently claims all-clear.
+  const notARepo = fs.mkdtempSync(path.join(os.tmpdir(), "helm-notrepo-"));
+  fs.writeFileSync(path.join(notARepo, "PLAN.md"), "# plan\n");
+  const mixed = await staleProjectsAsync([staleRepo, notARepo]);
+  assert(mixed.unchecked === 1, `a directory with docs but no git repo counts as unchecked, not clean (${mixed.unchecked})`);
+  // A directory with no docs at all IS a real answer ("nothing to be stale about").
+  const noDocs = fs.mkdtempSync(path.join(os.tmpdir(), "helm-nodocs-"));
+  const noDocsRes = await staleProjectsAsync([noDocs]);
+  assert(noDocsRes.unchecked === 0, "a project with no PLAN/DECISIONS is a real answer, not a failed check");
+  // And it must not block the event loop - the whole point of the async twin.
+  let ticks = 0;
+  const iv = setInterval(() => ticks++, 10);
+  await staleProjectsAsync([staleRepo, freshRepo, midRepo]);
+  clearInterval(iv);
+  assert(ticks > 0, `the async sweep leaves the event loop running (${ticks} ticks) - the sync one blocks it completely`);
+  fs.rmSync(notARepo, { recursive: true, force: true });
+  fs.rmSync(noDocs, { recursive: true, force: true });
+
+  // An uncommitted doc edit means "reconciling right now" only if it is RECENT.
+  // An edit abandoned months ago would otherwise silence that project forever,
+  // which for the only board-level signal is a permanent blind spot.
+  fs.appendFileSync(path.join(midRepo, "PLAN.md"), "\nabandoned edit\n");
+  const oldMs = Date.now() - 40 * 24 * 60 * 60 * 1000;
+  fs.utimesSync(path.join(midRepo, "PLAN.md"), oldMs / 1000, oldMs / 1000);
+  const withAbandoned = await staleProjectsAsync([midRepo]);
+  assert(withAbandoned.rows.length === 1, "a doc edit left uncommitted for weeks does NOT silence the project");
+  const nowMs = Date.now();
+  fs.utimesSync(path.join(midRepo, "PLAN.md"), nowMs / 1000, nowMs / 1000);
+  const withFresh = await staleProjectsAsync([midRepo]);
+  assert(withFresh.rows.length === 0, "a doc edit you just made DOES silence it - you're reconciling right now");
+  execFileSync("git", ["-C", midRepo, "checkout", "--", "PLAN.md"], { windowsHide: true });
+
   // The IPC, on the real board: shape + the cache.
   const board = await app.eval(`window.helm.staleProjects()`);
   assert(board?.ok === true && Array.isArray(board.rows), `docs:staleProjects returns rows (${board?.rows?.length} stale project(s) on the real board)`);
@@ -111,9 +152,16 @@ try {
   );
   assert(wellFormed, "every row is well-formed and actually past the threshold");
   const cached = await app.eval(`window.helm.staleProjects()`);
-  assert(cached?.cached === true, "a second call inside the TTL is served from cache (two git calls per repo is not free)");
+  assert(cached?.cached === true, "a second call inside the TTL is served from cache (four git calls per repo is not free)");
   const forced = await app.eval(`window.helm.staleProjects({ force: true })`);
   assert(forced?.cached === false, "force bypasses the cache");
+  // The handler must return promptly even when the cache has expired: it serves the
+  // last-known rows and refreshes in the BACKGROUND. A blocking handler is what
+  // stalled every window's IPC for ~1.1s a minute in the first cut.
+  const t0 = Date.now();
+  await app.eval(`window.helm.staleProjects()`);
+  const servedMs = Date.now() - t0;
+  assert(servedMs < 400, `a cached read returns promptly (${servedMs}ms)`);
 
   // The widget body, given known data - so the populated path is deterministic
   // rather than depending on whether this machine happens to have drift today.
@@ -157,6 +205,45 @@ try {
   assert(/couldn't/i.test(broken.thrown) && !/current/i.test(broken.thrown), `a thrown read says so instead of claiming all clear (got "${broken.thrown}")`);
   assert(/couldn't/i.test(broken.failed) && /git missing/.test(broken.failed), `an ok:false result surfaces its reason (got "${broken.failed}")`);
 
+  // The widget's own not-yet-known and partially-checked states.
+  const widgetStates = await app.eval(`(async () => {
+    const one = document.createElement("div");
+    one.append(await widgetBodyDocsDrift(null, null, async () => ({ ok: true, rows: [], pending: true })));
+    const two = document.createElement("div");
+    two.append(await widgetBodyDocsDrift(null, null, async () => ({ ok: true, rows: [], unchecked: 2, considered: 5 })));
+    return { pending: one.textContent, partial: two.textContent };
+  })()`);
+  assert(/checking/i.test(widgetStates.pending), `before the first sweep the widget says it is checking, not "current" (got "${widgetStates.pending}")`);
+  assert(/2 of 5/.test(widgetStates.partial) && !/are current/i.test(widgetStates.partial), `a partial sweep is reported as unknown, never folded into the all-clear (got "${widgetStates.partial}")`);
+
+  // Jump in must actually LAND you somewhere. The first cut called
+  // openSessionInPane without navigating first, and openSessionInPane writes into
+  // the hidden #chatPage and focuses a hidden composer - so from the Dashboard the
+  // one interactive affordance of the whole feature did nothing visible. The
+  // previous version of this test only COUNTED the buttons, never clicked one.
+  const jump = await app.eval(`(async () => {
+    const res = await window.helm.getSessions();
+    const target = (res?.sessions || []).find(s => s.sessionId && s.status !== "archived");
+    if (!target) { return { skipped: true }; }
+    await navigateToPage("dashboard");
+    const host = document.createElement("div");
+    document.body.append(host);
+    host.append(driftLineEl({ path: target.cwd || "x", name: "jump-test", commitsSince: 99, threshold: 8, sessionId: target.sessionId }));
+    const vis = () => ({ chat: !document.getElementById("chatPage").classList.contains("hidden"), dash: !document.getElementById("dashboardPage").classList.contains("hidden") });
+    const before = vis();
+    host.querySelector(".wd-drift-jump").click();
+    await new Promise(r => setTimeout(r, 700));
+    const after = vis();
+    host.remove();
+    return { skipped: false, before: JSON.stringify(before), after: JSON.stringify(after), chatVisible: after.chat && !after.dash, opened: selectedSessionId === target.sessionId };
+  })()`);
+  if (jump.skipped) {
+    log("     SKIP - no session on this machine to test Jump in against");
+  } else {
+    assert(jump.chatVisible === true, `Jump in navigates to chat, not just swaps a hidden pane (visible before: ${jump.before}, after: ${jump.after})`);
+    assert(jump.opened === true, "and the target session is the one selected");
+  }
+
   // The CLASSIC dashboard section. This is the board that actually matters: the
   // widget dashboard is opt-in and currently off, so a widget-only nudge would be
   // invisible on the board in use - an attention signal that never fires is worse
@@ -166,22 +253,47 @@ try {
       { path: "D:/Repo/Tools/fake-a", name: "fake-a", commitsSince: 40, threshold: 8, sessionId: null }
     ] });
     const sec = await dashboardDriftSection(stub);
-    const clean = await dashboardDriftSection(async () => ({ ok: true, rows: [] }));
+    const clean = await dashboardDriftSection(async () => ({ ok: true, rows: [], unchecked: 0, considered: 4 }));
     const broke = await dashboardDriftSection(async () => { throw new Error("boom"); });
+    const failed = await dashboardDriftSection(async () => ({ ok: false, error: "git missing", rows: [] }));
+    const partial = await dashboardDriftSection(async () => ({ ok: true, rows: [], unchecked: 3, considered: 9 }));
+    const pending = await dashboardDriftSection(async () => ({ ok: true, rows: [], pending: true }));
+    const txt = (el) => (el ? el.textContent.replace(/\\s+/g, " ") : null);
+    // The fingerprint must move when only the jump-in target changes.
+    const fpA = (await dashboardDriftSection(async () => ({ ok: true, rows: [{ path: "p", name: "p", commitsSince: 9, threshold: 8, sessionId: "A" }] }))).dataset.fp;
+    const fpB = (await dashboardDriftSection(async () => ({ ok: true, rows: [{ path: "p", name: "p", commitsSince: 9, threshold: 8, sessionId: "B" }] }))).dataset.fp;
     return {
       rendered: !!sec,
       cls: sec?.className,
       lines: sec ? sec.querySelectorAll(".wd-drift-line").length : 0,
+      headIsH3: !!sec?.querySelector(".dash-board-head h3"),
+      headText: sec?.querySelector(".dash-board-head h3")?.textContent,
+      hasCount: !!sec?.querySelector(".dash-count"),
       hasFingerprint: typeof sec?.dataset?.fp === "string" && sec.dataset.fp.length > 0,
       cleanIsNull: clean === null,
-      brokeIsNull: broke === null
+      pendingIsNull: pending === null,
+      brokeText: txt(broke),
+      failedText: txt(failed),
+      partialText: txt(partial),
+      fpTracksSession: fpA !== fpB
     };
   })()`);
   assert(section.rendered === true && section.lines === 1, `the classic dashboard renders a drift section (${section.lines} line(s))`);
-  assert(section.cls === "dash-board", `it reuses the existing dashboard module shell, not a new visual language (got "${section.cls}")`);
+  assert(section.cls === "dash-board", `it reuses the existing dashboard module shell (got "${section.cls}")`);
+  // Not just the shell: the HEAD has to come from the shared builder, or the title
+  // renders unstyled next to every other module's small uppercase heading.
+  assert(section.headIsH3 === true && section.headText.startsWith("Docs drift"), `the head comes from the shared dashBoardHead builder (h3: ${section.headIsH3}, "${section.headText}")`);
+  assert(section.hasCount === true, "and carries the same count pill convention as its neighbours");
   assert(section.hasFingerprint === true, "it carries a fingerprint, so the poll tick doesn't rebuild it every second");
+  assert(section.fpTracksSession === true, "the fingerprint tracks the jump-in target, not just the commit count - otherwise the button keeps pointing at an archived session");
   assert(section.cleanIsNull === true, "no drift means no section at all on the classic board - it stays quiet rather than showing an empty module");
-  assert(section.brokeIsNull === true, "a failed read cannot break the dashboard");
+  assert(section.pendingIsNull === true, "before the first sweep finishes it shows nothing, rather than guessing");
+  // The failure modes. A read that could not look must NEVER render as the
+  // all-clear: on the classic board the all-clear IS the absence of the section,
+  // so returning null on failure was indistinguishable from "everything is fine".
+  assert(/couldn't check/i.test(section.brokeText || ""), `a thrown read renders an explicit "couldn't check", not silence (got "${section.brokeText}")`);
+  assert(/couldn't check/i.test(section.failedText || "") && /git missing/.test(section.failedText || ""), `an ok:false read surfaces its reason (got "${section.failedText}")`);
+  assert(/3 of 9/.test(section.partialText || "") && /unknown/i.test(section.partialText || ""), `a partially-checked sweep says how many it couldn't check (got "${section.partialText}")`);
 
   // And it is present on the real board, in the slot the refresh writes to.
   const live = await app.eval(`(() => {
