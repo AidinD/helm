@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import { parseAcceptanceCriteria, acceptanceCoverage } from "./acceptance.js";
 
 // Review records (task ce2d19ab).
 //
@@ -46,6 +47,39 @@ export function reviewRecordPath(metaHome, taskId) {
 
 export const REVIEW_VERDICTS = ["stamp", "judgment"];
 
+// Criticality drives what evidence is REQUIRED, not just how carefully to work
+// (the captain 2026-07-27): "störst effort borde ligga på systemkritiska moment. security
+// issues borde t.ex aldrig slinka igenom, medans en front end bugg är mer
+// acceptabelt."
+//
+// Uniform rigour is what makes "I don't review code anymore" unsafe: it spends the
+// same shallow pass on an auth path as on a misaligned pixel. The gradient is what
+// lets him stop reading diffs while keeping the veto where being wrong is expensive.
+export const CRITICALITY_TIERS = {
+  critical: {
+    label: "Critical",
+    what: "security, auth, data loss or corruption, money, irreversible or outward-facing actions (release, publish, delete, spend)",
+    // The author's own passing tests are not evidence at this tier. Something from
+    // OUTSIDE the author has to have looked - that is the whole finding from
+    // 2026-07-26/27, where green self-written tests sat on top of broken features.
+    requiresIndependentReview: true,
+    requiresChecks: true,
+  },
+  core: {
+    label: "Core",
+    what: "state, persistence, or behaviour other work depends on",
+    requiresIndependentReview: false,
+    requiresChecks: true,
+  },
+  cosmetic: {
+    label: "Cosmetic",
+    what: "visual or front-end only; a bug here is recoverable and finding it later is acceptable",
+    requiresIndependentReview: false,
+    requiresChecks: false,
+  },
+};
+export const CRITICALITY_LEVELS = Object.keys(CRITICALITY_TIERS);
+
 /**
  * What is wrong with a record, as a list of human-readable problems. Empty means
  * complete. Used both to refuse a bad write and to mark a rendered record as
@@ -88,7 +122,83 @@ export function reviewRecordProblems(rec) {
       problems.push("every check needs a label and a cmd");
     }
   }
+  problems.push(...criticalityProblems(rec));
+  problems.push(...acceptanceRecordProblems(rec));
   return problems;
+}
+
+/**
+ * The criticality gradient, enforced (the captain 2026-07-27).
+ *
+ * Required, with no default. A missing tier is the author declining to say how much
+ * it costs to be wrong here - which is precisely the judgement the gradient exists
+ * to force, so silence must not resolve to the lenient option.
+ */
+function criticalityProblems(rec) {
+  const problems = [];
+  const tier = CRITICALITY_TIERS[rec.criticality];
+  if (!tier) {
+    return [`criticality must be one of ${CRITICALITY_LEVELS.join(" | ")} - say how much it costs to be wrong here`];
+  }
+  const checks = Array.isArray(rec.checks) ? rec.checks : [];
+  if (tier.requiresChecks && checks.length === 0) {
+    problems.push(`a ${rec.criticality} item needs at least one runnable check - "${tier.what}" cannot rest on prose alone`);
+  }
+  if (tier.requiresIndependentReview) {
+    const ind = rec.independentReview;
+    if (!ind || !String(ind.by || "").trim() || !String(ind.summary || "").trim()) {
+      problems.push(
+        "a critical item needs independentReview {by, summary} - at this tier the author's own passing tests are not evidence (2026-07-27: three features shipped broken under green self-written tests)"
+      );
+    } else if (typeof ind.findings !== "number") {
+      problems.push("independentReview.findings must be a number - how many issues the independent pass raised (0 is a real answer)");
+    }
+  }
+  return problems;
+}
+
+/**
+ * Acceptance criteria, enforced at the review boundary.
+ *
+ * Copied onto the record rather than read live from the task: a record is a snapshot
+ * of a claim, and a task edited afterwards must not retroactively change what was
+ * claimed. The cost is that they can drift from the task - surfaced by
+ * acceptanceDrift() rather than hidden.
+ *
+ * Every criterion must be linked to a test step by name or number. This is the half
+ * that would have caught the "Jump in" bug: the criterion was "I land in the
+ * session", the test COUNTED buttons, and nothing connected the two.
+ */
+function acceptanceRecordProblems(rec) {
+  const criteria = Array.isArray(rec.acceptanceCriteria) ? rec.acceptanceCriteria : null;
+  if (!criteria) {
+    // Not every record has criteria yet (they only exist for work taken after this
+    // landed), so their ABSENCE is not a refusal - but a present-and-empty array is
+    // an explicit claim that the task had none, which is allowed and visible.
+    return [];
+  }
+  const problems = [];
+  const { uncovered, dangling } = acceptanceCoverage(criteria, rec.testSteps);
+  for (const c of uncovered) {
+    problems.push(`acceptance criterion ${c.index} has no test step covering it: "${c.text}" - link one with ac: ${c.index}`);
+  }
+  for (const ref of dangling) {
+    problems.push(`a test step claims to cover "${ref}", which is not one of this task's acceptance criteria`);
+  }
+  return problems;
+}
+
+/**
+ * Has the task's acceptance changed since the record snapshotted it? Reported, never
+ * auto-resolved: if the criteria moved, either the work needs revisiting or the
+ * record does, and only a human knows which.
+ */
+export function acceptanceDrift(rec, taskDescription) {
+  const snapshot = Array.isArray(rec?.acceptanceCriteria) ? rec.acceptanceCriteria : [];
+  const live = parseAcceptanceCriteria(taskDescription);
+  const key = (list) => list.map((c) => (typeof c === "string" ? c : c.text).trim().toLowerCase()).sort().join("|");
+  const drifted = key(snapshot) !== key(live);
+  return { drifted, snapshot, live };
 }
 
 // --- The gauntlet (Uncle Bob, task bd5d7b4b) -------------------------------
@@ -269,6 +379,12 @@ export function buildReviewQueue(reviewTasks, records) {
   const rows = (reviewTasks || []).map((t) => {
     const rec = byId.get(String(t.id).toLowerCase()) || null;
     const problems = rec ? reviewRecordProblems(rec) : ["no review record was written for this task"];
+    // "incomplete" and "unrecorded" are deliberately DIFFERENT verdicts. Both used
+    // to read as "unrecorded", which hid the more alarming case: a record exists,
+    // so somebody claimed this was reviewed, but the claim is inadmissible (e.g. a
+    // critical item with nothing independent behind it). Nobody-wrote-one and
+    // somebody-wrote-a-bad-one need different reactions.
+    const verdict = problems.length === 0 ? rec.verdict : rec ? "incomplete" : "unrecorded";
     return {
       taskId: t.id,
       title: t.title || t.text || "(untitled)",
@@ -277,14 +393,40 @@ export function buildReviewQueue(reviewTasks, records) {
       record: rec,
       incomplete: problems.length > 0,
       problems,
-      verdict: problems.length === 0 ? rec.verdict : "unrecorded",
+      verdict,
+      criticality: rec?.criticality || null,
+      // Did the task's acceptance criteria move after the record snapshotted them?
+      drift: rec ? acceptanceDrift(rec, t.description || "") : { drifted: false, snapshot: [], live: [] },
       gauntlet: rec ? gauntletStatus(rec) : { declared: 0, state: "none" },
     };
   });
-  const rank = { judgment: 0, stamp: 1, unrecorded: 2 };
+  // Ordering is an attention model, so it gets stated rather than inherited:
+  //
+  //   0. things needing a decision (judgment), AND any CRITICAL item that claims to
+  //      be reviewed but isn't admissible. The second one belongs at the top even
+  //      though the fix is mine, not his: it means something on the expensive tier
+  //      is being presented as verified when nothing independent has looked. Sorting
+  //      it below a batch of cheap cosmetic stamps buries exactly the alarm the
+  //      gradient exists to raise.
+  //   1. stamps - cheap, safe, read the evidence and move on.
+  //   2. everything else inadmissible or unwritten - informational; it tells him I
+  //      have work left, not that he does.
+  //
+  // Within a band: criticality, then board priority.
+  const band = (r) => {
+    if (r.verdict === "judgment" || (r.verdict === "incomplete" && r.criticality === "critical")) {
+      return 0;
+    }
+    return r.verdict === "stamp" ? 1 : 2;
+  };
+  const critRank = { critical: 0, core: 1, cosmetic: 2 };
   return rows.sort((a, b) => {
-    const d = (rank[a.verdict] ?? 3) - (rank[b.verdict] ?? 3);
-    return d !== 0 ? d : (a.priority ?? 99) - (b.priority ?? 99);
+    const d = band(a) - band(b);
+    if (d !== 0) {
+      return d;
+    }
+    const c = (critRank[a.criticality] ?? 3) - (critRank[b.criticality] ?? 3);
+    return c !== 0 ? c : (a.priority ?? 99) - (b.priority ?? 99);
   });
 }
 
@@ -295,5 +437,9 @@ export function reviewQueueTally(rows) {
     judgment: rows.filter((r) => r.verdict === "judgment").length,
     stamp: rows.filter((r) => r.verdict === "stamp").length,
     unrecorded: rows.filter((r) => r.verdict === "unrecorded").length,
+    // A record that exists but is inadmissible - counted apart from "nobody wrote
+    // one", because it needs a different reaction.
+    incomplete: rows.filter((r) => r.verdict === "incomplete").length,
+    critical: rows.filter((r) => r.criticality === "critical").length,
   };
 }

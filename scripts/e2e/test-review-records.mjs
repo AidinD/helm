@@ -18,6 +18,8 @@ import {
   reviewQueueTally,
   recordCheckRun,
   gauntletStatus,
+  acceptanceDrift,
+  CRITICALITY_LEVELS,
 } from "../../src/lib/reviewRecords.js";
 
 let exit = 0;
@@ -42,6 +44,9 @@ const complete = (over = {}) => ({
   notVerified: [],
   testSteps: [{ step: "Type a prompt, click the caret, pick 'Send when quota resets'", expect: "A queued bar appears naming the wait" }],
   release: "0.1.456",
+  // Required since 2026-07-27: criticality has no default, because a missing tier
+  // is the author declining to say how much it costs to be wrong.
+  criticality: "cosmetic",
   ...over,
 });
 
@@ -114,6 +119,71 @@ try {
 
   const leftovers = fs.readdirSync(reviewsDir(metaHome)).filter((f) => f.includes(".tmp"));
   ok(leftovers.length === 0, "atomic write leaves no .tmp files");
+  // --- the criticality gradient (the captain 2026-07-27) ---------------------------
+  // "störst effort borde ligga på systemkritiska moment. security issues borde
+  // t.ex aldrig slinka igenom, medans en front end bugg är mer acceptabelt."
+  ok(reviewRecordProblems(complete({ criticality: undefined })).some((p) => /criticality must be one of/.test(p)),
+    "a record with NO criticality is refused - silence must not resolve to the lenient tier");
+  ok(reviewRecordProblems(complete({ criticality: "kritisk" })).some((p) => /criticality must be one of/.test(p)),
+    "an unknown tier is refused rather than treated as a note");
+  ok(reviewRecordProblems(complete({ criticality: "cosmetic" })).length === 0,
+    "a cosmetic item needs no runnable check - a front-end bug is recoverable");
+
+  // core: needs a check, but the author may still be the only reviewer.
+  ok(reviewRecordProblems(complete({ criticality: "core" })).some((p) => /needs at least one runnable check/.test(p)),
+    "a CORE item with no check is refused - state others depend on can't rest on prose");
+  ok(reviewRecordProblems(complete({ criticality: "core", checks: [{ label: "x", cmd: "node -e 0" }] })).length === 0,
+    "a core item with a check is complete");
+
+  // critical: the author's own passing tests are explicitly not enough.
+  const crit = (over = {}) => complete({ criticality: "critical", checks: [{ label: "x", cmd: "node -e 0" }], ...over });
+  ok(reviewRecordProblems(crit()).some((p) => /needs independentReview/.test(p)),
+    "a CRITICAL item without an independent pass is refused - green self-written tests are not evidence at this tier");
+  ok(reviewRecordProblems(crit({ independentReview: { by: "code-review agent", summary: "" } })).some((p) => /needs independentReview/.test(p)),
+    "an independentReview with no summary doesn't count - a name alone proves nothing");
+  ok(reviewRecordProblems(crit({ independentReview: { by: "code-review agent", summary: "found 2 real issues" } })).some((p) => /findings must be a number/.test(p)),
+    "it must say HOW MANY findings the independent pass raised");
+  ok(reviewRecordProblems(crit({ independentReview: { by: "code-review agent", summary: "no issues found", findings: 0 } })).length === 0,
+    "zero findings is a real answer, as long as somebody independent actually looked");
+  ok(reviewRecordProblems(complete({ criticality: "critical", independentReview: { by: "a", summary: "b", findings: 0 } }))
+    .some((p) => /needs at least one runnable check/.test(p)),
+    "critical needs BOTH a check and an independent pass, not either/or");
+
+  // --- acceptance criteria: intent captured before the work ------------------
+  // The bug this closes: the "Jump in" criterion was "I land in the session" and the
+  // test COUNTED buttons. Nothing connected the two, so it passed while broken.
+  const withAc = (criteria, steps) => complete({ criticality: "cosmetic", acceptanceCriteria: criteria, testSteps: steps });
+  const AC1 = { index: 1, text: "I click Jump in and land in that project's session" };
+  const AC2 = { index: 2, text: "the drift list disappears once the docs are reconciled" };
+  ok(reviewRecordProblems(withAc([AC1], [{ step: "count the buttons", expect: "one button" }]))
+    .some((p) => /has no test step covering it/.test(p)),
+    "a criterion with no linked test step is refused - this is the exact Jump-in failure");
+  ok(reviewRecordProblems(withAc([AC1], [{ step: "click Jump in", expect: "chat opens on that session", ac: 1 }])).length === 0,
+    "linking the step to the criterion by number satisfies it");
+  ok(reviewRecordProblems(withAc([AC1], [{ step: "click Jump in", expect: "chat opens", ac: AC1.text }])).length === 0,
+    "linking by the criterion's text works too");
+  ok(reviewRecordProblems(withAc([AC1, AC2], [{ step: "click", expect: "opens", ac: [1, 2] }])).length === 0,
+    "one step may cover two criteria");
+  ok(reviewRecordProblems(withAc([AC1, AC2], [{ step: "click", expect: "opens", ac: 1 }]))
+    .some((p) => /criterion 2 has no test step/.test(p)),
+    "covering only the first of two criteria is still refused");
+  ok(reviewRecordProblems(withAc([AC1], [{ step: "click", expect: "opens", ac: 7 }]))
+    .some((p) => /not one of this task's acceptance criteria/.test(p)),
+    "a step claiming to cover a criterion that doesn't exist is an error, not noise");
+  ok(reviewRecordProblems(complete({ criticality: "cosmetic", acceptanceCriteria: [] })).length === 0,
+    "an explicitly EMPTY criteria list is allowed - it claims the task had none, visibly");
+  ok(reviewRecordProblems(complete({ criticality: "cosmetic" })).length === 0,
+    "a record with no criteria field at all is not refused - work predating this must stay writable");
+
+  // Drift: the record snapshots the criteria, so a later task edit must be REPORTED,
+  // never silently adopted or silently ignored.
+  const snap = { acceptanceCriteria: [AC1] };
+  ok(acceptanceDrift(snap, "blah\nAC: I click Jump in and land in that project's session\nmore").drifted === false,
+    "matching criteria are not drift");
+  ok(acceptanceDrift(snap, "AC: something else entirely happens now").drifted === true,
+    "an edited criterion IS drift - either the work or the record needs revisiting");
+  ok(acceptanceDrift(snap, "no criteria here").drifted === true, "removing the criteria from the task is drift too");
+
   // --- the gauntlet: declared checks vs what actually ran --------------------
   // This had NO repo test until a live run exposed the bug below - the same miss
   // as the feature it guards (a test that lived only in a scratch file).
@@ -123,6 +193,7 @@ try {
     title: "Gauntlet subject",
     verdict: "stamp",
     summary: "Two declared checks.",
+    criticality: "core",
     evidence: [],
     notVerified: [],
     testSteps: [{ step: "Run it", expect: "It works" }],

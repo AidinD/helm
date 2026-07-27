@@ -392,6 +392,10 @@ export function reviewTasks(jotConfig = {}) {
       title: t.text || "",
       priority: typeof t.priority === "number" ? t.priority : null,
       category: catName.get(t.categoryId) || null,
+      // Carried so the review queue can compare the record's snapshotted
+      // acceptance criteria against the ones on the task RIGHT NOW - a criterion
+      // edited after the work must be surfaced, not silently ignored.
+      description: t.description || "",
     }));
   return { ok: true, path: jotPath, tasks };
 }
