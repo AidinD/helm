@@ -4559,3 +4559,47 @@ parameters rather than reassigning `window.helm.*`: the bridge is contextBridge-
 exposed and therefore NOT writable, so the first version's stubs silently did
 nothing and the test was quietly asserting against live machine data instead of
 the empty and error states it claimed to cover.
+
+### Ship-review of increment 5 (same day) - what the independent pass caught
+
+An independent reviewer in a fresh context found four real defects in the commit
+above.
+Recording them because three of the four are instructive about the testing, not
+just the code.
+
+**1. A shipped regression.**
+The Fleet rows string-compared `lifecycleState === "working"`, so the new
+`launching` state fell through to the idle else-branch: a session Helm had just
+spawned printed "idle".
+That is the precise display this epic exists to remove, reintroduced by the
+increment meant to close it.
+Fixed by routing both readers through a named `isWorkingLifecycle` mirror, plus a
+source-level assertion that fails if any site goes back to comparing the string -
+the renderer is a classic script and cannot import the real helper, so the mirror
+is the best available and the assertion is what keeps it honest.
+
+**2. An empty if-block.**
+The "first real output ends the launching window" guard had no body: the clear was
+destroyed when I stripped an earlier over-broad edit with a line filter.
+The consequence was subtle and worse than it looks - the window lasted the whole
+turn, which made `launching` co-extensive with `isLive` and therefore a pure
+relabel of a state already resolved correctly.
+The reviewer concluded from this that the state gained no coverage at all.
+That was right about the code as committed; after the fix a real launch measurably
+goes `launching -> working -> waiting`, so the window is genuinely distinct.
+
+**3 and 4** were a never-bound (inert) launching entry in `fireRoutine` plus a
+leak on synchronous launch failure, and a comment in `sessions.js` that claimed
+resumed Desktop sessions become Helm-owned when they do not.
+
+**The lesson, which is the same one as increment 5's own notes.**
+The unit test was green.
+The IPC E2E was green.
+Neither could catch #1, because both tested layers I had reasoned about, and
+neither had ever WATCHED A LAUNCH.
+`test-launching-observed.mjs` now spawns a real session and samples the board
+through its first turn.
+It costs a real turn, which is why it isn't in the fast suite - but a state you
+have never seen appear is a state you have not tested, and that is what the
+notVerified field on the review record was trying to say before the reviewer
+proved it.
