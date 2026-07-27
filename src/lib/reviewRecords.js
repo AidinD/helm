@@ -119,7 +119,8 @@ export function recordCheckRun(metaHome, taskId, run, { now = Date.now() } = {})
     ranAt: now,
     tail: run.tail ? String(run.tail).slice(-1200) : null,
   });
-  return writeReviewRecord(metaHome, { ...rec, checkRuns: runs }, { now });
+  // isRunStamp: recording an outcome must not move the staleness baseline.
+  return writeReviewRecord(metaHome, { ...rec, checkRuns: runs }, { now, isRunStamp: true });
 }
 
 /**
@@ -136,7 +137,7 @@ export function gauntletStatus(rec) {
     return { declared: 0, passed: 0, failed: 0, stale: 0, unrun: 0, state: "none" };
   }
   const runs = Array.isArray(rec.checkRuns) ? rec.checkRuns : [];
-  const updatedAt = typeof rec.updatedAt === "number" ? rec.updatedAt : 0;
+  const updatedAt = typeof rec.contentUpdatedAt === "number" ? rec.contentUpdatedAt : typeof rec.updatedAt === "number" ? rec.updatedAt : 0;
   let passed = 0;
   let failed = 0;
   let stale = 0;
@@ -197,7 +198,7 @@ export function listReviewRecords(metaHome) {
  * feature exists to prevent is a review item that looks reviewed and is not.
  * Atomic temp+rename.
  */
-export function writeReviewRecord(metaHome, rec, { now = Date.now() } = {}) {
+export function writeReviewRecord(metaHome, rec, { now = Date.now(), isRunStamp = false } = {}) {
   const problems = reviewRecordProblems(rec);
   if (problems.length > 0) {
     return { ok: false, error: `Incomplete review record: ${problems.join("; ")}`, problems };
@@ -208,6 +209,18 @@ export function writeReviewRecord(metaHome, rec, { now = Date.now() } = {}) {
     ...rec,
     createdAt: existing?.createdAt || now,
     updatedAt: now,
+    // Staleness is measured against when the CLAIM last changed, not against the
+    // last write - because stamping a check run is itself a write. With one
+    // baseline for both, running N checks made the first N-1 read as stale (each
+    // later stamp moved the baseline past the earlier runs), so a multi-check
+    // gauntlet could never reach "passing" however green the checks were.
+    //
+    // Only recordCheckRun passes isRunStamp, and it is an explicit ARGUMENT rather
+    // than a field on the record: if preserving it were data-driven, an ordinary
+    // edit that spread the previous record would silently carry the old baseline
+    // forward too, and a green tick would keep vouching for changed work - the
+    // exact failure the staleness rule exists to prevent.
+    contentUpdatedAt: isRunStamp && typeof existing?.contentUpdatedAt === "number" ? existing.contentUpdatedAt : now,
   };
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true });
