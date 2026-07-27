@@ -710,9 +710,18 @@ function showImageLightbox(fileUrl) {
   const img = document.createElement("img");
   img.src = fileUrl;
   overlay.append(img);
-  const close = () => {
+  let settled = false;
+  // Every dismissal path funnels through close(), and onCancel must fire exactly once -
+  // otherwise a caller awaiting an answer hangs on Escape.
+  const close = (confirmed = false) => {
     overlay.remove();
     document.removeEventListener("keydown", onKey);
+    if (!settled) {
+      settled = true;
+      if (!confirmed && onCancel) {
+        onCancel();
+      }
+    }
   };
   const onKey = (e) => {
     if (e.key === "Escape") {
@@ -761,6 +770,14 @@ function reviewRowEl(row, band = null) {
   head.append(title, id);
   if (row.category) {
     head.append(reviewChip(row.category));
+  }
+  // Subtasks are in the queue now (they used to be filtered out entirely, so a subtask
+  // in review was invisible and needed no record). Name the parent so the row still
+  // reads as belonging somewhere.
+  if (row.parentTitle) {
+    const chip = reviewChip(`in: ${row.parentTitle.slice(0, 40)}`, "neutral");
+    chip.title = `Subtask of "${row.parentTitle}"`;
+    head.append(chip);
   }
   if (typeof row.priority === "number") {
     head.append(reviewChip(`p${row.priority}`));
@@ -985,9 +1002,28 @@ function reviewRowEl(row, band = null) {
     run.className = "text-btn";
     run.textContent = "Run checks";
     run.addEventListener("click", async () => {
-      run.disabled = true;
-      run.textContent = "Running…";
-      const res = await window.helm.runReviewChecks(row.taskId);
+      // This button executes arbitrary shell from a JSON file in the meta-home, with
+      // no allowlist. For a prompt-injected or careless agent it is the most direct
+      // capability in the whole flow: write a record, wait for the click. So the
+      // commands are shown IN FULL and confirmed before anything runs, and the
+      // confirm focuses Cancel.
+      const cmds = (rec.checks || []).map((c, i) => `${i + 1}. ${c.cmd}`).join("\n");
+      const cwd = rec.projectPath || "(no project path - the run will be refused)";
+      const proceedRun = async () => {
+        run.disabled = true;
+        run.textContent = "Running…";
+        return window.helm.runReviewChecks(row.taskId);
+      };
+      const res = await new Promise((resolve) => {
+        customConfirm(`Run these in ${cwd}:\n\n${cmds}`, "Run them", async () => resolve(await proceedRun()), {
+          deliberate: true,
+          // Escape, Cancel and the backdrop all land here, so the await can't hang.
+          onCancel: () => resolve(null),
+        });
+      });
+      if (res === null) {
+        return;
+      }
       if (!res?.ok) {
         showToast(res?.error || "Couldn't run the checks.");
         run.disabled = false;
@@ -1074,8 +1110,26 @@ function reviewRowEl(row, band = null) {
         showToast(res?.ok ? `"${row.title}" marked done.` : res?.error || "Couldn't update the board.");
         renderReviewPage();
       });
-    if (g.state === "failing") {
-      customConfirm(`"${row.title}" has failing checks. Mark it done anyway?`, "Mark done", proceed);
+    // Every state that means "this has not been shown to work" gets a confirm, not
+    // just an outright failing one. Previously only `failing` did - so unverified,
+    // unrun, stale, drifted and a record that doesn't meet its own bar all signed off
+    // on a single click, which are precisely the states a rushed session produces.
+    const reason =
+      g.state === "failing"
+        ? `has FAILING checks`
+        : g.unverified > 0
+          ? `has ${g.unverified} check(s) whose outcome was never stamped by the app`
+          : row.verdict === "incomplete"
+            ? `has a record that does not meet the bar for a ${row.criticality || "?"} item`
+            : g.state === "incomplete"
+              ? `has declared checks that have not passed (${g.unrun} unrun, ${g.stale} stale)`
+              : row.drift?.drifted
+                ? `has acceptance criteria that changed after the record was written`
+                : (row.caveats || []).length > 0 && (g.declared || 0) === 0
+                  ? `has no executed check at all - it rests on the author's word`
+                  : null;
+    if (reason) {
+      customConfirm(`"${row.title}" ${reason}. Mark it done anyway?`, "Mark done", proceed, { deliberate: true });
       return;
     }
     proceed();
@@ -1190,7 +1244,42 @@ async function renderReviewPage() {
     frag.append(reviewRowEl(row, band));
   }
 
-  if (tally.total === 0) {
+  // The audit: work that reached done without ever being recorded. A direct board
+  // write (an agent editing todos.json, a drag in the Jot app) cannot be prevented
+  // from here - only detected - so it has to appear on the page he actually reads.
+  // Otherwise "I only look at the Review page" is safe only while every agent
+  // voluntarily stops at `review`.
+  const skipped = res?.doneWithoutRecord || [];
+  if (skipped.length > 0) {
+    const h = document.createElement("h3");
+    h.className = "rev-group";
+    h.textContent = "Went to done without a record";
+    const hint = document.createElement("span");
+    hint.className = "rev-group-hint";
+    hint.textContent = "— these bypassed review entirely; nothing was written down to check";
+    h.append(hint);
+    frag.append(h);
+    for (const t of skipped) {
+      const el = document.createElement("section");
+      el.className = "rev-item skipped";
+      const line = document.createElement("div");
+      line.className = "rev-head";
+      const title = document.createElement("span");
+      title.className = "rev-title";
+      title.textContent = t.title || "(untitled)";
+      line.append(title);
+      if (t.category) {
+        line.append(reviewChip(t.category, "neutral"));
+      }
+      if (t.completedAt) {
+        line.append(reviewChip(relTime(t.completedAt), "neutral"));
+      }
+      el.append(line);
+      frag.append(el);
+    }
+  }
+
+  if (tally.total === 0 && skipped.length === 0) {
     const empty = document.createElement("div");
     empty.className = "pane-empty";
     empty.textContent = "When something moves to review on the Jot board, it lands here with its evidence and test steps.";
@@ -6435,7 +6524,16 @@ function mateCrewWait(mate) {
 // A small themed, centered confirm modal (never the native window.confirm -
 // Aidin's standing rule). Calls onConfirm only if the user confirms; clicking
 // the backdrop or Cancel dismisses. Reusable for any destructive action.
-function customConfirm(message, confirmLabel, onConfirm) {
+/**
+ * `deliberate: true` focuses CANCEL rather than OK.
+ *
+ * The default focuses OK, so click-then-Enter/Space confirms - and for the review
+ * flow this dialog is the ONLY guard in the whole path, which makes a reflex keypress
+ * enough to sign off work whose checks are failing. Escape and the backdrop still
+ * dismiss; the point is only that the destructive answer is never the one your hands
+ * are already on.
+ */
+function customConfirm(message, confirmLabel, onConfirm, { deliberate = false, onCancel = null } = {}) {
   const overlay = document.createElement("div");
   overlay.className = "confirm-overlay";
   const box = document.createElement("div");
@@ -6469,7 +6567,7 @@ function customConfirm(message, confirmLabel, onConfirm) {
   });
   ok.addEventListener("click", (e) => {
     e.stopPropagation();
-    close();
+    close(true);
     onConfirm();
   });
   overlay.addEventListener("click", (e) => {
@@ -6482,7 +6580,9 @@ function customConfirm(message, confirmLabel, onConfirm) {
   box.append(msg, row);
   overlay.append(box);
   document.body.append(overlay);
-  ok.focus();
+  // See the deliberate flag: for a destructive confirm the focus goes to Cancel, so
+  // a reflex Enter cannot complete it.
+  (deliberate ? cancel : ok).focus();
 }
 
 // Second mates are DERIVED from run history (main.js), which only surfaces

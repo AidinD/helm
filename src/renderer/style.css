@@ -4590,6 +4590,10 @@ button.primary {
   font-size: 13.5px;
   line-height: 1.5;
   margin-bottom: 14px;
+  /* Newlines are load-bearing now: the Run-checks confirm lists the actual commands
+     one per line, and the whole point is that they are readable in full. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .confirm-row {
   display: flex;
@@ -5695,3 +5699,6 @@ button.primary {
 .rev-caveats ul { margin: 3px 0 0; padding-left: 16px; }
 .rev-caveats li { font-size: 12.5px; color: var(--text-dim); }
 .rev-whynot { margin-top: 7px; font-size: 12px; color: var(--text-faint); font-style: italic; }
+/* Work that reached done with no record at all - the audit band. Red, because it
+   bypassed the flow entirely rather than merely being under-evidenced. */
+.rev-item.skipped { border-left: 3px solid var(--danger); opacity: 0.92; }
