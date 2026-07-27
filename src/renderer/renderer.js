@@ -1187,6 +1187,34 @@ async function renderReviewPage() {
       : `${tally.judgment} need your judgment · ${tally.stamp} ready to stamp${tally.unconfirmed > 0 ? ` · ${tally.unconfirmed} claimed but unconfirmed` : ""}${tally.incomplete > 0 ? ` · ${tally.incomplete} below the bar` : ""}${tally.unrecorded > 0 ? ` · ${tally.unrecorded} with no record` : ""}`;
   heading.append(h2, sub);
   topbar.append(heading);
+
+  // "Re-run everything unconfirmed", so a board that went stale after a commit can be
+  // brought back without opening every card. Pinning a pass to a commit is the right
+  // rule but it makes staleness common, and a signal that is tedious to clear is a
+  // signal that gets ignored.
+  const needsRun = rows.filter((r) => (r.gauntlet?.declared || 0) > 0 && r.gauntlet.state !== "passing");
+  if (needsRun.length > 0) {
+    const runAll = document.createElement("button");
+    runAll.type = "button";
+    runAll.className = "text-btn";
+    runAll.textContent = `Re-run ${needsRun.length} unconfirmed`;
+    runAll.title = needsRun.map((r) => r.title).join("\n");
+    runAll.addEventListener("click", async () => {
+      runAll.disabled = true;
+      let done = 0;
+      let failed = 0;
+      for (const row of needsRun) {
+        runAll.textContent = `Running ${++done}/${needsRun.length}…`;
+        const res2 = await window.helm.runReviewChecks(row.taskId);
+        if (!res2?.ok || res2.stored === false || (res2.results || []).some((r) => !r.ok)) {
+          failed += 1;
+        }
+      }
+      showToast(failed === 0 ? `Re-ran ${done} item(s); all checks passed.` : `Re-ran ${done} item(s); ${failed} still not passing.`);
+      renderReviewPage();
+    });
+    topbar.append(runAll);
+  }
   frag.append(topbar);
 
   if (!res?.ok && res?.error) {
