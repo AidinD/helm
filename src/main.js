@@ -16,7 +16,7 @@ import { loadJot, loadGoals, addSubtask, formatJotSummaryForClassifier, projectB
 import { loadConfig, writeConfig } from "./lib/config.js";
 import { startSession } from "./lib/launcher.js";
 import { createLiveSessionRegistry } from "./lib/liveSessions.js";
-import { sessionLifecycleState, applyStatusOverrides } from "./lib/sessionState.js";
+import { sessionLifecycleState, applyStatusOverrides, sessionStateSource } from "./lib/sessionState.js";
 import { createJotHostStore } from "./lib/jotHostStore.js";
 import { registerJotIpc } from "./lib/jotIpcBridge.js";
 import { continueOnMobile } from "./lib/remoteControl.js";
@@ -337,8 +337,20 @@ ipcMain.handle("sessions:get", () => {
     // projected from status + orchestratorTag now that both are resolved. isAcked
     // is passed so a content-driven needs-you promotion (an age-decayed open
     // question, 4cd7d592) is still suppressed for a session the user acked.
+    // isLaunching is only ever true for a Helm-OWNED session (it is the launch
+    // itself that proves it), which is what makes `launching` a TRACKED state
+    // rather than another guess layered on the heuristic.
+    const launchingNow =
+      session.helmOwned && (liveSessions.isLaunching(session.cliSessionId) || liveSessions.isLaunching(session.sessionId));
     session.lifecycleState = sessionLifecycleState(session, {
       isAcked: acknowledged[session.sessionId] >= session.lastActivityAt,
+      isLaunching: launchingNow,
+    });
+    // Whether that state is tracked or merely derived - the design's hybrid
+    // caveat, exposed instead of assumed (Epic f3d096fa).
+    session.stateSource = sessionStateSource(session, {
+      isLive: liveSessions.isLive(session.cliSessionId) || liveSessions.isLive(session.sessionId),
+      isLaunching: launchingNow,
     });
     // autoCompacted: surfaced so an automatic (silent) compaction isn't a
     // total black box — the row shows a small note until the next real
@@ -1893,6 +1905,12 @@ ipcMain.handle(
       liveTurnId = resumeSessionId;
       markSessionLive(liveTurnId);
     }
+    // launching (Epic f3d096fa): spawned, nothing back yet. A FRESH launch has no
+    // session id in this window at all, which is exactly why the transcript
+    // heuristic cannot see it - so track it by launchId and bind the id later.
+    if (!internal) {
+      liveSessions.markLaunching(launchId, liveTurnId);
+    }
     try {
       ({ child, done } = startSession({
       cwd,
@@ -1910,6 +1928,10 @@ ipcMain.handle(
         if (evt.kind === "session" && evt.sessionId && !internal && !liveTurnId) {
           liveTurnId = evt.sessionId;
           markSessionLive(liveTurnId);
+          liveSessions.bindLaunch(launchId, liveTurnId);
+        }
+        // First real output ends the launching window - it is working now.
+        if (!internal && (evt.kind === "assistant" || evt.kind === "tool_use" || evt.kind === "result")) {
         }
         if (evt.kind === "session" && evt.sessionId && !internal) {
           // Record into Helm's own index the moment the session id appears, so
@@ -1987,6 +2009,7 @@ ipcMain.handle(
         sessionTurnLocks.delete(resumeSessionId);
       }
       markSessionDone(liveTurnId);
+      liveSessions.clearLaunching(launchId);
       throw err;
     }
     liveChildren.set(launchId, child);
@@ -1998,6 +2021,7 @@ ipcMain.handle(
     done.then((summary) => {
       liveChildren.delete(launchId);
       markSessionDone(liveTurnId);
+      liveSessions.clearLaunching(launchId);
       // Release the per-session turn lock (Slice 4) now the turn is over, so the
       // next turn (pane or relay) on this session can proceed.
       if (resumeSessionId) {
@@ -3792,6 +3816,9 @@ function fireRoutine(routine) {
     };
     let recorded = false;
     let liveTurnId = null;
+    // A routine fire is a Helm-owned launch too, so it gets the same pre-output
+    // launching window (Epic f3d096fa).
+    liveSessions.markLaunching(launchId, null);
     const { child, done } = startSession({
       cwd,
       prompt: routine.prompt,
@@ -3825,6 +3852,7 @@ function fireRoutine(routine) {
       .then((summary) => {
         liveChildren.delete(launchId);
         markSessionDone(liveTurnId);
+      liveSessions.clearLaunching(launchId);
         send({ kind: "done", summary });
         if (summary.sessionId) {
           recordHelmSession(summary.sessionId, { createIfAbsent: false });
@@ -3836,6 +3864,7 @@ function fireRoutine(routine) {
       .catch(() => {
         liveChildren.delete(launchId);
         markSessionDone(liveTurnId);
+      liveSessions.clearLaunching(launchId);
       });
   } catch (err) {
     console.error("[helm] failed to fire routine:", routine?.name, err);

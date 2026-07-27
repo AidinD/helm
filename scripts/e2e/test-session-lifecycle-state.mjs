@@ -2,7 +2,8 @@
 // increment 1). A pure map from status + orchestratorTag to one FSM state, and the
 // three surface-decision helpers - so the later reader migration is behaviour-
 // preserving. Run: node scripts/e2e/test-session-lifecycle-state.mjs
-import { sessionLifecycleState, isNeedsYouState, isWorkingState, isArchiveSuggestState } from "../../src/lib/sessionState.js";
+import { sessionLifecycleState, isNeedsYouState, isWorkingState, isArchiveSuggestState, sessionStateSource } from "../../src/lib/sessionState.js";
+import { createLiveSessionRegistry } from "../../src/lib/liveSessions.js";
 
 let code = 0;
 const ok = (c, m) => { console.log(`${c ? "OK  " : "FAIL"} - ${m}`); if (!c) code = 1; };
@@ -46,6 +47,54 @@ ok(isWorkingState(st("active")) === true && isWorkingState(st("waiting")) === fa
 // today: archive-suggest = status idle || classifierDone
 ok(isArchiveSuggestState(st("idle")) === true && isArchiveSuggestState(st("waiting", tag("done_not_archived"))) === true && isArchiveSuggestState(st("waiting")) === false,
   "archive-suggest = wrapped|idle (idle, or a done-tagged waiting) - matches today");
+
+// --- increment 5: the `launching` state, and the hybrid caveat made explicit ---
+// The bug this closes: a just-spawned session's transcript says nothing at all, so
+// the file heuristic reads it as idle - "idle while working" at its worst, because
+// it is the ONE moment Helm knows the truth for certain (it did the spawning).
+const launching = (status, extra = {}) => sessionLifecycleState({ status, ...extra }, { isLaunching: true });
+ok(launching("idle") === "launching", "isLaunching beats the idle heuristic - a brand-new session is not parked");
+ok(launching(undefined) === "launching", "isLaunching with no status at all -> launching (the transcript has nothing to read yet)");
+ok(launching("waiting") === "launching", "isLaunching beats a stale waiting reading");
+ok(launching("archived") === "archived", "archived still wins over launching - an archived session is off the board, period");
+ok(sessionLifecycleState({ status: "idle", ...tag("waiting_for_input") }, { isLaunching: true }) === "launching",
+  "launching is checked BEFORE the needs-you promotion (a session that hasn't spoken can't be awaiting you)");
+// It must read as working, and must never be offered for archive.
+ok(isWorkingState("launching") === true, "launching counts as working - something IS happening, it just hasn't spoken");
+ok(isArchiveSuggestState("launching") === false, "launching is never archive-suggested");
+ok(isNeedsYouState("launching") === false, "launching never reads as needs-you");
+
+// stateSource: tracked only where Helm actually has authority.
+ok(sessionStateSource({ helmOwned: false }, { isLive: true }) === "derived",
+  "a FOREIGN session is 'derived' even when something looks live - Helm has only the transcript heuristic");
+ok(sessionStateSource({ helmOwned: false }) === "derived", "a foreign session with no signals is derived");
+ok(sessionStateSource({ helmOwned: true }, { isLive: true }) === "tracked", "helm-owned + live turn -> tracked");
+ok(sessionStateSource({ helmOwned: true }, { isLaunching: true }) === "tracked", "helm-owned + launching -> tracked");
+ok(sessionStateSource({ helmOwned: true }) === "derived",
+  "helm-owned but nothing in flight -> derived (ownership alone isn't a live signal; the status still comes from the file)");
+ok(sessionStateSource(null) === "derived", "no session at all -> derived, not a crash");
+
+// --- the launching registry: keyed by launchId because a fresh launch has no session id yet ---
+const reg = createLiveSessionRegistry();
+reg.markLaunching("launch-1", null);
+ok(reg.pendingLaunchCount() === 1, "a launch with no session id yet is counted as pending");
+ok(reg.isLaunching("sess-a") === false, "...but it doesn't claim to be launching any particular session");
+reg.bindLaunch("launch-1", "sess-a");
+ok(reg.isLaunching("sess-a") === true, "once the CLI reports an id, the launch binds to it");
+ok(reg.pendingLaunchCount() === 0, "and it is no longer counted as pending");
+ok(reg.isLaunching("sess-b") === false, "an unrelated session is not launching");
+reg.clearLaunching("launch-1");
+ok(reg.isLaunching("sess-a") === false, "clearing the launch ends the launching window - a failed launch can't hang there forever");
+reg.bindLaunch("launch-gone", "sess-c");
+ok(reg.isLaunching("sess-c") === false, "binding a launch that was already cleared must NOT resurrect it");
+ok(reg.isLaunching(null) === false && reg.isLaunching(undefined) === false, "a missing id never reads as launching");
+reg.markLaunching(null);
+ok(reg.pendingLaunchCount() === 0, "marking with no launchId is a no-op, not a phantom pending launch");
+// launching and live are independent registries - clearing one must not touch the other.
+reg.markLaunching("launch-2", "sess-d");
+reg.markLive("sess-d");
+reg.clearLaunching("launch-2");
+ok(reg.isLive("sess-d") === true, "clearing the launching window leaves a genuinely live turn live");
 
 console.log(code === 0 ? "VERIFY OK: lifecycle-state projection + decision helpers behave as intended (behaviour-preserving foundation)." : "VERIFY FAILED.");
 process.exit(code);

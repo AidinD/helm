@@ -14,6 +14,12 @@
 // fresh process has nothing live yet, so there is nothing to persist.
 export function createLiveSessionRegistry() {
   const counts = new Map();
+  // Launched, but nothing has come back yet (Epic f3d096fa's `launching` state).
+  // Keyed by launchId rather than session id for a good reason: a FRESH launch has
+  // no session id until the CLI reports one, which is exactly the window this
+  // state covers. Without it, a just-started session reads as whatever the
+  // transcript last said - which for a brand new one is nothing at all.
+  const launching = new Map();
   const isLive = (id) => !!id && counts.has(id);
   return {
     // A turn for `id` (a cliSessionId) just started.
@@ -22,6 +28,47 @@ export function createLiveSessionRegistry() {
         return;
       }
       counts.set(id, (counts.get(id) || 0) + 1);
+    },
+    // Helm just spawned a launch; no session id or output exists yet.
+    markLaunching(launchId, sessionId = null) {
+      if (!launchId) {
+        return;
+      }
+      launching.set(launchId, sessionId);
+    },
+    // The launch produced its session id (or ended) - it is no longer launching.
+    clearLaunching(launchId) {
+      if (launchId) {
+        launching.delete(launchId);
+      }
+    },
+    /** Is any launch still in its pre-first-output window for this session? */
+    isLaunching(id) {
+      if (!id) {
+        return false;
+      }
+      for (const sessionId of launching.values()) {
+        if (sessionId === id) {
+          return true;
+        }
+      }
+      return false;
+    },
+    /** How many launches are in flight with no session id yet. */
+    pendingLaunchCount() {
+      let n = 0;
+      for (const sessionId of launching.values()) {
+        if (!sessionId) {
+          n += 1;
+        }
+      }
+      return n;
+    },
+    /** Attach a session id to a launch once the CLI reports it. */
+    bindLaunch(launchId, sessionId) {
+      if (launchId && launching.has(launchId)) {
+        launching.set(launchId, sessionId || null);
+      }
     },
     // A turn for `id` just ended (close or error). Removes the id only when its
     // last live turn ends, so overlapping turns keep it live until both finish.
