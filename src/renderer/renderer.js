@@ -7496,9 +7496,14 @@ async function fillDashboardSections({ force = false } = {}) {
 }
 
 /**
- * Classic-dashboard module for docs drift (task 0831417b). Returns null when
- * nothing has drifted, so a clean board shows no section at all - unlike the
- * widget, which a user placed deliberately and so gets an explicit "all current".
+ * Classic-dashboard module for docs drift (task 0831417b). Returns null when there
+ * is genuinely nothing to say, so a clean board shows no section at all - unlike
+ * the widget, which a user placed deliberately and so gets an explicit "all
+ * current".
+ *
+ * But it does NOT return null when the check FAILED. The first cut did, which meant
+ * a broken read (no git, no sessions dir) looked exactly like a clean board on the
+ * one surface actually in use - the silent all-clear this nudge exists to prevent.
  *
  * `fetchStale` is injectable for the same reason as the widget's: window.helm is
  * contextBridge-exposed and not writable, so a test can't otherwise drive this
@@ -7508,28 +7513,52 @@ async function dashboardDriftSection(fetchStale = () => window.helm.staleProject
   let res;
   try {
     res = await fetchStale();
-  } catch {
-    return null; // never let a coach signal break the dashboard
+  } catch (err) {
+    return driftSectionEl([], { problem: "Couldn't check docs drift." });
+  }
+  if (res?.pending) {
+    return null; // nothing measured yet; the next poll will have it
   }
   const rows = res?.ok ? res.rows || [] : [];
-  if (rows.length === 0) {
+  const problem = !res?.ok
+    ? `Couldn't check docs drift${res?.error ? `: ${res.error}` : "."}`
+    : res.unchecked > 0
+      ? `${res.unchecked} of ${res.considered} project${res.considered === 1 ? "" : "s"} couldn't be checked`
+      : null;
+  if (rows.length === 0 && !problem) {
     return null;
   }
+  return driftSectionEl(rows, { problem });
+}
+
+function driftSectionEl(rows, { problem = null } = {}) {
   const section = document.createElement("section");
   section.className = "dash-board";
-  section.dataset.fp = rows.map((r) => `${r.path}:${r.commitsSince}`).join("|");
-  const head = document.createElement("div");
-  head.className = "dash-board-head";
-  const title = document.createElement("span");
-  title.textContent = "Docs drift";
-  const hint = document.createElement("span");
-  hint.className = "dash-hint";
-  hint.textContent = "state-of-play behind the code - reconcile so these stay archivable";
-  head.append(title, hint);
+  // sessionId is in the fingerprint too: without it, a project whose commit count
+  // hasn't moved would keep its old Jump-in target forever, even after that
+  // session was archived out from under the button.
+  section.dataset.fp = [problem || "", ...rows.map((r) => `${r.path}:${r.commitsSince}:${r.sessionId || ""}`)].join("|");
+  // The shared head builder, so the title gets the same small uppercase treatment
+  // as every neighbouring module - a hand-rolled span matches no CSS rule and read
+  // as a different visual language sitting between Goals and New session.
+  const head = dashBoardHead("Docs drift", rows.length || null, "state-of-play behind the code - reconcile so these stay archivable");
   const body = document.createElement("div");
   body.className = "dash-board-body";
   for (const row of rows) {
     body.append(driftLineEl(row));
+  }
+  if (problem) {
+    const warn = document.createElement("div");
+    warn.className = "wd-drift-line";
+    const t = document.createElement("span");
+    t.className = "wd-drift-name";
+    t.textContent = problem;
+    const tag = document.createElement("span");
+    tag.className = "wd-drift-count crit";
+    tag.textContent = "unknown";
+    tag.title = "Treat this as 'not checked', not as 'nothing to reconcile'.";
+    warn.append(t, tag);
+    body.append(warn);
   }
   section.append(head, body);
   return section;
@@ -7821,15 +7850,23 @@ async function widgetBodyDocsDrift(_data, _widget, fetchStale = () => window.hel
     frag.append(widgetEmpty(res?.error ? `Couldn't read docs drift: ${res.error}` : "Couldn't read docs drift."));
     return frag;
   }
+  if (res.pending) {
+    // Nothing has been measured yet (the sweep runs in the background so it can't
+    // block the main process). "Checking" is the truth; "current" would not be.
+    frag.append(widgetEmpty("Checking docs drift…"));
+    return frag;
+  }
   const rows = res.rows || [];
-  if (rows.length === 0) {
+  for (const row of rows) {
+    frag.append(driftLineEl(row));
+  }
+  if (res.unchecked > 0) {
+    // Never fold a failed look into the all-clear.
+    frag.append(widgetEmpty(`${res.unchecked} of ${res.considered} project${res.considered === 1 ? "" : "s"} couldn't be checked - treat as unknown, not current.`));
+  } else if (rows.length === 0) {
     // Said as reassurance, not as an empty state - "nothing here" should read as
     // good news for a nudge whose whole job is to be quiet when there's no drift.
     frag.append(widgetEmpty("Docs are current across your projects."));
-    return frag;
-  }
-  for (const row of rows) {
-    frag.append(driftLineEl(row));
   }
   return frag;
 }
@@ -7858,11 +7895,15 @@ function driftLineEl(row) {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
       const session = (state.sessions || []).find((s) => s.sessionId === row.sessionId);
-      if (session) {
-        openSessionInPane(session, focusedPaneIndex);
-      } else {
+      if (!session) {
         showToast("That session is no longer on the board.");
+        return;
       }
+      // Navigate FIRST. openSessionInPane writes into #chatPage and focuses the
+      // composer, both of which no-op while chat is hidden - so from the Dashboard
+      // the button silently did nothing at all. Every other jump-in does this.
+      navigateToPage("chat");
+      openSessionInPane(session, focusedPaneIndex);
     });
     line.append(btn);
   }
