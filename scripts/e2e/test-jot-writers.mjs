@@ -13,7 +13,7 @@ import fs from "node:fs";
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jot-writers-"));
 const jotPath = path.join(dir, "todos.json");
-const { addSubtask, setTaskStatus, mutateJotFile, reviewTasks } = await import("../../src/lib/jot.js");
+const { addSubtask, setTaskStatus, mutateJotFile, reviewTasks, signedOffWithoutRecord } = await import("../../src/lib/jot.js");
 
 let exit = 0;
 const ok = (c, m) => {
@@ -124,6 +124,42 @@ try {
   } else {
     ok(ours === 0, `an aborted race did NOT write ours - no silent clobber (found ${ours}, ${after.todos.length} todos total)`);
   }
+
+  // --- subtasks in review, and the done-without-a-record audit ---------------
+  // Subtasks were filtered out of the review queue entirely (`!t.parentId`), so a
+  // subtask in review was invisible to the page, needed no record and raised no badge.
+  // the captain's own convention uses epics with subtasks, so the hole opens itself.
+  const withSub = read();
+  const EPIC = "aaaa1111-1111-4111-8111-111111111111";
+  const SUB = "bbbb2222-2222-4222-8222-222222222222";
+  const DONE_NO_REC = "cccc3333-3333-4333-8333-333333333333";
+  const DONE_OLD = "dddd4444-4444-4444-8444-444444444444";
+  withSub.todos.push(
+    { id: EPIC, text: "An epic", status: "in-progress", categoryId: CAT, parentId: null, priority: 0 },
+    { id: SUB, text: "A subtask in review", status: "review", categoryId: CAT, parentId: EPIC, priority: 1 },
+    { id: DONE_NO_REC, text: "Marked done directly", status: "done", categoryId: CAT, parentId: null, priority: 0, completedAt: Date.now() - 1000 },
+    { id: DONE_OLD, text: "Done long ago", status: "done", categoryId: CAT, parentId: null, priority: 0, completedAt: Date.now() - 90 * 24 * 60 * 60 * 1000 }
+  );
+  fs.writeFileSync(jotPath, JSON.stringify(withSub, null, 2), "utf8");
+
+  const q = reviewTasks({ enabled: true, path: jotPath });
+  const subRow = (q.tasks || []).find((t) => t.id === SUB);
+  ok(!!subRow, "a SUBTASK in review appears in the queue - it used to be filtered out and so needed no record at all");
+  ok(subRow?.parentTitle === "An epic", `and it names its parent so the row reads as belonging somewhere (${subRow?.parentTitle})`);
+  ok((q.tasks || []).every((t) => t.status !== "done"), "done tasks are not in the review queue");
+
+  // The audit. A direct board write cannot be prevented from here, only detected.
+  const audit = signedOffWithoutRecord({ enabled: true, path: jotPath }, () => false);
+  ok(audit.ok === true, "the audit reads the board");
+  ok(audit.tasks.some((t) => t.id === DONE_NO_REC), "a task marked done with no review record is surfaced");
+  ok(!audit.tasks.some((t) => t.id === DONE_OLD), "one from months ago is not - this is a signal about current practice, not a history dump");
+  ok(!audit.tasks.some((t) => t.id === SUB), "a task still in review is not reported as signed off");
+  const auditWithRecords = signedOffWithoutRecord({ enabled: true, path: jotPath }, (id) => id === DONE_NO_REC);
+  ok(!auditWithRecords.tasks.some((t) => t.id === DONE_NO_REC), "a done task that DOES have a record is not flagged");
+  // Case-shifted ids must still match a record, or the audit would cry wolf forever.
+  ok(signedOffWithoutRecord({ enabled: true, path: jotPath }, (id) => id.toLowerCase() === DONE_NO_REC).tasks.length === 0,
+    "the record lookup is the caller's business and is honoured as given");
+  ok(signedOffWithoutRecord({ enabled: false }, () => false).ok === false, "a disabled Jot config is refused, not treated as an empty board");
 
   const mutatorRefusal = mutateJotFile(jotPath, () => ({ ok: false, error: "nope" }));
   ok(mutatorRefusal.ok === false && mutatorRefusal.error === "nope", "a mutator can abort and its error passes through");

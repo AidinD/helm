@@ -383,6 +383,55 @@ export function setTaskStatus(jotConfig, taskId, status, note = "") {
   });
 }
 
+/**
+ * Tasks that reached `done` recently with NO review record - the audit half.
+ *
+ * The Review page is not the only writer of the board: agents write todos.json
+ * directly (a documented workflow), the embedded Jot tab and the Jot app can drag a
+ * card straight to done, and setTaskStatus validates only the status string. So "I
+ * only look at the Review page" is safe only while every agent voluntarily stops at
+ * `review`. Under time pressure, "I'll just mark it done, it's trivial" is the
+ * cheapest escape and it left no trace anywhere.
+ *
+ * A direct write cannot be PREVENTED from here, only DETECTED - which is why this
+ * matters more than any additional gate.
+ *
+ * @param {(taskId: string) => boolean} hasRecord
+ */
+export function signedOffWithoutRecord(jotConfig = {}, hasRecord, { withinMs = 14 * 24 * 60 * 60 * 1000, now = Date.now() } = {}) {
+  if (jotConfig.enabled === false) {
+    return { ok: false, error: "Jot is disabled in config", tasks: [] };
+  }
+  const jotPath = jotConfig.path || resolveJotTodosPath();
+  const data = readJotFile(jotPath);
+  if (!data) {
+    return { ok: false, error: `Couldn't read the Jot board at ${jotPath}`, tasks: [] };
+  }
+  const catName = new Map((Array.isArray(data.categories) ? data.categories : []).map((c) => [c.id, c.name]));
+  const tasks = (Array.isArray(data.todos) ? data.todos : [])
+    .filter((t) => {
+      if (!t || t.status !== "done") {
+        return false;
+      }
+      // Only recent ones: the whole history would be noise, and this is a signal about
+      // current practice. A done task with no completedAt is included - a missing
+      // timestamp is itself a sign it was not moved through the flow.
+      const at = typeof t.completedAt === "number" ? t.completedAt : null;
+      if (at !== null && now - at > withinMs) {
+        return false;
+      }
+      return !hasRecord(t.id);
+    })
+    .map((t) => ({
+      id: t.id,
+      title: t.text || "",
+      category: catName.get(t.categoryId) || null,
+      completedAt: typeof t.completedAt === "number" ? t.completedAt : null,
+    }))
+    .sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0));
+  return { ok: true, path: jotPath, tasks };
+}
+
 export function reviewTasks(jotConfig = {}) {
   // Reads the board file directly, the same way loadGoals does. NOTE: loadJot()
   // is a category INDEX (ok/path/categories/matchByTitle) and carries no todos -
@@ -396,8 +445,14 @@ export function reviewTasks(jotConfig = {}) {
     return { ok: false, error: `Couldn't read the Jot board at ${jotPath}`, tasks: [] };
   }
   const catName = new Map((Array.isArray(data.categories) ? data.categories : []).map((c) => [c.id, c.name]));
+  const byId = new Map((Array.isArray(data.todos) ? data.todos : []).map((t) => [t.id, t]));
+  // Subtasks in review are INCLUDED. They used to be filtered out (`!t.parentId`), so
+  // a subtask sitting in review was invisible to the Review page, needed no record and
+  // raised no badge - and the captain's own convention uses epics with subtasks, so that hole
+  // opens itself the first time an epic is worked. The parent's title comes along so a
+  // subtask row still reads as belonging somewhere.
   const tasks = (Array.isArray(data.todos) ? data.todos : [])
-    .filter((t) => t && t.status === "review" && !t.parentId)
+    .filter((t) => t && t.status === "review")
     .map((t) => ({
       id: t.id,
       title: t.text || "",
@@ -407,6 +462,7 @@ export function reviewTasks(jotConfig = {}) {
       // acceptance criteria against the ones on the task RIGHT NOW - a criterion
       // edited after the work must be surfaced, not silently ignored.
       description: t.description || "",
+      parentTitle: t.parentId ? byId.get(t.parentId)?.text || "(unknown parent)" : null,
     }));
   return { ok: true, path: jotPath, tasks };
 }

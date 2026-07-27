@@ -700,6 +700,8 @@ export function buildReviewQueue(reviewTasks, records, metaHome = null) {
       title: t.title || t.text || "(untitled)",
       category: t.category || null,
       priority: typeof t.priority === "number" ? t.priority : null,
+      // Subtasks are in the queue now, so a row needs to say what it belongs to.
+      parentTitle: t.parentTitle || null,
       record: rec,
       incomplete: problems.length > 0,
       problems,

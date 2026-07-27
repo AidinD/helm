@@ -12,7 +12,7 @@ import crypto from "node:crypto";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { readAllSessions, enrichWithJot, setSessionArchived, forkTranscriptAtUserMessage, switchSessionRootFolder } from "./lib/sessions.js";
-import { loadJot, loadGoals, addSubtask, formatJotSummaryForClassifier, projectBoardSummary, reviewTasks, setTaskStatus } from "./lib/jot.js";
+import { loadJot, loadGoals, addSubtask, formatJotSummaryForClassifier, projectBoardSummary, reviewTasks, signedOffWithoutRecord, setTaskStatus } from "./lib/jot.js";
 import { loadConfig, writeConfig } from "./lib/config.js";
 import { startSession } from "./lib/launcher.js";
 import { createLiveSessionRegistry } from "./lib/liveSessions.js";
@@ -4119,8 +4119,20 @@ ipcMain.handle("reviews:list", () => {
   const metaHome = resolveMetaHome();
   // metaHome is threaded in so the queue can VERIFY that each check run was stamped
   // by the app rather than written into the record by hand.
-  const rows = buildReviewQueue(board.tasks, listReviewRecords(metaHome), metaHome);
-  return { ok: board.ok, error: board.error || null, rows, tally: reviewQueueTally(rows) };
+  const records = listReviewRecords(metaHome);
+  const rows = buildReviewQueue(board.tasks, records, metaHome);
+  // The audit half: work that reached done without ever being recorded. A direct
+  // board write cannot be prevented from here, only detected - and it has to surface
+  // on the page he actually reads.
+  const haveRecord = new Set(records.map((r) => String(r.taskId).toLowerCase()));
+  const unrecordedDone = signedOffWithoutRecord(config.jot || {}, (id) => haveRecord.has(String(id).toLowerCase()));
+  return {
+    ok: board.ok,
+    error: board.error || null,
+    rows,
+    tally: reviewQueueTally(rows),
+    doneWithoutRecord: unrecordedDone.ok ? unrecordedDone.tasks : [],
+  };
 });
 
 // Review actions: move a task on the board from the review page itself, so
