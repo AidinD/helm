@@ -143,8 +143,15 @@ export function readAllSessions(options = {}) {
   // explicit instead of leaving every surface to assume the heuristic is truth.
   //
   // Keyed on presence in config.helmSessions, not on which source won the id
-  // collision: a Desktop session later resumed THROUGH Helm is Helm-tracked from
-  // that point on, so it belongs in the tracked half.
+  // collision - a Desktop file can win the id and the session still be ours.
+  //
+  // KNOWN LIMITATION: a Desktop session RESUMED through Helm does not become
+  // owned. session:start records with `createIfAbsent: !resumeSessionId`, so a
+  // resume never creates an entry - a deliberate earlier rule ("a resumed Desktop
+  // session isn't ours to index"), but it means Helm can be running a turn for a
+  // session that still reads helmOwned:false, and therefore stateSource
+  // "derived". That understates Helm's authority rather than overstating it,
+  // which is the safe direction, but it is not the whole truth.
   const ownedIds = new Set();
   for (const meta of Object.values(helmSessions)) {
     if (meta?.sessionId) {

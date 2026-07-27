@@ -1,5 +1,15 @@
 const STATUS_LABEL = { waiting: "Needs you", active: "Working", idle: "Idle", archived: "Archived" };
 
+// Mirrors isWorkingState in src/lib/sessionState.js. The renderer is a classic
+// script, not a module, so it cannot import the helper - and a bare
+// `lifecycleState === "working"` here is how a NEW state silently reads as idle:
+// adding `launching` did exactly that to the Fleet rows, reintroducing the
+// "idle while working" display the FSM epic exists to remove. Any reader asking
+// "is this session working" must go through this, never a string compare.
+// Add a state to sessionState.js's isWorkingState and it must be added here too.
+const WORKING_LIFECYCLE_STATES = new Set(["working", "launching"]);
+const isWorkingLifecycle = (ls) => WORKING_LIFECYCLE_STATES.has(ls);
+
 let state = { sessions: [], config: { groups: [], viewMode: "simple" }, quota: null, orchestratorHome: "" };
 // The CLI session ids currently bound to an active first mate (mate.sessionId).
 // Refreshed each poll in refresh(); the signal for "is this session a first
@@ -6949,7 +6959,7 @@ function fleetSecondMateEl(sm) {
     // lifecycleState "waiting", so this now says "waiting on you" instead of
     // burying it as "idle" (bug 4cd7d592).
     const ls = sess?.lifecycleState;
-    if (ls === "working") {
+    if (isWorkingLifecycle(ls)) {
       const spin = document.createElement("span");
       spin.className = "fleet-spin";
       now.append(spin, document.createTextNode("working · "));
@@ -6958,7 +6968,7 @@ function fleetSecondMateEl(sm) {
     } else {
       now.append(document.createTextNode("idle · "));
     }
-  } else if (sess?.lifecycleState === "working") {
+  } else if (isWorkingLifecycle(sess?.lifecycleState)) {
     // The second mate's own session is running a turn - show that first, like the
     // in-motion list does, instead of a crew-only "idle" (bug 9ad82c28).
     const spin = document.createElement("span");
