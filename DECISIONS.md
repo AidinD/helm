@@ -4665,3 +4665,44 @@ Flagged, not fixed: a session rooted in a SUBDIRECTORY of a repo contributes a
 candidate with no docs, so that repo never appears. No live instance on this
 machine, and walking up to the git root would change which project a session is
 attributed to - worth doing deliberately, not as a review afterthought.
+
+## 2026-07-27 - The gauntlet could never go green (three bugs in the review pipe itself)
+
+Found by actually running it: filing the two review records above and then running
+their declared checks through the app, rather than trusting that the pipe worked
+because its unit tests passed.
+All three bugs made the gauntlet - the part of the review flow whose whole purpose
+is to be the half the author cannot talk around - useless.
+
+**1. Checks ran in the wrong directory.**
+The runner defaulted to `check.cwd || metaHome`, so every repo check
+(`node scripts/e2e/...`) ran in the Dropbox meta-home and exited 1.
+A red gauntlet that is red for that reason is worse than no gauntlet: it looks like
+a real failure and it can never be made green.
+Now `check.cwd || rec.projectPath`, and if neither resolves it REFUSES with a
+stated reason instead of guessing - a check run in the wrong place fails for the
+wrong reason, and silence about that is the problem.
+
+**2. A check that launches the app attached to the wrong app.**
+An E2E check spawned from inside a harness-launched Helm inherited the same fixed
+CDP port (9333), so the child attached to its parent's renderer and never settled.
+The harness now honours `HELM_E2E_PORT`, and the runner hands each check a distinct
+port. Default stays 9333 so an interactive run is still predictable to attach to.
+
+**3. A multi-check gauntlet could never reach "passing".**
+Staleness compared each run against the record's `updatedAt` - but STAMPING a run is
+itself a write, so the second stamp moved the baseline past the first run and run 1
+read as stale, forever, for any record with more than one check.
+Split into `contentUpdatedAt` (moved by a real edit) versus `updatedAt` (any write),
+with `isRunStamp` passed as an explicit ARGUMENT by `recordCheckRun`.
+Deliberately not a field on the record: if preserving the baseline were data-driven,
+an ordinary edit that spreads the previous record would carry the old baseline
+forward too, and a green tick would keep vouching for changed work - the exact
+failure the staleness rule exists to prevent. Both directions are now tested.
+
+**And the gauntlet had no repo test at all.**
+Its coverage lived in a scratch file that was never committed - the same miss as
+`test-repo-scripts.mjs` earlier this session, and the same shape as the bug in #1:
+something verified once, by hand, and then assumed.
+`test-review-records.mjs` now covers unrun/passing/failing/stale, the legacy
+fallback for records written before `contentUpdatedAt`, and the refusals.

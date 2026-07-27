@@ -57,7 +57,13 @@ export async function launch(opts = {}) {
   const appDir = opts.appDir || REPO_ROOT;
   const command = opts.command || "npm";
   const baseArgs = opts.args || ["start"];
-  const port = opts.port || 9333;
+  // A fixed default port makes two harnesses collide: the second app can't bind
+  // it, so waitForRendererTarget attaches to the FIRST app's renderer (or times
+  // out). That happens for real - the review-page gauntlet runs an E2E script as a
+  // check, from inside a Helm that a harness already launched. HELM_E2E_PORT lets
+  // the outer runner hand its children a different port; the default stays 9333 so
+  // an interactive `node scripts/e2e/foo.mjs` is still predictable to attach to.
+  const port = opts.port || Number(process.env.HELM_E2E_PORT) || 9333;
   const readyTimeoutMs = opts.readyTimeoutMs ?? 30000;
 
   // The debug flag must reach electron. For `npm start` (which runs

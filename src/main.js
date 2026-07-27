@@ -4139,12 +4139,33 @@ ipcMain.handle("reviews:runChecks", async (_event, { taskId } = {}) => {
   }
   const results = [];
   for (const check of checks) {
-    const cwd = check.cwd || metaHome;
-    const outcome = await new Promise((resolve) => {
+    // Where a check RUNS is part of the check. The first cut defaulted to the
+    // meta-home, so every repo check ("node scripts/e2e/...") failed with exit 1
+    // simply because it ran in the wrong directory - and a red gauntlet that is
+    // red for that reason is worse than no gauntlet, because it looks like a real
+    // failure and it can never be made green.
+    const cwd = check.cwd || rec.projectPath || null;
+    const cwdProblem = !cwd
+      ? "no working directory: set projectPath on the record or cwd on the check. Refusing to guess - a check run in the wrong place fails for the wrong reason."
+      : !fs.existsSync(cwd)
+        ? `working directory does not exist: ${cwd}`
+        : null;
+    const outcome = cwdProblem
+      ? { exitCode: null, tail: cwdProblem }
+      : await new Promise((resolve) => {
       let out = "";
       let child;
       try {
-        child = spawn(check.cmd, { cwd, shell: true, env: process.env });
+        // A check may itself be an E2E that launches Helm under a debugger. Hand
+        // it a DIFFERENT CDP port than the one this instance may have been
+        // launched with, or the child attaches to us instead of to its own app
+        // and the check never settles. (Per-check offset so several in one run
+        // don't collide either.)
+        child = spawn(check.cmd, {
+          cwd,
+          shell: true,
+          env: { ...process.env, HELM_E2E_PORT: String(9400 + (results.length % 50)) },
+        });
       } catch (err) {
         resolve({ exitCode: null, tail: `could not start: ${err.message}` });
         return;

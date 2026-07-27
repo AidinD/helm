@@ -16,6 +16,8 @@ import {
   removeReviewRecord,
   buildReviewQueue,
   reviewQueueTally,
+  recordCheckRun,
+  gauntletStatus,
 } from "../../src/lib/reviewRecords.js";
 
 let exit = 0;
@@ -112,6 +114,68 @@ try {
 
   const leftovers = fs.readdirSync(reviewsDir(metaHome)).filter((f) => f.includes(".tmp"));
   ok(leftovers.length === 0, "atomic write leaves no .tmp files");
+  // --- the gauntlet: declared checks vs what actually ran --------------------
+  // This had NO repo test until a live run exposed the bug below - the same miss
+  // as the feature it guards (a test that lived only in a scratch file).
+  const G = "cccccccc-3333-4333-8333-333333333333";
+  const gRec = {
+    taskId: G,
+    title: "Gauntlet subject",
+    verdict: "stamp",
+    summary: "Two declared checks.",
+    evidence: [],
+    notVerified: [],
+    testSteps: [{ step: "Run it", expect: "It works" }],
+    checks: [
+      { label: "first", cmd: "node -e \"process.exit(0)\"" },
+      { label: "second", cmd: "node -e \"process.exit(0)\"" },
+    ],
+  };
+  writeReviewRecord(metaHome, gRec);
+  ok(gauntletStatus(readReviewRecord(metaHome, G)).state === "incomplete", "declared-but-unrun reads as incomplete, never as passing");
+  ok(gauntletStatus(readReviewRecord(metaHome, G)).unrun === 2, "both unrun checks are counted");
+
+  // THE BUG: stamping a run is itself a write. When the baseline was the record's
+  // updatedAt, the second stamp moved it past the FIRST run, so run 1 read as
+  // stale - meaning a multi-check gauntlet could never reach "passing" however
+  // green the checks were. Staleness now measures against contentUpdatedAt.
+  recordCheckRun(metaHome, G, { label: "first", cmd: "x", exitCode: 0 });
+  recordCheckRun(metaHome, G, { label: "second", cmd: "x", exitCode: 0 });
+  const afterBoth = gauntletStatus(readReviewRecord(metaHome, G));
+  ok(afterBoth.state === "passing", `two passing checks make a PASSING gauntlet (got ${afterBoth.state}: pass ${afterBoth.passed}, stale ${afterBoth.stale})`);
+  ok(afterBoth.passed === 2 && afterBoth.stale === 0, `both runs count as fresh (pass ${afterBoth.passed}, stale ${afterBoth.stale})`);
+
+  // A red check cannot be talked around.
+  recordCheckRun(metaHome, G, { label: "second", cmd: "x", exitCode: 7 });
+  const withFail = gauntletStatus(readReviewRecord(metaHome, G));
+  ok(withFail.state === "failing" && withFail.failed === 1, `a non-zero exit makes the gauntlet FAILING (got ${withFail.state})`);
+  ok(readReviewRecord(metaHome, G).checkRuns.find((r) => r.label === "second").exitCode === 7, "the real exit code is stored, not just a boolean");
+
+  // But a real EDIT must still invalidate green ticks - otherwise a pass keeps
+  // vouching for work that has since changed. This is the failure mode the
+  // isRunStamp split had to avoid re-introducing in the other direction.
+  recordCheckRun(metaHome, G, { label: "second", cmd: "x", exitCode: 0 });
+  ok(gauntletStatus(readReviewRecord(metaHome, G)).state === "passing", "back to passing after the check is re-run green");
+  const edited = { ...readReviewRecord(metaHome, G), summary: "changed after the checks ran" };
+  writeReviewRecord(metaHome, edited, { now: Date.now() + 5000 });
+  const afterEdit = gauntletStatus(readReviewRecord(metaHome, G));
+  ok(afterEdit.state === "incomplete" && afterEdit.stale === 2, `editing the record makes every earlier run stale (got ${afterEdit.state}, stale ${afterEdit.stale})`);
+  ok(afterEdit.passed === 0, "a stale run is not counted as a pass");
+
+  // Records written before contentUpdatedAt existed must not all read as stale.
+  const legacyFile = reviewRecordPath(metaHome, G);
+  const legacy = JSON.parse(fs.readFileSync(legacyFile, "utf8"));
+  delete legacy.contentUpdatedAt;
+  legacy.updatedAt = 1000;
+  legacy.checkRuns = legacy.checkRuns.map((r) => ({ ...r, ranAt: 2000, ok: true, exitCode: 0 }));
+  fs.writeFileSync(legacyFile, JSON.stringify(legacy), "utf8");
+  ok(gauntletStatus(readReviewRecord(metaHome, G)).state === "passing", "a record without contentUpdatedAt falls back to updatedAt rather than reading as all-stale");
+
+  ok(gauntletStatus({ taskId: G }).state === "none", "a record declaring no checks has no gauntlet, rather than a fake pass");
+  ok(gauntletStatus(null).state === "none", "gauntletStatus(null) is a safe no-op");
+  ok(recordCheckRun(metaHome, "no-such-id-000000", { label: "x", exitCode: 0 }).ok === false, "stamping a run onto a missing record fails loudly");
+  ok(recordCheckRun(metaHome, G, { exitCode: 0 }).ok === false, "a run with no label is refused - it could not be matched to a check");
+
 } catch (err) {
   exit = 1;
   console.log("ERROR:", err.stack || err.message);
