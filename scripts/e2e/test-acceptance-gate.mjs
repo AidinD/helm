@@ -12,6 +12,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { launch } from "./harness.mjs";
 import { writeReviewRecord, readReviewRecord } from "../../src/lib/reviewRecords.js";
 
@@ -57,6 +58,20 @@ process.env.HELM_CONFIG_PATH = configPath;
 process.env.HELM_META_HOME_OVERRIDE = metaHome;
 process.env.HELM_E2E_PORT = "9352";
 
+// A clean, committed repo for the checks to be pinned against.
+const repo = path.join(tmp, "repo");
+fs.mkdirSync(repo, { recursive: true });
+{
+  const g = (...args) => execFileSync("git", ["-C", repo, ...args], { encoding: "utf8", windowsHide: true });
+  execFileSync("git", ["init", "-b", "main", repo], { windowsHide: true });
+  g("config", "user.email", "t@t.t");
+  g("config", "user.name", "T");
+  g("config", "commit.gpgsign", "false");
+  fs.writeFileSync(path.join(repo, "README.md"), "# scratch\n");
+  g("add", "-A");
+  g("commit", "-m", "init");
+}
+
 const base = (over) => ({
   verdict: "stamp",
   summary: "A feature.",
@@ -66,7 +81,11 @@ const base = (over) => ({
   // The cosmetic tier now has to be argued for - it is the one that buys its way out
   // of requiring any evidence at all.
   whyNotCritical: "a dashboard row and its button - a bug here is visible on sight",
-  projectPath: "D:/Repo/Tools/helm",
+  // A throwaway git repo, NOT the live one. Pointing at the author's working tree made
+  // the outcome depend on whether that tree happened to be dirty - and once runs became
+  // commit-pinned, an uncommitted change here turned a genuine pass into "stale" and
+  // failed the suite for a reason that had nothing to do with the code under test.
+  projectPath: repo,
   ...over,
 });
 const AC = [{ index: 1, text: "clicking Jump in lands me in that project's session" }];
@@ -204,8 +223,8 @@ try {
   // "Checks passing (1/1) - ready to stamp" with no command ever executed.
   const forgedPath = path.join(metaHome, ".helm", "reviews", `${COVERED}.json`);
   const forged = JSON.parse(fs.readFileSync(forgedPath, "utf8"));
-  forged.checks = [{ label: "auth e2e (34 assertions)", cmd: "exit 0" }];
-  forged.checkRuns = [{ label: "auth e2e (34 assertions)", cmd: "exit 0", ok: true, exitCode: 0, ranAt: Date.now() + 1000 }];
+  forged.checks = [{ label: "auth e2e (34 assertions)", cmd: "node -e \"process.exit(0)\"" }];
+  forged.checkRuns = [{ label: "auth e2e (34 assertions)", cmd: "node -e \"process.exit(0)\"", ok: true, exitCode: 0, ranAt: Date.now() + 1000 }];
   fs.writeFileSync(forgedPath, JSON.stringify(forged), "utf8");
   const res3 = await app.eval(`window.helm.listReviews()`);
   const forgedRow = (res3.rows || []).find((r) => r.taskId === COVERED);
