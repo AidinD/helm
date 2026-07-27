@@ -4904,3 +4904,61 @@ Since the gradient is what "I stop reading diffs" rests on, this is the largest
 remaining hole, and I have no honest fix that doesn't involve inspecting the diff -
 which is the thing we are trying to stop doing.
 Recorded on the record's own `notVerified` so it is visible where the trust is given.
+
+### The five red-team tasks, worked (2026-07-27, later)
+
+All five filed tasks done. What is worth remembering is which fixes were structural
+and which were only presentational, because the presentational ones were the ones
+that had actually shipped broken.
+
+**Structural.** A pass is now bound to two things it was not bound to before: the
+command as DECLARED in `rec.checks` (runs were matched by label alone, so a run
+stamped for `exit 0` could score a check whose displayed command was a real e2e
+script) and the commit it ran against (staleness only consulted the record's own
+`contentUpdatedAt`, so the ordinary send-back / fix / return-to-review lap left the
+pre-fix green vouching for post-fix code).
+
+Both are covered by the signature, so neither can be edited afterwards to make an old
+pass look current. Changing the signature payload correctly invalidated every
+previously-signed run on the board - all of them read `unverified` until the checks
+were genuinely re-run. That was the mechanism working, and it is the first time a
+change to this system produced a visible, correct mass-invalidation.
+
+**Presentational, and more dangerous than it sounds.** `independentReview` was
+rendered nowhere, so the certificate gating the critical tier was invisible - a record
+could claim "reviewed by a fresh-context agent, 0 findings" with nothing on screen to
+interrogate. The criticality chips were coloured backwards: `critical` shared the amber
+of a `notVerified` gap while `cosmetic` was green, so the highest-stakes tier read as a
+caveat and the tier that requires no evidence at all read as a pass. And the per-check
+state was re-derived in the renderer from `run.ok`, a field the author writes, so a
+forged run drew a green dot on the line a reader studies.
+
+**The detection half.** Two things cannot be gated from inside Helm, so they are now
+detected instead. Subtasks in review were filtered out of the queue entirely
+(`!t.parentId`) - invisible, no record needed, no badge; the convention here is epics
+with subtasks, so that hole opens itself. And nothing requires a record for `done` at
+all: agents write `todos.json` directly and the Jot app can drag a card straight
+across. `signedOffWithoutRecord` lists what reached done in the last fortnight with no
+record, in its own band. It found four real items on the first run.
+
+**Cosmetic no longer buys silence.** It was the likeliest path to false trust and it
+was the system's normal shape, not a trick: no checks, no criteria, no gauntlet box
+rendered at all, filed under "Ready to stamp", one click to done. The tier now costs a
+written `whyNotCritical` - a tier you must argue for is much harder to under-declare
+than one you tick, and the argument is something Aidin can disagree with. Absences are
+rendered as caveats, because an absence otherwise renders as nothing.
+
+**One keypress no longer signs off.** `Mark done` confirmed only on an outright
+`failing` gauntlet; unverified, unrun, stale, drifted, below-the-bar and
+no-checks-at-all all went through on a single click. Each now names its own reason. And
+`customConfirm` focused OK, so click-then-Enter confirmed - destructive confirms now
+focus Cancel. `Run checks`, which spawns arbitrary shell from a JSON file in the
+meta-home, lists every command in full before running anything.
+
+**What is still open, and it is the same thing as before.** Tier gaming remains an
+honour system: nothing correlates the declared criticality with the diff. The signing
+oracle is narrowed but not closed - `recordCheckRun` is still an exported function that
+accepts an exit code, so the honest claim is that a forgery now has to lie about a
+specific declared command at a specific commit, not that it is impossible. A real
+guarantee needs the runner outside the author's reach, which is CI, which is a project
+rather than a task.
