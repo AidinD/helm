@@ -46,7 +46,7 @@ import { computeVersionString, captureRunningBuildIdentity, checkForNewerBuild }
 import { runGoal } from "./lib/goalOrchestrator.js";
 import { loadGoalRunHistory, upsertGoalRunRecord, removeGoalRunRecord } from "./lib/goalRunHistory.js";
 import { removeWorktree, isBranchMerged, deleteBranch } from "./lib/worktree.js";
-import { docsStaleness } from "./lib/docsStaleness.js";
+import { docsStaleness, staleProjects } from "./lib/docsStaleness.js";
 import { loadDomains, registerDomain, removeDomain } from "./lib/domains.js";
 import { ensureMates, activeMates, findMateById, loadMates, renameMate, retireAndRespawn, bindMateSession, consumeMateHandoff, setMatePersona, rethemeMateNames } from "./lib/mates.js";
 import { personaOverlay, PERSONAS } from "./lib/personas.js";
@@ -3035,6 +3035,66 @@ ipcMain.handle("docs:staleness", (_event, { cwd }) => {
     return { ok: true, ...docsStaleness(cwd) };
   } catch (err) {
     return { ok: false, error: err?.message || String(err) };
+  }
+});
+
+// Same signal, board-wide: the ACTIVE half of the docs-drift nudge (task
+// 0831417b). The pane-header pill only tells you once you've already opened the
+// project, which is exactly backwards for drift you've stopped thinking about -
+// so the dashboard lists the projects that need reconciling, with the most recent
+// session in each so you can jump straight in.
+//
+// Deliberately jump-in only: no auto-reconcile, no dispatched doc-reconcile turn.
+// Rewriting a project's DECISIONS.md unsupervised is a much bigger promise than
+// pointing at it, and getting that wrong quietly corrupts the durable record this
+// whole nudge exists to protect.
+//
+// Cached for a minute: staleness needs two git calls per repo, the dashboard
+// refreshes often, and drift measured in commits does not move second to second.
+let staleProjectsCache = { at: 0, rows: [] };
+const STALE_PROJECTS_TTL_MS = 60_000;
+ipcMain.handle("docs:staleProjects", (_event, { force = false } = {}) => {
+  try {
+    if (!force && Date.now() - staleProjectsCache.at < STALE_PROJECTS_TTL_MS) {
+      return { ok: true, rows: staleProjectsCache.rows, cached: true };
+    }
+    // Candidate projects = where you've actually been working. An archived
+    // session's project still counts: archiving the session is what leaves the
+    // docs as the only record, so that is when drift matters MOST.
+    const sessions = readAllSessions().sessions || [];
+    const newestByPath = new Map();
+    for (const s of sessions) {
+      if (!s.cwd) {
+        continue;
+      }
+      // Keyed on the RESOLVED path, matching what staleProjects returns - the same
+      // repo appears as both D:\Repo\... and d:/Repo/... across sessions, and a
+      // raw-string key would both split one project in two and fail the lookup below.
+      let key;
+      try {
+        key = path.resolve(s.cwd).toLowerCase();
+      } catch {
+        continue;
+      }
+      const prev = newestByPath.get(key);
+      if (!prev || (s.lastActivityAt || 0) > (prev.lastActivityAt || 0)) {
+        newestByPath.set(key, s);
+      }
+    }
+    const stale = staleProjects([...newestByPath.values()].map((s) => s.cwd));
+    const rows = stale.map((row) => {
+      const newest = newestByPath.get(row.path.toLowerCase());
+      return {
+        ...row,
+        name: path.basename(row.path),
+        sessionId: newest?.sessionId || null,
+        lastActivityAt: newest?.lastActivityAt || 0,
+      };
+    });
+    staleProjectsCache = { at: Date.now(), rows };
+    return { ok: true, rows, cached: false };
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err), rows: [] };
   }
 });
 

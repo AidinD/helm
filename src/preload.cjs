@@ -188,6 +188,7 @@ contextBridge.exposeInMainWorld("helm", {
   // Coach: commits since a project's PLAN.md/DECISIONS.md were last touched
   // (pane-header staleness nudge).
   docsStaleness: (cwd) => ipcRenderer.invoke("docs:staleness", { cwd }),
+  staleProjects: (opts) => ipcRenderer.invoke("docs:staleProjects", opts || {}),
   onGoalEvent: (handler) => {
     const listener = (_event, payload) => handler(payload);
     ipcRenderer.on("goal:event", listener);

@@ -7464,11 +7464,65 @@ async function fillDashboardSections({ force = false } = {}) {
   if (bailIfPressed()) {
     return;
   }
+  // Docs drift (task 0831417b). Also on the CLASSIC dashboard, not only as a
+  // widget: the widget dashboard is opt-in and currently off, so a widget-only
+  // nudge would be invisible on exactly the board being used - an attention signal
+  // that never fires is worse than none, because you trust the quiet.
+  const drift = await dashboardDriftSection();
+  const driftFp = drift ? drift.dataset.fp : "none";
+  if (force || driftFp !== dashSectionFingerprints.drift) {
+    dashSectionFingerprints.drift = driftFp;
+    writeDashSlot("dashDriftSlot", ...(drift ? [drift] : []));
+  }
+
+  if (bailIfPressed()) {
+    return;
+  }
   const newSessionFp = dashboardNewSessionFingerprint();
   if (force || newSessionFp !== dashSectionFingerprints.newSession) {
     dashSectionFingerprints.newSession = newSessionFp;
     writeDashSlot("dashNewSessionSlot", await dashboardNewSessionSection());
   }
+}
+
+/**
+ * Classic-dashboard module for docs drift (task 0831417b). Returns null when
+ * nothing has drifted, so a clean board shows no section at all - unlike the
+ * widget, which a user placed deliberately and so gets an explicit "all current".
+ *
+ * `fetchStale` is injectable for the same reason as the widget's: window.helm is
+ * contextBridge-exposed and not writable, so a test can't otherwise drive this
+ * with known data.
+ */
+async function dashboardDriftSection(fetchStale = () => window.helm.staleProjects()) {
+  let res;
+  try {
+    res = await fetchStale();
+  } catch {
+    return null; // never let a coach signal break the dashboard
+  }
+  const rows = res?.ok ? res.rows || [] : [];
+  if (rows.length === 0) {
+    return null;
+  }
+  const section = document.createElement("section");
+  section.className = "dash-board";
+  section.dataset.fp = rows.map((r) => `${r.path}:${r.commitsSince}`).join("|");
+  const head = document.createElement("div");
+  head.className = "dash-board-head";
+  const title = document.createElement("span");
+  title.textContent = "Docs drift";
+  const hint = document.createElement("span");
+  hint.className = "dash-hint";
+  hint.textContent = "state-of-play behind the code - reconcile so these stay archivable";
+  head.append(title, hint);
+  const body = document.createElement("div");
+  body.className = "dash-board-body";
+  for (const row of rows) {
+    body.append(driftLineEl(row));
+  }
+  section.append(head, body);
+  return section;
 }
 
 // ======================= Widget dashboard (task 4bf2421c) =======================
@@ -7499,6 +7553,7 @@ const WIDGET_CATALOG = {
   auto: { label: "Auto", span: 4, accent: "mate", singleton: true },
   firstMate: { label: "First mate", span: 4, accent: "mate", perMate: true },
   goals: { label: "Goals", span: 6, accent: "blue", singleton: true },
+  docsDrift: { label: "Docs drift", span: 4, accent: "acc", singleton: true },
 };
 const WIDGET_SPANS = [3, 4, 5, 6, 7, 8, 12];
 
@@ -7517,8 +7572,52 @@ function widgetLayout(mates) {
   for (const mate of mates || []) {
     layout.push({ id: `w-mate-${mate.mateId}`, type: "firstMate", span: 4, mateId: mate.mateId });
   }
-  layout.push({ id: "w-captain", type: "captain", span: 4 }, { id: "w-auto", type: "auto", span: 4 }, { id: "w-goals", type: "goals", span: 12 });
+  layout.push(
+    { id: "w-captain", type: "captain", span: 4 },
+    { id: "w-auto", type: "auto", span: 4 },
+    { id: "w-docsDrift", type: "docsDrift", span: 4 },
+    { id: "w-goals", type: "goals", span: 12 }
+  );
   return layout;
+}
+
+/**
+ * Seeds a NEW widget type onto an already-saved layout, exactly once (task
+ * 0831417b). A widget added to the default layout is invisible to anyone who has
+ * already arranged their board - and an attention signal you have to go find in
+ * the Add-widget menu isn't much of a nudge.
+ *
+ * Gated on a per-type flag rather than "is it in the layout": otherwise removing
+ * the widget would just make it come back, which is the app overriding a decision
+ * you made on purpose. Seeded once, then yours.
+ */
+// `save` is injectable for the same reason as widgetBodyDocsDrift's fetcher: a
+// test must be able to observe what this WOULD persist without writing config.
+async function seedNewWidgets(save = (patch) => window.helm.setConfig(patch)) {
+  const dw = state.config?.dashboardWidgets;
+  const saved = dw?.layout;
+  if (!Array.isArray(saved) || saved.length === 0) {
+    return; // no saved layout: the default already includes everything.
+  }
+  const seeded = dw?.seeded || {};
+  const toSeed = ["docsDrift"].filter((type) => !seeded[type] && !saved.some((w) => w.type === type));
+  const alreadyPresent = ["docsDrift"].filter((type) => !seeded[type] && saved.some((w) => w.type === type));
+  if (toSeed.length === 0 && alreadyPresent.length === 0) {
+    return;
+  }
+  const layout = [...saved];
+  for (const type of toSeed) {
+    layout.push({ id: `w-${type}`, type, span: WIDGET_CATALOG[type]?.span || 4 });
+  }
+  // Mark every candidate as seeded, including ones already on the board, so this
+  // never runs twice for the same type.
+  const nextSeeded = { ...seeded };
+  for (const type of [...toSeed, ...alreadyPresent]) {
+    nextSeeded[type] = true;
+  }
+  const next = { ...(dw || {}), layout, seeded: nextSeeded };
+  state.config = { ...state.config, dashboardWidgets: next };
+  await save({ dashboardWidgets: next });
 }
 
 async function saveWidgetLayout(layout) {
@@ -7685,6 +7784,81 @@ async function widgetBodyGoals(data) {
   return widgetSectionBody(await dashboardGoalsSection(data.goalsResult));
 }
 
+// The ACTIVE half of the docs-drift signal (task 0831417b). The pane-header pill
+// only tells you once you've already opened the project - backwards for drift on a
+// project you've stopped thinking about. This lists the projects whose
+// PLAN/DECISIONS have fallen behind, worst first, with jump-in.
+//
+// Jump-in only, by design: it points, it does not reconcile. An unsupervised
+// rewrite of a project's DECISIONS.md would quietly corrupt the durable record
+// this nudge exists to protect.
+//
+// `fetchStale` is injectable purely so a test can drive the render paths (drift,
+// no drift, failed read) with known data: window.helm is contextBridge-exposed and
+// therefore NOT writable, so a test cannot stub the call any other way - and a
+// widget that only ever renders whatever this machine happens to have today is a
+// widget whose empty and error states go unverified.
+async function widgetBodyDocsDrift(_data, _widget, fetchStale = () => window.helm.staleProjects()) {
+  const frag = document.createDocumentFragment();
+  let res;
+  try {
+    res = await fetchStale();
+  } catch {
+    frag.append(widgetEmpty("Couldn't read docs drift."));
+    return frag;
+  }
+  if (!res?.ok) {
+    frag.append(widgetEmpty(res?.error ? `Couldn't read docs drift: ${res.error}` : "Couldn't read docs drift."));
+    return frag;
+  }
+  const rows = res.rows || [];
+  if (rows.length === 0) {
+    // Said as reassurance, not as an empty state - "nothing here" should read as
+    // good news for a nudge whose whole job is to be quiet when there's no drift.
+    frag.append(widgetEmpty("Docs are current across your projects."));
+    return frag;
+  }
+  for (const row of rows) {
+    frag.append(driftLineEl(row));
+  }
+  return frag;
+}
+
+/** One drift row, shared by the widget and the classic dashboard section. */
+function driftLineEl(row) {
+  const line = document.createElement("div");
+  line.className = "wd-drift-line";
+  const name = document.createElement("span");
+  name.className = "wd-drift-name";
+  name.textContent = row.name || row.path;
+  name.title = row.path;
+  const count = document.createElement("span");
+  count.className = "wd-drift-count" + (row.commitsSince >= row.threshold * 3 ? " crit" : "");
+  count.textContent = `${row.commitsSince} behind`;
+  count.title = `${row.commitsSince} commits since PLAN.md/DECISIONS.md were last touched (nudges at ${row.threshold}).`;
+  line.append(name, count);
+  // Jump in only if there is a session to jump into. A project with drift but no
+  // session left on the board is still worth SHOWING - that is drift with nothing
+  // holding the context, which is the worst case, not a reason to hide it.
+  if (row.sessionId) {
+    const btn = document.createElement("button");
+    btn.className = "wd-drift-jump";
+    btn.textContent = "Jump in";
+    btn.title = "Open the most recent session in this project so you can reconcile its docs.";
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const session = (state.sessions || []).find((s) => s.sessionId === row.sessionId);
+      if (session) {
+        openSessionInPane(session, focusedPaneIndex);
+      } else {
+        showToast("That session is no longer on the board.");
+      }
+    });
+    line.append(btn);
+  }
+  return line;
+}
+
 const WIDGET_BODIES = {
   quota: widgetBodyQuota,
   needsYou: widgetBodyNeedsYou,
@@ -7692,6 +7866,7 @@ const WIDGET_BODIES = {
   auto: widgetBodyAuto,
   firstMate: widgetBodyFirstMate,
   goals: widgetBodyGoals,
+  docsDrift: widgetBodyDocsDrift,
 };
 
 /**
@@ -7891,6 +8066,12 @@ let widgetRenderToken = 0;
 /** Builds the whole widget grid into #dashboardPage. */
 async function renderWidgetDashboard(page) {
   const token = ++widgetRenderToken;
+  // Before reading the layout, so a newly-shipped widget reaches an already-
+  // arranged board once (task 0831417b). Best-effort: a failed seed must not stop
+  // the dashboard from rendering.
+  try {
+    await seedNewWidgets();
+  } catch {}
   const [matesResult, secondMatesResult, goalsResult, budget] = await Promise.all([
     window.helm.listMates(),
     window.helm.listSecondMates(),
@@ -8021,9 +8202,10 @@ async function renderDashboardPage() {
     mkSlot("dashQueueSlot"),
     mkSlot("dashFleetSlot"),
     mkSlot("dashGoalsSlot"),
+    mkSlot("dashDriftSlot"),
     mkSlot("dashNewSessionSlot")
   );
-  dashSectionFingerprints = { onboarding: null, queue: null, report: null, fleet: null, goals: null, newSession: null };
+  dashSectionFingerprints = { onboarding: null, queue: null, report: null, fleet: null, goals: null, drift: null, newSession: null };
   await fillDashboardSections({ force: true });
 }
 
