@@ -828,6 +828,33 @@ ipcMain.handle("context:saveHandoff", async (_event, { cwd, text, title, categor
 // reverted by another app. We still mirror the flag into whichever store the
 // session lives in (best-effort) so views stay consistent, but the overlay is
 // what actually holds the line. ---
+/**
+ * Both id forms a session can be keyed under, given either one.
+ *
+ * A Desktop session carries a `local_<uuid>` sessionId AND a separate
+ * cliSessionId, and different surfaces key on different ones - the Fleet node is
+ * built from whichever the session object exposes. Anything that has to CLEAR a
+ * stored id therefore has to clear both, or it silently misses.
+ */
+function sessionIdForms(sessionId) {
+  const forms = new Set([sessionId]);
+  try {
+    for (const s of readAllSessions().sessions || []) {
+      if (s.sessionId === sessionId || s.cliSessionId === sessionId) {
+        if (s.sessionId) {
+          forms.add(s.sessionId);
+        }
+        if (s.cliSessionId) {
+          forms.add(s.cliSessionId);
+        }
+      }
+    }
+  } catch {
+    // A failed scan must not stop the archive change itself.
+  }
+  return [...forms].filter(Boolean);
+}
+
 function applySessionArchive(sessionId, archived) {
   const shouldArchive = archived !== false;
   const cfg = loadConfig();
@@ -838,6 +865,29 @@ function applySessionArchive(sessionId, archived) {
     set.delete(sessionId);
   }
   const nextCfg = { ...cfg, archivedSessions: [...set] };
+  // Un-archiving must clear the FLEET's separate overlay too, or the session comes
+  // back in the sidebar and stays invisible in Fleet/Captain (Aidin, 2026-07-28:
+  // "jag tog unarchive på träning och kost och den syns inte i captain ändå").
+  //
+  // There are two independent archive lists: `archivedSessions` for the session
+  // itself, and `archivedSecondMates` for its node in the Fleet view, keyed
+  // "sess_<id>" (renderer.js builds it from whichever id form the session carries).
+  // Archiving from the Fleet button writes the second list; un-archiving the session
+  // only ever cleared the first. A one-way overlay - the mirror image of the bug the
+  // overlay was introduced to fix.
+  //
+  // Both id forms are removed because the node is built from cliSessionId OR
+  // sessionId depending on the session, and guessing wrong leaves it hidden.
+  if (!shouldArchive) {
+    const smSet = new Set(cfg.archivedSecondMates || []);
+    const before = smSet.size;
+    for (const id of sessionIdForms(sessionId)) {
+      smSet.delete(`sess_${id}`);
+    }
+    if (smSet.size !== before) {
+      nextCfg.archivedSecondMates = [...smSet];
+    }
+  }
   // Mirror into the Helm-owned session index if this is a Helm-created session
   // (no Desktop file to patch), and persist the overlay in the same write.
   if (cfg.helmSessions && cfg.helmSessions[sessionId]) {
