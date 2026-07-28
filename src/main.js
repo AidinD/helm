@@ -4175,7 +4175,17 @@ ipcMain.handle("reviews:list", () => {
   // board write cannot be prevented from here, only detected - and it has to surface
   // on the page he actually reads.
   const haveRecord = new Set(records.map((r) => String(r.taskId).toLowerCase()));
-  const unrecordedDone = signedOffWithoutRecord(config.jot || {}, (id) => haveRecord.has(String(id).toLowerCase()));
+  // A task counts as "handled" if it has a record OR the captain has acknowledged it. The
+  // audit's job is to tell him something bypassed review; once he has SEEN that,
+  // repeating it for a fortnight just teaches him to skim the section (his review,
+  // 2026-07-28: "när du sett dem en gång blir de bara tjat"). Acknowledging does not
+  // create evidence and does not claim the work was reviewed - it only records that he
+  // knows, which is the whole purpose of the signal.
+  const acked = new Set((config.acknowledgedNoRecord || []).map((id) => String(id).toLowerCase()));
+  const unrecordedDone = signedOffWithoutRecord(
+    config.jot || {},
+    (id) => haveRecord.has(String(id).toLowerCase()) || acked.has(String(id).toLowerCase())
+  );
   return {
     ok: board.ok,
     error: board.error || null,
@@ -4192,6 +4202,22 @@ ipcMain.handle("reviews:list", () => {
 ipcMain.handle("reviews:setStatus", (_event, { taskId, status, note } = {}) => {
   const config = loadConfig();
   return setTaskStatus(config.jot || {}, taskId, status, note || "");
+});
+
+// Acknowledge a task that reached done with no review record: "I know this bypassed
+// review." It does NOT create evidence and does not mark the work reviewed - the audit
+// simply stops repeating something already seen. Kept in Helm's own config rather than
+// written onto the task, because it is a fact about what the captain has read, not about the
+// work.
+ipcMain.handle("reviews:acknowledgeNoRecord", (_event, { taskId } = {}) => {
+  if (!taskId) {
+    return { ok: false, error: "No task id." };
+  }
+  const cfg = loadConfig();
+  const set = new Set(cfg.acknowledgedNoRecord || []);
+  set.add(String(taskId));
+  writeConfig({ ...cfg, acknowledgedNoRecord: [...set] });
+  return { ok: true };
 });
 
 // Run a record's declared checks and stamp the REAL outcome (exit code + output
