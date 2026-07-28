@@ -76,6 +76,7 @@ contextBridge.exposeInMainWorld("helm", {
   // run the record's declared checks, whose real exit codes are the half of the
   // evidence the author doesn't get to write.
   listReviews: () => ipcRenderer.invoke("reviews:list"),
+  acknowledgeNoRecord: (taskId) => ipcRenderer.invoke("reviews:acknowledgeNoRecord", { taskId }),
   setReviewStatus: (taskId, status, note) => ipcRenderer.invoke("reviews:setStatus", { taskId, status, note }),
   runReviewChecks: (taskId) => ipcRenderer.invoke("reviews:runChecks", { taskId }),
   onReviewsChanged: (cb) => {

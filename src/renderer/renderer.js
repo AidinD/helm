@@ -1309,6 +1309,26 @@ async function renderReviewPage() {
       if (t.completedAt) {
         line.append(reviewChip(relTime(t.completedAt), "neutral"));
       }
+      // Acknowledge: "I know this bypassed review." It does NOT claim the work was
+      // reviewed and creates no evidence - it stops the audit repeating something
+      // already read. Without it these sit for a fortnight and train you to skim the
+      // section, which is how an attention signal dies.
+      const ackBtn = document.createElement("button");
+      ackBtn.type = "button";
+      ackBtn.className = "text-btn";
+      ackBtn.textContent = "I know";
+      ackBtn.title = "Stop listing this. It does not mark the work as reviewed - there is still no evidence for it.";
+      ackBtn.addEventListener("click", async () => {
+        ackBtn.disabled = true;
+        const res = await window.helm.acknowledgeNoRecord(t.id);
+        if (!res?.ok) {
+          ackBtn.disabled = false;
+          showToast(res?.error || "Couldn't acknowledge that.");
+          return;
+        }
+        renderReviewPage();
+      });
+      line.append(ackBtn);
       el.append(line);
       frag.append(el);
     }
