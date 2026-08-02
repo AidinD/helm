@@ -13979,6 +13979,70 @@ function cmdkBuildCommands() {
     cmds.push({ label, tag: "Nav", run: () => navigateToPage(page) });
   }
 
+  // AUTO-CAPTAIN. Its switch and its "run one pass" live in the Auto widget, which
+  // only exists on the widget dashboard - and that is off for the captain, so without
+  // these two entries the feature would be unreachable for him entirely. Kept out
+  // of the classic dashboard on purpose: a permanent panel for something that is
+  // switched off is the same noise the docs-drift nudge just had removed from it.
+  {
+    const on = state.config?.autoCaptain?.enabled === true;
+    cmds.push({
+      label: on ? "Auto-captain: turn OFF" : "Auto-captain: turn on (starts tasks tagged \"auto\")",
+      tag: "Auto",
+      run: async () => {
+        if (!on) {
+          customConfirm(
+            "Turn on the auto-captain? Tasks tagged \"auto\" in Jot will start real sessions by themselves, up to 3 at a time. Work always lands in review - it never marks anything done.",
+            "Turn on",
+            async () => {
+              const res = await window.helm.setAutoCaptainEnabled(true);
+              if (!res?.ok) {
+                showToast(`Couldn't turn it on: ${res.error}`);
+                return;
+              }
+              state.config = { ...state.config, autoCaptain: { ...(state.config?.autoCaptain || {}), enabled: true } };
+              showToast("Auto-captain is on.");
+            },
+            { deliberate: true }
+          );
+          return;
+        }
+        const res = await window.helm.setAutoCaptainEnabled(false);
+        if (res?.ok) {
+          state.config = { ...state.config, autoCaptain: { ...(state.config?.autoCaptain || {}), enabled: false } };
+          showToast("Auto-captain is off.");
+        }
+      },
+    });
+    cmds.push({
+      label: "Auto-captain: run one pass now",
+      tag: "Auto",
+      run: async () => {
+        showToast("Auto-captain: checking the board…");
+        const res = await window.helm.runAutoCaptainNow({ force: true });
+        if (!res?.ok) {
+          showToast(`Auto-captain: ${res?.error || "that didn't work"}`);
+          return;
+        }
+        if (res.skipped) {
+          showToast(`Auto-captain did nothing: ${res.skipped}.`);
+          return;
+        }
+        const bits = [];
+        if (res.acted) {
+          bits.push(`started ${res.acted}`);
+        }
+        if (res.held) {
+          bits.push(`held back ${res.held} for clarification`);
+        }
+        if (res.waiting) {
+          bits.push(`${res.waiting} waiting`);
+        }
+        showToast(bits.length ? `Auto-captain: ${bits.join(", ")}.` : "Auto-captain: nothing tagged \"auto\" is queued.");
+      },
+    });
+  }
+
   // ACTIONS - only when the underlying affordance exists in the DOM.
   const newChatBtn = document.getElementById("newChat");
   if (newChatBtn) {

@@ -137,6 +137,22 @@ try {
   ok(ui.btns.includes("Run one pass"), `the widget offers a single supervised pass (${J(ui.btns)})`);
   ok(ui.btns.some((b) => b === "On" || b === "Off"), "and its own on/off switch");
 
+  // ---- reachable without the widget dashboard -----------------------------
+  // The Auto widget only exists on the widget dashboard, which the captain has off - so
+  // without a command-palette entry the whole feature would be unreachable for him.
+  const palette = await app.eval(`(() => {
+    const cmds = typeof cmdkBuildCommands === "function" ? cmdkBuildCommands() : null;
+    if (!cmds) { return null; }
+    return cmds.filter(c => c.tag === "Auto").map(c => c.label);
+  })()`);
+  if (palette === null) {
+    console.log("SKIP - command list builder not exposed under this name");
+  } else {
+    ok(palette.length === 2, `the command palette carries the auto-captain (${J(palette)})`);
+    ok(palette.some((l) => /run one pass/i.test(l)), "including a single supervised pass");
+    ok(palette.some((l) => /turn on|turn OFF/.test(l)), "and the switch");
+  }
+
   await app.eval(`window.helm.setAutoCaptainEnabled(false)`);
   const errs = app.getConsoleErrors();
   ok(errs.length === 0, `no console errors${errs.length ? ": " + errs[0].text.slice(0, 200) : ""}`);
