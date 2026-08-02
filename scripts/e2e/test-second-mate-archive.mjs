@@ -26,9 +26,14 @@ function assert(cond, msg) {
   }
 }
 
-const REPO = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\//, "")), "..", "..");
-const configPath = path.join(REPO, "config.json");
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "helm-smarch-"));
+// This test used to read (and clean up after itself in) the dev repo's REAL
+// config.json. The harness now sandboxes config into a temp dir whenever
+// HELM_CONFIG_PATH is unset, so the app's write went somewhere this test never
+// looked and the assertion failed for a reason that had nothing to do with the
+// feature. Own the seam explicitly instead of reaching for the real file - a test
+// that writes to his live config is a bad idea regardless.
+const configPath = path.join(tmp, "config.json");
 const metaHome = path.join(tmp, "meta-home");
 const smPath = path.join(tmp, "second-mates.json");
 fs.mkdirSync(metaHome, { recursive: true });
@@ -36,6 +41,7 @@ fs.writeFileSync(smPath, JSON.stringify({ sm_arch: { firstMateId: "mate_x", proj
 
 let app;
 try {
+  process.env.HELM_CONFIG_PATH = configPath;
   process.env.HELM_META_HOME_OVERRIDE = metaHome;
   process.env.HELM_MATES_PATH = path.join(tmp, "mates.json");
   process.env.HELM_SECOND_MATES_PATH = smPath;
@@ -77,16 +83,8 @@ try {
     const k = await app.close();
     log("cleanup app:", k || "(nothing)");
   }
-  // Remove the test id from the real config overlay (no un-archive IPC).
-  try {
-    if (fs.existsSync(configPath)) {
-      const cfg = JSON.parse(fs.readFileSync(configPath, "utf8"));
-      if (Array.isArray(cfg.archivedSecondMates)) {
-        cfg.archivedSecondMates = cfg.archivedSecondMates.filter((x) => x !== "sm_arch");
-        fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2) + "\n", "utf8");
-      }
-    }
-  } catch {}
+  // No config clean-up needed any more: the whole sandbox goes with `tmp`.
+  delete process.env.HELM_CONFIG_PATH;
   delete process.env.HELM_META_HOME_OVERRIDE;
   delete process.env.HELM_MATES_PATH;
   delete process.env.HELM_SECOND_MATES_PATH;

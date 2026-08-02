@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { writeJsonAtomicSync } from "./atomicWrite.js";
 
 /**
  * Registry of non-repo "life-domain" projects (PLAN.md's non-repo project
@@ -49,7 +50,14 @@ export function loadDomains() {
 }
 
 function writeDomains(domains) {
-  fs.writeFileSync(domainsPath, JSON.stringify(domains, null, 2) + "\n", "utf8");
+  // Shared atomic write with the locked-file retry (task efcaf486). Still a plain
+  // overwrite until 2026-08-02: the original conversion missed it, and the class
+  // guard of the day only looked for a private tmp+rename - so a store with no
+  // rename at all was invisible to it. Throws on failure, as the plain write did.
+  const res = writeJsonAtomicSync(domainsPath, domains);
+  if (!res.ok) {
+    throw new Error(`Could not write the domain list: ${res.error}`);
+  }
 }
 
 const DEFAULT_ICON = "\u{1F4CC}"; // pushpin - generic "life domain" marker

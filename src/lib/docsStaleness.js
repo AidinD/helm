@@ -79,7 +79,7 @@ export function docsStaleness(projectPath, { threshold = DOCS_STALE_THRESHOLD } 
  * Conflating those two is how a nudge ends up silently claiming all-clear.
  */
 export async function docsStalenessAsync(projectPath, { threshold = DOCS_STALE_THRESHOLD } = {}) {
-  const result = { hasDocs: false, stale: false, commitsSince: 0, threshold, checked: false };
+  const result = { hasDocs: false, stale: false, commitsSince: 0, threshold, checked: false, versioned: false, reason: null };
   if (!projectPath) {
     return result;
   }
@@ -106,7 +106,25 @@ export async function docsStalenessAsync(projectPath, { threshold = DOCS_STALE_T
   result.hasDocs = true;
   const git = async (args) => (await execFileAsync("git", ["-C", resolved, ...args], { windowsHide: true })).stdout.trim();
   try {
-    await git(["rev-parse", "--is-inside-work-tree"]);
+    try {
+      await git(["rev-parse", "--is-inside-work-tree"]);
+    } catch (err) {
+      // Two very different situations used to land in the same bucket, and the
+      // difference is the whole point of the `checked` flag.
+      //
+      // "not a git repository" is a complete ANSWER: drift is measured in commits,
+      // and a folder with no version control has none, so there is nothing that
+      // could be behind. Aidin's notes folder was being counted as "couldn't be
+      // checked" and showing up as a problem to look into, when the truth is there
+      // was never anything to look at (his review, 2026-07-28).
+      //
+      // Anything else here - git not installed, permission denied, a corrupt repo -
+      // IS a failed look and must stay uncertain.
+      const text = String(err?.stderr || err?.message || "");
+      const notARepo = /not a git repository|does not appear to be a git repository/i.test(text);
+      return { ...result, versioned: false, checked: notARepo, reason: notARepo ? "no version control" : firstLine(text) };
+    }
+    result.versioned = true;
     if (await git(["status", "--porcelain", "--", ...docs])) {
       // Uncommitted doc edits mean you're reconciling right now - not stale. But
       // only if the edit is RECENT: an edit left uncommitted months ago would
@@ -122,11 +140,25 @@ export async function docsStalenessAsync(projectPath, { threshold = DOCS_STALE_T
     result.commitsSince = Number.isFinite(count) ? count : 0;
     result.stale = result.commitsSince >= threshold;
     result.checked = true;
-  } catch {
+  } catch (err) {
     // Could not look. Deliberately NOT reported as clean.
-    return { hasDocs: result.hasDocs, stale: false, commitsSince: 0, threshold, checked: false };
+    return {
+      hasDocs: result.hasDocs,
+      stale: false,
+      commitsSince: 0,
+      threshold,
+      checked: false,
+      versioned: result.versioned,
+      reason: firstLine(String(err?.stderr || err?.message || "")),
+    };
   }
   return result;
+}
+
+/** The first meaningful line of a git error, for naming WHY a project couldn't be read. */
+function firstLine(text) {
+  const line = (text || "").split("\n").map((l) => l.trim()).find((l) => l.length > 0);
+  return line ? (line.length > 120 ? line.slice(0, 119) + "…" : line) : "unknown error";
 }
 
 const RECENT_DOC_EDIT_MS = 36 * 60 * 60 * 1000; // ~a day and a half: "still on it"
@@ -177,11 +209,15 @@ export function staleProjects(projectPaths, { threshold = DOCS_STALE_THRESHOLD, 
  * Async twin of staleProjects, for the board-wide sweep - the version the nudge
  * actually uses, because the sync one blocks the Electron main process.
  *
- * Also reports `unchecked`: how many candidate projects could not be looked at.
- * The caller needs that to avoid the failure mode this whole nudge exists to
- * avoid - rendering "everything is current" when the truth is "I couldn't look".
+ * Also reports what could NOT be looked at - and, since Aidin's review on
+ * 2026-07-28, WHICH ones. "2 of 14 projects couldn't be checked" told him nothing
+ * he could act on; a named project with a reason is either fixable or parkable.
  *
- * @returns {Promise<{rows: {path: string, commitsSince: number, threshold: number}[], unchecked: number, considered: number}>}
+ * A folder with no version control is NOT counted here. It is a definite answer
+ * (no commits exist, so nothing can be behind), and counting it as a failed look
+ * put his notes folder on the board as a permanent unexplained problem.
+ *
+ * @returns {Promise<{rows: object[], unchecked: number, uncheckedPaths: object[], unversioned: number, considered: number}>}
  */
 export async function staleProjectsAsync(projectPaths, { threshold = DOCS_STALE_THRESHOLD, limit = 0 } = {}) {
   const paths = dedupePaths(projectPaths);
@@ -189,22 +225,78 @@ export async function staleProjectsAsync(projectPaths, { threshold = DOCS_STALE_
     paths.map(async (p) => {
       try {
         return { p, res: await docsStalenessAsync(p, { threshold }) };
-      } catch {
-        return { p, res: { stale: false, checked: false } };
+      } catch (err) {
+        return { p, res: { stale: false, checked: false, reason: firstLine(String(err?.message || err)) } };
       }
     })
   );
   const rows = [];
-  let unchecked = 0;
+  const uncheckedPaths = [];
+  let unversioned = 0;
   for (const { p, res } of results) {
+    if (res.checked && res.hasDocs && !res.versioned) {
+      unversioned += 1;
+    }
     if (!res.checked) {
-      unchecked += 1;
+      uncheckedPaths.push({ path: p, name: path.basename(p), reason: res.reason || "unknown error" });
     }
     if (res.stale) {
       rows.push({ path: p, commitsSince: res.commitsSince, threshold: res.threshold });
     }
   }
-  return { rows: sortAndCap(rows, limit), unchecked, considered: paths.length };
+  return {
+    rows: sortAndCap(rows, limit),
+    unchecked: uncheckedPaths.length,
+    uncheckedPaths,
+    unversioned,
+    considered: paths.length,
+  };
+}
+
+// How recently you must have worked in a project for its docs drift to be worth a
+// nudge. Aidin's question, and he was right: "vad händer om jag startar nya projekt
+// då och då, då kommer ytterligare en rad per projekt, men gamla projekt försvinner
+// aldrig?" The candidate list is every project he has ever had a session in, and an
+// ABANDONED project's docs are permanently behind its code - so without this the
+// section accumulates a row forever and trains him to stop reading it.
+export const DOCS_NUDGE_ACTIVE_DAYS = 60;
+
+/**
+ * Decide WHICH projects the sweep should even look at, before spending git calls
+ * on them. Separated from main.js so the two rules that decide what he never sees
+ * are testable on their own - an invisible filter is the easiest place for a real
+ * drifting project to disappear without anyone noticing.
+ *
+ * @param {{key: string, cwd: string, touchedAt: number}[]} entries - one per project,
+ *   `touchedAt` being the newest session activity there (0 = unknown).
+ * @param {{parked?: string[], now?: number, activeDays?: number}} [opts] - `parked`
+ *   holds lower-cased resolved paths the user has set aside.
+ * @returns {{candidates: string[], parked: number, dormant: number}}
+ */
+export function docsNudgeCandidates(entries, { parked = [], now = Date.now(), activeDays = DOCS_NUDGE_ACTIVE_DAYS } = {}) {
+  const parkedSet = new Set((parked || []).map((p) => String(p).toLowerCase()));
+  const cutoff = now - activeDays * 24 * 60 * 60 * 1000;
+  const candidates = [];
+  let parkedCount = 0;
+  let dormant = 0;
+  for (const e of entries || []) {
+    if (!e || !e.cwd) {
+      continue;
+    }
+    if (parkedSet.has(String(e.key || e.cwd).toLowerCase())) {
+      parkedCount += 1;
+      continue;
+    }
+    // An UNKNOWN timestamp counts as ACTIVE. A missing lastActivityAt is a gap in
+    // the session record, not evidence the project was abandoned, and silently
+    // dropping a real drifting project is the worse of the two mistakes.
+    if (e.touchedAt && e.touchedAt < cutoff) {
+      dormant += 1;
+      continue;
+    }
+    candidates.push(e.cwd);
+  }
+  return { candidates, parked: parkedCount, dormant };
 }
 
 /**

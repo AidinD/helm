@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { writeJsonAtomicSync } from "./atomicWrite.js";
 
 // Persistent index of goal-orchestrator runs (Fas 3 Point 11), so the Goal
 // page still shows what happened after a restart — Helm is restarted
@@ -32,7 +33,12 @@ function readAll() {
 }
 
 function writeAll(records) {
-  fs.writeFileSync(historyPath, JSON.stringify(records, null, 2) + "\n", "utf8");
+  // Shared atomic write with the locked-file retry (task efcaf486) - see the note
+  // in domains.js for why this one was missed until 2026-08-02.
+  const res = writeJsonAtomicSync(historyPath, records);
+  if (!res.ok) {
+    throw new Error(`Could not write the goal-run history: ${res.error}`);
+  }
 }
 
 /** Returns all persisted goal-run records, oldest first (same order as stored). */

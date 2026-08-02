@@ -46,7 +46,7 @@ import { computeVersionString, captureRunningBuildIdentity, checkForNewerBuild }
 import { runGoal } from "./lib/goalOrchestrator.js";
 import { loadGoalRunHistory, upsertGoalRunRecord, removeGoalRunRecord } from "./lib/goalRunHistory.js";
 import { removeWorktree, isBranchMerged, deleteBranch } from "./lib/worktree.js";
-import { docsStaleness, staleProjectsAsync } from "./lib/docsStaleness.js";
+import { docsStaleness, staleProjectsAsync, docsNudgeCandidates, DOCS_NUDGE_ACTIVE_DAYS } from "./lib/docsStaleness.js";
 import { loadDomains, registerDomain, removeDomain } from "./lib/domains.js";
 import { ensureMates, activeMates, findMateById, loadMates, renameMate, retireAndRespawn, bindMateSession, consumeMateHandoff, setMatePersona, rethemeMateNames } from "./lib/mates.js";
 import { personaOverlay, PERSONAS } from "./lib/personas.js";
@@ -3124,7 +3124,7 @@ ipcMain.handle("docs:staleness", (_event, { cwd }) => {
 // one attached to the other's app - the wrong-app-attach bug, reintroduced across
 // invocations instead of within one.
 let checkPortCursor = 0;
-let staleProjectsCache = { at: 0, rows: [], unchecked: 0, considered: 0, error: null };
+let staleProjectsCache = { at: 0, rows: [], unchecked: 0, uncheckedPaths: [], considered: 0, parked: 0, dormant: 0, dormantDays: 0, error: null };
 let staleProjectsRefreshing = null;
 const STALE_PROJECTS_TTL_MS = 60_000;
 
@@ -3134,7 +3134,12 @@ async function refreshStaleProjects() {
   // record, so that is when drift matters MOST.
   const all = readAllSessions();
   const sessions = all.sessions || [];
+  const cfg = loadConfig();
   const hidden = new Set(loadConfig().hiddenSessions || []);
+  // Projects deliberately set aside - work repos, or ones he has decided not to
+  // reconcile. Parked is NOT the same as fixed, so they are reported separately
+  // rather than vanishing without trace.
+  const parked = new Set((cfg.parkedDocsProjects || []).map((p) => String(p).toLowerCase()));
   const newestByPath = new Map();
   for (const s of sessions) {
     if (!s.cwd) {
@@ -3155,14 +3160,22 @@ async function refreshStaleProjects() {
     const jumpable = !s.isArchived && !hidden.has(s.sessionId);
     const prev = newestByPath.get(key);
     if (!prev) {
-      newestByPath.set(key, { cwd: s.cwd, jumpTarget: jumpable ? s : null });
+      // touchedAt tracks the newest activity from ANY session in this project,
+      // jumpable or not - an archived session still proves you were working here,
+      // and the age-out below must not treat archiving as abandonment.
+      newestByPath.set(key, { cwd: s.cwd, jumpTarget: jumpable ? s : null, touchedAt: s.lastActivityAt || 0 });
       continue;
     }
+    prev.touchedAt = Math.max(prev.touchedAt, s.lastActivityAt || 0);
     if (jumpable && (!prev.jumpTarget || (s.lastActivityAt || 0) > (prev.jumpTarget.lastActivityAt || 0))) {
       prev.jumpTarget = s;
     }
   }
-  const swept = await staleProjectsAsync([...newestByPath.values()].map((v) => v.cwd));
+  const { candidates, parked: parkedCount, dormant } = docsNudgeCandidates(
+    [...newestByPath.entries()].map(([key, v]) => ({ key, cwd: v.cwd, touchedAt: v.touchedAt })),
+    { parked: [...parked] }
+  );
+  const swept = await staleProjectsAsync(candidates);
   const rows = swept.rows.map((row) => {
     const target = newestByPath.get(row.path.toLowerCase())?.jumpTarget;
     return {
@@ -3176,7 +3189,11 @@ async function refreshStaleProjects() {
     at: Date.now(),
     rows,
     unchecked: swept.unchecked,
+    uncheckedPaths: swept.uncheckedPaths,
     considered: swept.considered,
+    parked: parkedCount,
+    dormant,
+    dormantDays: DOCS_NUDGE_ACTIVE_DAYS,
     // A sessions-dir failure means the candidate list itself is empty for the
     // wrong reason - report it rather than letting it look like a clean board.
     error: all.error || null,
@@ -3191,7 +3208,7 @@ ipcMain.handle("docs:staleProjects", async (_event, { force = false } = {}) => {
       const c = await (staleProjectsRefreshing || (staleProjectsRefreshing = refreshStaleProjects().finally(() => {
         staleProjectsRefreshing = null;
       })));
-      return { ok: !c.error, error: c.error, rows: c.rows, unchecked: c.unchecked, considered: c.considered, cached: false, pending: false };
+      return { ...driftPayload(c), cached: false, pending: false };
     }
     if (!fresh && !staleProjectsRefreshing) {
       // Fire and forget: the next poll picks up the result. A failure here must not
@@ -3207,19 +3224,59 @@ ipcMain.handle("docs:staleProjects", async (_event, { force = false } = {}) => {
     }
     const c = staleProjectsCache;
     return {
-      ok: !c.error,
-      error: c.error,
-      rows: c.rows,
-      unchecked: c.unchecked,
-      considered: c.considered,
+      ...driftPayload(c),
       cached: fresh,
       // Nothing has ever been measured yet, so an empty list means "not known",
       // not "all current".
       pending: c.at === 0,
     };
   } catch (err) {
-    return { ok: false, error: err?.message || String(err), rows: [], unchecked: 0, considered: 0, pending: false };
+    return { ok: false, error: err?.message || String(err), rows: [], unchecked: 0, uncheckedPaths: [], considered: 0, parked: 0, dormant: 0, pending: false };
   }
+});
+
+/** One shape for the drift readout, so the cached and forced paths can't diverge. */
+function driftPayload(c) {
+  return {
+    ok: !c.error,
+    error: c.error,
+    rows: c.rows,
+    unchecked: c.unchecked,
+    uncheckedPaths: c.uncheckedPaths || [],
+    considered: c.considered,
+    parked: c.parked || 0,
+    dormant: c.dormant || 0,
+    dormantDays: c.dormantDays || 0,
+  };
+}
+
+// Park (or un-park) a project so its docs drift stops being nudged about. Aidin's
+// case: asteroid-wars is a work repo he cannot reconcile while on leave, and a row
+// he can never act on is what teaches him to stop reading the whole section.
+// Parking is reversible and counted in the readout, so it can't quietly hide drift.
+ipcMain.handle("docs:parkProject", (_event, { path: projectPath, parked = true } = {}) => {
+  if (!projectPath || typeof projectPath !== "string") {
+    return { ok: false, error: "No project path." };
+  }
+  let key;
+  try {
+    key = path.resolve(projectPath).toLowerCase();
+  } catch {
+    return { ok: false, error: "That path can't be resolved." };
+  }
+  const cfg = loadConfig();
+  const current = (cfg.parkedDocsProjects || []).map((p) => String(p).toLowerCase());
+  const next = parked ? [...new Set([...current, key])] : current.filter((p) => p !== key);
+  writeConfig({ ...cfg, parkedDocsProjects: next });
+  // The cached sweep still contains the row that was just parked; expire it so the
+  // next read reflects the decision instead of leaving the row on screen.
+  staleProjectsCache = { ...staleProjectsCache, at: 0 };
+  return { ok: true, parked: next.length };
+});
+
+ipcMain.handle("docs:parkedProjects", () => {
+  const list = (loadConfig().parkedDocsProjects || []).map((p) => ({ path: p, name: path.basename(p) }));
+  return { ok: true, parked: list };
 });
 
 function truncateForNotification(text) {

@@ -190,6 +190,8 @@ contextBridge.exposeInMainWorld("helm", {
   // (pane-header staleness nudge).
   docsStaleness: (cwd) => ipcRenderer.invoke("docs:staleness", { cwd }),
   staleProjects: (opts) => ipcRenderer.invoke("docs:staleProjects", opts || {}),
+  parkDocsProject: (projectPath, parked) => ipcRenderer.invoke("docs:parkProject", { path: projectPath, parked }),
+  parkedDocsProjects: () => ipcRenderer.invoke("docs:parkedProjects"),
   onGoalEvent: (handler) => {
     const listener = (_event, payload) => handler(payload);
     ipcRenderer.on("goal:event", listener);
