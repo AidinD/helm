@@ -12,7 +12,7 @@ import crypto from "node:crypto";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { readAllSessions, enrichWithJot, setSessionArchived, forkTranscriptAtUserMessage, switchSessionRootFolder } from "./lib/sessions.js";
-import { loadJot, loadGoals, addSubtask, formatJotSummaryForClassifier, projectBoardSummary, reviewTasks, signedOffWithoutRecord, setTaskStatus, setTaskTags, readJotState } from "./lib/jot.js";
+import { loadJot, loadGoals, addSubtask, formatJotSummaryForClassifier, projectBoardSummary, reviewTasks, signedOffWithoutRecord, setTaskStatus, setTaskTags, readJotState, ensureTagsExist } from "./lib/jot.js";
 import { loadConfig, writeConfig } from "./lib/config.js";
 import { startSession } from "./lib/launcher.js";
 import { createLiveSessionRegistry } from "./lib/liveSessions.js";
@@ -69,6 +69,7 @@ import { initAutoUpdate } from "./lib/autoUpdate.js";
 import { deriveSecondMates, bindSecondMateSession, renameSecondMate, readBindings, proposeSecondMate, markSecondMateCreated, secondMateIdForSession, secondMateId, removeSecondMates } from "./lib/secondMates.js";
 import {
   AUTO_WIDTH_CAP,
+  AUTO_CAPTAIN_TAGS,
   AUTO_RUNNING_TAG,
   NEEDS_CLARIFICATION_TAG,
   TRIAGE_SYSTEM_PROMPT,
@@ -4392,6 +4393,18 @@ function startDispatchWatcher() {
   // own note). At startup, before the first render, so the Fleet is right the first
   // time rather than after a refresh.
   pruneStaleArchivedFleetNodes();
+  // Put the auto-captain's tags on the board so the feature can actually be
+  // reached: "auto" is the tag the user applies, and until now nothing created
+  // it, so there was nothing to pick in Jot. Idempotent, and it does not touch
+  // the file when all three already exist.
+  try {
+    const seeded = ensureTagsExist(loadConfig().jot || {}, AUTO_CAPTAIN_TAGS);
+    if (seeded.added.length > 0) {
+      console.log(`[helm] added Jot tags for the auto-captain: ${seeded.added.join(", ")}`);
+    }
+  } catch (err) {
+    console.error("[helm] could not add the auto-captain's Jot tags:", err?.message || err);
+  }
   try {
     ensureMates(metaHome, configuredMateSlots());
   } catch (err) {

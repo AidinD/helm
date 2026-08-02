@@ -1,5 +1,26 @@
 # Decisions
 
+## 2026-08-02 - The auto-captain's trigger tag is seeded; still a tag, not a lane
+
+The captain, reviewing the finished auto-captain: "det finns ingen auto tag, borde den inte läggas till som default? Ska det inte finnas en auto lane i jot?"
+
+**The first half was a real bug, and an embarrassing one.**
+`auto` is the tag the USER applies - it is the entire entry point - and nothing in Helm or Jot ever created it.
+Every gate, cap and kill switch was tested through the real app; the door was locked.
+`setTaskTags` creates a missing tag on the fly, but only for the two Helm writes back, and it creates them bare: no colour, no description, next to six hand-made tags that have both.
+
+**Decided.** `ensureTagsExist` seeds all three at startup, with colours and with descriptions that say what the tag DOES - those descriptions are the only place in Jot that documents the feature.
+Idempotent, name-matched case-insensitively, and it does not rewrite the file when all three exist.
+That last part is not tidiness: this runs at every launch against a file the Jot app may have open, and a pointless rewrite is a chance to lose someone else's edit for nothing.
+A colour he changes himself survives.
+
+**The second half stays as designed: a tag, not a lane.**
+Not because a lane is hard - the parked task ed4291d2 covers that Jot's four statuses are hardcoded - but because it would be wrong even if it were free.
+A lane is a position in the workflow (open -> in-progress -> review -> done).
+"This may be started automatically" is a PROPERTY of a card, not a place in its lifecycle, and the two behave differently in the case that matters: the moment the auto-captain starts a card it must move to in-progress, which would erase the marking that caused it.
+A tag survives the transition, which is how `auto-running` can mean anything at all, and how a card can be marked auto-eligible while it sits in review.
+His instinct was about discoverability, and that was the right instinct pointed at the wrong mechanism - the fix for discoverability is the seeded, described tag.
+
 ## 2026-08-02 - A handoff asks which topic rather than inventing one
 
 The captain archived "Träning och kost (Hevy)" and got a second handoff file, `traning-och-kost-hevy.md`, next to the `training-coaching.md` it belonged in.

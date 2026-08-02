@@ -17,6 +17,31 @@ export const AUTO_TAG = "auto";
 export const NEEDS_CLARIFICATION_TAG = "needs-clarification";
 export const AUTO_RUNNING_TAG = "auto-running";
 
+// Seeded onto the board at startup (ensureTagsExist in jot.js). Without this the
+// feature has no way in: `auto` is the tag the USER applies, and nothing ever
+// created it, so there was nothing to pick in Jot - the trigger for the whole
+// feature did not exist (the captain, 2026-08-02). The two Helm writes back would have
+// been created on demand, but bare: no colour, no description, sitting next to
+// six hand-made tags that have both. The descriptions ARE the documentation -
+// they are the only place in Jot that explains what tagging a card does.
+export const AUTO_CAPTAIN_TAGS = [
+  {
+    name: AUTO_TAG,
+    color: "#5fb0ff",
+    description: "Let Helm start this on its own. It only ever STARTS - the work lands in review for you.",
+  },
+  {
+    name: NEEDS_CLARIFICATION_TAG,
+    color: "#ffb054",
+    description: "Helm did not start this: too vague to hand over. The reason is written on the card.",
+  },
+  {
+    name: AUTO_RUNNING_TAG,
+    color: "#5fd0a0",
+    description: "Helm started this one itself. Set and cleared by Helm - not something to set by hand.",
+  },
+];
+
 // How many auto-started runs may be in flight at once. Dragging ten cards into
 // Auto must not fire ten sessions; the rest wait their turn. Matches the crew
 // dispatch width so the whole system has one idea of "too much at once".
