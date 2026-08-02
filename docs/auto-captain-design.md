@@ -47,13 +47,44 @@ surgery. A visual "Auto" lane/view can be layered later (a filtered view over th
 tag); the tag is the durable trigger. State tags (needs-clarification, auto-running)
 carry status, matched by name so no Jot schema change is needed.
 
-Build status (2026-07-18): the auto-captain's PURE brain is built + tested, OFF by
-default (config.autoCaptain.enabled = false) - src/lib/autoCaptain.js does task
-selection (selectAutoQueuedTasks) + triage-verdict parsing (parseTriageVerdict),
-covered by test-auto-captain.mjs. NOT yet wired: the live Haiku triage call, the
-watch loop, the actual dispatch, and the auto-captain column / settings toggle UI.
-Those FIRE REAL WORK on the board + touch UI, so they're staged to run first under
-Aidin's eyes (flip the toggle, watch the first live run) rather than autonomously.
+Build status (2026-08-02): BUILT END TO END, still OFF by default.
+
+What exists now:
+- `src/lib/autoCaptain.js` - the pure brain: selection, project resolution from the
+  list's folder binding, the concurrency cap, the re-triage guard, and the wording of
+  what gets written back to the board.
+- `triageAutoTask` in `orchestratorHelper.js` - the live Haiku gate. No tools, no MCP
+  servers, its own transcript deleted. A null answer counts as "don't fire".
+- `autoCaptainTick` in `main.js` - one pass over the board, on a one-minute timer.
+  The timer always runs; the TICK checks the toggle, so turning it on takes effect
+  without a restart. No catch-up pass at startup, deliberately: an Auto card is a
+  standing instruction, and firing a burst of them the moment Helm opens is exactly
+  the surprise this must not produce.
+- Dispatch reuses `runRelayTurn`, the same path a first mate's relay uses, with
+  `allowDirect` for the deliberate captain -> second-mate route. One mechanism, so
+  the auto path can't drift into a less careful copy of the locking and binding.
+- The Auto widget now has the on/off switch and a "Run one pass" button. The switch
+  lives THERE rather than in Settings: you cannot turn it on without seeing what it
+  has started, and you cannot look at what it started without seeing that it is on.
+- `startedBy: "auto"` is stamped on the session record and carried through to the
+  Fleet node. Before this the Auto column filtered on a field nothing ever wrote,
+  so it could never have shown anything.
+
+Two things that emerged while building, both worth keeping:
+1. **A card judged unclear is not re-judged until the card CHANGES.** Otherwise the
+   triage re-runs every minute against the same words forever. The fingerprint
+   STRIPS the auto-captain's own notes first - without that, appending the
+   hold-back note changed the card, which made it look edited, which triggered
+   another judgement and another note. Caught by the gate test on its first run.
+2. **An unbound list is a first-class refusal, not a triage verdict.** A Jot list
+   with no folder binding gives no trustworthy answer to "where does this run", and
+   guessing from the list name would mean occasionally starting real work in the
+   wrong repo. The card is held with a reason that says how to fix it.
+
+NOT verified, on purpose: the live triage call and an actual dispatch have never
+been run. Every test reaches its decision without a model call or a spawned session,
+because a suite that fires real work would cost money each run. That last step is
+"Run one pass" with Aidin watching, which is what this doc asked for.
 
 ### The Auto lane itself is behind a Jot-settings toggle
 

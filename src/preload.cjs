@@ -125,6 +125,12 @@ contextBridge.exposeInMainWorld("helm", {
     ipcRenderer.on("config:writeFailed", listener);
     return () => ipcRenderer.removeListener("config:writeFailed", listener);
   },
+  // Auto-captain (ea0546d1): OFF by default. runAutoCaptainNow({force:true}) runs a
+  // single pass even while the toggle is off - the deliberate "watch the first live
+  // run" path, rather than flipping it on and waiting for a timer.
+  autoCaptainStatus: () => ipcRenderer.invoke("autoCaptain:status"),
+  setAutoCaptainEnabled: (enabled) => ipcRenderer.invoke("autoCaptain:setEnabled", { enabled }),
+  runAutoCaptainNow: (opts) => ipcRenderer.invoke("autoCaptain:runNow", opts || {}),
   pickFolder: () => ipcRenderer.invoke("dialog:pickFolder"),
   pickFiles: () => ipcRenderer.invoke("dialog:pickFiles"),
   // Non-repo "life-domain" projects (PLAN.md) — plain folders (gym, diabetes,

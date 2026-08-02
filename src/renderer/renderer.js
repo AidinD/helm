@@ -6854,6 +6854,10 @@ function augmentSecondMatesWithSessions(secondMates, mates = []) {
       name: sess.title || sess.cwd.split(/[\\/]/).filter(Boolean).pop() || sess.cwd,
       sessionId: sid,
       crew: [],
+      // Carried through so the Auto column can pick its own runs out. Without it
+      // the column had no populated field to filter on and could never show
+      // anything at all.
+      startedBy: sess.startedBy || null,
       isSessionNode: true,
     });
     boundIds.add(sid);
@@ -8422,22 +8426,109 @@ function widgetBodyAuto(data) {
   // auto captain's own column (Aidin: "auto ska vara en separat widget som ser
   // precis ut som captain men med autostartade sessioner").
   //
-  // The auto captain's firing loop is not built yet (task ea0546d1 - it spawns
-  // real work, so it stays off until supervised), which means nothing is tagged
-  // auto-started yet and this reads as empty rather than wrong.
   const autoSms = (data.secondMates || []).filter((s) => s.isSessionNode && s.startedBy === "auto");
+  const frag = document.createDocumentFragment();
+  frag.append(autoCaptainControlsEl());
   if (autoSms.length === 0) {
-    const frag = document.createDocumentFragment();
     frag.append(
       widgetEmpty(
         state.config?.autoCaptain?.enabled === true
-          ? "No auto-started sessions yet."
-          : "Auto captain is off. Nothing starts by itself until you enable it."
+          ? "Nothing started yet. Tag a task \"auto\" in Jot and it gets picked up within a minute."
+          : "Off. Nothing starts by itself until you turn this on."
       )
     );
     return frag;
   }
-  return fleetDirectCardEl(autoSms);
+  frag.append(fleetDirectCardEl(autoSms));
+  return frag;
+}
+
+/**
+ * The auto-captain's own controls, inside its widget: the on/off switch, and a
+ * "run one pass now" that works even while it is off.
+ *
+ * The switch lives here rather than in Settings on purpose. This is the one
+ * feature in Helm that spends money and changes a repo without being asked each
+ * time, so the control belongs next to the list of what it has actually started -
+ * you cannot turn it on without seeing its output, and you cannot look at its
+ * output without seeing that it is on.
+ */
+function autoCaptainControlsEl() {
+  const row = document.createElement("div");
+  row.className = "wd-auto-controls";
+  const on = state.config?.autoCaptain?.enabled === true;
+
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "text-btn" + (on ? " has-running" : "");
+  toggle.textContent = on ? "On" : "Off";
+  toggle.title = on
+    ? "Auto-captain is watching for tasks tagged \"auto\". Click to stop."
+    : "Turn on to let tasks tagged \"auto\" start themselves. Work always lands in review, never done.";
+  toggle.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    const next = !on;
+    // Turning it ON is the consequential direction, so it is the one that asks.
+    const apply = async () => {
+      toggle.disabled = true;
+      const res = await window.helm.setAutoCaptainEnabled(next);
+      if (!res?.ok) {
+        toggle.disabled = false;
+        showToast(`Couldn't change that: ${res?.error || "unknown"}`);
+        return;
+      }
+      state.config = { ...state.config, autoCaptain: { ...(state.config?.autoCaptain || {}), enabled: next } };
+      showToast(next ? "Auto-captain is on. Tasks tagged \"auto\" will start themselves." : "Auto-captain is off.");
+      repaintDashboard();
+    };
+    if (next) {
+      customConfirm(
+        "Turn on the auto-captain? Tasks tagged \"auto\" in Jot will start real sessions by themselves, up to 3 at a time. Work always lands in review - it never marks anything done.",
+        "Turn on",
+        apply,
+        { deliberate: true }
+      );
+      return;
+    }
+    apply();
+  });
+
+  const runNow = document.createElement("button");
+  runNow.type = "button";
+  runNow.className = "text-btn";
+  runNow.textContent = "Run one pass";
+  runNow.title = "Check the board once, right now - even while the auto-captain is off. This is how to watch the first run.";
+  runNow.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    runNow.disabled = true;
+    runNow.textContent = "Checking…";
+    const res = await window.helm.runAutoCaptainNow({ force: true });
+    runNow.disabled = false;
+    runNow.textContent = "Run one pass";
+    if (!res?.ok) {
+      showToast(`Auto-captain: ${res?.error || "that didn't work"}`);
+      return;
+    }
+    if (res.skipped) {
+      showToast(`Auto-captain did nothing: ${res.skipped}.`);
+      return;
+    }
+    const bits = [];
+    if (res.acted) {
+      bits.push(`started ${res.acted}`);
+    }
+    if (res.held) {
+      bits.push(`held back ${res.held} for clarification`);
+    }
+    if (res.waiting) {
+      bits.push(`${res.waiting} waiting`);
+    }
+    showToast(bits.length ? `Auto-captain: ${bits.join(", ")}.` : "Auto-captain: nothing tagged \"auto\" is queued.");
+    repaintDashboard();
+  });
+
+  row.append(toggle, runNow);
+  return row;
 }
 
 async function widgetBodyGoals(data) {

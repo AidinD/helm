@@ -384,6 +384,109 @@ export function classifyHandoffCategory({ cwd, title, text, existingCategories =
   });
 }
 
+const TRIAGE_SCHEMA = JSON.stringify({
+  type: "object",
+  properties: {
+    well_defined: { type: "boolean" },
+    reason: { type: "string" },
+  },
+  required: ["well_defined", "reason"],
+});
+
+/**
+ * The auto-captain's gate: is this task card specific enough to hand to an agent?
+ *
+ * Same cheap one-shot shape as the classifiers above - Haiku, low effort, NO tools
+ * and no MCP servers, its own transcript deleted afterwards. Tool access matters
+ * here beyond cost: this call reads a card the user wrote and decides whether real
+ * work fires, so it must not be able to touch anything itself.
+ *
+ * Resolves { dispatchable, reason, costUsd } or null when the call could not be
+ * made at all. A null is NOT "go ahead" - the caller treats it as "don't fire".
+ *
+ * @param {{cwd: string, systemPrompt: string, input: string}} args
+ */
+export function triageAutoTask({ cwd, systemPrompt, input }) {
+  return new Promise((resolve) => {
+    if (!input || !input.trim()) {
+      resolve(null);
+      return;
+    }
+    const triageSessionId = randomUUID();
+    const args = [
+      "-p",
+      input,
+      "--model",
+      "claude-haiku-4-5-20251001",
+      "--effort",
+      "low",
+      "--session-id",
+      triageSessionId,
+      "--output-format",
+      "json",
+      "--json-schema",
+      TRIAGE_SCHEMA,
+      "--system-prompt",
+      systemPrompt,
+      "--allowed-tools",
+      "",
+      "--mcp-config",
+      '{"mcpServers":{}}',
+      "--strict-mcp-config",
+    ];
+    const claudePath = resolveClaudeBinary();
+    let child;
+    try {
+      child = spawn(claudePath, args, {
+        cwd,
+        shell: !claudePath.toLowerCase().endsWith(".exe"),
+        env: process.env,
+      });
+    } catch {
+      resolve(null);
+      return;
+    }
+    let out = "";
+    let settled = false;
+    const finish = (result) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeoutId);
+      deleteOwnTranscript(cwd, triageSessionId);
+      resolve(result);
+    };
+    const timeoutId = setTimeout(() => {
+      child.kill();
+      finish(null);
+    }, CLASSIFIER_TIMEOUT_MS);
+    child.stdout.on("data", (d) => {
+      if (out.length < MAX_OUTPUT_BYTES) {
+        out += d.toString("utf8");
+      }
+    });
+    child.on("error", () => finish(null));
+    child.on("close", () => {
+      try {
+        const parsed = JSON.parse(out);
+        const result = parsed.structured_output;
+        if (result && typeof result.well_defined === "boolean") {
+          finish({
+            dispatchable: result.well_defined,
+            reason: typeof result.reason === "string" ? result.reason.trim() : "",
+            costUsd: parsed.total_cost_usd || 0,
+          });
+        } else {
+          finish(null);
+        }
+      } catch {
+        finish(null);
+      }
+    });
+  });
+}
+
 // Best-effort delete of a just-completed one-shot classifier call's own
 // transcript. `cwd` + `sessionId` together resolve the exact file path the
 // same way `findTranscriptPath` searches (paths.js's own `encodeProjectDir`

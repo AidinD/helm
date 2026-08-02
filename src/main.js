@@ -12,7 +12,7 @@ import crypto from "node:crypto";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { readAllSessions, enrichWithJot, setSessionArchived, forkTranscriptAtUserMessage, switchSessionRootFolder } from "./lib/sessions.js";
-import { loadJot, loadGoals, addSubtask, formatJotSummaryForClassifier, projectBoardSummary, reviewTasks, signedOffWithoutRecord, setTaskStatus } from "./lib/jot.js";
+import { loadJot, loadGoals, addSubtask, formatJotSummaryForClassifier, projectBoardSummary, reviewTasks, signedOffWithoutRecord, setTaskStatus, setTaskTags, readJotState } from "./lib/jot.js";
 import { loadConfig, writeConfig } from "./lib/config.js";
 import { startSession } from "./lib/launcher.js";
 import { createLiveSessionRegistry } from "./lib/liveSessions.js";
@@ -40,7 +40,7 @@ import {
 } from "./lib/scheduledPrompts.js";
 import { buildReviewQueue, listReviewRecords, reviewQueueTally, readReviewRecord, recordCheckRun } from "./lib/reviewRecords.js";
 import { listHandoffCategories, writeHandoff, readHandoff, resolveHandoffCategory, handoffPath } from "./lib/handoffStore.js";
-import { classifySessionStatus, classifyHandoffCategory, expectsUserInputHeuristic, estimateSessionContextTokens, compactSession, getTranscriptSize } from "./lib/orchestratorHelper.js";
+import { classifySessionStatus, classifyHandoffCategory, expectsUserInputHeuristic, estimateSessionContextTokens, compactSession, getTranscriptSize, triageAutoTask } from "./lib/orchestratorHelper.js";
 import { savePastedImage, prunePastedImages } from "./lib/images.js";
 import { computeVersionString, captureRunningBuildIdentity, checkForNewerBuild } from "./lib/version.js";
 import { runGoal } from "./lib/goalOrchestrator.js";
@@ -67,6 +67,17 @@ import { trackHelmUsage, summarizeHelmUsage } from "./lib/helmUsage.js";
 import { mcpAllowedToolsFromConfig } from "./lib/userMcp.js";
 import { initAutoUpdate } from "./lib/autoUpdate.js";
 import { deriveSecondMates, bindSecondMateSession, renameSecondMate, readBindings, proposeSecondMate, markSecondMateCreated, secondMateIdForSession, secondMateId, removeSecondMates } from "./lib/secondMates.js";
+import {
+  AUTO_WIDTH_CAP,
+  AUTO_RUNNING_TAG,
+  NEEDS_CLARIFICATION_TAG,
+  TRIAGE_SYSTEM_PROMPT,
+  buildTriageInput,
+  clarificationNote,
+  planAutoTick,
+  resolveTaskProject,
+  taskFingerprint,
+} from "./lib/autoCaptain.js";
 import { secondMateAppendPrompt } from "./lib/secondMatePrompt.js";
 import { addSpend, isOverBudget, isKilled, setKilled, resetBudget, readBudget, setCeiling } from "./lib/orchestrationBudget.js";
 import {
@@ -1877,7 +1888,7 @@ ipcMain.handle("secondMates:propose", (_event, { firstMateId, project, brief, as
 // once (on create), lastActivityAt always bumps. `createIfAbsent:false` means
 // "only bump an existing entry" - used on resume/completion so resuming a
 // DESKTOP session (which Helm didn't create) never fabricates a stray entry.
-function recordHelmSession(sessionId, { cwd, model, effort, permissionMode, title, createIfAbsent } = {}) {
+function recordHelmSession(sessionId, { cwd, model, effort, permissionMode, title, startedBy, createIfAbsent } = {}) {
   if (!sessionId) {
     return;
   }
@@ -1897,6 +1908,10 @@ function recordHelmSession(sessionId, { cwd, model, effort, permissionMode, titl
       effort: existing?.effort ?? effort ?? "",
       permissionMode: existing?.permissionMode ?? permissionMode ?? "",
       title: existing?.title ?? title ?? "(untitled)",
+      // Who started this session. "auto" marks an auto-captain run, which is what
+      // puts it in the Auto column instead of among the captain's own work. Never
+      // downgraded once set - a resumed auto run is still an auto run.
+      startedBy: existing?.startedBy ?? startedBy ?? null,
       isArchived: existing?.isArchived ?? false,
       createdAt: existing?.createdAt ?? now,
       lastActivityAt: now,
@@ -3039,6 +3054,175 @@ ipcMain.handle("orchestration:killTree", () => {
   return { ok: true, cancelled };
 });
 
+// ============================ Auto-captain (ea0546d1) ========================
+// Starts work on tasks the user hands it, so the board drives execution without
+// opening a session and prompting each time. Design: docs/auto-captain-design.md.
+//
+// The safety shape, and none of it is optional:
+//   - OFF by default. Nothing fires until config.autoCaptain.enabled is true.
+//   - START only. A run lands in review; only the user moves anything to done.
+//   - Capped. AUTO_WIDTH_CAP runs at once, the rest wait.
+//   - The orchestration kill switch stops it, like everything else that spends.
+//   - A card it will not start gets a tag AND a written reason on the board.
+//   - A card judged unclear is not re-judged until the card CHANGES. Without that
+//     the triage would re-run every minute, forever, on the same words.
+const AUTO_TICK_MS = 60_000;
+let autoTickInFlight = false;
+// taskId -> { taskId, title, projectPath, startedAt, secondMateId }. In memory
+// only: a run that did not survive a restart is not running, so remembering it
+// would just block the cap on nothing.
+const autoRuns = new Map();
+let autoLastTick = { at: 0, acted: 0, held: 0, error: null };
+
+function autoCaptainConfig() {
+  const cfg = loadConfig();
+  return { enabled: cfg.autoCaptain?.enabled === true, triaged: cfg.autoCaptain?.triaged || {}, jot: cfg.jot || {} };
+}
+
+/** Remember that this exact wording was judged unclear, so it isn't re-judged. */
+function rememberTriaged(taskId, fingerprint) {
+  try {
+    const cfg = loadConfig();
+    const triaged = { ...(cfg.autoCaptain?.triaged || {}), [taskId]: fingerprint };
+    writeConfig({ ...cfg, autoCaptain: { ...(cfg.autoCaptain || {}), triaged } });
+  } catch (err) {
+    // A failed write means this card gets triaged again next tick - wasteful, but
+    // never wrong. Not worth failing the tick over.
+    console.error("[helm] auto-captain could not remember a triage verdict:", err?.message || err);
+  }
+}
+
+/** Hold a card back: tag it, say why on the card itself, and don't ask again. */
+function holdBack(jotConfig, todo, reason) {
+  const res = setTaskTags(jotConfig, todo.id, {
+    add: [NEEDS_CLARIFICATION_TAG],
+    note: clarificationNote(reason),
+  });
+  rememberTriaged(todo.id, taskFingerprint(todo));
+  if (!res.ok) {
+    console.error("[helm] auto-captain could not tag a held task:", res.error);
+  }
+  return res.ok;
+}
+
+/**
+ * One pass over the board. Returns a summary rather than throwing, because this
+ * runs on a timer and a thrown error on a timer is an unhandled rejection.
+ */
+async function autoCaptainTick({ force = false } = {}) {
+  if (autoTickInFlight) {
+    return { ok: true, skipped: "a pass is already running" };
+  }
+  const { enabled, triaged, jot } = autoCaptainConfig();
+  if (!enabled && !force) {
+    return { ok: true, skipped: "auto-captain is off" };
+  }
+  const metaHome = resolveMetaHome();
+  if (isKilled(metaHome)) {
+    return { ok: true, skipped: "orchestration is stopped by the kill switch" };
+  }
+  autoTickInFlight = true;
+  let acted = 0;
+  let held = 0;
+  try {
+    const state = readJotState(jot);
+    if (!state.ok) {
+      autoLastTick = { at: Date.now(), acted: 0, held: 0, error: "Couldn't read the board." };
+      return { ok: false, error: autoLastTick.error };
+    }
+    const { act, skipped } = planAutoTick(state, { running: autoRuns.size, triaged, handledIds: new Set(autoRuns.keys()) });
+    for (const todo of act) {
+      // WHERE. A list with no folder binding cannot be acted on, and saying that
+      // plainly is more useful than a triage verdict about the wording.
+      const where = resolveTaskProject(todo, state.categories);
+      if (!where.ok) {
+        holdBack(jot, todo, where.reason);
+        held += 1;
+        continue;
+      }
+      // WHETHER. Haiku, no tools, and a null answer counts as "no".
+      const verdict = await triageAutoTask({
+        cwd: where.projectPath,
+        systemPrompt: TRIAGE_SYSTEM_PROMPT,
+        input: buildTriageInput(todo, where.category),
+      });
+      if (!verdict || !verdict.dispatchable) {
+        holdBack(jot, todo, verdict?.reason || "The triage couldn't be completed, so this wasn't started.");
+        held += 1;
+        continue;
+      }
+      // GO. Same dispatch path a first mate's relay uses.
+      const smId = secondMateId("direct", where.projectPath);
+      const message = [
+        `Task from the board: ${todo.text}`,
+        "",
+        todo.description ? todo.description.slice(0, 4000) : "(no description)",
+        "",
+        "This was started automatically from the Auto lane. When you are done, leave the work in a reviewable state -",
+        "do not mark anything as finished on the board; the captain does that.",
+      ].join("\n");
+      const res = runRelayTurn(metaHome, {
+        secondMateId: smId,
+        projectPath: where.projectPath,
+        message,
+        allowDirect: true,
+        startedBy: "auto",
+      });
+      if (!res?.ok) {
+        // Busy or refused - leave the card alone entirely so the next pass retries.
+        // Deliberately NOT held back: nothing was decided about the card itself.
+        console.error("[helm] auto-captain could not dispatch:", res?.error);
+        continue;
+      }
+      autoRuns.set(todo.id, {
+        taskId: todo.id,
+        title: todo.text,
+        projectPath: where.projectPath,
+        secondMateId: smId,
+        startedAt: Date.now(),
+      });
+      const moved = setTaskTags(jot, todo.id, { add: [AUTO_RUNNING_TAG], remove: [NEEDS_CLARIFICATION_TAG], status: "in-progress" });
+      if (!moved.ok) {
+        console.error("[helm] auto-captain dispatched but could not move the card:", moved.error);
+      }
+      acted += 1;
+    }
+    autoLastTick = { at: Date.now(), acted, held, waiting: skipped.length, error: null };
+    return { ok: true, acted, held, waiting: skipped.length };
+  } catch (err) {
+    autoLastTick = { at: Date.now(), acted, held, error: err?.message || String(err) };
+    return { ok: false, error: autoLastTick.error };
+  } finally {
+    autoTickInFlight = false;
+  }
+}
+
+ipcMain.handle("autoCaptain:status", () => {
+  const { enabled } = autoCaptainConfig();
+  return {
+    ok: true,
+    enabled,
+    running: [...autoRuns.values()],
+    cap: AUTO_WIDTH_CAP,
+    lastTick: autoLastTick,
+    killed: isKilled(resolveMetaHome()),
+  };
+});
+
+ipcMain.handle("autoCaptain:setEnabled", (_event, { enabled } = {}) => {
+  try {
+    const cfg = loadConfig();
+    writeConfig({ ...cfg, autoCaptain: { ...(cfg.autoCaptain || {}), enabled: enabled === true } });
+    return { ok: true, enabled: enabled === true };
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err) };
+  }
+});
+
+// Run one pass right now. `force` runs it even while the toggle is off, which is
+// how the first live run is watched deliberately instead of waiting for a timer.
+ipcMain.handle("autoCaptain:runNow", async (_event, { force = false } = {}) => autoCaptainTick({ force }));
+
 // Clears the kill flag + zeroes spend so dispatch can resume (keeps the ceiling).
 ipcMain.handle("orchestration:resume", () => {
   return { ok: true, budget: resetBudget(resolveMetaHome()) };
@@ -3744,7 +3928,22 @@ function liveRunSnapshot() {
 // resumes the bound session (or starts a fresh one), guarded by the per-session
 // turn lock so it never races a direct pane turn on the same session.
 // Returns { ok } (turn launched) or { ok:false, error } (busy / no parent).
-function runRelayTurn(metaHome, { secondMateId: smId, projectPath, message }) {
+/**
+ * Hand a message to a second mate: resume its session, or start one in the project
+ * and bind it. This is the dispatch path for BOTH a first mate's relay and the
+ * auto-captain - one mechanism, so the auto path can't drift into a second, less
+ * careful copy of the locking and binding done here.
+ *
+ * `allowDirect` is what separates them. A relay only makes sense first-mate ->
+ * second-mate, so a second mate with no parent is refused. The auto-captain
+ * deliberately skips first mates (the card already names its project, so there is
+ * no cross-project prioritising to do), and passes allowDirect to say so.
+ *
+ * `startedBy` is stamped on the session record so an auto-started run is
+ * identifiable afterwards - it is what puts the run in the Auto column instead of
+ * mixing it in with work the captain started by hand.
+ */
+function runRelayTurn(metaHome, { secondMateId: smId, projectPath, message, allowDirect = false, startedBy = null }) {
   const binding = readBindings()[smId] || {};
   const resumeSessionId = binding.sessionId || null;
   // Lock per bound session, OR per second mate when there's no session yet - so
@@ -3760,7 +3959,7 @@ function runRelayTurn(metaHome, { secondMateId: smId, projectPath, message }) {
   const derivedSm = deriveSecondMates(loadGoalRunHistory()).find((s) => s.secondMateId === smId);
   const parentFirstMate = derivedSm?.firstMateId;
   const parentMateId = parentFirstMate && parentFirstMate !== "direct" ? parentFirstMate : null;
-  if (!parentMateId) {
+  if (!parentMateId && !allowDirect) {
     return { ok: false, error: "No parent first mate for this second mate - relay only works first-mate -> second-mate." };
   }
   ensureDispatchDirs(metaHome);
@@ -3819,6 +4018,7 @@ function runRelayTurn(metaHome, { secondMateId: smId, projectPath, message }) {
               cwd: projectPath,
               model: "claude-opus-4-8",
               title: message.trim().split("\n")[0].slice(0, 80) || "(second mate)",
+              startedBy,
               createIfAbsent: !resumeSessionId,
             });
           } catch {
@@ -4558,6 +4758,15 @@ app.whenReady().then(() => {
   pruneScheduledPrompts();
   runDueScheduledPrompts();
   setInterval(runDueScheduledPrompts, 60 * 1000);
+  // Auto-captain (ea0546d1). The timer always runs; the TICK is what checks the
+  // toggle, so turning it on takes effect without a restart. Deliberately no
+  // catch-up pass at startup: unlike a scheduled prompt, which the user queued
+  // explicitly for a moment that may have passed, an Auto card is a standing
+  // instruction - firing a burst of them the instant Helm opens is exactly the
+  // surprise this feature must not produce.
+  setInterval(() => {
+    autoCaptainTick().catch((err) => console.error("[helm] auto-captain tick failed:", err?.message || err));
+  }, AUTO_TICK_MS);
   // Auto-update: no-op in dev (app.isPackaged false); checks GitHub Releases in
   // the packaged build. See lib/autoUpdate.js + docs/installer-and-auto-update.md.
   initAutoUpdate();

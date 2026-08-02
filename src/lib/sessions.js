@@ -465,6 +465,9 @@ function buildSession(meta, attentionWindowMs) {
     effort: meta.effort || "",
     permissionMode: meta.permissionMode || "",
     completedTurns: meta.completedTurns || 0,
+    // "auto" for an auto-captain run, null for anything the captain started. Read
+    // by the Fleet's Auto column, which had no way to tell the two apart before.
+    startedBy: meta.startedBy || null,
     isArchived: !!meta.isArchived,
     lastActivityAt,
     createdAt: meta.createdAt || 0,
