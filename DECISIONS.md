@@ -1,5 +1,30 @@
 # Decisions
 
+## 2026-08-02 - Rescued from the mock gallery before deleting it: what NOT to add
+
+Fourteen published mockups and reports had piled up and the captain could no longer tell what was what.
+Almost all of them were mocks whose feature has since shipped, so they are safe to delete - but two carried judgement that was written down nowhere else.
+Recorded here so the gallery can go.
+
+**Anti-patterns (from the 2026-07-06 UX report, back when Helm was called Maestro).**
+These are standing "do not build this" rules, and the reasoning behind them is still the reasoning.
+
+- **Chat as default gravity.** The fastest way to collapse a delegation harness back into a chatbot. Chat is a deliberate detour, not the home screen. (This is why the dashboard is the landing page and Chat was demoted.)
+- **Live-animated execution graphs or moving-path canvases.** Static topology plus a status badge plus click-to-inspect covers oversight at a fraction of the cost. The Fleet tree is the right weight - do not upgrade it to a flow canvas.
+- **A bespoke run-history table.** `git log` already IS the history, and Autopilot commits to a worktree. Duplicating git in-app fights files-as-memory - and the captain wrote a git client (Loom) for exactly this.
+- **Removable-in-name-only chrome.** Every element must collapse to near-zero when unused and never tax the fast path.
+- **Onboarding theater.** No wizards, no tooltips-everywhere, no empty-state illustrations, no "getting started" banners in the main view. The dashboard stays a dense instrument.
+- **Escalate-everything OR silently-fix-everything.** Both destroy trust. The calibrated asymmetric split IS the value of the gate.
+
+The one recommendation from that report that has NOT shipped: a genuine agent-agnostic seam.
+It was raised three times and costed at zero work, which it is not. Either make it real or stop raising it - the Gemini/Antigravity track is where that question actually lives now.
+
+**Three journey seams still untested** (from the 2026-07-12 flow review, whose every other item shipped): a dual-mode relay plus jump-in resolving to ONE canonical session; first-mate to second-mate relay delivery; and retire-with-carry-over actually running its final summarize turn.
+Filed as a Jot task rather than left in a report nobody opens.
+
+**The habit that caused this.** A mock is a tool for agreeing on a shape, and it stops being useful the day the feature ships - but nothing ever retired one, so the gallery became a list of names with no way to tell live from dead.
+Two changes: mocks get deleted when the feature they aligned on ships, and anything in a mock or report that is a DECISION rather than a picture gets written here at the time, not rescued a month later.
+
 ## 2026-08-02 - Auto-captain built end to end, still off
 
 Task ea0546d1. The design was already settled (docs/auto-captain-design.md); this is what building it actually decided.
