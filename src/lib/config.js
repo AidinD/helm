@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { desktopConfigPath } from "./paths.js";
+import { writeJsonAtomicSync } from "./atomicWrite.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // HELM_CONFIG_PATH is a test/packaged-app seam (see main.js's packagedPaths.js,
@@ -203,7 +204,19 @@ export function loadConfig() {
 }
 
 export function writeConfig(config) {
-  fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n", "utf8");
+  // Shared atomic write with the locked-file retry (task efcaf486). config.json
+  // was missed when the other eight stores were converted - and it is the most
+  // frequently written of them all (quota readings, archive overlays, widget
+  // layout), so a torn or lost write here loses settings rather than a queue
+  // entry. Found on 2026-08-02 while chasing an unrelated test failure.
+  //
+  // Still THROWS on failure, as the plain write did: every caller here treats a
+  // config write as must-succeed, and quietly returning would turn "your setting
+  // didn't save" into silence.
+  const res = writeJsonAtomicSync(configPath, config);
+  if (!res.ok) {
+    throw new Error(`Could not write config.json: ${res.error}`);
+  }
 }
 
 export function configFilePath() {

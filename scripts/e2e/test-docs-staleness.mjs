@@ -90,7 +90,7 @@ try {
   // the IPC derives its candidate list from real session cwds, which no temp repo
   // can appear in - so the list-building and the rendering are checked at their
   // own layers rather than being assumed from one end-to-end call.
-  const { staleProjects, staleProjectsAsync } = await import("../../src/lib/docsStaleness.js");
+  const { staleProjects, staleProjectsAsync, docsStalenessAsync } = await import("../../src/lib/docsStaleness.js");
   const rows = staleProjects([staleRepo, freshRepo, midRepo]);
   assert(rows.length === 2, `only the stale repos are returned (${rows.length} of 3)`);
   assert(rows[0].commitsSince >= rows[1].commitsSince, `worst drift first (${rows.map((r) => r.commitsSince).join(" > ")})`);
@@ -111,12 +111,23 @@ try {
   assert(asyncRes.rows.length === 2, `the async sweep finds the same stale repos (${asyncRes.rows.length})`);
   assert(asyncRes.rows[0].commitsSince >= asyncRes.rows[1].commitsSince, "worst drift first");
   assert(asyncRes.considered === 3 && asyncRes.unchecked === 0, `it reports what it considered and what it couldn't check (${asyncRes.unchecked}/${asyncRes.considered})`);
-  // A path that isn't a git repo at all must count as UNCHECKED, not as clean -
-  // conflating those two is how a nudge silently claims all-clear.
+  // A folder with NO VERSION CONTROL is a complete answer, not a failed look.
+  //
+  // This assertion used to say the opposite, and the captain's review on 2026-07-28 is
+  // why it changed: his notes folder has PLAN/DECISIONS but no git, so it sat in
+  // the "couldn't be checked" counter looking like an unresolved problem forever.
+  // Drift is measured in commits. A folder with no commits cannot be behind any.
+  // The distinction that MUST survive is git-missing/unreadable (still unchecked)
+  // versus not-a-repo (checked, nothing to report) - asserted both ways below.
   const notARepo = fs.mkdtempSync(path.join(os.tmpdir(), "helm-notrepo-"));
   fs.writeFileSync(path.join(notARepo, "PLAN.md"), "# plan\n");
   const mixed = await staleProjectsAsync([staleRepo, notARepo]);
-  assert(mixed.unchecked === 1, `a directory with docs but no git repo counts as unchecked, not clean (${mixed.unchecked})`);
+  assert(mixed.unchecked === 0, `a folder with docs but no version control is NOT reported as unchecked - there is nothing to check (${mixed.unchecked})`);
+  assert(mixed.unversioned === 1, `it is counted separately as unversioned, so the fact isn't lost (${mixed.unversioned})`);
+  assert(mixed.uncheckedPaths.length === 0, "and it contributes no 'couldn't read' row");
+  const single = await docsStalenessAsync(notARepo);
+  assert(single.checked === true && single.versioned === false, `the single-project read says the same: checked, unversioned (${JSON.stringify({ checked: single.checked, versioned: single.versioned })})`);
+  assert(single.stale === false, "and never stale");
   // A directory with no docs at all IS a real answer ("nothing to be stale about").
   const noDocs = fs.mkdtempSync(path.join(os.tmpdir(), "helm-nodocs-"));
   const noDocsRes = await staleProjectsAsync([noDocs]);

@@ -5350,6 +5350,27 @@ button.primary {
   white-space: nowrap;
 }
 .wd-drift-jump:hover { color: var(--text); border-color: var(--text-faint); }
+/* Park sits beside Jump in and must read as the same KIND of control, so it
+   shares the pill shape - only quieter, since it is the secondary choice. */
+.wd-drift-park {
+  font-size: 10.5px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.wd-drift-park:hover { color: var(--text-dim); border-color: var(--border); }
+.wd-drift-park:disabled { opacity: 0.4; cursor: default; }
+/* The "not counted" footnote: deliberately the quietest thing in the module -
+   present so nothing is hidden, small enough not to compete with the rows. */
+.wd-drift-foot {
+  font-size: 10.5px;
+  color: var(--text-faint);
+  padding-top: 4px;
+}
 .wd-need-row {
   display: flex;
   align-items: center;

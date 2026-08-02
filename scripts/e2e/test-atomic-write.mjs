@@ -130,6 +130,40 @@ try {
   const allowed = new Set(["dispatchQueue.js"]);
   const unexpected = offenders.filter((f) => !allowed.has(f));
   ok(unexpected.length === 0, `no lib module keeps a private atomic rename (found: ${unexpected.join(", ") || "none"})`);
+
+  // --- AND NO STORE MAY WRITE ITSELF WITHOUT THE HELPER ---------------------
+  // The check above only catches a store that rolled its OWN tmp+rename. It could
+  // not see config.js, which had no rename at all - just a bare overwrite. That
+  // slipped through the whole atomic-write task and was only found on 2026-08-02
+  // while chasing an unrelated test failure. config.json is the most frequently
+  // written store in the app, so it was the worst one to miss.
+  //
+  // The class rule: if a lib declares a HELM_*_PATH store seam, it owns a durable
+  // file, and it must write through the shared helper.
+  // APPEND-ONLY logs are the deliberate exception. A tmp+rename would replace the
+  // whole file, which is the opposite of appending a line - and a torn append at
+  // worst loses the last usage entry, not the store. Named, not pattern-excluded,
+  // so this list has to be maintained honestly.
+  const appendOnly = new Set(["helmUsage.js", "usage.js"]);
+  const missing = [];
+  for (const file of fs.readdirSync(libDir).filter((f) => f.endsWith(".js") && f !== "atomicWrite.js" && f !== "packagedPaths.js")) {
+    if (appendOnly.has(file)) {
+      continue;
+    }
+    const src = fs.readFileSync(path.join(libDir, file), "utf8");
+    const declaresStore = /process\.env\.HELM_[A-Z0-9_]*PATH/.test(src);
+    if (!declaresStore) {
+      continue;
+    }
+    if (!/from "\.\/atomicWrite\.js"/.test(src)) {
+      missing.push(file);
+    }
+  }
+  ok(missing.length === 0, `every whole-file store writes through the shared helper (missing: ${missing.join(", ") || "none"})`);
+  for (const f of appendOnly) {
+    const src = fs.readFileSync(path.join(libDir, f), "utf8");
+    ok(/appendFileSync/.test(src) && !/writeFileSync/.test(src), `${f} really is append-only, so its exemption is earned`);
+  }
   ok(offenders.includes("dispatchQueue.js"), "dispatchQueue still has its rename-as-a-lock (the deliberate exception, so this list stays honest)");
 } catch (err) {
   code = 1;

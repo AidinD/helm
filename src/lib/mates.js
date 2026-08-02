@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { isValidPersonaKey } from "./personas.js";
 import { loadConfig } from "./config.js";
+import { writeJsonAtomicSync } from "./atomicWrite.js";
 
 // First-mate identity (docs/first-mate-tier-design.md section 3 + the "named
 // mates" refinement). A first mate is a NAMED coordination context the captain
@@ -277,7 +278,12 @@ function readState() {
 }
 
 function writeState(state) {
-  fs.writeFileSync(matesPath, JSON.stringify(state, null, 2) + "\n", "utf8");
+  // Shared atomic write with the locked-file retry (task efcaf486) - see the note
+  // in domains.js for why this one was missed until 2026-08-02.
+  const res = writeJsonAtomicSync(matesPath, state);
+  if (!res.ok) {
+    throw new Error(`Could not write the first-mate state: ${res.error}`);
+  }
 }
 
 /**

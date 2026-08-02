@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { writeJsonAtomicSync } from "./atomicWrite.js";
 
 // Second-mate identity (the "named mates" model, corrected: a second mate is a
 // per-PROJECT SESSION the captain can jump into and steer directly - the
@@ -49,7 +50,12 @@ export function readBindings() {
 }
 
 function writeBindings(obj) {
-  fs.writeFileSync(bindingsPath, JSON.stringify(obj, null, 2) + "\n", "utf8");
+  // Shared atomic write with the locked-file retry (task efcaf486) - see the note
+  // in domains.js for why this one was missed until 2026-08-02.
+  const res = writeJsonAtomicSync(bindingsPath, obj);
+  if (!res.ok) {
+    throw new Error(`Could not write the second-mate bindings: ${res.error}`);
+  }
 }
 
 /**

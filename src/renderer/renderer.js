@@ -6202,7 +6202,9 @@ async function startup() {
   await rehydrateGoalRuns();
   await refresh();
   updateRunningIndicator();
-  navigateToPage("dashboard");
+  // startup: the default landing page, NOT an override of a page you already
+  // picked while this was still loading.
+  navigateToPage("dashboard", { startup: true });
 }
 
 // Seeds goalRuns from the persisted index (src/lib/goalRunHistory.js) so past
@@ -7967,24 +7969,54 @@ async function dashboardDriftSection(fetchStale = () => window.helm.staleProject
     return null; // nothing measured yet; the next poll will have it
   }
   const rows = res?.ok ? res.rows || [] : [];
+  const unchecked = res?.ok ? res.uncheckedPaths || [] : [];
+  // Safety net: a reply that reports a COUNT of unchecked projects but no names
+  // (an older cached payload) must still never render as the all-clear. On the
+  // classic board the all-clear is the ABSENCE of this section, so a silent
+  // return here is indistinguishable from "everything is fine".
   const problem = !res?.ok
     ? `Couldn't check docs drift${res?.error ? `: ${res.error}` : "."}`
-    : res.unchecked > 0
+    : !unchecked.length && res.unchecked > 0
       ? `${res.unchecked} of ${res.considered} project${res.considered === 1 ? "" : "s"} couldn't be checked`
       : null;
-  if (rows.length === 0 && !problem) {
+  const footnote = driftFootnote(res);
+  if (rows.length === 0 && !problem && unchecked.length === 0) {
     return null;
   }
-  return driftSectionEl(rows, { problem });
+  return driftSectionEl(rows, { problem, unchecked, footnote, parked: res?.parked || 0 });
 }
 
-function driftSectionEl(rows, { problem = null } = {}) {
+/**
+ * The quiet line under the list: what was deliberately left out, and why. The captain
+ * parked or aged-out projects still have to be VISIBLE somewhere, or "nothing to
+ * reconcile" starts meaning "nothing I chose to look at" without saying so.
+ */
+function driftFootnote(res) {
+  if (!res?.ok) {
+    return null;
+  }
+  const bits = [];
+  if (res.parked > 0) {
+    bits.push(`${res.parked} parked`);
+  }
+  if (res.dormant > 0) {
+    bits.push(`${res.dormant} untouched for over ${res.dormantDays} days`);
+  }
+  return bits.length ? `Not counted: ${bits.join(", ")}.` : null;
+}
+
+function driftSectionEl(rows, { problem = null, unchecked = [], footnote = null, parked = 0 } = {}) {
   const section = document.createElement("section");
   section.className = "dash-board";
   // sessionId is in the fingerprint too: without it, a project whose commit count
   // hasn't moved would keep its old Jump-in target forever, even after that
   // session was archived out from under the button.
-  section.dataset.fp = [problem || "", ...rows.map((r) => `${r.path}:${r.commitsSince}:${r.sessionId || ""}`)].join("|");
+  section.dataset.fp = [
+    problem || "",
+    footnote || "",
+    ...unchecked.map((u) => `?${u.path}`),
+    ...rows.map((r) => `${r.path}:${r.commitsSince}:${r.sessionId || ""}`),
+  ].join("|");
   // The shared head builder, so the title gets the same small uppercase treatment
   // as every neighbouring module - a hand-rolled span matches no CSS rule and read
   // as a different visual language sitting between Goals and New session.
@@ -7993,6 +8025,12 @@ function driftSectionEl(rows, { problem = null } = {}) {
   body.className = "dash-board-body";
   for (const row of rows) {
     body.append(driftLineEl(row));
+  }
+  // Name each project that couldn't be read, and why. "2 of 14 projects couldn't
+  // be checked" was unusable (the captain, 2026-07-28): it named nothing, so there was
+  // no way to tell a broken repo from a folder that was never version-controlled.
+  for (const u of unchecked) {
+    body.append(driftLineEl({ path: u.path, name: u.name, unreadable: u.reason }));
   }
   if (problem) {
     const warn = document.createElement("div");
@@ -8007,8 +8045,56 @@ function driftSectionEl(rows, { problem = null } = {}) {
     warn.append(t, tag);
     body.append(warn);
   }
+  if (footnote) {
+    body.append(driftFootEl(footnote, parked));
+  }
   section.append(head, body);
   return section;
+}
+
+/**
+ * The footnote, with un-parking attached to it. The un-park control lives HERE
+ * rather than in Settings because this is the only place the concept is visible -
+ * telling him to go find it somewhere else is how a reversible decision becomes
+ * an irreversible one in practice.
+ */
+function driftFootEl(text, parkedCount = 0) {
+  const note = document.createElement("div");
+  note.className = "wd-drift-foot";
+  note.textContent = text;
+  if (parkedCount > 0) {
+    const undo = document.createElement("button");
+    undo.className = "wd-drift-park";
+    undo.textContent = "show parked";
+    undo.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const res = await window.helm.parkedDocsProjects();
+      const list = res?.parked || [];
+      if (!list.length) {
+        showToast("Nothing is parked.");
+        return;
+      }
+      showContextMenu(
+        e.clientX,
+        e.clientY,
+        list.map((p) => ({
+          label: `Un-park ${p.name}`,
+          hint: p.path,
+          onClick: async () => {
+            const r = await window.helm.parkDocsProject(p.path, false);
+            if (!r?.ok) {
+              showToast(`Couldn't un-park it: ${r?.error || "unknown"}`);
+              return;
+            }
+            showToast(`"${p.name}" is back in the docs-drift check.`);
+            refreshDashboardIfVisible({ force: true });
+          },
+        }))
+      );
+    });
+    note.append(" ", undo);
+  }
+  return note;
 }
 
 // ======================= Widget dashboard (task 4bf2421c) =======================
@@ -8307,18 +8393,34 @@ async function widgetBodyDocsDrift(_data, _widget, fetchStale = () => window.hel
   for (const row of rows) {
     frag.append(driftLineEl(row));
   }
-  if (res.unchecked > 0) {
-    // Never fold a failed look into the all-clear.
+  // Never fold a failed look into the all-clear - and name the projects, so the
+  // line is something he can act on rather than a count he has to trust.
+  for (const u of res.uncheckedPaths || []) {
+    frag.append(driftLineEl({ path: u.path, name: u.name, unreadable: u.reason }));
+  }
+  if (!(res.uncheckedPaths || []).length && res.unchecked > 0) {
+    // Same safety net as the classic board: a count with no names still beats
+    // rendering the all-clear.
     frag.append(widgetEmpty(`${res.unchecked} of ${res.considered} project${res.considered === 1 ? "" : "s"} couldn't be checked - treat as unknown, not current.`));
-  } else if (rows.length === 0) {
+  } else if (rows.length === 0 && !(res.uncheckedPaths || []).length) {
     // Said as reassurance, not as an empty state - "nothing here" should read as
     // good news for a nudge whose whole job is to be quiet when there's no drift.
     frag.append(widgetEmpty("Docs are current across your projects."));
   }
+  const foot = driftFootnote(res);
+  if (foot) {
+    frag.append(driftFootEl(foot, res.parked || 0));
+  }
   return frag;
 }
 
-/** One drift row, shared by the widget and the classic dashboard section. */
+/**
+ * One drift row, shared by the widget and the classic dashboard section.
+ *
+ * Two kinds of row: a project whose docs are N commits behind, and a project that
+ * could not be read at all (`unreadable` holds the reason). Both get the same
+ * Park control - a row you can never act on is the thing that kills the signal.
+ */
 function driftLineEl(row) {
   const line = document.createElement("div");
   line.className = "wd-drift-line";
@@ -8327,10 +8429,37 @@ function driftLineEl(row) {
   name.textContent = row.name || row.path;
   name.title = row.path;
   const count = document.createElement("span");
-  count.className = "wd-drift-count" + (row.commitsSince >= row.threshold * 3 ? " crit" : "");
-  count.textContent = `${row.commitsSince} behind`;
-  count.title = `${row.commitsSince} commits since PLAN.md/DECISIONS.md were last touched (nudges at ${row.threshold}).`;
+  if (row.unreadable) {
+    count.className = "wd-drift-count crit";
+    count.textContent = "couldn't read";
+    count.title = `${row.path}\n${row.unreadable}\nTreat as unknown, not as current.`;
+  } else {
+    count.className = "wd-drift-count" + (row.commitsSince >= row.threshold * 3 ? " crit" : "");
+    count.textContent = `${row.commitsSince} behind`;
+    count.title = `${row.commitsSince} commits since PLAN.md/DECISIONS.md were last touched (nudges at ${row.threshold}).`;
+  }
   line.append(name, count);
+
+  // Park: stop nudging about this project. For a work repo he cannot touch, or a
+  // project he has decided not to reconcile. Reversible from Settings, and the
+  // count of parked projects stays on screen so this never hides drift silently.
+  const park = document.createElement("button");
+  park.className = "wd-drift-park";
+  park.textContent = "Park";
+  park.title = "Stop nudging about this project. Reversible - parked projects are still counted below.";
+  park.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    park.disabled = true;
+    const res = await window.helm.parkDocsProject(row.path, true);
+    if (!res?.ok) {
+      park.disabled = false;
+      showToast(`Couldn't park it: ${res?.error || "unknown"}`);
+      return;
+    }
+    showToast(`Parked "${row.name || row.path}" - un-park it in Settings.`);
+    refreshDashboardIfVisible({ force: true });
+  });
+  line.append(park);
   // Jump in only if there is a session to jump into. A project with drift but no
   // session left on the board is still worth SHOWING - that is drift with nothing
   // holding the context, which is the worst case, not a reason to hide it.
@@ -12116,7 +12245,22 @@ async function renderJotPage() {
   jotWebviewCreated = true;
 }
 
+// Has the user chosen a page yet? Startup finishes with a navigate to the
+// dashboard, but it does that AFTER awaiting the first session refresh, which on a
+// real board takes seconds. Anything you clicked during that window - the settings
+// gear especially - was silently undone as the app snapped back to the dashboard,
+// with nothing on screen to explain it. Startup now yields to a choice you already
+// made. (Found on 2026-08-02: it made test-settings-groups fail two runs in three,
+// which is the same thing happening to a person who clicks quickly.)
+let userChosePage = false;
+
 function navigateToPage(page, opts = {}) {
+  if (opts.startup && userChosePage) {
+    return;
+  }
+  if (!opts.startup && !opts.fromHistory) {
+    userChosePage = true;
+  }
   // Local, content-free usage analytics: record the view visit so the Analysis
   // page can show which views + navigation paths you actually use. Fire-and-
   // forget; never let analytics affect navigation.
