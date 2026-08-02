@@ -52,7 +52,15 @@ import { ensureMates, activeMates, findMateById, loadMates, renameMate, retireAn
 
 // How many first mates the captain wants. Two by default; configurable since
 // 2026-08-02 (task 4bf2421c) because the fleet was hard-capped at two.
-const configuredMateSlots = () => clampMateSlots(loadConfig().firstMateSlots ?? MATE_SLOT_COUNT);
+// The count must never be BELOW how many mates actually exist. ensureMates only
+// ever adds, so mates.json can hold more than config says - and if config is reset
+// or unparseable it falls back to the default of two while four mates are visibly
+// on the board. Reading the floor from config alone then refused to dismiss any of
+// them ("Helm keeps at least one first mate") with three still on screen.
+const configuredMateSlots = () => {
+  const wanted = clampMateSlots(loadConfig().firstMateSlots ?? MATE_SLOT_COUNT);
+  return clampMateSlots(Math.max(wanted, activeMates().length));
+};
 import { personaOverlay, PERSONAS } from "./lib/personas.js";
 import { listSlashItems } from "./lib/slashCommands.js";
 import { trackHelmUsage, summarizeHelmUsage } from "./lib/helmUsage.js";
@@ -877,7 +885,20 @@ function sessionIdForms(sessionId) {
   return [...forms].filter(Boolean);
 }
 
+// Returns { ok } - and never throws. The session:archive handler is a one-line
+// delegation to this, so a throw here crossed the channel as a rejected promise:
+// `await window.helm.archiveSession(...)` threw inside an async click handler, the
+// `if (!res.ok)` branch never ran, and archiving a session while config.json was
+// locked did nothing at all with no message. Found by the pre-release review.
 function applySessionArchive(sessionId, archived) {
+  try {
+    return applySessionArchiveInner(sessionId, archived);
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err) };
+  }
+}
+
+function applySessionArchiveInner(sessionId, archived) {
   const shouldArchive = archived !== false;
   const cfg = loadConfig();
   const set = new Set(cfg.archivedSessions || []);
@@ -1701,7 +1722,8 @@ ipcMain.handle("mates:list", () => {
 ipcMain.handle("mates:add", () => {
   try {
     const cfg = loadConfig();
-    const current = clampMateSlots(cfg.firstMateSlots ?? MATE_SLOT_COUNT);
+    // Count from reality, not just from config - see configuredMateSlots.
+    const current = configuredMateSlots();
     if (current >= MATE_SLOT_MAX) {
       return { ok: false, error: `${MATE_SLOT_MAX} first mates is the most Helm will run at once.`, active: activeMates() };
     }
@@ -1719,7 +1741,7 @@ ipcMain.handle("mates:add", () => {
 ipcMain.handle("mates:remove", (_event, { mateId } = {}) => {
   try {
     const cfg = loadConfig();
-    const current = clampMateSlots(cfg.firstMateSlots ?? MATE_SLOT_COUNT);
+    const current = configuredMateSlots();
     if (current <= 1) {
       return { ok: false, error: "Helm keeps at least one first mate.", active: activeMates() };
     }
@@ -1735,7 +1757,14 @@ ipcMain.handle("mates:remove", (_event, { mateId } = {}) => {
       console.error("[helm] could not tear down second mates while removing a first mate:", err);
     }
     retireMateSlot(mate.slot);
-    writeConfig({ ...cfg, firstMateSlots: current - 1 });
+    // RE-READ. `cfg` was loaded before the teardown, and tearDownSecondMatesFor
+    // writes config.json twice on its way through (it archives each second mate's
+    // session and adds their ids to the archived-second-mates overlay). Writing the
+    // stale `cfg` back over the top erased both, so the dismissed mate's second
+    // mates reappeared in the Fleet under a parent that no longer exists and their
+    // sessions un-archived - exactly the orphan state the teardown exists to
+    // prevent. Found by the pre-release review, reproduced with a probe.
+    writeConfig({ ...loadConfig(), firstMateSlots: current - 1 });
     return { ok: true, active: ensureMates(resolveMetaHome(), current - 1) };
   } catch (err) {
     return { ok: false, error: err?.message || String(err), active: [] };
@@ -3195,9 +3224,17 @@ ipcMain.handle("docs:staleness", (_event, { cwd }) => {
 let checkPortCursor = 0;
 let staleProjectsCache = { at: 0, rows: [], unchecked: 0, uncheckedPaths: [], considered: 0, parked: 0, dormant: 0, dormantDays: 0, error: null };
 let staleProjectsRefreshing = null;
+// Bumped whenever a decision invalidates an in-flight sweep (parking a project).
+// The sweep captured its candidate list before that decision, so its result is
+// already wrong by the time it lands - see docs:parkProject.
+let staleProjectsGeneration = 0;
 const STALE_PROJECTS_TTL_MS = 60_000;
 
 async function refreshStaleProjects() {
+  // Remember which decisions this sweep is based on. If that changes while the git
+  // calls are in flight (the user parks a project), the result is stale before it
+  // lands and must not be published.
+  const generation = staleProjectsGeneration;
   // Candidate projects = where you've actually been working. An archived session's
   // project still counts: archiving the session is what leaves the docs as the only
   // record, so that is when drift matters MOST.
@@ -3254,6 +3291,12 @@ async function refreshStaleProjects() {
       lastActivityAt: target?.lastActivityAt || 0,
     };
   });
+  if (generation !== staleProjectsGeneration) {
+    // Something was parked while this ran. Publishing now would put the parked row
+    // back on screen and mark it fresh for another minute. Leave the cache expired
+    // so the next read starts a sweep with the current candidate list.
+    return staleProjectsCache;
+  }
   staleProjectsCache = {
     at: Date.now(),
     rows,
@@ -3343,9 +3386,19 @@ ipcMain.handle("docs:parkProject", (_event, { path: projectPath, parked = true }
     const current = (cfg.parkedDocsProjects || []).map((p) => String(p).toLowerCase());
     const next = parked ? [...new Set([...current, key])] : current.filter((p) => p !== key);
     writeConfig({ ...cfg, parkedDocsProjects: next });
-    // The cached sweep still contains the row that was just parked; expire it so
-    // the next read reflects the decision instead of leaving the row on screen.
-    staleProjectsCache = { ...staleProjectsCache, at: 0 };
+    // Expire the cached sweep so the next read reflects the decision.
+    //
+    // `at: 1`, not `at: 0`. Zero is the sentinel for "never measured", which the
+    // renderer reports as `pending` and draws as nothing at all - so clicking Park
+    // made the whole docs-drift module vanish until the background sweep landed.
+    // One is in the past, so it reads as stale-and-refetch, which is the truth.
+    //
+    // The generation bump handles the other half: a sweep that started BEFORE this
+    // park is still running, and it ends by assigning the whole cache object
+    // (candidate list and all) with a fresh timestamp. Without this it would put
+    // the parked row straight back and mark it fresh for another minute.
+    staleProjectsGeneration += 1;
+    staleProjectsCache = { ...staleProjectsCache, at: 1 };
     return { ok: true, parked: next.length };
   } catch (err) {
     return { ok: false, error: err?.message || String(err) };

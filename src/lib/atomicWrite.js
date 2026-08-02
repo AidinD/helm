@@ -21,9 +21,28 @@ import crypto from "node:crypto";
 
 const MAX_ATTEMPTS = 4;
 
-/** Is this "someone else has the file right now", rather than a real failure? */
-export function isTransientLock(err) {
-  return err?.code === "EPERM" || err?.code === "EBUSY" || err?.code === "EACCES";
+/**
+ * Is this "someone else has the file right now", rather than a real failure?
+ *
+ * Windows reports BOTH a locked file and a permission-denied folder as EPERM, so
+ * the code alone cannot tell them apart. `targetExists` is what separates them: you
+ * can only be fighting over a file that is there. A folder Helm is not allowed to
+ * write in produces the same EPERM with no file at the end of it, and retrying
+ * that four times just delays a wrong answer - the pre-release review measured the
+ * app blocking for 377ms and then telling the user Dropbox might be syncing, for a
+ * permission problem that will never clear on its own.
+ *
+ * Called with one argument it keeps the old, more forgiving behaviour, so the
+ * exported predicate stays usable as a plain "could this be a lock?" check.
+ */
+export function isTransientLock(err, targetExists = true) {
+  if (err?.code === "EBUSY") {
+    return true; // always a live handle on something
+  }
+  if (err?.code === "EPERM" || err?.code === "EACCES") {
+    return targetExists;
+  }
+  return false;
 }
 
 /**
@@ -101,7 +120,15 @@ export function writeFileAtomicSync(filePath, contents, { onBeforeRename = null 
       } catch {
         // best-effort cleanup; the write already failed
       }
-      if (isTransientLock(err)) {
+      // Whether the destination already exists decides whether an EPERM is a lock
+      // worth waiting out or a permission problem worth reporting immediately.
+      let targetExists = false;
+      try {
+        targetExists = fs.existsSync(filePath);
+      } catch {
+        // unreadable - treat as absent, i.e. not a lock
+      }
+      if (isTransientLock(err, targetExists)) {
         if (attempt < MAX_ATTEMPTS - 1) {
           lastError = `${err.code} (file locked, likely Dropbox sync)`;
           sleepSync(60 * (attempt + 1));

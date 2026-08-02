@@ -78,6 +78,18 @@ ok(
   `every IPC handler that writes settings answers instead of throwing (unguarded: ${unguarded.join(", ") || "none"})`
 );
 
+// The scan above only sees `writeConfig(` written INSIDE a handler body. A handler
+// that delegates in one line - `ipcMain.handle("session:archive", (...) =>
+// applySessionArchive(...))` - is invisible to it, and that is exactly where the
+// review found the remaining hole. So the delegating helpers are named and checked
+// directly: each must catch internally and return a result.
+for (const fn of ["applySessionArchive"]) {
+  const start = src.indexOf(`function ${fn}(`);
+  const body = start < 0 ? "" : src.slice(start, start + 900);
+  ok(start >= 0, `${fn} exists`);
+  ok(/try\s*\{/.test(body) && /catch/.test(body) && /ok:\s*false/.test(body), `${fn} answers with ok:false instead of throwing`);
+}
+
 // ---- 1. BEHAVIOUR --------------------------------------------------------
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "helm-cfgfail-"));
 const configPath = path.join(tmp, "config.json");

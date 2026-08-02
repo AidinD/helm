@@ -155,8 +155,23 @@ try {
     if (!declaresStore) {
       continue;
     }
-    if (!/from "\.\/atomicWrite\.js"/.test(src)) {
-      missing.push(file);
+    // Check for the WRITE, not for the import.
+    //
+    // The first version of this asserted only that `from "./atomicWrite.js"`
+    // appeared in the file. The pre-release review mutation-tested it: putting the
+    // old `fs.writeFileSync(configPath, ...)` back into config.js while leaving the
+    // import line alone left this assertion green. The guard written to catch
+    // exactly that regression did not catch it. An import is not a call.
+    const code = src
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*"))
+      .join("\n");
+    if (/fs\.writeFileSync\s*\(/.test(code)) {
+      missing.push(`${file} (writes directly)`);
+      continue;
+    }
+    if (!/writeJsonAtomicSync\s*\(|writeFileAtomicSync\s*\(/.test(code)) {
+      missing.push(`${file} (never calls the helper)`);
     }
   }
   ok(missing.length === 0, `every whole-file store writes through the shared helper (missing: ${missing.join(", ") || "none"})`);
