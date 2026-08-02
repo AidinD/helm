@@ -1910,25 +1910,48 @@ async function archiveWithHandoff(session) {
   archiveSession(session);
 }
 
-// Shows the "save a handoff first?" choice for a DELIBERATE single-session
-// archive (the Fleet button, the sidebar context menu, the "Archive?" pill,
-// the queue approve). `plainArchive` runs the caller's own no-handoff archive
-// so each flow keeps its specifics (e.g. the Fleet button's optimistic
-// removal). The handoff branch is ALWAYS offered now: a session with a project
-// cwd writes its repo HANDOFF.md, and one without (a non-rooted second mate -
-// training, kombucha, job hunting) files a topic-keyed handoff in Helm's own
-// store instead of losing the knowledge entirely (task 663ab4b6).
-// NOT used for bulk "Archive all" - a per-session summarize there would be N
-// Sonnet calls (see its own inline note).
-function offerArchiveChoice(x, y, session, plainArchive) {
-  showContextMenu(x, y, [
+// THE ONE PLACE that builds an archive menu. Every archive path must go through
+// here.
+//
+// Why it is a single builder and not three similar inline arrays: the topic-keyed
+// handoff (task 663ab4b6) was added to one of the three menus only. The other two
+// kept gating the handoff option on `session.cwd`, so a session with no project
+// folder - exactly the case the feature was built for - was still offered nothing
+// but "Archive without a handoff", and its knowledge was dropped silently. Aidin
+// hit this on 2026-07-28 archiving "Träning och kost (Hevy)". Same shape as the
+// eight file writers: one instance fixed, the class assumed closed.
+//
+// Never re-introduce a `session.cwd` condition around the handoff ITEM. The cwd
+// only decides WHERE the handoff lands (repo HANDOFF.md vs a topic-keyed file in
+// Helm's own store), never WHETHER it is offered.
+//
+// `plainArchive` is the caller's own no-handoff archive, so each flow keeps its
+// specifics (e.g. the Fleet button's optimistic removal). `after` runs once the
+// chosen branch finishes (the Fleet needs to drop its node either way).
+function archiveMenuItems(session, { plainArchive, after = null, nameInLabel = false }) {
+  const named = nameInLabel ? ` "${session.title}"` : "";
+  const run = (fn) => async () => {
+    await fn();
+    if (after) {
+      await after();
+    }
+  };
+  return [
     {
-      label: session.cwd ? "Save handoff to HANDOFF.md + archive" : "Save handoff by topic + archive",
+      label: `Save handoff ${session.cwd ? "to HANDOFF.md" : "by topic"} + archive${named}`,
       danger: true,
-      onClick: () => archiveWithHandoff(session),
+      onClick: run(() => archiveWithHandoff(session)),
     },
-    { label: "Archive without a handoff", danger: true, onClick: plainArchive },
-  ]);
+    { label: `Archive${named} without a handoff`, danger: true, onClick: run(plainArchive) },
+  ];
+}
+
+// Shows the "save a handoff first?" choice for a DELIBERATE single-session
+// archive (the "Archive?" pill, the queue approve). NOT used for bulk
+// "Archive all" - a per-session summarize there would be N Sonnet calls (see
+// its own inline note).
+function offerArchiveChoice(x, y, session, plainArchive) {
+  showContextMenu(x, y, archiveMenuItems(session, { plainArchive }));
 }
 
 // Retire a first mate: a two-option menu (mirrors offerArchiveChoice) so carrying
@@ -2846,16 +2869,10 @@ function rowEl(session) {
         onClick: () => {
           // Re-opens with an explicit confirm step (no native window.confirm()
           // — unreliable in this build) since this writes to the desktop
-          // app's OWN session file, not just Helm's local config. When the
-          // session has a project cwd, also offer a last-effort handoff save
-          // to its DECISIONS.md before archiving (planned handoff = faithful
-          // transfer; see DECISIONS.md "Session-renewal strategy").
-          showContextMenu(x, y, [
-            ...(session.cwd
-              ? [{ label: `Save handoff to HANDOFF.md + archive "${session.title}"`, danger: true, onClick: () => archiveWithHandoff(session) }]
-              : []),
-            { label: `Archive "${session.title}" without a handoff`, danger: true, onClick: () => archiveSession(session) },
-          ]);
+          // app's OWN session file, not just Helm's local config. The handoff
+          // branch comes from the shared builder, so it is offered whether or
+          // not the session has a project folder.
+          showContextMenu(x, y, archiveMenuItems(session, { plainArchive: () => archiveSession(session), nameInLabel: true }));
         },
       },
       {
@@ -7411,15 +7428,14 @@ function fleetSecondMateEl(sm) {
           refreshDashboardIfVisible();
         }
       };
-      // Offer the last-effort handoff (save to the project's DECISIONS.md) when
-      // the session has a project cwd, same as the sidebar context menu - so
-      // this Fleet button isn't a silent no-handoff archive path.
-      showContextMenu(e.clientX, e.clientY, [
-        ...(backingSession.cwd
-          ? [{ label: "Save handoff to HANDOFF.md + archive", danger: true, onClick: async () => { await archiveWithHandoff(backingSession); await finishSecondMateArchive(sm); } }]
-          : []),
-        { label: "Archive without a handoff", danger: true, onClick: async () => { await doPlainArchive(); await finishSecondMateArchive(sm); } },
-      ]);
+      // Shared builder, so this Fleet button can't drift back into being a
+      // silent no-handoff path for a session with no project folder - which is
+      // precisely what it was. `after` drops the fleet node either way.
+      showContextMenu(
+        e.clientX,
+        e.clientY,
+        archiveMenuItems(backingSession, { plainArchive: doPlainArchive, after: () => finishSecondMateArchive(sm) })
+      );
     });
     head.append(archiveBtn);
   }
