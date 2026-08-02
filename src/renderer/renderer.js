@@ -14074,3 +14074,11 @@ function applyBuildStatus(status) {
 
 window.helm.getBuildStatus().then(applyBuildStatus);
 window.helm.onBuildStaleUpdate(applyBuildStatus);
+
+// A setting that could not be saved has to SAY so. setConfig returns the config
+// object itself (assigned straight into state.config all over this file), so it has
+// no room to report a failure - without this the setting would appear to apply and
+// then quietly be gone after a restart.
+window.helm.onConfigWriteFailed(({ message } = {}) => {
+  showToast(`That setting didn't save: ${message || "unknown reason"}`);
+});

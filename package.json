@@ -8,7 +8,9 @@
   "scripts": {
     "start": "electron .",
     "dist": "node scripts/build.mjs",
-    "release": "node scripts/build.mjs --publish"
+    "release": "node scripts/build.mjs --publish",
+    "test": "node scripts/run-tests.mjs",
+    "test:fast": "node scripts/run-tests.mjs --fast"
   },
   "build": {
     "appId": "com.aidin.helm",
