@@ -46,8 +46,12 @@ try {
   // --- #2: first-mate card reflects its bound session status -----------------
   const card = await app.eval(`(() => {
     const mate = { mateId: "m1", name: "Jack Sparrow", sessionId: "cli_fm", persona: null, slot: 0 };
+    // The card reads the FSM field (lifecycleState), not the raw status - that was
+    // the point of Epic f3d096fa, and a fixture that only sets \`status\` tests a
+    // reader that no longer exists. Set both, the way a real session carries both.
+    const LS = { waiting: "waiting", active: "working", idle: "idle" };
     const make = (status) => {
-      state.sessions = [{ sessionId: "local_fm", cliSessionId: "cli_fm", cwd: "P", title: "t", status, lastActivityAt: 1 }];
+      state.sessions = [{ sessionId: "local_fm", cliSessionId: "cli_fm", cwd: "P", title: "t", status, lifecycleState: LS[status], lastActivityAt: 1 }];
       const el = fleetMateCardEl(mate, [], {});
       return {
         badge: el.querySelector(".fleet-badge")?.textContent || "",

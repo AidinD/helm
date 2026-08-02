@@ -1,5 +1,114 @@
 # Decisions
 
+## 2026-08-02 - Widget dashboard: three complaints, three unrelated defects
+
+The captain's review listed three things.
+None of them were in the widget code, which is why the widget tests stayed green throughout.
+
+WIDTH DID NOTHING.
+The width menu offered 3,4,5,6,7,8,12 and style.css implemented `.wd-span-3` through `.wd-span-7` only, so choosing 8 or Full width silently fell back to 4.
+Replaced the class table with one inline custom property (`--wd-span`) that the grid reads, so the widths the menu offers and the widths the stylesheet supports are the same set by construction.
+The test measures the COMPUTED grid span for every width in the menu - the only evidence that a choice reached the layout.
+
+NO WAY TO LEAVE A ROW SHORT.
+Added two layout-only entries, Blank space and Row break.
+Deliberately ordinary widgets with a different skin rather than a second rendering path, so they inherit drag, resize and remove for free.
+A row break gets no width picker: offering one would be another control that visibly does nothing.
+
+THE FLEET WAS CAPPED AT TWO.
+Not a widget limit. mates.js declared that exactly two first-mate slots always exist, so the Add-widget menu could only ever offer the two that existed.
+MATE_SLOT_COUNT is now a DEFAULT, with the count in config and a ceiling of 8 - each mate is a real coordinator with its own session and cost, so a large number is a mistake rather than a preference.
+Adding is offered from the Add-widget menu because that is where he went looking for it, even though it is a fleet action.
+Removal exists too, because a cap you can only raise is worse than a cap, and it lowers the configured count in the SAME step - retiring without lowering it would just have ensureMates recreate the mate on the next render.
+Dismissing tears down that mate's second mates and re-packs the remaining slots; the floor is one mate.
+
+CAPTAIN WAS EMPTY.
+The widget dashboard passed RAW second-mate bindings to the widgets.
+The captain's own sessions are not bindings at all - they are nodes derived from state.sessions by augmentSecondMatesWithSessions, which the widget path never called.
+Measured on his real board: 10 derived direct nodes from 0 raw bindings.
+It also meant the first-mate widgets had no live crew and no context gauges, and that a second mate archived on the classic board would have reappeared in the widget one.
+Fixed by extracting buildFleetModel and having BOTH dashboards call it, with a test asserting neither re-derives the fleet on its own.
+This is the same failure as the three archive menus and the file writers: two places deriving the same thing separately.
+The pattern is now frequent enough to state as a rule - if two surfaces show the same thing they share a builder, and a test asserts there is only one.
+
+## 2026-08-02 - Four stale tests were hiding behind each other
+
+Chasing the above turned up four tests that had been failing, or passing for the wrong reason.
+Worth recording because the pattern matters more than any one of them: a test that asserts an implementation detail rots the moment the detail changes, and a rotted test is worse than no test - it costs attention and teaches you to ignore the suite.
+
+test-second-mate-archive read the dev repo's REAL config.json; the harness now sandboxes config to a temp dir, so the app's write went somewhere the test never looked.
+It should never have been writing to his live config either.
+test-settings-groups called a renderer function before renderer.js had evaluated, and asserted EXACT counts of settings groups, select rows and toggles - numbers that grow whenever a setting is added.
+Counts became floors, which is the property actually worth protecting.
+test-first-mate-surfacing built a synthetic session carrying only `status`, but the card has read `lifecycleState` since Epic f3d096fa.
+The product was correct; the fixture tested a reader that no longer exists.
+test-fleet-view expected a yes/no confirm modal for retire, which was replaced by the two-branch choice menu on purpose.
+It now asserts both branches are offered.
+
+## 2026-08-02 - Docs-drift nudge: only rows he can act on
+
+The captain's review killed the first version with one sentence: "jag vet inte hur jag ska anvanda den".
+Of four rows on his board exactly ONE was actionable.
+My own evidence had said the nudge found real drift immediately, which was true - and beside the point, because I never asked whether the rows could be acted on.
+That is the reporting failure to remember: a signal can be correct and still be noise.
+
+Four changes, all narrowing what is shown rather than changing how drift is measured.
+1. A folder with NO version control is no longer counted as "couldn't be checked". Drift is counted in commits, and a folder with no commits cannot be behind any. His notes folder had been sitting in the unchecked counter looking like an unresolved problem. docsStalenessAsync now separates "not a git repository" (a complete answer) from git-missing or unreadable (a genuine failed look).
+2. A project can be PARKED, reversibly. Without it a work repo he cannot touch stays on the list forever and teaches him to stop reading the section. Parked projects are counted in a footnote and un-parkable from the same place, so parking can never quietly hide drift.
+3. When something genuinely cannot be read the project is NAMED with the reason. "2 of 14 projects couldn't be checked" was unusable.
+4. Projects with no session activity for 60 days age out. His question - what happens as new projects accumulate and old ones never leave - was right, and my answer at the time ("at most 14 rows") was true that day and wrong over time. The candidate list is every project he has ever had a session in.
+
+Alternatives rejected: auto-reconciling drift (writes without asking, and the point of the nudge is to route his attention, not replace it); dropping the section (the drift is real - loom is 15 commits behind); a global snooze (hides the actionable row along with the noise).
+Deliberate: an UNKNOWN last-activity timestamp counts as active. A gap in the session record is not evidence of abandonment, and silently dropping a real drifting project is the worse mistake.
+Real result on his board: four rows became two, both actionable, nothing in the unchecked counter.
+The candidate filter lives in the lib (docsNudgeCandidates), not inline in main.js, because an invisible filter is the easiest place for a real project to disappear unnoticed - it needed to be testable on its own.
+
+## 2026-08-02 - Correction: the atomic-write conversion had missed five stores
+
+The commit for task efcaf486 said "one atomic write for all EIGHT durable stores".
+That was wrong, and I only found out while chasing an unrelated test failure.
+config.js, domains.js, goalRunHistory.js, mates.js and secondMates.js were still plain whole-file overwrites - including config.json, the most frequently written store in the app (quota readings, archive overlays, widget layout), so it was the worst one to miss.
+Why the class guard did not catch it: the guard searched for a store that had rolled its OWN tmp+rename. A store with NO rename at all, just fs.writeFileSync, was invisible to it.
+The guard tested the shape of the mistake I had already found, not the property I actually wanted.
+New rule and new assertion: if a lib declares a HELM_*_PATH store seam it owns a durable file, and it must import the shared helper.
+Append-only logs (helmUsage.js, usage.js) are exempt by name, and the test verifies each exemption is earned - appendFileSync present, writeFileSync absent - so the list cannot rot.
+Third time this pattern has appeared: fix one instance, believe the class is closed. The counter-measure that keeps working is a guard written against the PROPERTY, not against the instance.
+
+## 2026-08-02 - Startup no longer overrides a page you already opened
+
+init() ends with navigateToPage("dashboard"), and it did so unconditionally after awaiting the first session refresh - seconds on a real board.
+Anything opened during that window, the settings gear especially, was silently undone: the click appeared to do nothing.
+Found because test-settings-groups failed two runs in three, which is the same event happening to a person who clicks quickly.
+Startup now passes a flag and yields to a page the user already chose.
+
+## 2026-08-02 - Every archive menu offers a handoff, folder or not
+
+The topic-keyed handoff (task 663ab4b6) was added to one of THREE archive menus.
+The sidebar context menu and the Fleet archive button both kept gating the option on session.cwd - so a session with no project folder, the exact case the feature exists for, was offered only "Archive without a handoff" and its knowledge was dropped in silence.
+The captain hit this archiving "Traning och kost (Hevy)".
+One shared builder now, plus a test that fails if any archive menu is built outside it.
+Mutation-checked: re-introducing the cwd gate in the Fleet button trips four independent assertions.
+The cwd decides WHERE a handoff lands (repo HANDOFF.md versus a topic-keyed file in Helm's own store), never WHETHER it is offered.
+That is stated in the builder so the next reader does not re-derive the wrong rule.
+
+## 2026-08-02 - Scheduled prompts failed only in the installed app
+
+Every store lib resolves its file as "env var, or a file next to the app".
+In a packaged build the second branch points inside the read-only application bundle, which is why packagedPaths.js sets the env var for each store.
+scheduledPrompts.js was added with the seam but never added to that registry, so queueing a prompt failed in the installed app and worked perfectly in dev.
+Nine of ten stores were redirected; the tenth was the newest.
+Guarded by a sweep that fails, and names the offending store, when a lib declares a seam packagedPaths.js does not redirect.
+Same lesson as the atomic-write correction: a registry is a class, and a class needs a sweep, not a spot check.
+
+## 2026-08-02 - The script runner had to say what it was doing
+
+The captain: "terminalen ar inte tydlig, vet inte ens om den funkar".
+The mechanism was fine and test-repo-scripts.mjs passed throughout - it exercises the IPC, which was never the broken layer.
+Everything missing was on screen: the menu listed script NAMES with no commands, the panel opened black and empty with a static "running...", and the outcome was an exit code.
+Now the menu shows each command, the panel echoes the command and folder before anything starts, the header ticks a live elapsed count (proof of life for a script that prints nothing), and the outcome reads "done in 4s" or "failed after 4s [exit code 1]" at the end of the transcript as well as in the header.
+Verified by driving the OVERLAY in the real app with real child processes rather than the IPC beneath it.
+That test also caught a dead branch: npm always echoes a banner, so a "printed nothing" fallback could never fire. Removed rather than left in as unverifiable code.
+
 ## 2026-07-18 - Embedded Jot tab: Jot's renderer in a webview, backed by @jot/core
 
 The visible half of "one Jot, two mounts" (docs/auto-captain-design.md). A "Jot" tab in Helm's nav mounts Jot's BUILT renderer in a `<webview>` (webviewTag enabled), with a preload (src/jot-webview-preload.cjs) that exposes the exact `window.jot` Jot's renderer expects - backed by the @jot/core host store via the IPC bridge (jotIpcBridge). So the identical Jot UI runs in Helm and standalone, over the same board, with no fork.
