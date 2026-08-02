@@ -42,7 +42,16 @@ const AUTO_TAG_ID = "tag-auto";
 const UNBOUND = "cat-unbound";
 const board = () => ({
   categories: [{ id: UNBOUND, name: "Ideas" }],
-  tags: [{ id: AUTO_TAG_ID, name: "auto" }],
+  // All three of the auto-captain's tags, because that is the state of a real
+  // board after the first launch: Helm seeds them at startup so the trigger tag
+  // is pickable in Jot at all (test-auto-captain-tags.mjs covers the seeding).
+  // Present here so the byte-for-byte checks below measure what THIS test is
+  // about - the pass not acting - rather than the one-off seeding write.
+  tags: [
+    { id: AUTO_TAG_ID, name: "auto" },
+    { id: "tag-needs-clarification", name: "needs-clarification" },
+    { id: "tag-auto-running", name: "auto-running" },
+  ],
   todos: [
     { id: "task-1", text: "Make it better somehow", description: "", status: "open", categoryId: UNBOUND, priority: 0, parentId: null, tags: [AUTO_TAG_ID] },
     { id: "task-2", text: "Not tagged, must be left alone", description: "", status: "open", categoryId: UNBOUND, priority: 1, parentId: null, tags: [] },

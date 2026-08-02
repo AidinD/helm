@@ -349,6 +349,55 @@ export function readJotState(jotConfig = {}) {
  * @param {string} taskId
  * @param {{add?: string[], remove?: string[], note?: string, status?: string}} changes
  */
+/**
+ * Make sure the auto-captain's tags exist on the board, with a colour and a
+ * description like every tag Aidin made by hand.
+ *
+ * Without this the feature is unreachable: `auto` is the tag HE applies, and it
+ * was never created by anything, so there was nothing to pick in Jot (Aidin,
+ * 2026-08-02: "det finns ingen auto tag"). setTaskTags creates a missing tag on
+ * the fly, but only for the two Helm writes back - and it creates them bare,
+ * with no colour and no description, which reads as junk next to his own.
+ *
+ * Idempotent and name-matched case-insensitively, so it can run every startup:
+ * an existing tag is left exactly as it is, including a colour he changed.
+ * Returns { ok, added: [names] }.
+ */
+export function ensureTagsExist(jotConfig = {}, specs = []) {
+  if (jotConfig.enabled === false || specs.length === 0) {
+    return { ok: true, added: [] };
+  }
+  const state = readJotState(jotConfig);
+  if (!state.ok) {
+    return { ok: false, added: [], error: "No Jot board to add tags to." };
+  }
+  const has = (name) => state.tags.some((t) => (t.name || "").toLowerCase() === String(name).toLowerCase());
+  const missing = specs.filter((s) => !has(s.name));
+  if (missing.length === 0) {
+    // Nothing to add. Return WITHOUT writing: this runs at every startup, and
+    // rewriting a file the Jot app may have open, to change nothing, is how you
+    // lose someone else's concurrent edit for no reason at all.
+    return { ok: true, added: [] };
+  }
+  const res = mutateJotFile(state.path, (data) => {
+    if (!Array.isArray(data.tags)) {
+      data.tags = [];
+    }
+    for (const spec of missing) {
+      // Re-check inside the mutation: the board was re-read here, and Jot may
+      // have created the tag in between.
+      if (data.tags.some((t) => (t.name || "").toLowerCase() === String(spec.name).toLowerCase())) {
+        continue;
+      }
+      data.tags.push({ id: crypto.randomUUID(), name: spec.name, color: spec.color, description: spec.description });
+    }
+    return { ok: true, result: {} };
+  });
+  return res.ok
+    ? { ok: true, added: missing.map((s) => s.name) }
+    : { ok: false, added: [], error: res.error };
+}
+
 export function setTaskTags(jotConfig, taskId, { add = [], remove = [], note = "", status = null } = {}) {
   if (!taskId) {
     return { ok: false, error: "Missing task id." };
