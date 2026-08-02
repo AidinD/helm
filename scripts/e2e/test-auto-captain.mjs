@@ -4,7 +4,16 @@
 // the decision logic that must be right before anything fires.
 //
 // Run:  node scripts/e2e/test-auto-captain.mjs
-import { selectAutoQueuedTasks, parseTriageVerdict } from "../../src/lib/autoCaptain.js";
+import {
+  selectAutoQueuedTasks,
+  parseTriageVerdict,
+  resolveTaskProject,
+  taskFingerprint,
+  planAutoTick,
+  clarificationNote,
+  buildTriageInput,
+  AUTO_WIDTH_CAP,
+} from "../../src/lib/autoCaptain.js";
 
 let code = 0;
 const ok = (c, m) => { console.log(`${c ? "OK  " : "FAIL"} - ${m}`); if (!c) code = 1; };
@@ -43,5 +52,70 @@ ok(parseTriageVerdict("").dispatchable === false, "empty output -> NOT dispatcha
 ok(parseTriageVerdict("total garbage no json").dispatchable === false, "unparseable -> NOT dispatchable (left for review)");
 ok(parseTriageVerdict('{"well_defined": true}').reason.length > 0, "a missing reason still yields a non-empty reason");
 
-console.log(code === 0 ? "VERIFY OK: auto-captain selection + triage parsing behave as intended (safe defaults - never fires on ambiguity)." : "VERIFY FAILED.");
+// --- WHERE does the work run? -------------------------------------------------
+// Guessing a project from a list NAME would occasionally start real work in the
+// wrong repo, which is far worse than not starting it. Only an explicit folder
+// binding counts.
+const cats = [
+  { id: "c-bound", name: "Helm", repoPath: "D:/Repo/Tools/helm" },
+  { id: "c-loose", name: "Ideas" },
+  { id: "c-blank", name: "Blank", repoPath: "   " },
+];
+ok(resolveTaskProject({ categoryId: "c-bound" }, cats).projectPath === "D:/Repo/Tools/helm", "a list bound to a folder resolves to it");
+const loose = resolveTaskProject({ categoryId: "c-loose" }, cats);
+ok(loose.ok === false && /isn't bound to a folder/.test(loose.reason), `an unbound list is refused, with a fixable reason (${loose.reason})`);
+ok(/Set the list's folder in Jot/.test(loose.reason), "and the reason says exactly what to do about it");
+ok(resolveTaskProject({ categoryId: "c-blank" }, cats).ok === false, "a whitespace-only folder counts as unbound, not as a path");
+ok(resolveTaskProject({ categoryId: "nope" }, cats).ok === false, "a task in no list is refused rather than guessed at");
+
+// --- don't re-judge the same words forever ------------------------------------
+const t1 = { id: "x", text: "Do the thing", description: "a", categoryId: "c-bound" };
+ok(taskFingerprint(t1) === taskFingerprint({ ...t1 }), "the fingerprint is stable for unchanged wording");
+ok(taskFingerprint(t1) !== taskFingerprint({ ...t1, description: "a b" }), "editing the description changes it - so it gets re-judged");
+ok(taskFingerprint(t1) !== taskFingerprint({ ...t1, text: "Do the other thing" }), "and so does editing the title");
+
+// --- one tick's decision ------------------------------------------------------
+const tickState = {
+  tags: [{ id: "t-auto", name: "auto" }],
+  categories: cats,
+  todos: [
+    { id: "p0", text: "urgent", status: "open", tags: ["t-auto"], priority: 0, parentId: null, categoryId: "c-bound" },
+    { id: "p1", text: "next", status: "open", tags: ["t-auto"], priority: 1, parentId: null, categoryId: "c-bound" },
+    { id: "p2", text: "later", status: "open", tags: ["t-auto"], priority: 2, parentId: null, categoryId: "c-bound" },
+    { id: "p3", text: "last", status: "open", tags: ["t-auto"], priority: 3, parentId: null, categoryId: "c-bound" },
+  ],
+};
+const plain = planAutoTick(tickState);
+ok(plain.act.length === AUTO_WIDTH_CAP, `the cap holds: ${AUTO_WIDTH_CAP} at once, not all four (acting on ${plain.act.length})`);
+ok(plain.act.map((t) => t.id).join(",") === "p0,p1,p2", `and the most urgent go first (${plain.act.map((t) => t.id).join(",")})`);
+ok(plain.skipped.length === 1 && /waiting/.test(plain.skipped[0].reason), "the rest are recorded as waiting, not dropped");
+
+const busy = planAutoTick(tickState, { running: AUTO_WIDTH_CAP });
+ok(busy.act.length === 0, "with the cap already full, nothing new starts");
+
+const oneFree = planAutoTick(tickState, { running: AUTO_WIDTH_CAP - 1 });
+ok(oneFree.act.length === 1 && oneFree.act[0].id === "p0", "one free slot starts exactly one, the most urgent");
+
+const held = planAutoTick(tickState, {
+  triaged: { p0: taskFingerprint(tickState.todos[0]) },
+});
+ok(!held.act.some((t) => t.id === "p0"), "a task already judged unclear is not judged again");
+ok(held.skipped.some((s) => s.todo.id === "p0" && /unchanged/.test(s.reason)), "and the reason says why it was skipped");
+
+const edited = planAutoTick(
+  { ...tickState, todos: [{ ...tickState.todos[0], description: "now with detail" }, ...tickState.todos.slice(1)] },
+  { triaged: { p0: taskFingerprint(tickState.todos[0]) } }
+);
+ok(edited.act.some((t) => t.id === "p0"), "editing the task makes it eligible again - the whole point of the fingerprint");
+
+// --- what the board is told ---------------------------------------------------
+const note = clarificationNote("No acceptance criterion.", new Date("2026-08-02T10:00:00Z"));
+ok(/2026-08-02/.test(note) && /No acceptance criterion\./.test(note), `the note is dated and carries the reason (${JSON.stringify(note)})`);
+ok(/picked up again/.test(note), "and tells the user what happens after they fix it");
+
+const input = buildTriageInput({ text: "Fix the thing", description: "d".repeat(9000) }, { name: "Helm" });
+ok(/List: Helm/.test(input) && /Fix the thing/.test(input), "the triage sees the list and the title");
+ok(input.length < 5000, `an enormous description is truncated rather than sent whole (${input.length} chars)`);
+
+console.log(code === 0 ? "VERIFY OK: auto-captain selection, project resolution, capping and re-triage guards behave as intended (safe defaults - never fires on ambiguity)." : "VERIFY FAILED.");
 process.exit(code);

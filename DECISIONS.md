@@ -1,5 +1,32 @@
 # Decisions
 
+## 2026-08-02 - Auto-captain built end to end, still off
+
+Task ea0546d1. The design was already settled (docs/auto-captain-design.md); this is what building it actually decided.
+
+The dispatch reuses `runRelayTurn`, the path a first mate's relay already uses, with a new `allowDirect` flag for the deliberate captain -> second-mate route.
+Writing a second dispatcher would have meant a second, less careful copy of the session locking and binding - the same mistake as the three archive menus, made on the one code path that spends money.
+
+**A card judged unclear is not re-judged until the card CHANGES.**
+Not in the design doc, and without it the feature is a slow leak: the triage would re-run every minute against the same words, forever, on every unclear card.
+The subtlety that only showed up when tested: the fingerprint has to STRIP the auto-captain's own notes first. Holding a card back appends a note, the note changes the description, the changed description makes the card look edited, and the next pass judges it again and appends another note. The gate test caught that loop on its first run.
+
+**An unbound list is a first-class refusal, not a triage verdict.**
+A Jot list can be bound to a folder, and that binding is the only trustworthy answer to "where does this task's work happen".
+Guessing from the list name would mean occasionally starting real work in the wrong repo, which is far worse than not starting it, so an unbound list is refused before the model is even asked - with a reason that says how to fix it.
+
+**The on/off switch lives in the Auto widget, not in Settings.**
+This is the one feature in Helm that spends money and changes a repo without being asked each time.
+Putting the switch next to the list of what it has started means you cannot turn it on without seeing its output, and cannot look at its output without seeing that it is on. Turning it ON is confirmed; turning it off is not.
+
+**No catch-up pass at startup**, unlike scheduled prompts. A queued prompt is something the user asked for at a moment that may have passed; an Auto card is a standing instruction, and firing a burst of them the instant Helm opens is exactly the surprise this must not produce.
+
+Also fixed on the way: `startedBy` was READ by the Auto column and written by nothing, so that column could never have shown anything at all.
+It is now stamped on the session record and carried through to the Fleet node.
+
+Deliberately NOT verified: the live triage call and an actual dispatch have never been run. Every test reaches its decision without a model call or a spawned session, because a suite that fires real work would cost money on every run.
+That last step is the "Run one pass" button with the captain watching - which is what the design doc asked for, and the reason the toggle ships off.
+
 ## 2026-08-02 - Widget dashboard: three complaints, three unrelated defects
 
 The captain's review listed three things.

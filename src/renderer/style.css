@@ -5520,6 +5520,16 @@ button.primary {
   border-top: 1px solid var(--border);
 }
 
+/* Auto-captain controls, inside its own widget (task ea0546d1). Kept as a plain
+   row of the shared .text-btn so the on/off switch reads as an ordinary control -
+   the weight of the decision is carried by the confirm dialog, not by styling. */
+.wd-auto-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
 /* Scheduled prompts (task 7d9d2188): the queued bar. The send-later button
    itself has no rules of its own on purpose - it is a plain .icon-btn, so it
    matches the paperclip and the mic and can never drift away from them. */

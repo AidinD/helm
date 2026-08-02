@@ -307,6 +307,101 @@ const JOT_STATUSES = ["open", "in-progress", "review", "done"];
  * (the captain's own convention: write the reason in the description when parking or
  * bouncing a task).
  */
+/**
+ * The board exactly as it is on disk - todos, tags and categories, unindexed.
+ *
+ * loadJot() returns a per-category work INDEX, which is the right shape for the
+ * dashboard but throws away the two things the auto-captain needs: each task's tag
+ * ids, and each category's folder binding. Returns empty arrays rather than null so
+ * a missing or unreadable board reads as "nothing queued", never as an error that
+ * would make the loop retry against a file that isn't there.
+ */
+export function readJotState(jotConfig = {}) {
+  if (jotConfig.enabled === false) {
+    return { ok: false, todos: [], tags: [], categories: [] };
+  }
+  const jotPath = jotConfig.path || resolveJotTodosPath();
+  const data = readJotFile(jotPath);
+  if (!data) {
+    return { ok: false, path: jotPath, todos: [], tags: [], categories: [] };
+  }
+  return {
+    ok: true,
+    path: jotPath,
+    todos: Array.isArray(data.todos) ? data.todos : [],
+    tags: Array.isArray(data.tags) ? data.tags : [],
+    categories: Array.isArray(data.categories) ? data.categories : [],
+  };
+}
+
+/**
+ * Add and/or remove tags on a task, creating any tag that doesn't exist yet.
+ *
+ * The auto-captain's whole state lives in tags (`auto` is the trigger the user
+ * sets; `needs-clarification` and `auto-running` are what Helm writes back), so
+ * this is how the board learns what the automation did. Tags are matched by NAME,
+ * case-insensitively, which is what lets Helm and Jot agree without a schema change.
+ *
+ * `note` is appended to the description, because a tag alone tells the user that
+ * something was refused but not what to do about it.
+ *
+ * @param {{path?: string}} jotConfig
+ * @param {string} taskId
+ * @param {{add?: string[], remove?: string[], note?: string, status?: string}} changes
+ */
+export function setTaskTags(jotConfig, taskId, { add = [], remove = [], note = "", status = null } = {}) {
+  if (!taskId) {
+    return { ok: false, error: "Missing task id." };
+  }
+  if (status && !JOT_STATUSES.includes(status)) {
+    return { ok: false, error: `Unknown status "${status}".` };
+  }
+  const jotPath = jotConfig.path || resolveJotTodosPath();
+  return mutateJotFile(jotPath, (data) => {
+    const todo = data.todos.find((t) => t.id === taskId);
+    if (!todo) {
+      return { ok: false, error: "Task not found on the board." };
+    }
+    if (!Array.isArray(data.tags)) {
+      data.tags = [];
+    }
+    const idFor = (name) => {
+      const lower = String(name).toLowerCase();
+      const found = data.tags.find((t) => (t.name || "").toLowerCase() === lower);
+      if (found) {
+        return found.id;
+      }
+      const created = { id: crypto.randomUUID(), name: String(name) };
+      data.tags.push(created);
+      return created.id;
+    };
+    const removeIds = new Set(
+      remove
+        .map((n) => {
+          const lower = String(n).toLowerCase();
+          const found = data.tags.find((t) => (t.name || "").toLowerCase() === lower);
+          return found ? found.id : null;
+        })
+        .filter(Boolean)
+    );
+    const next = new Set((todo.tags || []).filter((id) => !removeIds.has(id)));
+    for (const name of add) {
+      next.add(idFor(name));
+    }
+    todo.tags = [...next];
+    if (status) {
+      todo.status = status;
+      todo.completedAt = status === "done" ? Date.now() : null;
+    }
+    const trimmed = String(note || "").trim();
+    if (trimmed) {
+      todo.description = `${todo.description || ""}${todo.description ? "\n\n" : ""}${trimmed}`;
+    }
+    todo.updatedAt = Date.now();
+    return { ok: true, result: { tags: todo.tags, status: todo.status } };
+  });
+}
+
 export function setTaskStatus(jotConfig, taskId, status, note = "") {
   if (!taskId) {
     return { ok: false, error: "Missing task id." };
