@@ -65,6 +65,12 @@ if (app.isPackaged) {
   setIfUnset("HELM_MATES_PATH", "mates.json");
   setIfUnset("HELM_SECOND_MATES_PATH", "second-mates.json");
   setIfUnset("HELM_ROUTINES_PATH", "routines.json");
+  // Missing here until 2026-08-02, which is why queueing a prompt in the
+  // INSTALLED app failed with "Could not write the scheduled-prompt queue"
+  // while it worked perfectly in dev (the captain, task 7d9d2188): without the
+  // redirect the store resolved inside the read-only app bundle. Adding a new
+  // store means adding it here too - test-packaged-store-paths.mjs enforces it.
+  setIfUnset("HELM_SCHEDULED_PROMPTS_PATH", "scheduled-prompts.json");
   setIfUnset("HELM_USAGE_PATH", "helm-usage.jsonl");
   setIfUnset("HELM_USAGE_LOG_PATH", "usage-log.jsonl");
   setIfUnset("HELM_IMAGES_DIR", "pasted-images");

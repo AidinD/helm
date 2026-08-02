@@ -56,6 +56,26 @@ export function sleepSync(ms) {
  *   preconditions immediately before the rename (jot.js uses it for its
  *   concurrent-edit guard); return a reason string to abort the attempt and retry.
  */
+// A write failure ends up in a toast the captain reads. A bare "EROFS: read-only file
+// system, open '...'" tells him nothing he can act on, and a raw error code
+// appearing from nowhere is exactly the reporting failure he called out
+// (CLAUDE.md, "no unexplained jargon"). So say what happened in words, and keep
+// the code in brackets for a bug report.
+function plainReason(err, filePath) {
+  const code = err?.code || "";
+  const where = path.dirname(filePath);
+  if (code === "EROFS" || code === "EACCES" || code === "EPERM") {
+    return `Helm isn't allowed to write in ${where} - if this is the installed app, its data folder is misconfigured. [${code}]`;
+  }
+  if (code === "ENOENT") {
+    return `the folder ${where} doesn't exist and couldn't be created. [${code}]`;
+  }
+  if (code === "ENOSPC") {
+    return `the disk holding ${where} is full. [${code}]`;
+  }
+  return err?.message || String(err);
+}
+
 export function writeFileAtomicSync(filePath, contents, { onBeforeRename = null } = {}) {
   const dir = path.dirname(filePath);
   const base = path.basename(filePath);
@@ -95,7 +115,7 @@ export function writeFileAtomicSync(filePath, contents, { onBeforeRename = null 
           error: `the file stayed locked (${err.code}) after ${MAX_ATTEMPTS} attempts - Dropbox may be syncing it. Nothing was changed; try again.`,
         };
       }
-      return { ok: false, error: err.message };
+      return { ok: false, error: plainReason(err, filePath) };
     }
   }
   return { ok: false, error: lastError || "the file kept changing during the write" };
