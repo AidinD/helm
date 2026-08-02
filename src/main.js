@@ -383,11 +383,29 @@ ipcMain.handle("sessions:get", () => {
 });
 
 // --- Config: grouping, sorting, view mode, persisted to config.json ---
+// EVERY setting in the app goes through here, and the renderer does
+// `state.config = await window.helm.setConfig(patch)` in ~40 places. So this one
+// must never reject: a throw here would take out whichever click handler was
+// mid-flight, silently, and none of those 40 call sites check for it.
+//
+// On failure the UNCHANGED config comes back, which is the truth - the setting did
+// not persist - and a `config:writeFailed` event tells the user why. Returning the
+// patched-but-unsaved config instead would show the setting as applied and then
+// lose it on the next restart, which is the worse of the two lies.
 ipcMain.handle("config:set", (_event, patch) => {
   const current = loadConfig();
-  const next = { ...current, ...patch };
-  writeConfig(next);
-  return next;
+  try {
+    const next = { ...current, ...patch };
+    writeConfig(next);
+    return next;
+  } catch (err) {
+    const message = err?.message || String(err);
+    console.error("[helm] could not persist a setting:", message);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("config:writeFailed", { message });
+    }
+    return current;
+  }
 });
 
 // --- Away-from-desk attention delivery: an OS notification (only while the
@@ -3315,14 +3333,23 @@ ipcMain.handle("docs:parkProject", (_event, { path: projectPath, parked = true }
   } catch {
     return { ok: false, error: "That path can't be resolved." };
   }
-  const cfg = loadConfig();
-  const current = (cfg.parkedDocsProjects || []).map((p) => String(p).toLowerCase());
-  const next = parked ? [...new Set([...current, key])] : current.filter((p) => p !== key);
-  writeConfig({ ...cfg, parkedDocsProjects: next });
-  // The cached sweep still contains the row that was just parked; expire it so the
-  // next read reflects the decision instead of leaving the row on screen.
-  staleProjectsCache = { ...staleProjectsCache, at: 0 };
-  return { ok: true, parked: next.length };
+  // writeConfig THROWS when the file can't be written (another program holding it,
+  // a full disk). Without this guard the throw crosses the channel as a rejected
+  // promise, the renderer's `await` throws inside a click handler, and the button
+  // is left disabled with no message - the user sees a dead control instead of
+  // "couldn't park it". Every config-writing handler owes the caller an answer.
+  try {
+    const cfg = loadConfig();
+    const current = (cfg.parkedDocsProjects || []).map((p) => String(p).toLowerCase());
+    const next = parked ? [...new Set([...current, key])] : current.filter((p) => p !== key);
+    writeConfig({ ...cfg, parkedDocsProjects: next });
+    // The cached sweep still contains the row that was just parked; expire it so
+    // the next read reflects the decision instead of leaving the row on screen.
+    staleProjectsCache = { ...staleProjectsCache, at: 0 };
+    return { ok: true, parked: next.length };
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err) };
+  }
 });
 
 ipcMain.handle("docs:parkedProjects", () => {
@@ -4321,11 +4348,17 @@ ipcMain.handle("reviews:acknowledgeNoRecord", (_event, { taskId } = {}) => {
   if (!taskId) {
     return { ok: false, error: "No task id." };
   }
-  const cfg = loadConfig();
-  const set = new Set(cfg.acknowledgedNoRecord || []);
-  set.add(String(taskId));
-  writeConfig({ ...cfg, acknowledgedNoRecord: [...set] });
-  return { ok: true };
+  // Same reason as docs:parkProject - a failed write must come back as an answer,
+  // not as a rejected promise the renderer's `res?.ok` check never sees.
+  try {
+    const cfg = loadConfig();
+    const set = new Set(cfg.acknowledgedNoRecord || []);
+    set.add(String(taskId));
+    writeConfig({ ...cfg, acknowledgedNoRecord: [...set] });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err) };
+  }
 });
 
 // Run a record's declared checks and stamp the REAL outcome (exit code + output

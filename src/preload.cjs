@@ -117,6 +117,14 @@ contextBridge.exposeInMainWorld("helm", {
     ipcRenderer.on("build:staleUpdate", listener);
     return () => ipcRenderer.removeListener("build:staleUpdate", listener);
   },
+  // Fired when a setting could not be saved. setConfig cannot report this in its
+  // return value - the renderer assigns that straight into state.config in ~40
+  // places - so the failure comes back on its own channel instead of vanishing.
+  onConfigWriteFailed: (handler) => {
+    const listener = (_event, payload) => handler(payload);
+    ipcRenderer.on("config:writeFailed", listener);
+    return () => ipcRenderer.removeListener("config:writeFailed", listener);
+  },
   pickFolder: () => ipcRenderer.invoke("dialog:pickFolder"),
   pickFiles: () => ipcRenderer.invoke("dialog:pickFiles"),
   // Non-repo "life-domain" projects (PLAN.md) — plain folders (gym, cycling,
