@@ -145,6 +145,8 @@ contextBridge.exposeInMainWorld("helm", {
   // Named mates: the two fixed first-mate slots. listMates -> { active, all };
   // renameMate/retireMate mutate (retire discards + respawns a fresh one).
   listMates: () => ipcRenderer.invoke("mates:list"),
+  addMate: () => ipcRenderer.invoke("mates:add"),
+  removeMate: (mateId) => ipcRenderer.invoke("mates:remove", { mateId }),
   renameMate: (mateId, name) => ipcRenderer.invoke("mates:rename", { mateId, name }),
   rethemeMates: (fromTheme, toTheme) => ipcRenderer.invoke("mates:retheme", { fromTheme, toTheme }),
   retireMate: (mateId, handoff, persona) => ipcRenderer.invoke("mates:retire", { mateId, handoff, persona }),

@@ -48,7 +48,11 @@ import { loadGoalRunHistory, upsertGoalRunRecord, removeGoalRunRecord } from "./
 import { removeWorktree, isBranchMerged, deleteBranch } from "./lib/worktree.js";
 import { docsStaleness, staleProjectsAsync, docsNudgeCandidates, DOCS_NUDGE_ACTIVE_DAYS } from "./lib/docsStaleness.js";
 import { loadDomains, registerDomain, removeDomain } from "./lib/domains.js";
-import { ensureMates, activeMates, findMateById, loadMates, renameMate, retireAndRespawn, bindMateSession, consumeMateHandoff, setMatePersona, rethemeMateNames } from "./lib/mates.js";
+import { ensureMates, activeMates, findMateById, loadMates, renameMate, retireAndRespawn, bindMateSession, consumeMateHandoff, setMatePersona, rethemeMateNames, retireMateSlot, clampMateSlots, MATE_SLOT_COUNT, MATE_SLOT_MAX } from "./lib/mates.js";
+
+// How many first mates the captain wants. Two by default; configurable since
+// 2026-08-02 (task 4bf2421c) because the fleet was hard-capped at two.
+const configuredMateSlots = () => clampMateSlots(loadConfig().firstMateSlots ?? MATE_SLOT_COUNT);
 import { personaOverlay, PERSONAS } from "./lib/personas.js";
 import { listSlashItems } from "./lib/slashCommands.js";
 import { trackHelmUsage, summarizeHelmUsage } from "./lib/helmUsage.js";
@@ -1398,7 +1402,7 @@ function buildFirstMateMcpConfig(metaHome, mateId) {
   // mateId the renderer passes. Fall back to the first active mate if none was
   // given (a direct meta-home launch that didn't pick a slot) so a first mate
   // always has a stable identity. ensureMates guarantees the two slots exist.
-  const active = ensureMates(metaHome);
+  const active = ensureMates(metaHome, configuredMateSlots());
   const mate = (mateId && findMateById(mateId)) || active[0];
   return buildDispatchMcpConfig(metaHome, mate.mateId, "first-mate");
 }
@@ -1668,11 +1672,58 @@ ipcMain.handle("lavish:formatPrompt", (_event, { annotations, domSnapshot }) => 
 ipcMain.handle("mates:list", () => {
   try {
     const metaHome = resolveMetaHome();
-    return { ok: true, active: ensureMates(metaHome), all: loadMates() };
+    return { ok: true, active: ensureMates(metaHome, configuredMateSlots()), all: loadMates() };
   } catch (err) {
     return { ok: false, error: err?.message || String(err), active: [], all: [] };
   }
 });
+// Add a first mate. The fleet was fixed at two slots; this raises the configured
+// count by one and lets ensureMates fill it, so the new mate is a real coordinator
+// with its own name, root and session - not a widget with nothing behind it.
+ipcMain.handle("mates:add", () => {
+  try {
+    const cfg = loadConfig();
+    const current = clampMateSlots(cfg.firstMateSlots ?? MATE_SLOT_COUNT);
+    if (current >= MATE_SLOT_MAX) {
+      return { ok: false, error: `${MATE_SLOT_MAX} first mates is the most Helm will run at once.`, active: activeMates() };
+    }
+    writeConfig({ ...cfg, firstMateSlots: current + 1 });
+    return { ok: true, active: ensureMates(resolveMetaHome(), current + 1) };
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err), active: [] };
+  }
+});
+
+// Remove a first mate for good (as opposed to retire, which respawns into the same
+// slot). Lowers the configured count in the SAME step - retiring without lowering
+// it would just have ensureMates recreate the mate on the next render, which would
+// read as the app refusing to do what it was asked.
+ipcMain.handle("mates:remove", (_event, { mateId } = {}) => {
+  try {
+    const cfg = loadConfig();
+    const current = clampMateSlots(cfg.firstMateSlots ?? MATE_SLOT_COUNT);
+    if (current <= 1) {
+      return { ok: false, error: "Helm keeps at least one first mate.", active: activeMates() };
+    }
+    const mate = mateId ? findMateById(mateId) : null;
+    if (!mate || mate.status !== "active") {
+      return { ok: false, error: "That first mate isn't on watch.", active: activeMates() };
+    }
+    // Tear down its second mates first, exactly as retiring does - otherwise their
+    // nodes linger pointing at a mate id that no longer exists.
+    try {
+      tearDownSecondMatesFor(mate.mateId);
+    } catch (err) {
+      console.error("[helm] could not tear down second mates while removing a first mate:", err);
+    }
+    retireMateSlot(mate.slot);
+    writeConfig({ ...cfg, firstMateSlots: current - 1 });
+    return { ok: true, active: ensureMates(resolveMetaHome(), current - 1) };
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err), active: [] };
+  }
+});
+
 ipcMain.handle("mates:rename", (_event, { mateId, name }) => {
   try {
     const mate = renameMate(mateId, name);
@@ -3987,7 +4038,7 @@ function startDispatchWatcher() {
   // random sea-captain name) so the Fleet tree always has its two roots to show,
   // even before the captain has jumped into either.
   try {
-    ensureMates(metaHome);
+    ensureMates(metaHome, configuredMateSlots());
   } catch (err) {
     console.error("[helm] could not ensure the two first mates:", err);
   }

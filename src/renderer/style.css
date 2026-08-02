@@ -5234,15 +5234,36 @@ button.primary {
   padding: 13px 14px;
   position: relative;
   min-height: 96px;
-  grid-column: span 4;
+  /* The width comes from --wd-span, set inline per widget. It used to be a table
+     of .wd-span-N classes that only covered 3..7 - so choosing "Width 8/12" or
+     "Full width" in the menu silently did nothing at all, which is exactly what
+     Aidin reported ("händer inget när jag ändrar width size"). A single custom
+     property cannot fall out of sync with the widths the menu offers. */
+  grid-column: span var(--wd-span, 4);
 }
-.wd-span-3 { grid-column: span 3; }
-.wd-span-4 { grid-column: span 4; }
-.wd-span-5 { grid-column: span 5; }
-.wd-span-6 { grid-column: span 6; }
-.wd-span-7 { grid-column: span 7; }
 @media (max-width: 900px) {
-  .wd, .wd-span-3, .wd-span-4, .wd-span-5, .wd-span-6, .wd-span-7 { grid-column: span 2; }
+  .wd { grid-column: span 2; }
+}
+
+/* Layout helpers with no content of their own (Aidin: "jag kan inte lämna tomt på
+   rad 1 för att börja på rad 2"). A break ends the current row; a blank holds
+   space so a row can be left deliberately short. Both are real layout entries, so
+   they drag and resize like anything else. */
+.wd-break {
+  grid-column: 1 / -1;
+  min-height: 0;
+  padding: 4px 12px;
+  background: transparent;
+  border-style: dashed;
+}
+.wd-break .wd-head { margin-bottom: 0; }
+.wd-break .wd-body { display: none; }
+/* A blank keeps the normal .wd box model (so it drags and resizes like any other
+   widget) and only changes how it reads: an outline, not a card. */
+.wd-blank {
+  background: transparent;
+  border-style: dashed;
+  min-height: 72px;
 }
 
 .wd-head { display: flex; align-items: center; gap: 8px; margin-bottom: 11px; }

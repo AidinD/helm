@@ -171,15 +171,28 @@ try {
   await wait(120);
   assert((await count("#dashFleetSlot .fleet-rename-input")) === 1, "rename opens an inline input (not a native prompt)");
 
-  // Retire shows a custom confirm MODAL (not window.confirm): 2nd icon = retire.
+  // Retire offers a CHOICE, not a yes/no confirm: carrying the thread over to the
+  // successor has to be a deliberate decision (DECISIONS.md, "Retire: carry-over is
+  // a choice"). This test still expected the old confirm modal, so it had been
+  // failing since that change - a stale assertion, not a regression. What matters
+  // is that it is still not a native dialog and that both branches are offered.
   await app.eval(`document.querySelectorAll("#dashFleetSlot .fleet-mate-card:not(.direct) .fleet-btn:not(.fleet-btn-accent)")[1].click(); true`);
   await wait(120);
-  assert((await count(".confirm-overlay")) === 1, "retire opens a custom confirm modal (not window.confirm)");
-  assert((await count(".confirm-overlay .confirm-ok")) === 1 && (await count(".confirm-overlay .confirm-cancel")) === 1, "the confirm modal has Retire + Cancel buttons");
-  // Cancel dismisses it (and doesn't retire).
-  await app.eval(`document.querySelector(".confirm-overlay .confirm-cancel").click(); true`);
+  const retireMenu = await app.eval(`(() => {
+    const menu = document.getElementById("contextMenu");
+    if (!menu || menu.classList.contains("hidden")) { return null; }
+    return [...menu.querySelectorAll(".item")].map(el => el.textContent);
+  })()`);
+  assert(Array.isArray(retireMenu), "retire opens Helm's own menu, not a native dialog");
+  assert(
+    (retireMenu || []).some((l) => /start fresh/i.test(l)) && (retireMenu || []).some((l) => /carry over/i.test(l)),
+    `both retire branches are offered (got ${JSON.stringify(retireMenu)})`
+  );
+  // Dismissing it must not retire anything.
+  await app.eval(`closeContextMenu(); true`);
   await wait(80);
-  assert((await count(".confirm-overlay")) === 0, "Cancel dismisses the confirm modal");
+  const dismissed = await app.eval(`document.getElementById("contextMenu").classList.contains("hidden")`);
+  assert(dismissed === true, "dismissing the menu leaves the mate alone");
 
   // A session-backed second mate offers an archive button (archive from Direct).
   const arch = await app.eval(`(() => {

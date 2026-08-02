@@ -6739,6 +6739,80 @@ function customConfirm(message, confirmLabel, onConfirm, { deliberate = false, o
 // sessions included. Sessions already bound to a first mate's second mate are
 // skipped (they show under that mate). The run-derived Direct nodes (autonomous
 // runs with commits to review) are kept as-is alongside.
+/**
+ * THE ONE PLACE that turns raw second-mate bindings into the fleet model both
+ * dashboards render from.
+ *
+ * Why it is shared. The widget dashboard skipped this entirely and passed
+ * listSecondMates() straight to the widgets - so its Captain widget was EMPTY
+ * (Aidin, 2026-07-28: "Captain är tom trots att den inte ska vara det"). The
+ * captain's own sessions are not bindings at all; they are nodes this function
+ * derives from state.sessions. The first-mate widgets were missing their live
+ * crew and context gauges for the same reason, and archived second mates would
+ * have reappeared there after being archived on the classic board.
+ *
+ * Two dashboards deriving the same model separately is the same failure as the
+ * three archive menus and the eight file writers. One builder, both callers.
+ *
+ * Mutates the returned nodes' `crew` and refreshes contextTokensBySession, which
+ * is what the synchronous card renderers read.
+ */
+async function buildFleetModel(activeMates, rawSecondMates) {
+  // Exclude second mates the captain archived (bug 05166d55 / retire teardown):
+  // the archivedSecondMates overlay keeps a node out of the Fleet even when it
+  // would otherwise re-derive from goal-run history.
+  const archivedSecondMateIds = new Set(state.config.archivedSecondMates || []);
+  const secondMates = augmentSecondMatesWithSessions(rawSecondMates || [], activeMates || []).filter(
+    (s) => !archivedSecondMateIds.has(s.secondMateId)
+  );
+  // Trigger layer 3: the Jot board state of the projects the mates work, so the
+  // retire nudge can strengthen (boards clear) or dampen (urgent task queued).
+  const projectPaths = [...new Set(secondMates.map((s) => s.projectPath).filter(Boolean))];
+  let boardSummary = {};
+  if (projectPaths.length) {
+    try {
+      const boardResult = await window.helm.getJotBoardSummary(projectPaths);
+      boardSummary = boardResult?.ok ? boardResult.summary || {} : {};
+    } catch {
+      boardSummary = {};
+    }
+  }
+  // Live sub-agents as crew: only for session nodes whose session is actively
+  // working (an idle session has none), so we tail-read only a couple of
+  // transcripts, not all ~15.
+  const activeSessionNodes = secondMates
+    .filter((sm) => sm.isSessionNode && sm.sessionId)
+    .map((sm) => ({ sm, sess: state.sessions.find((s) => (s.cliSessionId || s.sessionId) === sm.sessionId) }))
+    .filter((x) => x.sess && x.sess.status === "active");
+  if (activeSessionNodes.length) {
+    try {
+      const saRes = await window.helm.getLiveSubAgents(activeSessionNodes.map((x) => ({ cliSessionId: x.sess.cliSessionId, sessionId: x.sess.sessionId })));
+      const saMap = saRes?.ok ? saRes.subAgents : {};
+      for (const { sm, sess } of activeSessionNodes) {
+        sm.crew = (saMap[sess.sessionId] || []).map((a) => ({ isSubAgent: true, id: a.id, goal: a.description, status: "running" }));
+      }
+    } catch {
+      // crew is decoration; never let it take the fleet down with it
+    }
+  }
+  // Context gauge for EVERY first mate: tail-read each mate session's last-known
+  // context size (keyed on mate.sessionId), stashed for the synchronous fleet
+  // render. The gauge prefers a live pane value when open; this is the fallback
+  // so both mates show a gauge (bug bf1ea538).
+  const mateCtxSessions = (activeMates || []).filter((m) => m.sessionId).map((m) => ({ cliSessionId: m.sessionId, sessionId: m.sessionId }));
+  if (mateCtxSessions.length) {
+    try {
+      const ctxRes = await window.helm.getContextTokens(mateCtxSessions);
+      contextTokensBySession = ctxRes?.ok ? ctxRes.contextTokens || {} : {};
+    } catch {
+      contextTokensBySession = {};
+    }
+  } else {
+    contextTokensBySession = {};
+  }
+  return { secondMates, boardSummary };
+}
+
 function augmentSecondMatesWithSessions(secondMates, mates = []) {
   const list = [...secondMates];
   const boundIds = new Set(list.map((s) => s.sessionId).filter(Boolean));
@@ -7864,43 +7938,12 @@ async function fillDashboardSections({ force = false } = {}) {
 
   const [matesResult, secondMatesResult] = await Promise.all([window.helm.listMates(), window.helm.listSecondMates()]);
   const activeMatesList = matesResult?.ok ? matesResult.active : [];
-  // Exclude second mates the captain archived (bug 05166d55 / retire teardown):
-  // the archivedSecondMates overlay keeps a node out of the Fleet even when it
-  // would otherwise re-derive from goal-run history.
-  const archivedSecondMateIds = new Set(state.config.archivedSecondMates || []);
-  const secondMatesList = augmentSecondMatesWithSessions(secondMatesResult?.ok ? secondMatesResult.secondMates : [], activeMatesList).filter(
-    (s) => !archivedSecondMateIds.has(s.secondMateId)
+  // Shared with the widget dashboard - see buildFleetModel for why this must not
+  // be two separate derivations.
+  const { secondMates: secondMatesList, boardSummary } = await buildFleetModel(
+    activeMatesList,
+    secondMatesResult?.ok ? secondMatesResult.secondMates : []
   );
-  // Trigger layer 3: the Jot board state of the projects the mates work, so the
-  // retire nudge can strengthen (boards clear) or dampen (urgent task queued).
-  const projectPaths = [...new Set(secondMatesList.map((s) => s.projectPath).filter(Boolean))];
-  const boardResult = projectPaths.length ? await window.helm.getJotBoardSummary(projectPaths) : null;
-  const boardSummary = boardResult?.ok ? boardResult.summary : {};
-  // Live sub-agents as crew: only for session nodes whose session is actively
-  // working (an idle session has none), so we tail-read only a couple of
-  // transcripts, not all ~15.
-  const activeSessionNodes = secondMatesList
-    .filter((sm) => sm.isSessionNode && sm.sessionId)
-    .map((sm) => ({ sm, sess: state.sessions.find((s) => (s.cliSessionId || s.sessionId) === sm.sessionId) }))
-    .filter((x) => x.sess && x.sess.status === "active");
-  if (activeSessionNodes.length) {
-    const saRes = await window.helm.getLiveSubAgents(activeSessionNodes.map((x) => ({ cliSessionId: x.sess.cliSessionId, sessionId: x.sess.sessionId })));
-    const saMap = saRes?.ok ? saRes.subAgents : {};
-    for (const { sm, sess } of activeSessionNodes) {
-      sm.crew = (saMap[sess.sessionId] || []).map((a) => ({ isSubAgent: true, id: a.id, goal: a.description, status: "running" }));
-    }
-  }
-  // Context gauge for EVERY first mate: tail-read each mate session's last-known
-  // context size (keyed on mate.sessionId), stashed for the synchronous fleet
-  // render below. On the poll, not per render. The gauge prefers a live pane
-  // value when open; this is the fallback so both mates show a gauge (bug bf1ea538).
-  const mateCtxSessions = activeMatesList.filter((m) => m.sessionId).map((m) => ({ cliSessionId: m.sessionId, sessionId: m.sessionId }));
-  if (mateCtxSessions.length) {
-    const ctxRes = await window.helm.getContextTokens(mateCtxSessions);
-    contextTokensBySession = ctxRes?.ok ? ctxRes.contextTokens || {} : {};
-  } else {
-    contextTokensBySession = {};
-  }
   if (bailIfPressed()) {
     return;
   }
@@ -8126,10 +8169,28 @@ const WIDGET_CATALOG = {
   firstMate: { label: "First mate", span: 4, accent: "mate", perMate: true },
   goals: { label: "Goals", span: 6, accent: "blue", singleton: true },
   docsDrift: { label: "Docs drift", span: 4, accent: "acc", singleton: true },
+  // Layout-only entries, so a row can be left deliberately short instead of the
+  // grid packing every widget against the previous one (Aidin: "jag kan inte
+  // lämna tomt på rad 1 för att börja på rad 2"). They are ordinary layout
+  // entries - draggable, resizable, removable - not a separate mechanism.
+  blank: { label: "Blank space", span: 4, layoutOnly: true },
+  break: { label: "Row break", span: 12, layoutOnly: true },
 };
-const WIDGET_SPANS = [3, 4, 5, 6, 7, 8, 12];
+// Every width the 12-column grid can express. The old list stopped at 8 and the
+// CSS only implemented up to 7, so half the menu was inert.
+const WIDGET_SPANS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 12];
 
 let widgetDragId = null;
+
+/** Lowest free instance number for a repeatable widget type, so ids stay unique. */
+function nextWidgetInstanceId(layout, type) {
+  let n = 1;
+  const taken = new Set((layout || []).map((w) => w.id));
+  while (taken.has(`w-${type}-${n}`)) {
+    n += 1;
+  }
+  return n;
+}
 
 /** The saved layout, or a seeded default (one first-mate widget per active mate). */
 function widgetLayout(mates) {
@@ -8505,8 +8566,14 @@ const WIDGET_BODIES = {
 async function widgetEl(widget, data) {
   const spec = WIDGET_CATALOG[widget.type];
   const el = document.createElement("section");
-  el.className = `wd wd-span-${widget.span || spec?.span || 4}`;
+  // A break and a blank are ordinary widget elements with a different skin, NOT a
+  // second rendering path - so they inherit the drag, resize and remove wiring
+  // below for free and cannot drift away from it.
+  el.className = "wd" + (widget.type === "blank" ? " wd-blank" : widget.type === "break" ? " wd-break" : "");
+  // Inline custom property, not a class per width - see the note in style.css.
+  el.style.setProperty("--wd-span", String(widget.span || spec?.span || 4));
   el.dataset.widgetId = widget.id;
+  el.dataset.widgetSpan = String(widget.span || spec?.span || 4);
 
   const head = document.createElement("div");
   head.className = "wd-head";
@@ -8548,13 +8615,17 @@ async function widgetEl(widget, data) {
   opts.addEventListener("click", async (e) => {
     e.stopPropagation();
     const layout = widgetLayout(data.mates);
-    const items = WIDGET_SPANS.map((span) => ({
-      label: `${span === 12 ? "Full width" : `Width ${span}/12`}${(widget.span || spec?.span) === span ? " ✓" : ""}`,
-      onClick: async () => {
-        await saveWidgetLayout(layout.map((w) => (w.id === widget.id ? { ...w, span } : w)));
-        await renderDashboardPage();
-      },
-    }));
+    // A row break is always full width - offering it a width picker would be a
+    // control that visibly does nothing, which is the bug this task started with.
+    const items = widget.type === "break"
+      ? []
+      : WIDGET_SPANS.map((span) => ({
+          label: `${span === 12 ? "Full width" : `Width ${span}/12`}${(widget.span || spec?.span) === span ? " ✓" : ""}`,
+          onClick: async () => {
+            await saveWidgetLayout(layout.map((w) => (w.id === widget.id ? { ...w, span } : w)));
+            await renderDashboardPage();
+          },
+        }));
     if (widget.type === "needsYou") {
       const next = widget.orientation === "vertical" ? "horizontal" : "vertical";
       items.push({ sep: true }, {
@@ -8573,6 +8644,33 @@ async function widgetEl(widget, data) {
         await renderDashboardPage();
       },
     });
+    // Removing the WIDGET leaves the mate on watch; this removes the mate itself.
+    // Worded so the difference is unmistakable, and confirmed, because it retires
+    // a real coordinator and tears down its second mates.
+    if (widget.type === "firstMate" && widget.mateId) {
+      const mate = (data.mates || []).find((m) => m.mateId === widget.mateId);
+      items.push({
+        label: `Dismiss ${mate?.name || "this first mate"} from the fleet`,
+        danger: true,
+        onClick: () => {
+          customConfirm(
+            `Dismiss ${mate?.name || "this first mate"}? Its second mates are torn down and it does not respawn. The widget goes too.`,
+            "Dismiss",
+            async () => {
+              const res = await window.helm.removeMate(widget.mateId);
+              if (!res?.ok) {
+                showToast(res?.error || "Couldn't dismiss that first mate.");
+                return;
+              }
+              await saveWidgetLayout(layout.filter((w) => w.id !== widget.id));
+              showToast(`${mate?.name || "First mate"} left the fleet.`);
+              await renderDashboardPage();
+            },
+            { deliberate: true }
+          );
+        },
+      });
+    }
     const rect = opts.getBoundingClientRect();
     showContextMenu(rect.left, rect.bottom + 4, items);
   });
@@ -8582,7 +8680,9 @@ async function widgetEl(widget, data) {
   const body = document.createElement("div");
   body.className = "wd-body";
   const build = WIDGET_BODIES[widget.type];
-  if (build) {
+  if (spec?.layoutOnly) {
+    body.append(widgetEmpty("Empty on purpose - resize or drag it like any widget."));
+  } else if (build) {
     try {
       body.append(await build(data, widget));
     } catch (err) {
@@ -8660,6 +8760,28 @@ function widgetAddTile(data) {
             },
           });
         }
+        // The fleet used to be hard-capped at two first mates, so this menu could
+        // only ever offer the two that already existed - which read as "the widget
+        // dashboard limits me to two" (Aidin, 2026-07-28). A first mate is a real
+        // coordinator, so ADDING one is a fleet action, not a widget action; it
+        // happens here because this is where he went looking for it.
+        items.push({
+          label: "New first mate…",
+          hint: "adds to the fleet",
+          onClick: async () => {
+            const res = await window.helm.addMate();
+            if (!res?.ok) {
+              showToast(res?.error || "Couldn't add a first mate.");
+              return;
+            }
+            const added = (res.active || []).find((m) => !(data.mates || []).some((x) => x.mateId === m.mateId));
+            if (added) {
+              await saveWidgetLayout([...layout, { id: `w-mate-${added.mateId}`, type: "firstMate", span: spec.span, mateId: added.mateId }]);
+              showToast(`${added.name} joined the fleet.`);
+            }
+            await renderDashboardPage();
+          },
+        });
         continue;
       }
       if (spec.singleton && layout.some((w) => w.type === type)) {
@@ -8667,8 +8789,13 @@ function widgetAddTile(data) {
       }
       items.push({
         label: spec.label,
+        hint: spec.layoutOnly ? "layout only" : undefined,
         onClick: async () => {
-          await saveWidgetLayout([...layout, { id: `w-${type}`, type, span: spec.span }]);
+          // Non-singletons (blank, break) can appear many times, so the id has to
+          // be unique per instance - a fixed `w-<type>` would give two entries the
+          // same id and the drag/remove/resize handlers all key on id.
+          const id = spec.singleton ? `w-${type}` : `w-${type}-${nextWidgetInstanceId(layout, type)}`;
+          await saveWidgetLayout([...layout, { id, type, span: spec.span }]);
           await renderDashboardPage();
         },
       });
@@ -8706,19 +8833,13 @@ async function renderWidgetDashboard(page) {
     window.helm.getOrchestrationBudget?.() ?? Promise.resolve(null),
   ]);
   const mates = matesResult?.ok ? matesResult.active : [];
-  const secondMates = secondMatesResult?.ok ? secondMatesResult.secondMates || [] : [];
-  // The first-mate cards read per-project Jot boards for their retire nudge, so
-  // the widget has to supply the same summary the Fleet section does.
-  const projectPaths = [...new Set(secondMates.map((s) => s.projectPath).filter(Boolean))];
-  let boardSummary = {};
-  if (projectPaths.length > 0) {
-    try {
-      const res = await window.helm.getJotBoardSummary(projectPaths);
-      boardSummary = res?.ok ? res.summary || {} : res || {};
-    } catch {
-      boardSummary = {};
-    }
-  }
+  // The SAME derivation the classic Fleet uses. Passing the raw bindings here is
+  // what left the Captain widget empty: the captain's own sessions are derived
+  // nodes, not bindings, so they only exist after buildFleetModel runs.
+  const { secondMates, boardSummary } = await buildFleetModel(
+    mates,
+    secondMatesResult?.ok ? secondMatesResult.secondMates || [] : []
+  );
   await ensurePersonaCatalog();
   const data = {
     mates,

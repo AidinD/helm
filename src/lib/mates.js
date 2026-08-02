@@ -31,7 +31,24 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const matesPath = process.env.HELM_MATES_PATH || path.join(__dirname, "..", "..", "mates.json");
 
 // Exactly two first-mate slots always exist.
+// The DEFAULT number of first-mate slots, not a hard ceiling. It was a fixed 2
+// until 2026-08-02 - Aidin: "ett av syftena var att kunna lägga till hur många
+// first mates som helst, men jag är begränsad till två". Callers pass a count;
+// this is what they get when nothing is configured.
 export const MATE_SLOT_COUNT = 2;
+// An upper bound only so a stray value can't spawn a hundred mates. Each mate is
+// a real coordinator with its own session and cost, so a large number is a
+// mistake, not a preference.
+export const MATE_SLOT_MAX = 8;
+
+/** Clamp a requested slot count to something sane; anything unusable falls back to the default. */
+export function clampMateSlots(n) {
+  const v = Math.trunc(Number(n));
+  if (!Number.isFinite(v) || v < 1) {
+    return MATE_SLOT_COUNT;
+  }
+  return Math.min(v, MATE_SLOT_MAX);
+}
 
 // Mate name pools, per theme identity. A newborn mate takes one not currently
 // held by a live mate. The nautical pool backs the default/brass (Helm) themes;
@@ -316,19 +333,24 @@ export function activeMates() {
 }
 
 /**
- * Guarantees exactly two active mates rooted at `root`, creating any missing
+ * Guarantees `slotCount` active mates rooted at `root`, creating any missing
  * slot's mate with a fresh random name. Idempotent - safe to call on every
- * startup / Fleet render. Returns the two active mates ordered by slot.
+ * startup / Fleet render. Returns the active mates ordered by slot.
+ *
+ * Only ever ADDS. Reducing the count is retireMateSlot's job, because dropping a
+ * mate means retiring a real session's owner and that must be an explicit act,
+ * never a side effect of a number changing.
  */
-export function ensureMates(root) {
+export function ensureMates(root, slotCount = MATE_SLOT_COUNT) {
   if (!root) {
     throw new Error("ensureMates requires a root path");
   }
+  const wanted = clampMateSlots(slotCount);
   const resolvedRoot = path.resolve(root);
   const state = readState();
   const pool = namePoolForTheme(currentTheme());
   let changed = false;
-  for (let slot = 0; slot < MATE_SLOT_COUNT; slot++) {
+  for (let slot = 0; slot < wanted; slot++) {
     const held = state.mates.find((m) => m.status === "active" && m.slot === slot);
     if (!held) {
       const takenNames = activeMatesFrom(state.mates).map((m) => m.name);
@@ -508,12 +530,42 @@ export function consumeMateHandoff(mateId) {
   return handoff;
 }
 
-/** Lowest slot index [0, MATE_SLOT_COUNT) not currently held by an active mate. */
+/** Lowest slot index not currently held by an active mate (bounded by the max). */
 function firstFreeSlot(mates) {
-  for (let slot = 0; slot < MATE_SLOT_COUNT; slot++) {
+  for (let slot = 0; slot < MATE_SLOT_MAX; slot++) {
     if (!mates.some((m) => m.status === "active" && m.slot === slot)) {
       return slot;
     }
   }
   return 0;
+}
+
+/**
+ * Retire the mate in `slot` WITHOUT respawning it - the way to go back down to
+ * fewer first mates. Unlike retireAndRespawn (same slot, fresh name, work
+ * continues) this removes the position entirely, so the caller must also lower
+ * the configured slot count or ensureMates will recreate it on the next render.
+ *
+ * Remaining mates are re-packed onto slots 0..n-1: leaving a hole would make
+ * ensureMates refill it, which is precisely the opposite of what was asked.
+ * Returns the retired mate, or null when there was nothing there.
+ */
+export function retireMateSlot(slot) {
+  const state = readState();
+  const mate = state.mates.find((m) => m.status === "active" && m.slot === slot);
+  if (!mate) {
+    return null;
+  }
+  mate.status = "retired";
+  mate.slot = null;
+  mate.retiredAt = Date.now();
+  mate.sessionId = null;
+  const remaining = state.mates
+    .filter((m) => m.status === "active")
+    .sort((a, b) => (a.slot ?? 0) - (b.slot ?? 0));
+  remaining.forEach((m, i) => {
+    m.slot = i;
+  });
+  writeState(state);
+  return mate;
 }
