@@ -30,15 +30,24 @@ export const AUTO_CAPTAIN_TAGS = [
     color: "#5fb0ff",
     description: "Let Helm start this on its own. It only ever STARTS - the work lands in review for you.",
   },
+  // These two get Jot's whole-row stripe (tag emphasis, Jot 1.5.23). `auto` does
+  // NOT, on purpose: "may be started automatically" is not an active state, and
+  // if twenty cards carry it the stripe stops meaning anything. These two are
+  // "a machine is spending money and touching a repo right now" and "this card
+  // is waiting on you" - the two you cannot afford to miss while scanning.
+  // Only applied when the tag is CREATED, so turning the stripe off in Jot
+  // sticks instead of being switched back on at every launch.
   {
     name: NEEDS_CLARIFICATION_TAG,
     color: "#ffb054",
     description: "Helm did not start this: too vague to hand over. The reason is written on the card.",
+    emphasis: "stripe",
   },
   {
     name: AUTO_RUNNING_TAG,
     color: "#5fd0a0",
     description: "Helm started this one itself. Set and cleared by Helm - not something to set by hand.",
+    emphasis: "stripe",
   },
 ];
 

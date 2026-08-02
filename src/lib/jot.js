@@ -389,7 +389,17 @@ export function ensureTagsExist(jotConfig = {}, specs = []) {
       if (data.tags.some((t) => (t.name || "").toLowerCase() === String(spec.name).toLowerCase())) {
         continue;
       }
-      data.tags.push({ id: crypto.randomUUID(), name: spec.name, color: spec.color, description: spec.description });
+      data.tags.push({
+        id: crypto.randomUUID(),
+        name: spec.name,
+        color: spec.color,
+        description: spec.description,
+        // Jot's own field (TagEmphasis): "stripe" marks the whole row/card, not
+        // just the chip. Written only on CREATE - re-asserting it every launch
+        // would undo a choice made in Jot's tag manager, which is the
+        // can-create-but-cannot-reverse shape we keep getting wrong.
+        emphasis: spec.emphasis || null,
+      });
     }
     return { ok: true, result: {} };
   });
