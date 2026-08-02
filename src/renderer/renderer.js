@@ -2018,6 +2018,35 @@ async function archiveWithHandoff(session) {
 // `plainArchive` is the caller's own no-handoff archive, so each flow keeps its
 // specifics (e.g. the Fleet button's optimistic removal). `after` runs once the
 // chosen branch finishes (the Fleet needs to drop its node either way).
+/**
+ * Is this session NOT rooted in a real project?
+ *
+ * "Has a cwd" is not the same question, and assuming it was is why the archive menu
+ * lied to Aidin. His life-domain sessions (training, diabetes journal, kombucha) are
+ * all rooted at the META-HOME, so they DO have a cwd - the menu therefore promised
+ * "Save handoff to HANDOFF.md" while the backend, which checks for the meta-home
+ * properly, correctly filed them by topic. The behaviour was right and the label was
+ * wrong, which is worse than a plain bug: he concluded the feature was missing.
+ *
+ * Mirrors isMetaHomeRoot in main.js. Windows paths are case-insensitive and mix
+ * separators, so both sides must fold to one form before comparing.
+ */
+function isNonRootedSession(cwd) {
+  if (!cwd) {
+    return true;
+  }
+  const home = state.orchestratorHome;
+  if (!home) {
+    return false; // not yet known - assume rooted rather than mislabel the other way
+  }
+  const norm = (p) =>
+    String(p)
+      .replace(/[\\/]+/g, "/")
+      .replace(/\/+$/, "")
+      .toLowerCase();
+  return norm(cwd) === norm(home);
+}
+
 function archiveMenuItems(session, { plainArchive, after = null, nameInLabel = false }) {
   const named = nameInLabel ? ` "${session.title}"` : "";
   const run = (fn) => async () => {
@@ -2028,7 +2057,7 @@ function archiveMenuItems(session, { plainArchive, after = null, nameInLabel = f
   };
   return [
     {
-      label: `Save handoff ${session.cwd ? "to HANDOFF.md" : "by topic"} + archive${named}`,
+      label: `Save handoff ${isNonRootedSession(session.cwd) ? "by topic" : "to HANDOFF.md"} + archive${named}`,
       danger: true,
       onClick: run(() => archiveWithHandoff(session)),
     },

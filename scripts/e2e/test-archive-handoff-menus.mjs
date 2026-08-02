@@ -80,10 +80,17 @@ const calls = [];
 const archiveWithHandoff = (s) => {
   calls.push(["handoff", s.title]);
 };
+// archiveMenuItems now asks isNonRootedSession whether a cwd is a real project
+// (his life-domain sessions are rooted AT the meta-home, so "has a cwd" was the
+// wrong question - see the note in the renderer). Extract that too and give it a
+// meta-home to compare against.
+const nonRootedSrc = extractFunction("isNonRootedSession");
+ok(!!nonRootedSrc, "isNonRootedSession exists - the label no longer just asks whether a cwd is set");
 const build = new Function(
   "archiveWithHandoff",
-  `${builderSrc}; return archiveMenuItems;`
-)(archiveWithHandoff);
+  "state",
+  `${nonRootedSrc}; ${builderSrc}; return archiveMenuItems;`
+)(archiveWithHandoff, { orchestratorHome: "D:/Dropbox/Mina Dokument/Claude" });
 
 // --- 1. behaviour: the folderless session is the whole point --------------
 const folderless = { title: "Träning och kost (Hevy)", cwd: null };
@@ -96,6 +103,14 @@ ok(
 ok(
   /by topic/i.test(items[0].label),
   `worded so it says where it goes - by topic, since there is no repo to write to (${items[0].label})`
+);
+
+// Backslashes, a different case and a trailing separator on purpose: his real
+// sessions carry the Windows form, and the meta-home is stored forward-slashed.
+const metaRooted = build({ title: "Traning och kost", cwd: "D:\\DROPBOX\\Mina Dokument\\Claude\\" }, { plainArchive: () => {} });
+ok(
+  /by topic/.test(metaRooted[0].label),
+  `a session rooted AT the meta-home is by-topic too, not HANDOFF.md (${metaRooted[0].label})`
 );
 
 const rooted = build({ title: "helm", cwd: "D:/Repo/Tools/helm" }, { plainArchive: () => {} });
@@ -159,7 +174,10 @@ ok(
 
 // The specific regression: a cwd condition deciding WHETHER the handoff is offered.
 const cwdGate = [...code.matchAll(/\.cwd\s*(\?|&&)[^\n]*[Hh]andoff/g)].map((m) => m[0]);
-const badGate = cwdGate.filter((t) => !/\?\s*"to HANDOFF\.md"\s*:\s*"by topic"/.test(t));
+// The gate that must never come back is one deciding WHETHER a handoff is offered.
+// Deciding the LABEL from the destination is fine and is what these two are.
+const ALLOWED_LABEL_GATES = [/\?\s*"by topic"\s*:\s*"to HANDOFF\.md"/, /isNonRootedSession\(/];
+const badGate = cwdGate.filter((t) => !ALLOWED_LABEL_GATES.some((re) => re.test(t)));
 ok(
   badGate.length === 0,
   `no archive path gates the handoff OPTION on having a project folder (${JSON.stringify(badGate)})`
