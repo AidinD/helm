@@ -55,6 +55,27 @@ try {
     after.tags.some((t) => t.name === "Urgent" && t.color === "#ff8c42"),
     "his own tags are untouched"
   );
+
+  // Jot's whole-row stripe (TagEmphasis). Only for the two ACTIVE states - a
+  // stripe on every card that MAY be started would mean nothing.
+  const byName = (n) => after.tags.find((t) => t.name === n);
+  ok(byName("auto-running").emphasis === "stripe", "auto-running marks the whole card - a machine is working on it now");
+  ok(byName("needs-clarification").emphasis === "stripe", "so does needs-clarification - it is waiting on him");
+  ok(
+    byName(AUTO_TAG).emphasis === null,
+    `but plain "auto" does not: eligible is not an active state (${J(byName(AUTO_TAG).emphasis)})`
+  );
+
+  // Turning the stripe off in Jot must STICK. Re-asserting it every launch is
+  // the can-create-but-cannot-reverse shape we keep getting wrong.
+  const off = read();
+  off.tags.find((t) => t.name === "auto-running").emphasis = null;
+  write(off);
+  ensureTagsExist({ path: board }, AUTO_CAPTAIN_TAGS);
+  ok(
+    read().tags.find((t) => t.name === "auto-running").emphasis === null,
+    "a stripe switched off by hand is not switched back on at the next launch"
+  );
   ok(
     !!tagIdByName(readJotState({ path: board }).tags, "AUTO"),
     "and the auto-captain's own lookup finds it, case-insensitively - the two agree"
