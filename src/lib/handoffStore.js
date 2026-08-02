@@ -134,10 +134,14 @@ export function writeHandoff(metaHome, slug, text, { title = null, now = Date.no
  * Returns { category, isNew }.
  */
 export function resolveHandoffCategory(proposed, existing = [], fallback = "general") {
-  const slug = slugifyCategory(proposed);
   const known = existing.map((e) => slugifyCategory(e)).filter(Boolean);
+  // The fallback goes through the SAME matching as a real proposal. It used to
+  // return immediately, which meant the one moment matching mattered most - the
+  // classifier had failed, so nothing else was going to catch a near-duplicate -
+  // was the one moment no matching ran at all (Aidin, 2026-08-02).
+  const slug = slugifyCategory(proposed) || slugifyCategory(fallback);
   if (!slug) {
-    return { category: slugifyCategory(fallback) || "general", isNew: !known.includes(slugifyCategory(fallback) || "general") };
+    return { category: "general", isNew: !known.includes("general") };
   }
   if (known.includes(slug)) {
     return { category: slug, isNew: false };
@@ -156,4 +160,33 @@ export function resolveHandoffCategory(proposed, existing = [], fallback = "gene
     }
   }
   return { category: slug, isNew: true };
+}
+
+/**
+ * Decide what to DO about a handoff's topic, given what (if anything) the
+ * classifier proposed. Split out of the IPC handler and pure for the same reason
+ * resolveHandoffCategory is: the rule that matters here is a refusal, and a
+ * refusal nobody can test is a refusal that quietly stops happening.
+ *
+ * The rule: when no topic could be picked AND topics already exist, ASK - never
+ * invent one from the session title. Inventing is what put the Hevy training
+ * handoff in its own file next to the training topic it belonged in, looking for
+ * all the world like it had worked (Aidin, 2026-08-02). With NO topics on file
+ * yet there is nothing to mis-split, so the title is a fine first topic name.
+ *
+ * Returns { needsCategory: true, existing, suggestion } or { category, isNew }.
+ */
+export function planHandoffFiling({ proposed = null, existing = [], title = "" } = {}) {
+  if (proposed) {
+    return resolveHandoffCategory(proposed, existing, title || "general");
+  }
+  // No proposal. Try the title against the existing topics first - if it clearly
+  // belongs to one, there is nothing to ask about. Only a title that would create
+  // a NEW topic is worth interrupting for, because that is the case that silently
+  // splits a subject across two files.
+  const guess = resolveHandoffCategory(null, existing, title || "general");
+  if (!guess.isNew || existing.length === 0) {
+    return guess;
+  }
+  return { needsCategory: true, existing, suggestion: guess.category };
 }

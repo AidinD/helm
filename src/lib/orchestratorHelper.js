@@ -64,6 +64,14 @@ const CLASSIFIER_SYSTEM_PROMPT = (() => {
 // --bare, which would also drop subscription auth). Deliberately the SAME
 // recipe, not a new one — this is establishing that pattern's second user.
 const CLASSIFIER_TIMEOUT_MS = 30_000;
+// The handoff classifier gets longer. The others run on a timer against a
+// background session, where giving up cheaply is right. This one runs on an
+// explicit "save a handoff and archive" click, and giving up means the note is
+// filed under a made-up one-off topic instead of the right one - so waiting is
+// far cheaper than failing. A cold `claude` start alone measured 15.5s here on
+// 2026-08-02, uncomfortably close to the 30s that was in force when the
+// misfiled handoff happened.
+const HANDOFF_CLASSIFIER_TIMEOUT_MS = 120_000;
 const MAX_OUTPUT_BYTES = 1024 * 1024;
 // Enough for the assistant's own last message plus the user turn that
 // prompted it — usually sufficient to tell "asked a real question" from
@@ -289,15 +297,21 @@ const HANDOFF_CATEGORY_PROMPT = [
  * 663ab4b6). Same cost-optimised recipe as classifySessionStatus (Haiku, no
  * tools, no MCP) - this is a one-line classification, not a conversation.
  *
- * Returns { category, reason, costUsd } or null; the CALLER decides what to do
- * with it (see resolveHandoffCategory in handoffStore.js, which enforces the
- * match-an-existing-topic-first rule deterministically rather than trusting the
- * model to have obeyed it).
+ * Resolves { category, reason, costUsd } on success, or { error } describing WHY
+ * no topic could be picked. It must never resolve a bare null: the caller's
+ * fallback is to name the topic after the session title, which produces a
+ * one-off near-duplicate of an existing topic ("traning-och-kost-hevy" next to
+ * "training-coaching", Aidin 2026-08-02). That fallback is only safe to take
+ * knowingly, so the failure has to be reportable rather than silent.
+ *
+ * The caller decides what to do with a success too - see resolveHandoffCategory
+ * in handoffStore.js, which enforces the match-an-existing-topic-first rule
+ * deterministically rather than trusting the model to have obeyed it.
  */
-export function classifyHandoffCategory({ cwd, title, text, existingCategories = [] }) {
+export function classifyHandoffCategory({ cwd, title, text, existingCategories = [], timeoutMs = HANDOFF_CLASSIFIER_TIMEOUT_MS }) {
   return new Promise((resolve) => {
     if (!text || !text.trim()) {
-      resolve(null);
+      resolve({ error: "There was nothing to classify." });
       return;
     }
     const summary = [
@@ -341,8 +355,8 @@ export function classifyHandoffCategory({ cwd, title, text, existingCategories =
         shell: !claudePath.toLowerCase().endsWith(".exe"),
         env: process.env,
       });
-    } catch {
-      resolve(null);
+    } catch (err) {
+      resolve({ error: `Could not start the topic classifier: ${err.message}` });
       return;
     }
 
@@ -355,19 +369,22 @@ export function classifyHandoffCategory({ cwd, title, text, existingCategories =
       settled = true;
       clearTimeout(timeoutId);
       deleteOwnTranscript(cwd, classifierSessionId);
+      if (result.error) {
+        console.error(`[handoff] topic classification failed: ${result.error}`);
+      }
       resolve(result);
     };
     const timeoutId = setTimeout(() => {
       child.kill();
-      finish(null);
-    }, CLASSIFIER_TIMEOUT_MS);
+      finish({ error: `The topic classifier did not answer within ${Math.round(timeoutMs / 1000)}s.` });
+    }, timeoutMs);
 
     child.stdout.on("data", (d) => {
       if (out.length < MAX_OUTPUT_BYTES) {
         out += d.toString("utf8");
       }
     });
-    child.on("error", () => finish(null));
+    child.on("error", (err) => finish({ error: `The topic classifier could not run: ${err.message}` }));
     child.on("close", () => {
       try {
         const parsed = JSON.parse(out);
@@ -375,10 +392,10 @@ export function classifyHandoffCategory({ cwd, title, text, existingCategories =
         if (result && typeof result.category === "string" && result.category.trim()) {
           finish({ category: result.category, reason: result.reason || "", costUsd: parsed.total_cost_usd || 0 });
         } else {
-          finish(null);
+          finish({ error: "The topic classifier answered, but with no usable topic." });
         }
       } catch {
-        finish(null);
+        finish({ error: "The topic classifier produced output that could not be read." });
       }
     });
   });

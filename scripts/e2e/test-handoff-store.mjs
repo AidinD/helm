@@ -48,6 +48,28 @@ try {
   ok(resolveHandoffCategory("jobbot", existing).category === "jobbot", "substring lookalike does NOT fold into job-search");
   ok(resolveHandoffCategory(null, existing).category === "general", "unusable proposal falls back to 'general'");
 
+  // --- the FALLBACK is matched too (Aidin, 2026-08-02) ---------------------
+  // When the classifier fails, the caller passes the session title as the
+  // fallback. That path used to return the title slug immediately, skipping the
+  // matching entirely - so the one time matching mattered most (nothing else was
+  // going to catch a near-duplicate) was the one time it did not run.
+  ok(
+    resolveHandoffCategory(null, existing, "Training log").category === "training",
+    `a fallback title folds into an existing topic (got ${JSON.stringify(resolveHandoffCategory(null, existing, "Training log").category)})`
+  );
+  ok(
+    resolveHandoffCategory(null, existing, "Training log").isNew === false,
+    "and is not reported as a new topic"
+  );
+  ok(
+    resolveHandoffCategory(null, existing, "Endocrinology").category === "endocrinology",
+    "a fallback that matches nothing still becomes its own topic"
+  );
+  ok(
+    resolveHandoffCategory(null, existing, "!!!").category === "general",
+    "an unusable fallback still lands on 'general', never on an empty slug"
+  );
+
   // --- write / read round-trip ---
   const w = writeHandoff(metaHome, "Träning", "Bench 3x8 at 60kg. Next: add a set.", { title: "Träning och kost", now: 1784000000000 });
   ok(w.ok === true && w.category === "traning", `write returns the resolved slug (got ${JSON.stringify(w.category)})`);

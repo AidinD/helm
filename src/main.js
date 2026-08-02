@@ -39,7 +39,7 @@ import {
   quotaResetFireAt,
 } from "./lib/scheduledPrompts.js";
 import { buildReviewQueue, listReviewRecords, reviewQueueTally, readReviewRecord, recordCheckRun } from "./lib/reviewRecords.js";
-import { listHandoffCategories, writeHandoff, readHandoff, resolveHandoffCategory, handoffPath } from "./lib/handoffStore.js";
+import { listHandoffCategories, writeHandoff, readHandoff, planHandoffFiling, handoffPath } from "./lib/handoffStore.js";
 import { classifySessionStatus, classifyHandoffCategory, expectsUserInputHeuristic, estimateSessionContextTokens, compactSession, getTranscriptSize, triageAutoTask } from "./lib/orchestratorHelper.js";
 import { savePastedImage, prunePastedImages } from "./lib/images.js";
 import { computeVersionString, captureRunningBuildIdentity, checkForNewerBuild } from "./lib/version.js";
@@ -817,13 +817,21 @@ ipcMain.handle("context:saveHandoff", async (_event, { cwd, text, title, categor
     const metaHome = resolveMetaHome();
     const existing = listHandoffCategories(metaHome);
     let proposed = category || null;
+    let classifierError = null;
     if (!proposed) {
       // Classify against the topics already on file - match-first, so related
       // sessions keep landing in the same readable document.
       const verdict = await classifyHandoffCategory({ cwd: metaHome, title, text, existingCategories: existing });
       proposed = verdict?.category || null;
+      classifierError = proposed ? null : verdict?.error || "The topic classifier did not answer.";
     }
-    const resolved = resolveHandoffCategory(proposed, existing, title || "general");
+    // No topic and topics already exist -> ASK, never invent (planHandoffFiling
+    // holds the rule and the reasoning). The caller re-sends the same text with an
+    // explicit `category`, so nothing is lost by refusing here.
+    const resolved = planHandoffFiling({ proposed, existing, title });
+    if (resolved.needsCategory) {
+      return { ok: false, topicKeyed: true, ...resolved, error: classifierError };
+    }
     const written = writeHandoff(metaHome, resolved.category, text, { title });
     if (!written.ok) {
       return written;

@@ -104,6 +104,44 @@ try {
     "so the LABEL and the BEHAVIOUR now agree - that disagreement was the whole bug"
   );
 
+  // ---- 2b. THE TOPIC PICKER -----------------------------------------------
+  // When the classifier can't pick a topic the save is refused and the renderer
+  // must ASK. Drive the real menu: it has to render the existing topics, offer a
+  // clearly-labelled new one, and resolve with what was clicked.
+  const picked = await app.eval(`(async () => {
+    const p = pickHandoffTopic(
+      { existing: ["training-coaching", "kombucha"], suggestion: "traning-och-kost-hevy", error: "The topic classifier did not answer within 120s." },
+      "Träning och kost (Hevy)"
+    );
+    const menu = document.getElementById("contextMenu");
+    const labels = [...menu.querySelectorAll(".item")].map(el => el.textContent);
+    const hidden = menu.classList.contains("hidden");
+    const row = [...menu.querySelectorAll(".item")].find(el => el.textContent.startsWith("training-coaching"));
+    row.click();
+    return { labels, hidden, chosen: await p };
+  })()`);
+  ok(picked.hidden === false, "the picker actually opens");
+  ok(
+    picked.labels.some((l) => l.includes("training-coaching")),
+    `it lists the existing topics to choose from (${J(picked.labels)})`
+  );
+  ok(
+    picked.labels.some((l) => l.includes("New topic: traning-och-kost-hevy")),
+    "the title-derived name is offered, but labelled as a NEW topic rather than taken silently"
+  );
+  ok(
+    picked.labels.some((l) => l.includes("did not answer")),
+    "and it says why it is asking - the classifier failing used to be invisible"
+  );
+  ok(picked.chosen === "training-coaching", `clicking a topic resolves it (${J(picked.chosen)})`);
+
+  const dismissed = await app.eval(`(async () => {
+    const p = pickHandoffTopic({ existing: ["training-coaching"], suggestion: "x" }, "t");
+    closeContextMenu();
+    return await p;
+  })()`);
+  ok(dismissed === null, `dismissing the menu resolves null rather than hanging the archive (${J(dismissed)})`);
+
   // ---- 1. THE PARKED NODE -------------------------------------------------
   const target = await app.eval(`(async () => {
     const res = await window.helm.getSessions();

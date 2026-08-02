@@ -1925,6 +1925,65 @@ async function sessionTurnCount(session) {
   }
 }
 
+// Ask which topic a non-rooted session's handoff belongs to, when the classifier
+// could not decide. Resolves the chosen slug, or null if dismissed.
+//
+// Reuses the app's own context-menu popup rather than a native dialog: same
+// reason dropdownPill does (Chromium's native popups render unreadable in this
+// Electron build), and it keeps the picker looking like every other menu.
+function pickHandoffTopic({ existing = [], suggestion = "general", error = null }, title = "") {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (value) => {
+      if (!settled) {
+        settled = true;
+        resolve(value);
+      }
+    };
+    const items = [
+      { label: `Which topic should the handoff for "${title}" go under?`, hint: error || "", onClick: null },
+      { sep: true },
+      ...existing.map((slug) => ({ label: slug, hint: "existing", onClick: () => done(slug) })),
+      { sep: true },
+      { label: `New topic: ${suggestion}`, hint: "from the session name", onClick: () => done(suggestion) },
+      { label: "Don't save a handoff", danger: true, onClick: () => done(null) },
+    ];
+    showContextMenu(Math.round(window.innerWidth / 2) - 140, Math.round(window.innerHeight / 3), items);
+    // The menu closes on outside click/Escape without telling us; treat that as
+    // "dismissed" rather than leaving the archive hanging forever.
+    const poll = setInterval(() => {
+      if (document.getElementById("contextMenu")?.classList.contains("hidden")) {
+        clearInterval(poll);
+        done(null);
+      }
+    }, 200);
+  });
+}
+
+// THE ONE PLACE that saves a handoff. Both callers (archive-with-handoff, and the
+// bulk child handoff during a first-mate retire) go through here so the
+// "classifier could not pick a topic" case is handled the same way in both -
+// filing one of them under a title-derived one-off while the other asks is
+// exactly how the subject gets split across two files.
+//
+// `ask: false` is for the unattended bulk path, where blocking on a menu would
+// stall a batch: it takes the suggestion knowingly and reports that it guessed.
+async function saveHandoffResolvingTopic(session, text, { ask = true } = {}) {
+  let res = await window.helm.saveHandoff(session.cwd, text, session.title);
+  if (!res || !res.needsCategory) {
+    return res;
+  }
+  const chosen = ask ? await pickHandoffTopic(res, session.title) : res.suggestion;
+  if (!chosen) {
+    return { ok: false, error: "no topic was chosen", cancelled: true };
+  }
+  const second = await window.helm.saveHandoff(session.cwd, text, session.title, chosen);
+  if (second?.ok && !ask) {
+    second.guessedTopic = true;
+  }
+  return second;
+}
+
 // Archive WITH a last-effort handoff: give the session one final turn to
 // summarize itself, save that to its project's DECISIONS.md (a durable store,
 // where a future session will actually read it), THEN archive. Unlike retire
@@ -1967,7 +2026,7 @@ async function archiveWithHandoff(session) {
     if (res && res.text) {
       // HANDOFF.md (overwrite, latest-only) - NOT DECISIONS.md (append), which
       // this used to bloat with transient session narrative (Aidin 2026-07-14).
-      const cap = await window.helm.saveHandoff(session.cwd, res.text.trim(), session.title);
+      const cap = await saveHandoffResolvingTopic(session, res.text.trim());
       saved = !!(cap && cap.ok);
       if (!saved) {
         showToast(`Handoff save failed: ${cap?.error || "unknown"} - archiving anyway.`);
@@ -3253,22 +3312,36 @@ function openFreshDraftInPane(cwd, draftText, opts = {}) {
 // Returns "" (no noise) when the cwd has no durable stores - e.g. a non-dev
 // project. Best-effort: any failure just yields no directive.
 async function buildDurableContextDirective(cwd) {
-  if (!cwd) {
-    return "";
-  }
   let ctx;
   try {
     ctx = await window.helm.listContext(cwd);
   } catch {
     return "";
   }
-  const toRead = (ctx?.projectDocs || []).filter((d) => d.exists).map((d) => d.name);
+  // Topic-keyed handoffs are NOT project docs: they live in Helm's own store
+  // under the meta-home, not in the session's cwd. Listing them by bare filename
+  // alongside DECISIONS.md told the fresh session to look for them in the wrong
+  // folder - so the answer to "how does loading work?" was, until now, "it
+  // doesn't". Name the folder, and let the session pick the matching subject
+  // (there are only a handful, and no classifier runs while composing a draft).
+  const docs = ctx?.projectDocs || [];
+  const topics = docs.filter((d) => d.kind === "handoffTopic" && d.exists);
+  const toRead = docs.filter((d) => d.kind !== "handoffTopic" && d.exists).map((d) => d.name);
   const memCount = ctx?.memory?.files?.length || 0;
   const projectClaudeLoads = (ctx?.claudeMd || []).some((c) => c.kind === "projectClaude" && c.exists);
-  if (toRead.length === 0 && memCount === 0 && !projectClaudeLoads) {
+  if (toRead.length === 0 && topics.length === 0 && memCount === 0 && !projectClaudeLoads) {
     return "";
   }
   const lines = ["\n\nBefore acting, load this project's DURABLE context (a transcript summary alone misses it):"];
+  if (topics.length > 0) {
+    const dir = topics[0].path.replace(/[\\/][^\\/]+$/, "");
+    lines.push(
+      `- This session has no project repo; its continuity lives in Helm's topic handoffs in ${dir}: ${topics
+        .map((t) => t.name)
+        .join(", ")}.`
+    );
+    lines.push("  READ the one matching this subject - it is the last session's state and what was next. Ignore the others.");
+  }
   if (projectClaudeLoads) {
     lines.push("- CLAUDE.md auto-loads for this folder - its gotchas are already in your context.");
   }
@@ -3440,7 +3513,10 @@ async function saveSecondMateHandoffsFor(mate, busy = null) {
     try {
       const summary = await summarizeSession(session);
       if (summary && summary.text) {
-        await window.helm.saveHandoff(session.cwd, summary.text.trim(), session.title);
+        const saved = await saveHandoffResolvingTopic(session, summary.text.trim(), { ask: false });
+        if (saved?.guessedTopic) {
+          showToast(`Couldn't tell which topic "${session.title}" belongs to - filed under "${saved.category}".`);
+        }
       }
     } catch {
       // best-effort - a failed child handoff must never block the retire
