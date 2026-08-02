@@ -142,6 +142,24 @@ try {
   })()`);
   ok(dismissed === null, `dismissing the menu resolves null rather than hanging the archive (${J(dismissed)})`);
 
+  // ---- 2c. A NON-SUMMARY MUST NOT BECOME A HANDOFF ------------------------
+  // The third handoff file on his disk contained, in full: "You've hit your
+  // session limit · resets 9:40pm (Europe/Stockholm)". The summarize turn had
+  // exited cleanly with the CLI's own notice as the assistant's reply, so
+  // nothing downstream saw a failure and a whole session's knowledge was
+  // replaced by a status line.
+  const summaries = await app.eval(`(() => ({
+    limit: validateSummary("You've hit your session limit · resets 9:40pm (Europe/Stockholm)"),
+    empty: validateSummary(""),
+    real: validateSummary("x".repeat(400)),
+  }))()`);
+  ok(
+    !summaries.limit.text && /ran out of usage/.test(summaries.limit.error || ""),
+    `a usage-limit notice is refused, and says so in plain words (${J(summaries.limit)})`
+  );
+  ok(!summaries.empty.text, "an empty reply is refused too");
+  ok(summaries.real.text?.length === 400, "a real summary passes through untouched");
+
   // ---- 1. THE PARKED NODE -------------------------------------------------
   const target = await app.eval(`(async () => {
     const res = await window.helm.getSessions();

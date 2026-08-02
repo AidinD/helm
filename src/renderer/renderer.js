@@ -3193,6 +3193,29 @@ const CARRY_OVER_PROMPT =
 // very long conversation should finish well under this.
 const SUMMARIZE_TIMEOUT_MS = 5 * 60 * 1000;
 
+// A summarize turn can "succeed" and hand back something that is not a summary.
+// When the CLI stops on a usage limit it emits its own one-line notice AS the
+// assistant's reply and exits cleanly, so there is no error to notice. That line
+// was saved verbatim as a handoff on 2026-08-02: a topic file whose entire
+// contents were "You've hit your session limit · resets 9:40pm". A whole session's
+// knowledge, replaced by a status message, silently.
+//
+// The guard is on LENGTH first, deliberately: a real handoff of a real
+// conversation is never two lines, and length does not depend on the exact
+// wording of a notice that will be reworded. The limit phrasing is matched only
+// to say what happened in plain words - never to decide.
+const MIN_SUMMARY_CHARS = 200;
+function validateSummary(text) {
+  const t = (text || "").trim();
+  if (t.length >= MIN_SUMMARY_CHARS) {
+    return { text: t };
+  }
+  if (/hit your .*limit|usage limit|resets \d/i.test(t)) {
+    return { error: `the session ran out of usage before it could summarize ("${t}")` };
+  }
+  return { error: `what came back was too short to be a summary ("${t}")` };
+}
+
 function summarizeSession(session) {
   return new Promise(async (resolve) => {
     // session:start REFUSES an empty cwd, so a session with no folder could
@@ -3231,7 +3254,7 @@ function summarizeSession(session) {
       assistantText: "",
       onDone: (text, error) => {
         clearTimeout(timeoutId);
-        resolve(error ? { error } : { text });
+        resolve(error ? { error } : validateSummary(text));
       },
     });
   });
