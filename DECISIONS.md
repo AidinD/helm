@@ -1,5 +1,30 @@
 # Decisions
 
+## 2026-08-02 - A handoff asks which topic rather than inventing one
+
+The captain archived "Träning och kost (Hevy)" and got a second handoff file, `traning-och-kost-hevy.md`, next to the `training-coaching.md` it belonged in.
+Two files, one subject, and the toast cheerfully announced a new topic - so the failure looked like success.
+
+The chain had three links, and only the third was the interesting one.
+The topic classifier is a real `claude` call on a 30s budget; a cold start alone measures 15.5s here, so it can simply not answer.
+When it did not answer, the caller fell back to naming the topic after the session title.
+And the fallback path was the ONE path in `resolveHandoffCategory` that returned immediately, skipping the match-an-existing-topic-first rule entirely.
+So the moment matching mattered most - the model was unavailable, nothing else was going to catch a near-duplicate - was the exact moment no matching ran.
+That is the same shape as the archive menus and the file writers: a rule implemented on the path we were thinking about, and not on the path that runs when things go wrong.
+
+**Decided.** Three changes, in order of how much they matter.
+
+1. **Never invent a topic.** `planHandoffFiling` refuses when no topic can be picked and topics already exist, and the renderer asks with a menu of the existing topics plus a clearly-labelled "New topic: <from the session name>". The text is re-sent with an explicit category, so refusing costs nothing.
+Considered and rejected: a smarter deterministic matcher. "traning" and "training" are the same subject in two languages, and no word-overlap rule gets there without a synonym table that would be wrong in a new way.
+The person archiving the session knows the answer instantly; asking is both cheaper and correct.
+2. **The fallback is matched like any proposal.** If the title clearly folds into an existing topic, file it there and do not interrupt. Only a title that would create a NEW topic is worth a question.
+3. **The classifier reports why it failed.** It used to resolve a bare `null` for a timeout, a spawn failure and unreadable output alike. Now every failure carries a sentence, it is logged, and it is shown in the picker. Its budget also went from 30s to 120s: the other classifiers run on a timer against a background session where giving up cheaply is right, but this one runs on an explicit click and giving up means misfiling the note.
+
+**Loading, which was the other half of the question.** Topic handoffs were listed in the context view and nothing more.
+Worse, the carry-over directive listed them by bare filename alongside DECISIONS.md, telling a fresh session to look for them in the session's own folder rather than in Helm's store - so the answer to "how does loading work?" was "it doesn't".
+The directive now names the real folder and tells the session to read the one matching its subject.
+Choosing the matching one is left to the session rather than resolved up front: there are only a handful, and spawning a classifier while someone composes a draft is not worth it.
+
 ## 2026-08-02 - Rescued from the mock gallery before deleting it: what NOT to add
 
 Fourteen published mockups and reports had piled up and the captain could no longer tell what was what.
