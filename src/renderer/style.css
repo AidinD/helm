@@ -5467,20 +5467,9 @@ button.primary {
   border-top: 1px solid var(--border);
 }
 
-/* Scheduled prompts (task 7d9d2188): the send-caret and the queued bar. */
-.schedule-caret {
-  background: var(--accent);
-  color: var(--bg);
-  border: none;
-  border-radius: 0 6px 6px 0;
-  margin-left: -6px;
-  padding: 0 6px;
-  font-size: 12px;
-  line-height: 1;
-  align-self: stretch;
-  cursor: pointer;
-}
-.schedule-caret:hover { background: var(--accent-hover); }
+/* Scheduled prompts (task 7d9d2188): the queued bar. The send-later button
+   itself has no rules of its own on purpose - it is a plain .icon-btn, so it
+   matches the paperclip and the mic and can never drift away from them. */
 .sched-bar {
   display: flex;
   flex-direction: column;

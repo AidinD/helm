@@ -467,6 +467,14 @@ const DOCUMENT_ICON =
 // Paperclip icon for non-image attachments (composer file-attach button, and
 // the small marker on a non-image attachment chip) — same replacement, same
 // reasoning as GLOBE_ICON/DOCUMENT_ICON above.
+// Clock, for "send this later" (task 7d9d2188). Same 13px/24-viewBox/stroke-2
+// build as the paperclip so it sits in the composer row as a sibling, not as a
+// one-off.
+const CLOCK_ICON =
+  '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+  '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/>' +
+  "</svg>";
+
 const PAPERCLIP_ICON =
   '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
   '<path d="M21 12.5l-8.5 8.5a4.5 4.5 0 0 1-6.36-6.36l9.19-9.19a3 3 0 0 1 4.24 4.24l-9.19 9.19a1.5 1.5 0 0 1-2.12-2.12l8.49-8.49"/>' +
@@ -5319,14 +5327,17 @@ function paneComposerEl(index) {
   sendBtn.textContent = "➤";
   sendBtn.title = pane.sessionId ? "Continue (Enter)" : "Start session (Enter)";
 
-  // Schedule-send caret (task 7d9d2188), sitting against the send button the way
-  // Slack's does: same action, later. Deliberately a separate small control - the
-  // send button must stay a plain single-click send.
+  // Send-later control (task 7d9d2188). It used to be an accent-coloured slab
+  // glued to the right of the send button, which is a 26px CIRCLE - so it read as
+  // a broken piece of the send button rather than a control (Aidin: "ful knapp").
+  // Now it is a plain .icon-btn like the paperclip and the mic, placed BEFORE the
+  // send button so the accent circle stays the last thing in the row and the only
+  // coloured one - colour marks the primary action, not a modifier.
   const scheduleBtn = document.createElement("button");
-  scheduleBtn.className = "schedule-caret";
+  scheduleBtn.className = "icon-btn";
   scheduleBtn.type = "button";
-  scheduleBtn.textContent = "⌄";
-  scheduleBtn.title = "Schedule this prompt (e.g. when the quota resets)";
+  scheduleBtn.innerHTML = CLOCK_ICON;
+  scheduleBtn.title = "Send this later (e.g. when the quota resets)";
   scheduleBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     scheduleSendMenu(scheduleBtn, pane, promptEl.value, {
@@ -5338,7 +5349,7 @@ function paneComposerEl(index) {
     });
   });
 
-  controls.append(pickBtn, cwdInput, attachBtn, permissionDD.el, modelDD.el, effortDD.el, languageDD.el, micBtn, sendBtn, scheduleBtn);
+  controls.append(pickBtn, cwdInput, attachBtn, permissionDD.el, modelDD.el, effortDD.el, languageDD.el, micBtn, scheduleBtn, sendBtn);
   shell.append(controls);
 
   // Repo scripts (task 8bfae7a0): appended asynchronously (it has to read the
