@@ -25,6 +25,17 @@ Worse, the carry-over directive listed them by bare filename alongside DECISIONS
 The directive now names the real folder and tells the session to read the one matching its subject.
 Choosing the matching one is left to the session rather than resolved up front: there are only a handful, and spawning a classifier while someone composes a draft is not worth it.
 
+## 2026-08-02 - A status message is not a summary
+
+Found while merging the duplicate handoffs above: the third topic file on disk contained, in full, "You've hit your session limit · resets 9:40pm (Europe/Stockholm)".
+The summarize turn had exited cleanly with the CLI's own notice as the assistant's reply, so there was no error for anything downstream to see, and a whole session's knowledge was replaced by a status line - silently, with a toast saying the handoff was filed.
+
+**Decided.** `validateSummary` guards on LENGTH first (under 200 characters is not a handoff of a real conversation) and matches the limit phrasing only to *report* what happened, never to decide.
+Wording changes; length does not.
+A refused summary archives without a handoff and says why, which is the same path an outright summarize failure already took.
+
+Considered and rejected: matching the notice text as the primary test. It is a message we do not own and it will be reworded, and the guard would then be green while doing nothing - the exact failure the atomicWrite guard already had once.
+
 ## 2026-08-02 - Rescued from the mock gallery before deleting it: what NOT to add
 
 Fourteen published mockups and reports had piled up and Aidin could no longer tell what was what.
