@@ -10,6 +10,11 @@ helm-usage.jsonl
 goal-run-history.json
 mates.json
 second-mates.json
+scheduled-prompts.json
+# Temp files from the shared atomic write (tmp + rename). Cleanup is best-effort,
+# so a kill at the wrong moment leaves one behind - and an un-ignored leftover
+# would otherwise be committed, or packaged into an installer (see build.files).
+.*.tmp
 routines.json
 pasted-images/
 # whisper.cpp CUDA binary + GGML model for voice transcription (see

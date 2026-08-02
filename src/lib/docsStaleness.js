@@ -277,14 +277,17 @@ export function docsNudgeCandidates(entries, { parked = [], now = Date.now(), ac
   const parkedSet = new Set((parked || []).map((p) => String(p).toLowerCase()));
   const cutoff = now - activeDays * 24 * 60 * 60 * 1000;
   const candidates = [];
-  let parkedCount = 0;
   let dormant = 0;
+  // The parked count comes from the PARKED LIST, not from how many parked projects
+  // happen to still be candidates. Counting matches would have hidden a parked
+  // project whose sessions aged out - and the count is what keeps the footnote, and
+  // therefore the only un-park control, on screen (pre-release review).
+  const parkedCount = parkedSet.size;
   for (const e of entries || []) {
     if (!e || !e.cwd) {
       continue;
     }
     if (parkedSet.has(String(e.key || e.cwd).toLowerCase())) {
-      parkedCount += 1;
       continue;
     }
     // An UNKNOWN timestamp counts as ACTIVE. A missing lastActivityAt is a gap in

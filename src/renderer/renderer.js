@@ -6803,9 +6803,15 @@ async function buildFleetModel(activeMates, rawSecondMates) {
   if (mateCtxSessions.length) {
     try {
       const ctxRes = await window.helm.getContextTokens(mateCtxSessions);
-      contextTokensBySession = ctxRes?.ok ? ctxRes.contextTokens || {} : {};
+      if (ctxRes?.ok) {
+        contextTokensBySession = ctxRes.contextTokens || {};
+      }
+      // A failed read KEEPS the last-known values. Blanking them on a transient
+      // failure resets every first mate's context gauge to zero for a tick, which
+      // is bug bf1ea538 all over again ("both mates show a gauge"). A slightly old
+      // number is a better answer than a wrong one. Found by the pre-release review.
     } catch {
-      contextTokensBySession = {};
+      // same: keep what we had
     }
   } else {
     contextTokensBySession = {};
@@ -8023,7 +8029,11 @@ async function dashboardDriftSection(fetchStale = () => window.helm.staleProject
       ? `${res.unchecked} of ${res.considered} project${res.considered === 1 ? "" : "s"} couldn't be checked`
       : null;
   const footnote = driftFootnote(res);
-  if (rows.length === 0 && !problem && unchecked.length === 0) {
+  // The footnote KEEPS THE SECTION ALIVE. It carries the only un-park control there
+  // is, so returning null here when everything happens to be parked deleted the
+  // user's own escape hatch and left the state editable only by hand in config.json
+  // (found by the pre-release review, reproduced end to end).
+  if (rows.length === 0 && !problem && unchecked.length === 0 && !footnote) {
     return null;
   }
   return driftSectionEl(rows, { problem, unchecked, footnote, parked: res?.parked || 0 });
@@ -8057,7 +8067,10 @@ function driftSectionEl(rows, { problem = null, unchecked = [], footnote = null,
   section.dataset.fp = [
     problem || "",
     footnote || "",
-    ...unchecked.map((u) => `?${u.path}`),
+    // The REASON is part of the fingerprint: keying on the path alone meant a
+    // project whose failure changed (say "bad object HEAD" -> "folder is gone")
+    // kept showing the old cause, which is the one thing this row exists to say.
+    ...unchecked.map((u) => `?${u.path}:${u.reason || ""}`),
     ...rows.map((r) => `${r.path}:${r.commitsSince}:${r.sessionId || ""}`),
   ].join("|");
   // The shared head builder, so the title gets the same small uppercase treatment
@@ -8101,6 +8114,22 @@ function driftSectionEl(rows, { problem = null, unchecked = [], footnote = null,
  * telling him to go find it somewhere else is how a reversible decision becomes
  * an irreversible one in practice.
  */
+/**
+ * Repaint whichever dashboard is actually on screen.
+ *
+ * refreshDashboardIfVisible drives the CLASSIC sections and returns immediately
+ * when the widget dashboard is enabled, so anything that called it from a widget
+ * (Park, un-park) showed its toast and then changed nothing on screen until the
+ * user navigated away and back. Found by the pre-release review.
+ */
+function repaintDashboard() {
+  if (state.config?.dashboardWidgets?.enabled === true) {
+    renderDashboardPage();
+    return;
+  }
+  refreshDashboardIfVisible({ force: true });
+}
+
 function driftFootEl(text, parkedCount = 0) {
   const note = document.createElement("div");
   note.className = "wd-drift-foot";
@@ -8130,7 +8159,7 @@ function driftFootEl(text, parkedCount = 0) {
               return;
             }
             showToast(`"${p.name}" is back in the docs-drift check.`);
-            refreshDashboardIfVisible({ force: true });
+            repaintDashboard();
           },
         }))
       );
@@ -8507,7 +8536,7 @@ function driftLineEl(row) {
   const park = document.createElement("button");
   park.className = "wd-drift-park";
   park.textContent = "Park";
-  park.title = "Stop nudging about this project. Reversible - parked projects are still counted below.";
+  park.title = "Stop nudging about this project. Reversible - use \"show parked\" at the bottom of this section.";
   park.addEventListener("click", async (e) => {
     e.stopPropagation();
     park.disabled = true;
@@ -8517,8 +8546,11 @@ function driftLineEl(row) {
       showToast(`Couldn't park it: ${res?.error || "unknown"}`);
       return;
     }
-    showToast(`Parked "${row.name || row.path}" - un-park it in Settings.`);
-    refreshDashboardIfVisible({ force: true });
+    // Say where to undo it. The first version of this said "un-park it in Settings",
+    // and there is no parking UI in Settings at all - the control is the "show
+    // parked" link in this section's own footnote.
+    showToast(`Parked "${row.name || row.path}" - undo with "show parked" below.`);
+    repaintDashboard();
   });
   line.append(park);
   // Jump in only if there is a session to jump into. A project with drift but no
@@ -8636,7 +8668,12 @@ async function widgetEl(widget, data) {
         },
       });
     }
-    items.push({ sep: true }, {
+    // No leading divider when there is nothing above it (a row break has no width
+    // picker, so its menu opened with a stray rule and then one item).
+    if (items.length > 0) {
+      items.push({ sep: true });
+    }
+    items.push({
       label: "Remove widget",
       danger: true,
       onClick: async () => {
