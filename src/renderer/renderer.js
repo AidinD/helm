@@ -8773,6 +8773,30 @@ async function widgetBodyDocsDrift(_data, _widget, fetchStale = () => window.hel
  * could not be read at all (`unreadable` holds the reason). Both get the same
  * Park control - a row you can never act on is the thing that kills the signal.
  */
+/**
+ * The job the Reconcile button writes into the composer.
+ *
+ * Written out in full rather than left as "reconcile the docs" on purpose: the
+ * whole complaint was not knowing what to do, and a vague prompt just moves that
+ * problem one step to the right. It names the range to read, what belongs in
+ * each file, and the trap - DECISIONS.md is not a changelog of commits, git
+ * already has that, and an entry a later decision has overruled has to be
+ * corrected rather than left to mislead.
+ */
+function docsReconcilePrompt(row) {
+  return [
+    `This project's durable docs are behind its code: ${row.commitsSince} commits have landed since DECISIONS.md / PLAN.md were last touched.`,
+    "",
+    "Reconcile them:",
+    "1. Find where they diverged: `git log -1 --format=%H -- DECISIONS.md PLAN.md`, then read `git log <sha>..HEAD -p` for whichever docs exist here.",
+    "2. Add to DECISIONS.md any DECISION in that range that is not recorded yet - dated, with the alternatives considered and why they lost. NOT a changelog of the commits; git already has those.",
+    "3. Update PLAN.md so its status section matches where the project actually is now.",
+    "4. Where a later decision has superseded an earlier entry, correct or annotate the old one so it cannot mislead.",
+    "",
+    "Commit the doc update on its own, then tell me in plain words what had gone unrecorded.",
+  ].join("\n");
+}
+
 function driftLineEl(row) {
   const line = document.createElement("div");
   line.className = "wd-drift-line";
@@ -8815,6 +8839,35 @@ function driftLineEl(row) {
     repaintDashboard();
   });
   line.append(park);
+
+  // Reconcile: the answer to "jag vet fortfarande inte vad jag ska göra med
+  // denna? Borde det finnas en fix-knapp?" (Aidin, 2026-08-02, his SECOND round
+  // of the same complaint).
+  //
+  // The original design chose jump-in only, on the grounds that dispatching a
+  // reconcile turn was the riskier option. That was the wrong trade. A row
+  // saying "loom, 15 behind" and offering only a way into an unrelated
+  // conversation leaves him holding the entire job: remember what reconciling
+  // means, find the range of commits, and type it out. Twice now he has read the
+  // row and not known what it wanted from him. A signal nobody can act on is not
+  // a safe signal, it is noise with a number on it.
+  //
+  // It lands in the COMPOSER rather than sending: this spends real money in a
+  // repo, and a nudge on a dashboard should never be one stray click away from
+  // that. He reads the prompt and presses Enter.
+  if (!row.unreadable) {
+    const fix = document.createElement("button");
+    fix.className = "wd-drift-jump";
+    fix.textContent = "Reconcile";
+    fix.title = "Open a session in this project with the doc-reconcile job already written out. Nothing is sent until you press Enter.";
+    fix.addEventListener("click", (e) => {
+      e.stopPropagation();
+      navigateToPage("chat");
+      openFreshDraftInPane(row.path, docsReconcilePrompt(row));
+    });
+    line.append(fix);
+  }
+
   // Jump in only if there is a session to jump into. A project with drift but no
   // session left on the board is still worth SHOWING - that is drift with nothing
   // holding the context, which is the worst case, not a reason to hide it.

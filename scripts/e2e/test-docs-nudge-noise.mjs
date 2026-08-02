@@ -121,6 +121,60 @@ try {
   ok(/couldn't read/i.test(named), "and each says it couldn't be read rather than implying it is current");
   ok(/1 parked/.test(named) && /3 untouched for over 60 days/.test(named), `what was left out is stated (${J(named.slice(-80))})`);
 
+  // --- the row has to offer an ACTION -------------------------------------
+  // Aidin, twice: "jag vet inte hur jag ska använda den", then "jag vet
+  // fortfarande inte vad jag ska göra med denna? Borde det finnas en fix-knapp?"
+  // A row that reports a number and offers no way to act on it is noise, however
+  // accurate the number is. The Reconcile button writes the job into the composer
+  // rather than sending it: this spends real money in a repo.
+  const actionable = await app.eval(`(async () => {
+    const host = document.createElement("div");
+    host.append(await widgetBodyDocsDrift(null, null, async () => ({
+      ok: true, considered: 1, unchecked: 0, parked: 0, dormant: 0,
+      rows: [{ path: "D:/Repo/Tools/loom", name: "loom", commitsSince: 15, threshold: 8, sessionId: null }],
+      uncheckedPaths: [],
+    })));
+    return {
+      buttons: [...host.querySelectorAll("button")].map((b) => b.textContent),
+      prompt: docsReconcilePrompt({ commitsSince: 15 }),
+    };
+  })()`);
+  ok(
+    actionable.buttons.includes("Reconcile"),
+    `a drifting row offers a way to fix it, not just a number (${J(actionable.buttons)})`
+  );
+  ok(
+    actionable.buttons.includes("Park"),
+    "and parking is still there for a repo he cannot act on"
+  );
+  ok(
+    /15 commits/.test(actionable.prompt),
+    `the job names the actual size of the drift (${J(actionable.prompt.slice(0, 80))})`
+  );
+  ok(
+    /git log/.test(actionable.prompt) && /DECISIONS\.md/.test(actionable.prompt) && /PLAN\.md/.test(actionable.prompt),
+    "and spells out how to find the range and what goes in each file - a vague prompt just moves the not-knowing one step right"
+  );
+  ok(
+    /NOT a changelog/i.test(actionable.prompt),
+    "including the trap: DECISIONS.md is not a changelog of commits, git already has those"
+  );
+
+  // A project that could not be READ gets no Reconcile button: there is nothing
+  // to reconcile against, and offering the action would spend money to find out.
+  const unreadableRow = await app.eval(`(async () => {
+    const host = document.createElement("div");
+    host.append(await widgetBodyDocsDrift(null, null, async () => ({
+      ok: true, rows: [], considered: 1, unchecked: 1, parked: 0, dormant: 0,
+      uncheckedPaths: [{ path: "D:/Repo/broken", name: "broken", reason: "fatal: bad object HEAD" }],
+    })));
+    return [...host.querySelectorAll("button")].map((b) => b.textContent);
+  })()`);
+  ok(
+    !unreadableRow.includes("Reconcile"),
+    `an unreadable project is not offered a fix (${J(unreadableRow)})`
+  );
+
   // The safety net must survive: a payload with a COUNT but no names still must
   // not render as the all-clear. This is the property the old test protected.
   const countOnly = await app.eval(`(async () => {
