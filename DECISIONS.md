@@ -1,5 +1,22 @@
 # Decisions
 
+## 2026-08-02 - The docs-drift nudge gets a Reconcile button
+
+The captain, on the same nudge for the second time: "jag vet fortfarande inte vad jag ska göra med denna? Borde det finnas en 'fix' knapp eller liknande?"
+
+The original design (2026-07-15) chose jump-in only, on the grounds that dispatching a reconcile turn was the riskier of the two options.
+Two rounds of feedback say that was the wrong trade.
+A row reading "loom, 15 behind" with a way into an unrelated conversation leaves him holding the whole job: remember what reconciling means, work out the range of commits, type it out.
+**A signal nobody can act on is not a safe signal. It is noise with a number on it**, and the previous round of work - filtering out unversioned folders, ageing out dormant projects, naming what could not be read - made the number trustworthy without making it useful.
+
+**Decided.** Every readable drifting row gets a Reconcile button that opens a session in that project with the job already written out: where the docs diverged, how to find the range, what belongs in DECISIONS.md versus PLAN.md, and the trap that DECISIONS.md is not a changelog of commits.
+
+Two deliberate limits.
+It lands in the COMPOSER instead of sending: this spends real money inside a repo, and a dashboard nudge must never be one stray click from that.
+A project that could not be READ gets no Reconcile button - there is nothing to reconcile against, and offering the action would spend money to discover that.
+
+The prompt is written out in full rather than left as "reconcile the docs" for the same reason the button exists at all: a vague prompt just moves the not-knowing one step to the right.
+
 ## 2026-08-02 - The auto-captain's trigger tag is seeded; still a tag, not a lane
 
 The captain, reviewing the finished auto-captain: "det finns ingen auto tag, borde den inte läggas till som default? Ska det inte finnas en auto lane i jot?"
