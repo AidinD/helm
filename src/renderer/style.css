@@ -2739,6 +2739,17 @@ body.advanced .row-jot {
   background: var(--bg-card-hover);
 }
 
+/* Dim trailing detail on a menu row (e.g. the command a package.json script
+   name actually runs). Monospace because it is a command, and pushed right so
+   the labels still read as a clean column. */
+.context-menu .item-hint {
+  margin-left: 14px;
+  float: right;
+  color: var(--text-faint);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+}
+
 .context-menu .item.danger {
   color: var(--accent);
 }

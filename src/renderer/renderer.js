@@ -1483,11 +1483,16 @@ function showScriptRunOverlay(cwd, script) {
   where.textContent = cwd;
   const status = document.createElement("span");
   status.className = "script-run-status running";
-  status.textContent = "running…";
+  status.textContent = "starting…";
   head.append(title, where, status);
 
   const out = document.createElement("pre");
   out.className = "script-run-out";
+  // Echo the command the way a terminal does, BEFORE anything runs. Aidin's
+  // report was "terminalen är inte tydlig, vet inte ens om den funkar" - the box
+  // opened black and empty, and a script that prints nothing for thirty seconds
+  // is indistinguishable from one that never started.
+  out.textContent = `> npm run ${script}\n  in ${cwd}\n\n`;
 
   const actions = document.createElement("div");
   actions.className = "script-run-actions";
@@ -1511,11 +1516,23 @@ function showScriptRunOverlay(cwd, script) {
 
   let unsubscribe = null;
   let finished = false;
+
+  // A ticking elapsed time is the cheapest possible proof of life: even a script
+  // that prints nothing shows a number going up, which answers "is this working?"
+  // without the user having to know anything about the script.
+  const startedAt = Date.now();
+  const elapsed = () => Math.round((Date.now() - startedAt) / 1000);
+  const ticker = setInterval(() => {
+    if (!finished) {
+      status.textContent = `running… ${elapsed()}s`;
+    }
+  }, 1000);
   const close = () => {
     if (!finished) {
       // Closing while it runs would orphan the process - stop it first.
       window.helm.stopRepoScript(runId);
     }
+    clearInterval(ticker);
     unsubscribe?.();
     overlay.remove();
     document.removeEventListener("keydown", onKey);
@@ -1549,6 +1566,7 @@ function showScriptRunOverlay(cwd, script) {
     if (payload.kind === "out") {
       const atBottom = out.scrollTop + out.clientHeight >= out.scrollHeight - 20;
       out.textContent += payload.text;
+
       if (atBottom) {
         out.scrollTop = out.scrollHeight;
       }
@@ -1556,18 +1574,36 @@ function showScriptRunOverlay(cwd, script) {
     }
     if (payload.kind === "done") {
       finished = true;
+      clearInterval(ticker);
       stopBtn.disabled = true;
-      const okRun = payload.code === 0;
+      const okRun = payload.code === 0 && !payload.error;
+      const secs = elapsed();
       status.className = "script-run-status " + (okRun ? "ok" : "fail");
-      status.textContent = payload.error ? `failed: ${payload.error}` : okRun ? "finished (exit 0)" : `exit ${payload.code}`;
+      // Say the OUTCOME in words. "exit 1" is a number he has to look up; the
+      // exit code stays, in brackets, for when it matters.
+      status.textContent = payload.error
+        ? `couldn't run it - ${payload.error}`
+        : okRun
+          ? `done in ${secs}s`
+          : `failed after ${secs}s [exit code ${payload.code}]`;
+      // Close the transcript too, so scrolling to the bottom of a long build
+      // tells you how it ended without looking back up at the header. With the
+      // command echoed on open and the outcome written here, the box always has
+      // a beginning and an end - it can no longer be the blank panel Aidin saw.
+      out.textContent += `\n> ${status.textContent}\n`;
+      out.scrollTop = out.scrollHeight;
+      closeBtn.textContent = "Close";
     }
   });
 
   window.helm.runRepoScript(cwd, script, runId).then((res) => {
     if (!res?.ok) {
       finished = true;
+      clearInterval(ticker);
+      stopBtn.disabled = true;
       status.className = "script-run-status fail";
       status.textContent = res?.error || "couldn't start";
+      out.textContent += `${status.textContent}\n`;
     }
   });
 }
@@ -1596,8 +1632,11 @@ async function repoScriptsPill(cwd) {
     showContextMenu(
       rect.left,
       rect.bottom + 4,
+      // Show the COMMAND beside the name. "dist" or "release" says nothing about
+      // what is about to run on his machine; the actual command does.
       res.scripts.map((s) => ({
         label: s.name,
+        hint: s.command.length > 46 ? s.command.slice(0, 45) + "…" : s.command,
         onClick: () => showScriptRunOverlay(cwd, s.name),
       }))
     );
@@ -2414,6 +2453,15 @@ function buildMenuItems(items) {
     const el = document.createElement("div");
     el.className = "item" + (it.danger ? " danger" : "");
     el.textContent = it.label;
+    // Optional dim trailing text: for a menu of NAMES that stand for something
+    // else (a package.json script name vs the command it runs), the name alone
+    // makes the menu a guess.
+    if (it.hint) {
+      const hint = document.createElement("span");
+      hint.className = "item-hint";
+      hint.textContent = it.hint;
+      el.append(hint);
+    }
     if (it.submenu) {
       const sub = document.createElement("div");
       sub.className = "submenu";
