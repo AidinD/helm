@@ -1466,6 +1466,44 @@ async function renderScheduledPromptBar() {
 // build is watchable, and can be stopped.
 let repoScriptRunSeq = 0;
 
+/**
+ * Append styled output to the run panel.
+ *
+ * Built from text nodes and spans, never innerHTML: this is a build tool's stdout,
+ * i.e. text Helm did not write, and it can contain anything - so it must never be
+ * able to become markup. An unstyled segment is appended as a bare text node so a
+ * plain log stays one node instead of thousands of spans.
+ */
+function appendScriptSegments(out, segments) {
+  const frag = document.createDocumentFragment();
+  for (const seg of segments) {
+    if (!seg || !seg.text) {
+      continue;
+    }
+    const style = seg.style || {};
+    if (!style.color && !style.bold && !style.dim && !style.underline) {
+      frag.append(document.createTextNode(seg.text));
+      continue;
+    }
+    const span = document.createElement("span");
+    span.textContent = seg.text;
+    if (style.color) {
+      span.style.color = style.color;
+    }
+    if (style.bold) {
+      span.style.fontWeight = "700";
+    }
+    if (style.dim) {
+      span.style.opacity = "0.65";
+    }
+    if (style.underline) {
+      span.style.textDecoration = "underline";
+    }
+    frag.append(span);
+  }
+  out.append(frag);
+}
+
 function showScriptRunOverlay(cwd, script) {
   const runId = `script-${++repoScriptRunSeq}-${Date.now()}`;
   const overlay = document.createElement("div");
@@ -1565,8 +1603,11 @@ function showScriptRunOverlay(cwd, script) {
     }
     if (payload.kind === "out") {
       const atBottom = out.scrollTop + out.clientHeight >= out.scrollHeight - 20;
-      out.textContent += payload.text;
-
+      // Segments come pre-parsed from the main process (see lib/ansi.js). Before
+      // this, raw stdout went straight in, so any tool that colours its output -
+      // Vite, most build tools - rendered its colour instructions as literal junk
+      // with the escape byte drawn as a box. Aidin hit it on `npm run dev`.
+      appendScriptSegments(out, payload.segments || [{ text: payload.text || "", style: {} }]);
       if (atBottom) {
         out.scrollTop = out.scrollHeight;
       }
@@ -1590,7 +1631,9 @@ function showScriptRunOverlay(cwd, script) {
       // tells you how it ended without looking back up at the header. With the
       // command echoed on open and the outcome written here, the box always has
       // a beginning and an end - it can no longer be the blank panel Aidin saw.
-      out.textContent += `\n> ${status.textContent}\n`;
+      // append, never `textContent +=` - that flattens every styled span the run
+      // just produced into a single plain text node.
+      out.append(document.createTextNode(`\n> ${status.textContent}\n`));
       out.scrollTop = out.scrollHeight;
       closeBtn.textContent = "Close";
     }
@@ -1603,7 +1646,7 @@ function showScriptRunOverlay(cwd, script) {
       stopBtn.disabled = true;
       status.className = "script-run-status fail";
       status.textContent = res?.error || "couldn't start";
-      out.textContent += `${status.textContent}\n`;
+      out.append(document.createTextNode(`${status.textContent}\n`));
     }
   });
 }

@@ -80,6 +80,7 @@ import {
 } from "./lib/autoCaptain.js";
 import { secondMateAppendPrompt } from "./lib/secondMatePrompt.js";
 import { addSpend, isOverBudget, isKilled, setKilled, resetBudget, readBudget, setCeiling } from "./lib/orchestrationBudget.js";
+import { parseAnsi, newAnsiState, collapseCarriageReturns } from "./lib/ansi.js";
 import {
   ensureDispatchDirs,
   requestsDir,
@@ -2542,8 +2543,14 @@ ipcMain.handle("repo:runScript", (_event, { cwd, script, runId } = {}) => {
     return { ok: false, error: err.message };
   }
   liveScriptRuns.set(runId, child);
-  child.stdout?.on("data", (d) => send({ kind: "out", text: d.toString("utf8") }));
-  child.stderr?.on("data", (d) => send({ kind: "out", text: d.toString("utf8") }));
+  // Parse the terminal colour codes HERE, not in the renderer: the renderer is a
+  // classic script and cannot import, so parsing there would mean a second copy of
+  // the parser. One state object per run, shared by stdout and stderr, because an
+  // escape sequence can be split across chunk boundaries (see lib/ansi.js).
+  const ansi = newAnsiState();
+  const emit = (buf) => send({ kind: "out", segments: parseAnsi(collapseCarriageReturns(buf.toString("utf8")), ansi) });
+  child.stdout?.on("data", emit);
+  child.stderr?.on("data", emit);
   child.on("error", (err) => {
     liveScriptRuns.delete(runId);
     send({ kind: "done", code: null, error: err.message });
