@@ -128,6 +128,7 @@ contextBridge.exposeInMainWorld("helm", {
   // Auto-captain (ea0546d1): OFF by default. runAutoCaptainNow({force:true}) runs a
   // single pass even while the toggle is off - the deliberate "watch the first live
   // run" path, rather than flipping it on and waiting for a timer.
+  pruneStaleArchivedFleetNodes: () => ipcRenderer.invoke("secondMates:pruneStaleArchived"),
   autoCaptainStatus: () => ipcRenderer.invoke("autoCaptain:status"),
   setAutoCaptainEnabled: (enabled) => ipcRenderer.invoke("autoCaptain:setEnabled", { enabled }),
   runAutoCaptainNow: (opts) => ipcRenderer.invoke("autoCaptain:runNow", opts || {}),

@@ -980,6 +980,62 @@ function archiveSecondMateIds(ids) {
   writeConfig({ ...cfg, archivedSecondMates: [...set] });
   removeSecondMates(list);
 }
+/**
+ * Drop fleet-node parkings that can no longer mean anything.
+ *
+ * The overlay `archivedSecondMates` hides a node from the Fleet. For a SESSION node
+ * ("sess_<id>") its only purpose is to keep an archived session's node hidden - so a
+ * parked node whose session is alive and NOT archived is a leftover, and a harmful
+ * one: the session shows in the needs-you queue and is invisible in Captain, with no
+ * control anywhere that can un-park it.
+ *
+ * the captain hit exactly that. His "Träning och kost (Hevy)" node was parked before
+ * un-archive learned to clear it (fix 3fa55c2), so the fix helps future archives and
+ * did nothing for the entry already on disk. It sat there for days while the session
+ * was plainly live two panels away.
+ *
+ * The same shape as the docs-drift "parked with no un-park" bug: a state the UI can
+ * create and cannot reverse. Rather than a repair button nobody would find, this runs
+ * at startup and heals it. Real second mates ("sm_<id>") are left alone - they are
+ * not session-backed and their parking is a deliberate, separate decision.
+ */
+function pruneStaleArchivedFleetNodes() {
+  try {
+    const cfg = loadConfig();
+    const parked = cfg.archivedSecondMates || [];
+    if (parked.length === 0) {
+      return { ok: true, removed: [] };
+    }
+    const all = readAllSessions();
+    // A session counts as "alive" only if we can see it AND it is not archived.
+    // An id we cannot find at all is left parked: absence is not evidence that the
+    // session is live, and un-parking on a failed read would resurrect nodes.
+    const live = new Set();
+    for (const s of all.sessions || []) {
+      if (s.isArchived) {
+        continue;
+      }
+      for (const id of sessionIdForms(s.sessionId)) {
+        live.add(`sess_${id}`);
+      }
+      if (s.cliSessionId) {
+        live.add(`sess_${s.cliSessionId}`);
+      }
+    }
+    const removed = parked.filter((id) => typeof id === "string" && id.startsWith("sess_") && live.has(id));
+    if (removed.length === 0) {
+      return { ok: true, removed: [] };
+    }
+    writeConfig({ ...cfg, archivedSecondMates: parked.filter((id) => !removed.includes(id)) });
+    console.log(`[helm] un-parked ${removed.length} fleet node(s) whose session is not archived:`, removed.join(", "));
+    return { ok: true, removed };
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err), removed: [] };
+  }
+}
+
+ipcMain.handle("secondMates:pruneStaleArchived", () => pruneStaleArchivedFleetNodes());
+
 ipcMain.handle("secondMates:archive", (_event, { id }) => {
   try {
     archiveSecondMateIds([id]);
@@ -4324,6 +4380,10 @@ function startDispatchWatcher() {
   // Named mates: guarantee the two fixed first-mate slots exist (each with a
   // random sea-captain name) so the Fleet tree always has its two roots to show,
   // even before the captain has jumped into either.
+  // Heal fleet-node parkings that can no longer mean anything (see the function's
+  // own note). At startup, before the first render, so the Fleet is right the first
+  // time rather than after a refresh.
+  pruneStaleArchivedFleetNodes();
   try {
     ensureMates(metaHome, configuredMateSlots());
   } catch (err) {
