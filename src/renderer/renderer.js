@@ -8053,6 +8053,42 @@ function fleetSecondMateEl(sm) {
       );
     });
     head.append(archiveBtn);
+  } else {
+    // A node with NO session still needs a way off the board. The auto lane's project
+    // row is exactly that: a grouping row for its autopilot runs, never a session - so
+    // it had no controls at all, and Aidin's question was the plain consequence ("hur
+    // jag arkiverar 2nd maten (helm) från auto?"). Answer, until now: you cannot.
+    //
+    // There is nothing to archive session-wise, so this parks the ROW: the overlay
+    // plus dropping the binding, which is what archiveSecondMateIds already does and
+    // has never needed a session. Safe now in a way it was not this morning - a later
+    // dispatch un-archives it (unarchiveSecondMateForNewWork), so parking a project's
+    // row hides it until there is new work rather than swallowing every future run.
+    const parkBtn = document.createElement("button");
+    parkBtn.className = "fleet-btn fleet-archive-btn";
+    parkBtn.textContent = "Archive";
+    parkBtn.title = "Park this project's row. It comes back on its own the next time work is dispatched here.";
+    parkBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      parkBtn.disabled = true;
+      const res = await window.helm.archiveSecondMate(sm.secondMateId);
+      if (!res?.ok) {
+        parkBtn.disabled = false;
+        showToast(`Couldn't archive "${sm.name}": ${res?.error || "unknown error"}`);
+        return;
+      }
+      // The optimistic half of finishSecondMateArchive, inline - calling that would
+      // send the same archive request a second time. Idempotent, but a redundant
+      // round-trip is still a thing a reader has to stop and check.
+      if (!Array.isArray(state.config.archivedSecondMates)) {
+        state.config.archivedSecondMates = [];
+      }
+      if (!state.config.archivedSecondMates.includes(sm.secondMateId)) {
+        state.config.archivedSecondMates.push(sm.secondMateId);
+      }
+      refreshDashboardIfVisible();
+    });
+    head.append(parkBtn);
   }
   branch.append(head);
 
