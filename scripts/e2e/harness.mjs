@@ -290,6 +290,37 @@ class Harness {
         d?.exception?.description || d?.text || "(uncaught exception)";
       this.console.push({ type: "error", text });
     });
+    // A renderer TARGET existing is not the same as its script having run. Roughly
+    // 30 tests drive the app by calling `navigateToPage(...)` through eval, and that
+    // global only exists once renderer.js has evaluated - so a launch that won the
+    // race against it failed with "navigateToPage is not defined", which reads like a
+    // broken test rather than a timing one. Seen while mutation-testing the settings
+    // layout (2026-08-03), where it made a mutation look like it had survived.
+    //
+    // Best-effort and bounded: this harness is also pointed at other apps (jot, loom)
+    // that have no such global, so a timeout here is not an error - it just means
+    // there was nothing to wait for.
+    await this.waitForRendererReady(5000);
+  }
+
+  /**
+   * Wait until the renderer's own script has run, detected by its page-navigation
+   * global existing. Resolves true if it appeared, false if the wait timed out.
+   */
+  async waitForRendererReady(timeoutMs = 5000) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      try {
+        const ready = await this.eval(`typeof navigateToPage === "function"`);
+        if (ready) {
+          return true;
+        }
+      } catch {
+        // the page can be mid-navigation; keep polling
+      }
+      await delay(100);
+    }
+    return false;
   }
 
   /**
