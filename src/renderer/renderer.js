@@ -4408,40 +4408,98 @@ function compactBoundaryEl(turn) {
   return wrap;
 }
 
+function toolOutputEl(text) {
+  const pre = document.createElement("pre");
+  pre.className = "tool-call-output";
+  pre.textContent = text;
+  return pre;
+}
+
 function toolGroupEl(pairs) {
   const details = document.createElement("details");
   details.className = "tool-group";
-  const summary = document.createElement("summary");
-  const names = pairs.map((p) => p.useTurn.toolName);
-  const shown = names.slice(0, 3).join(", ");
-  const extra = names.length > 3 ? ` +${names.length - 3} more` : "";
-  summary.textContent =
-    (pairs.length === 1 ? "Used 1 tool" : `Used ${pairs.length} tools`) + `: ${shown}${extra}`;
-  details.append(summary);
-
+  details.append(document.createElement("summary"));
   const list = document.createElement("div");
   list.className = "tool-group-list";
+  details.append(list);
+  // The names are kept on the element because the summary line counts ALL the
+  // calls in the group, and a group can be extended after it is drawn.
+  details._toolNames = [];
+  extendToolGroup(details, pairs);
+  return details;
+}
+
+// Adds tool calls to a group that is already on screen. Used by the append-only
+// redraw so a streaming tool run doesn't rebuild the group it belongs to. A
+// side benefit that was a real annoyance before: a group the captain had
+// expanded snapped shut on every streamed chunk, because the full rebuild
+// replaced the <details> element and a new one starts closed.
+function extendToolGroup(details, pairs) {
+  const list = details.querySelector(".tool-group-list");
+  const names = details._toolNames || (details._toolNames = []);
   pairs.forEach(({ useTurn, resultTurn }) => {
+    names.push(useTurn.toolName);
     const item = document.createElement("details");
     item.className = "tool-call-item";
     const itemSummary = document.createElement("summary");
     itemSummary.textContent = `${useTurn.toolName}${useTurn.toolInput ? " · " + useTurn.toolInput : ""}`;
     item.append(itemSummary);
     if (resultTurn) {
-      const pre = document.createElement("pre");
-      pre.className = "tool-call-output";
-      pre.textContent = resultTurn.text;
-      item.append(pre);
+      item.append(toolOutputEl(resultTurn.text));
     }
     list.append(item);
   });
-  details.append(list);
-  return details;
+  const shown = names.slice(0, 3).join(", ");
+  const extra = names.length > 3 ? ` +${names.length - 3} more` : "";
+  details.querySelector("summary").textContent =
+    (names.length === 1 ? "Used 1 tool" : `Used ${names.length} tools`) + `: ${shown}${extra}`;
 }
 
-function appendTurns(scroll, turns) {
-  let i = 0;
+// Continues an on-screen tool group with turns[from..], and returns the index of
+// the first turn it did NOT consume.
+//
+// Two shapes have to be handled, and getting either wrong loses a turn from the
+// transcript rather than just drawing it oddly:
+//  - a tool_result for a tool_use that was drawn before the result arrived: it
+//    belongs to the item already on screen, not to a new one;
+//  - a tool_result with no such item waiting: it is a lone result, which the
+//    full rebuild draws as its own block, so leave it to the caller.
+function extendToolGroupWithTurns(details, turns, from) {
+  const list = details.querySelector(".tool-group-list");
+  let i = from;
+  if (turns[i].kind === "tool_result") {
+    const lastItem = list.lastElementChild;
+    if (lastItem && !lastItem.querySelector(".tool-call-output")) {
+      lastItem.append(toolOutputEl(turns[i].text));
+      i++;
+    } else {
+      return i;
+    }
+  }
+  const pairs = [];
+  while (i < turns.length && turns[i].kind === "tool_use") {
+    const useTurn = turns[i];
+    const next = turns[i + 1];
+    const resultTurn = next && next.kind === "tool_result" ? next : null;
+    pairs.push({ useTurn, resultTurn });
+    i += resultTurn ? 2 : 1;
+  }
+  if (pairs.length > 0) {
+    extendToolGroup(details, pairs);
+  }
+  return i;
+}
+
+// Renders turns[fromIndex..] into `scroll`, stamping each element with the
+// absolute index of the first turn it covers. That stamp is what makes an
+// append-only redraw possible (see renderPaneTailOnly): without it there is no
+// way to tell which DOM children belong to which turns, so the only safe redraw
+// is to throw the whole transcript away and rebuild it.
+function appendTurns(scroll, turns, fromIndex = 0) {
+  let i = fromIndex;
   while (i < turns.length) {
+    const at = i;
+    let el;
     if (turns[i].kind === "tool_use") {
       const pairs = [];
       while (i < turns.length && turns[i].kind === "tool_use") {
@@ -4451,11 +4509,13 @@ function appendTurns(scroll, turns) {
         pairs.push({ useTurn, resultTurn });
         i += resultTurn ? 2 : 1;
       }
-      scroll.append(toolGroupEl(pairs));
+      el = toolGroupEl(pairs);
     } else {
-      scroll.append(turnEl(turns[i]));
+      el = turnEl(turns[i]);
       i++;
     }
+    el.dataset.turnFrom = String(at);
+    scroll.append(el);
   }
 }
 
@@ -4501,6 +4561,13 @@ function renderPane(index) {
   }
   const pane = panes[index];
   const scroll = paneEl.querySelector(".pane-scroll");
+  if (renderPaneTailOnly(index, pane, scroll)) {
+    return;
+  }
+  // A full rebuild from here. Drop the record of what is drawn FIRST, so an
+  // early return below (loading) can never leave a stale claim behind that the
+  // append-only path would then trust.
+  pane.rendered = null;
   scroll.innerHTML = "";
 
   if (pane.loading) {
@@ -4540,12 +4607,108 @@ function renderPane(index) {
   } else {
     appendTurns(scroll, pane.turns);
     wireEditableUserTurns(index, scroll);
-    wireDoneButtonOnLastReply(index, scroll);
-    wireTurnStatsOnLastReply(index, scroll);
-    wireQuestionFlagOnLastReply(index, scroll);
+    wireLastReplyDecorations(index, scroll);
+    markPaneRendered(pane, scroll);
   }
   wireScrollToBottomButton(scroll);
   scroll.scrollTop = scroll.scrollHeight;
+}
+
+// What the pane's transcript DOM currently shows. The append-only redraw needs
+// to know this to be sure the drawn messages are still the same ones - the tail
+// grows during streaming, but a transcript RELOAD replaces every turn object,
+// and drawing new text on top of an old prefix would be a corrupted transcript,
+// which is worse than a slow one.
+function markPaneRendered(pane, scroll) {
+  pane.rendered = {
+    scrollEl: scroll,
+    count: pane.turns.length,
+    tail: pane.turns[pane.turns.length - 1],
+    hiddenCount: pane.hiddenCount,
+    truncated: pane.transcriptTruncated,
+    cliSessionId: pane.cliSessionId,
+  };
+}
+
+// The three decorations that belong to whichever reply is currently LAST, so
+// they move when a new reply arrives. Each is recomputed from state on every
+// render, so the only thing needed to move them is to take the old ones off.
+function wireLastReplyDecorations(index, scroll) {
+  wireDoneButtonOnLastReply(index, scroll);
+  wireTurnStatsOnLastReply(index, scroll);
+  wireQuestionFlagOnLastReply(index, scroll);
+}
+
+function clearLastReplyDecorations(scroll) {
+  scroll.querySelectorAll(".done-btn, .turn-stats, .needs-input-badge").forEach((el) => el.remove());
+  scroll.querySelectorAll(".turn-bubble.needs-input").forEach((el) => el.classList.remove("needs-input"));
+}
+
+// The append-only redraw.
+//
+// A streaming turn only ever ADDS to the end of pane.turns, but the render for
+// it tore the whole transcript down and rebuilt it: measured in the real app at
+// 11.8ms for 50 turns, 32.6ms at 300 and 97.1ms at 800 - once per streamed
+// block, on the one thread that also has to echo the captain's keystrokes. That
+// is the input lag (task 9ca4fd1e), and it explains why a session feels heavier
+// the longer it has been running: the cost is proportional to the number of
+// messages already on screen, none of which changed.
+//
+// Returns true when it handled the render. Every bail-out below is a case where
+// the DOM is NOT simply a shorter version of what should be on screen, and each
+// one falls back to the full rebuild rather than guessing.
+function renderPaneTailOnly(index, pane, scroll) {
+  const drawn = pane.rendered;
+  if (
+    !drawn ||
+    pane.loading ||
+    drawn.scrollEl !== scroll || // renderSinglePane built a fresh scroll container
+    drawn.count === 0 ||
+    drawn.hiddenCount !== pane.hiddenCount || // the "show N earlier messages" button changed
+    drawn.truncated !== pane.transcriptTruncated || // decides whether user turns get a rewind button
+    drawn.cliSessionId !== pane.cliSessionId || // same: rewind needs a resumable session
+    pane.turns.length < drawn.count ||
+    pane.turns[drawn.count - 1] !== drawn.tail // a reload replaced the turns - not an append
+  ) {
+    return false;
+  }
+
+  clearLastReplyDecorations(scroll);
+  if (pane.turns.length > drawn.count) {
+    let from = drawn.count;
+    const tailEl = lastDrawnTurnEl(scroll);
+    // A tool run is ONE group element covering many turns, so turns that
+    // continue that run have to join the group rather than start a second one
+    // beside it.
+    if (tailEl?.classList.contains("tool-group") && isToolTurn(pane.turns[from])) {
+      from = extendToolGroupWithTurns(tailEl, pane.turns, from);
+    }
+    appendTurns(scroll, pane.turns, from);
+    wireEditableUserTurns(index, scroll);
+    // Keep the scroll-to-bottom affordance the last child, where the full
+    // rebuild leaves it.
+    const toBottom = scroll.querySelector(".scroll-to-bottom-wrap");
+    if (toBottom) {
+      scroll.append(toBottom);
+    }
+  }
+  wireLastReplyDecorations(index, scroll);
+  markPaneRendered(pane, scroll);
+  scroll.scrollTop = scroll.scrollHeight;
+  return true;
+}
+
+function isToolTurn(turn) {
+  return turn?.kind === "tool_use" || turn?.kind === "tool_result";
+}
+
+function lastDrawnTurnEl(scroll) {
+  for (let el = scroll.lastElementChild; el; el = el.previousElementSibling) {
+    if (el.dataset?.turnFrom !== undefined) {
+      return el;
+    }
+  }
+  return null;
 }
 
 // A floating "↓" button that appears once the user has manually scrolled
@@ -4617,6 +4780,16 @@ function wireEditableUserTurns(index, scroll) {
   // a task_notification is role "system", not "user").
   const userTextTurns = pane.turns.filter((t) => t.role === "user" && t.kind === "text");
   scroll.querySelectorAll(".turn.user .turn-bubble").forEach((bubble, i) => {
+    // `i` stays the correct global ordinal on an append-only redraw because the
+    // earlier bubbles are still in the DOM, in order - that is the whole reason
+    // this query runs over the entire scroll rather than over the new nodes.
+    // But the earlier bubbles already carry their listener and rewind button, so
+    // re-wiring them would stack a second dblclick handler and a second ⤺ per
+    // streamed chunk.
+    if (bubble.dataset.editWired === "1") {
+      return;
+    }
+    bubble.dataset.editWired = "1";
     bubble.classList.add("editable");
     bubble.title = "Double-click to edit and resend";
     bubble.addEventListener("dblclick", () => {

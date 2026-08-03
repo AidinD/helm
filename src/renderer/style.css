@@ -1554,6 +1554,15 @@ body.advanced .row-jot {
   color: var(--text-faint);
 }
 
+/* Stays a flex column ON PURPOSE, and it is worth knowing why, because the
+   opposite looks like the obvious optimisation. Appending a message forces a
+   layout of the transcript, and that layout is what is left of a streamed
+   render's cost now that the messages themselves are no longer rebuilt (task
+   9ca4fd1e): 6.7ms at 800 messages. Flex re-measures every item on a change, so
+   block layout with a 10px sibling margin should have been cheaper - measured,
+   it was FOUR TIMES more expensive (28.7ms vs 7.5ms per streamed message at 800,
+   49ms vs 16.3ms at 1600) and moved the geometry by 10px as well. Do not "fix"
+   this without measuring it again. */
 .pane-scroll {
   flex: 1;
   overflow-y: auto;
