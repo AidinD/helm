@@ -6741,6 +6741,22 @@ function dashboardNewSessionFingerprint() {
   return [cwds, dashboardSelectedChip, dashboardFocusMode].join("##");
 }
 
+// What the widget dashboard is a picture OF. Deliberately cheap and synchronous:
+// it runs on every poll tick, so it must not fetch anything. Sessions carry the
+// bulk of it because the fleet widgets are derived from them - a new session is
+// a new node, and a status change is a changed badge.
+let lastWidgetDashboardFingerprint = null;
+function widgetDashboardFingerprint() {
+  const sessions = (state.sessions || [])
+    .filter((s) => !s.isArchived)
+    .map((s) => `${s.sessionId}:${s.status}:${s.startedBy || "-"}:${s.lastActivityAt || 0}`)
+    .sort()
+    .join("|");
+  const runs = [...goalRuns.values()].map((r) => `${r.goalRunId}:${r.status}`).sort().join("|");
+  const layout = (state.config?.dashboardWidgets?.layout || []).map((w) => `${w.id}:${w.span}`).join("|");
+  return [sessions, runs, layout, state.config?.autoCaptain?.enabled === true].join("##");
+}
+
 function dashboardFleetFingerprint(mates = [], secondMates = [], boardSummary = {}) {
   const runsFp = [...goalRuns.values()]
     .map((r) => `${r.goalRunId}:${r.dispatchedBy || "-"}:${r.status}:${r.iterations?.length || 0}:${r.escalation ? 1 : 0}`)
@@ -8069,10 +8085,32 @@ async function fillDashboardSections({ force = false } = {}) {
   if (bailIfPressed()) {
     return;
   }
-  // Widget dashboard owns its own rendering (4bf2421c) and has no section slots.
-  // Returning here also protects an in-flight widget drag / edit session from
-  // being torn out by a poll tick.
+  // Widget dashboard owns its own rendering (4bf2421c) and has no section slots,
+  // so none of the per-slot work below applies to it.
+  //
+  // It used to return here outright, which meant the widget dashboard NEVER
+  // repainted on a poll: once rendered it was frozen until something called
+  // renderDashboardPage by hand. A fleet view that only updates when you click
+  // something is wrong on its own terms - sessions finish, statuses change - and
+  // it is why the Auto widget stayed empty rather than filling in a moment later
+  // (the captain, 2026-08-02: "Auto widgeten är fortfarande tillsynes tom").
+  //
+  // So: repaint, but only when something actually changed, and never mid-drag -
+  // being torn out while rearranging was the real reason for the original guard,
+  // and that reason is preserved exactly.
   if (state.config?.dashboardWidgets?.enabled === true) {
+    if (widgetDragId || !isDashboardVisible()) {
+      return;
+    }
+    const fp = widgetDashboardFingerprint();
+    if (!force && fp === lastWidgetDashboardFingerprint) {
+      return;
+    }
+    lastWidgetDashboardFingerprint = fp;
+    await renderDashboardPage();
+    // Recompute AFTER the render: it refreshes state.sessions itself, so the
+    // fingerprint taken before it would be stale and every tick would repaint.
+    lastWidgetDashboardFingerprint = widgetDashboardFingerprint();
     return;
   }
   if (!document.getElementById("dashQueueSlot")) {
@@ -9178,12 +9216,28 @@ async function renderWidgetDashboard(page) {
   try {
     await seedNewWidgets();
   } catch {}
-  const [matesResult, secondMatesResult, goalsResult, budget] = await Promise.all([
+  // getSessions is in here for a reason. Every OTHER store this render needs is
+  // fetched fresh, but the sessions were read out of renderer memory - and the
+  // fleet is DERIVED from sessions (a captain's or auto-captain's session is a
+  // derived node, not a binding). So a repaint triggered by the very thing that
+  // just created a session rendered without it.
+  //
+  // That is exactly what "Run one pass" did on 2026-08-02: the pass started a
+  // real session, did the work, moved the card - and the Auto widget it repainted
+  // immediately afterwards was empty, because the session it was looking for had
+  // been created a second earlier in the main process and nobody had asked for it.
+  // Same shape as the Captain-widget bug fixed here before: a repaint that reads a
+  // store nobody refreshed.
+  const [sessionData, matesResult, secondMatesResult, goalsResult, budget] = await Promise.all([
+    window.helm.getSessions(),
     window.helm.listMates(),
     window.helm.listSecondMates(),
     window.helm.getJotGoals(),
     window.helm.getOrchestrationBudget?.() ?? Promise.resolve(null),
   ]);
+  if (sessionData?.sessions) {
+    state.sessions = sessionData.sessions;
+  }
   const mates = matesResult?.ok ? matesResult.active : [];
   // The SAME derivation the classic Fleet uses. Passing the raw bindings here is
   // what left the Captain widget empty: the captain's own sessions are derived
