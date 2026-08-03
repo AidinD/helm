@@ -2415,7 +2415,15 @@ function quotaPanelRows(windows, nowMs) {
     if (!r) {
       continue;
     }
-    rows.push({ ...r, type: w.info.rateLimitType || "unknown", freshness: quotaFreshness(w.at, nowMs) });
+    rows.push({
+      ...r,
+      type: w.info.rateLimitType || "unknown",
+      freshness: quotaFreshness(w.at, nowMs),
+      // The raw age, so the headline choice can be made on it (see
+      // QUOTA_HEADLINE_MAX_AGE_MS). `freshness` is a sentence for humans; this is
+      // the number a decision can be based on.
+      ageMs: typeof w.at === "number" && w.at > 0 ? Math.max(0, nowMs - w.at) : null,
+    });
   }
   rows.sort((a, b) => {
     const ia = QUOTA_WINDOW_ORDER.indexOf(a.type);
@@ -2430,9 +2438,21 @@ function quotaPanelRows(windows, nowMs) {
 // last. Stale windows are excluded (their status no longer reflects reality -
 // bc6786c7). Returns null when nothing fresh is known (chip falls back to Usage$).
 const QUOTA_LEVEL_RANK = { hot: 3, warm: 2, ok: 1 };
+// A reading this old must not take the headline position while a current one is
+// available. `row.stale` only asks whether the WINDOW has reset - so a 26-hour-old
+// weekly figure counted as fresh, outranked a five-hour reading taken seconds ago, and
+// stood in the largest text in the widget. Aidin watched it not move and said "den
+// verkar inte uppdateras": correct, and the number he was watching was the one that
+// cannot move, because its window reports only when it is the binding one.
+//
+// Falls back to the stale row when there is nothing newer - a stale figure with its age
+// beside it beats "No current reading".
+const QUOTA_HEADLINE_MAX_AGE_MS = 3 * 60 * 60 * 1000;
 function worstFreshQuotaRow(rows) {
+  const recent = rows.filter((r) => !r.stale && (r.ageMs == null || r.ageMs <= QUOTA_HEADLINE_MAX_AGE_MS));
+  const pool = recent.length > 0 ? recent : rows;
   let worst = null;
-  for (const row of rows) {
+  for (const row of pool) {
     if (row.stale) {
       continue;
     }

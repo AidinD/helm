@@ -99,6 +99,57 @@ ok(
   `the same two the quota VALUES already use (${headTokens.join(", ")})`
 );
 
+// --- a stale reading must not hold the headline over a current one -----------
+// "den verkar inte uppdateras" (Aidin, after the age label shipped). He was right, and
+// the reason was the headline CHOICE: row.stale only asks whether the WINDOW has reset,
+// so a 26-hour-old weekly figure counted as fresh, outranked a five-hour reading taken
+// seconds earlier, and stood in the largest text in the widget - pinned to the one
+// number that cannot move often, because its window reports only when it is binding.
+const maxAge = Number((rSrc.match(/const QUOTA_HEADLINE_MAX_AGE_MS = ([^;]+);/) || [])[1]?.replace(/[^0-9*]/g, "").split("*").reduce((a, b) => a * Number(b), 1) || 0);
+ok(maxAge >= 30 * 60 * 1000, `there is an age ceiling for the headline (${maxAge}ms)`);
+const pick = new Function(
+  "rows",
+  `const QUOTA_LEVEL_RANK = { hot: 3, warm: 2, ok: 1 };
+   const QUOTA_HEADLINE_MAX_AGE_MS = ${maxAge};
+   ${grab("worstFreshQuotaRow").replace("const QUOTA_LEVEL_RANK = { hot: 3, warm: 2, ok: 1 };", "")}
+   return worstFreshQuotaRow(rows);`
+);
+const HOUR = 3600000;
+const weeklyOld = { type: "seven_day", level: "warm", pct: 36, hasPct: true, stale: false, ageMs: 26 * HOUR };
+const fiveNew = { type: "five_hour", level: "ok", pct: 12, hasPct: true, stale: false, ageMs: 5000 };
+ok(pick([weeklyOld, fiveNew])?.type === "five_hour", "a seconds-old reading wins the headline over a 26h-old one");
+ok(pick([weeklyOld])?.type === "seven_day", "but a stale reading still beats showing nothing when it is all there is");
+// Severity must still decide BETWEEN recent readings - that was the original point of
+// this function and it must not be lost to the age rule.
+const weeklyNewHot = { type: "seven_day", level: "hot", pct: 95, hasPct: true, stale: false, ageMs: 60000 };
+ok(pick([weeklyNewHot, fiveNew])?.type === "seven_day", "among recent readings the most constrained still wins");
+ok(pick([])?.type === undefined, "no rows means no headline, not a crash");
+ok(pick([{ type: "x", level: "ok", stale: true, ageMs: 1000 }]) === null, "a reset window is still excluded outright");
+
+// The WIRING: the rows the widget actually builds must carry the age, or every
+// assertion above is testing a hand-fed object. Setting ageMs to null in
+// quotaPanelRows survived this file until it checked the real row model.
+const rowsFn = new Function(
+  "windows",
+  "nowMs",
+  `${grab("quotaFreshness")}
+   ${grab("quotaWindowLabel")}
+   ${grab("quotaReadout")}
+   const QUOTA_WINDOW_ORDER = ${JSON.stringify(
+     JSON.parse((rSrc.match(/const QUOTA_WINDOW_ORDER = (\[[^\]]*\]);/) || [])[1].replace(/'/g, '"'))
+   )};
+   ${grab("quotaPanelRows")}
+   return quotaPanelRows(windows, nowMs);`
+);
+const built = rowsFn(
+  [{ info: { rateLimitType: "seven_day", status: "allowed_warning", utilization: 0.36, resetsAt: Math.floor((NOW + 86_400_000) / 1000) }, at: NOW - 26 * HOUR }],
+  NOW
+);
+ok(built.length === 1, `the real row builder produced a row (${built.length})`);
+ok(typeof built[0].ageMs === "number", `and it carries a numeric age (${built[0].ageMs})`);
+ok(built[0].ageMs === 26 * HOUR, `equal to the reading's actual age (${built[0].ageMs} vs ${26 * HOUR})`);
+ok(built[0].freshness === "as of 26h ago", `alongside the human sentence (${built[0].freshness})`);
+
 console.log(
   exit === 0
     ? "VERIFY OK: the quota widget states how old each reading is, on the headline and on every window row."
