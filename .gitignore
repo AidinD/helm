@@ -25,3 +25,11 @@ pasted-images/
 
 # Ad-hoc flow-review inspection screenshots (see inspect-flow.mjs)
 scripts/e2e/screenshots/flow-review/
+
+# The goal orchestrator's own scratch files, written INSIDE the worktree it runs
+# in (notes.md = its research, plan.md = its plan, phase.json = where it is).
+# Not ignored until 2026-08-03, so every autonomous run committed 50-250 lines of
+# its own working notes onto its branch - which would have landed on master the
+# moment such a branch was merged. The real artifacts are the code commits; the
+# notes are recoverable from the run's own transcript.
+.helm-goal/

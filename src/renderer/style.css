@@ -2846,6 +2846,29 @@ button.primary {
   margin-bottom: 20px;
 }
 
+/* Housekeeping line on the Autopilot page: what the last sweep of finished-run
+   worktrees cleaned, and what it kept. Same dim, secondary weight as
+   .analysis-totals - it is status, not a call to action. */
+.goal-housekeeping {
+  margin-bottom: 18px;
+}
+.goal-housekeeping-line {
+  color: var(--text-dim);
+  font-size: 12.5px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.goal-housekeeping-kept {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 6px 0 2px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
 /* Fas 3 proactive suggestion-accuracy finding — same "propose, you decide"
    visual language as .archive-suggest-pill (dashed border, faint text until
    hovered), just as a full-width banner since this is a page-level finding,
