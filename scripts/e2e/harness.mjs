@@ -69,8 +69,21 @@ export async function launch(opts = {}) {
   // The debug flag must reach electron. For `npm start` (which runs
   // `electron .`), npm forwards args after a literal "--" to the script.
   const debugFlag = `--remote-debugging-port=${port}`;
+
+  // Electron's userData dir is derived from the app NAME, so a test run and the
+  // INSTALLED Helm both resolve to %APPDATA%\helm and write the same window state,
+  // localStorage and cookies at the same time. Aidin noticed it live (2026-08-03):
+  // his Helm was open while a suite ran, both pointed at that one directory. That is
+  // both a source of flakiness (a test reads state its own app never wrote) and a
+  // way for a throwaway run to change the app he actually uses. A per-run directory
+  // costs nothing and removes the shared writer entirely.
+  sweepStaleUserDataDirs();
+  const userDataTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "helm-e2e-userdata-"));
+  const userDataFlag = `--user-data-dir=${userDataTmpDir}`;
   const args =
-    command === "npm" ? [...baseArgs, "--", debugFlag] : [...baseArgs, debugFlag];
+    command === "npm"
+      ? [...baseArgs, "--", debugFlag, userDataFlag]
+      : [...baseArgs, debugFlag, userDataFlag];
 
   // Isolate config.json so E2E runs never write their throwaway test sessions
   // into the real dev-repo config.json. config.js already honors HELM_CONFIG_PATH
@@ -102,9 +115,43 @@ export async function launch(opts = {}) {
   const target = await waitForRendererTarget(port, readyTimeoutMs, child);
   const cdp = await connectCdp(target.webSocketDebuggerUrl);
 
-  const harness = new Harness({ child, cdp, port, appDir, stdout, stderr, configTmpDir });
+  const harness = new Harness({ child, cdp, port, appDir, stdout, stderr, configTmpDir, userDataTmpDir });
   await harness._init();
   return harness;
+}
+
+const USERDATA_PREFIX = "helm-e2e-userdata-";
+const STALE_USERDATA_MS = 60 * 60 * 1000;
+
+/**
+ * Remove per-run Electron profiles an earlier launch could not delete.
+ *
+ * Cleanup on close() can lose the race with Windows releasing Chromium's cache
+ * handles, and a killed test run (Ctrl-C, or the runner being stopped) never gets
+ * to clean up at all. Without this, each of those leaks a whole Chromium profile
+ * into temp forever - and nothing else would ever notice, because a leaked
+ * directory breaks no test. Only touches directories older than an hour, so a
+ * CONCURRENT run's live profile is never pulled out from under it.
+ */
+function sweepStaleUserDataDirs() {
+  const root = os.tmpdir();
+  let entries;
+  try {
+    entries = fs.readdirSync(root).filter((d) => d.startsWith(USERDATA_PREFIX));
+  } catch {
+    return;
+  }
+  for (const name of entries) {
+    const full = path.join(root, name);
+    try {
+      if (Date.now() - fs.statSync(full).mtimeMs < STALE_USERDATA_MS) {
+        continue;
+      }
+      fs.rmSync(full, { recursive: true, force: true });
+    } catch {
+      /* still locked, or gone already - next launch tries again */
+    }
+  }
 }
 
 /**
@@ -213,7 +260,7 @@ function connectCdp(wsUrl) {
 }
 
 class Harness {
-  constructor({ child, cdp, port, appDir, stdout, stderr, configTmpDir }) {
+  constructor({ child, cdp, port, appDir, stdout, stderr, configTmpDir, userDataTmpDir }) {
     this.child = child;
     this.cdp = cdp;
     this.port = port;
@@ -221,6 +268,7 @@ class Harness {
     this.stdout = stdout;
     this.stderr = stderr;
     this.configTmpDir = configTmpDir || null;
+    this.userDataTmpDir = userDataTmpDir || null;
     /** @type {Array<{type: string, text: string}>} */
     this.console = [];
   }
@@ -417,6 +465,27 @@ class Harness {
     const result = await killByDebugPort(this.port);
     // Remove the throwaway config.json dir this launch created (if any). After the
     // process is gone so nothing is mid-write to it.
+    // Same for the per-run Electron userData dir - but that one needs RETRIES.
+    // killByDebugPort returns before Windows has released Chromium's cache handles,
+    // so a single rmSync throws and, being best-effort, leaves the whole profile
+    // behind. Silently: the first version of this passed every test while leaking a
+    // directory per launch, i.e. ~101 Chromium profiles per full suite, on the drive
+    // that ran out of space earlier the same day. Caught by
+    // test-harness-userdata-isolated.mjs, which is the reason that test asserts
+    // cleanup and not just isolation.
+    if (this.userDataTmpDir) {
+      for (let attempt = 0; attempt < 6; attempt++) {
+        try {
+          fs.rmSync(this.userDataTmpDir, { recursive: true, force: true });
+          break;
+        } catch {
+          if (attempt < 5) {
+            await delay(150 * (attempt + 1));
+          }
+          /* last attempt: leave it. sweepStaleUserDataDirs picks it up next launch. */
+        }
+      }
+    }
     if (this.configTmpDir) {
       try {
         fs.rmSync(this.configTmpDir, { recursive: true, force: true });
