@@ -8900,6 +8900,9 @@ function widgetBodyAuto(data) {
   const autoSms = (data.secondMates || []).filter((s) => isAutoStartedNode(s) && hasWorkUnderNode(s));
   const frag = document.createDocumentFragment();
   frag.append(autoCaptainControlsEl());
+  // What a pass LOOKED AT and declined, before the empty state gets to claim that
+  // nothing has happened - because for a card set aside as unclear, something did.
+  frag.append(autoSetAsideEl());
   if (autoSms.length === 0) {
     frag.append(
       widgetEmpty(
@@ -8912,6 +8915,63 @@ function widgetBodyAuto(data) {
   }
   frag.append(fleetDirectCardEl(autoSms, { as: "auto" }));
   return frag;
+}
+
+/**
+ * The cards the last pass looked at and did NOT start, each with its reason.
+ *
+ * Without this the only visible output of a pass that examined a card and decided
+ * against it was nothing at all. Aidin ran a pass, watched the widget stay empty,
+ * and reasonably concluded the feature was broken (2026-08-03) - while the card sat
+ * there, set aside, permanently skipped because the verdict is remembered against
+ * its wording. A transient toast saying "1 waiting" is not the same thing: it is gone
+ * a moment later and it reads like "queued, be patient".
+ *
+ * Fetches on creation and repaints itself, rather than riding the dashboard's
+ * fingerprint - that fingerprint is computed from data this element does not have,
+ * and a repaint-requesting button that does nothing is a bug this app has shipped
+ * before.
+ */
+function autoSetAsideEl() {
+  const wrap = document.createElement("div");
+  wrap.className = "wd-auto-setaside";
+  wrap.id = "autoSetAside";
+  paintAutoSetAside(wrap);
+  return wrap;
+}
+
+async function paintAutoSetAside(el = document.getElementById("autoSetAside")) {
+  if (!el) {
+    return;
+  }
+  let status = null;
+  try {
+    status = await window.helm.autoCaptainStatus();
+  } catch {
+    return; // leave whatever is there; never blank the widget over a failed read
+  }
+  const setAside = status?.lastTick?.setAside || [];
+  el.textContent = "";
+  if (setAside.length === 0) {
+    return;
+  }
+  const head = document.createElement("div");
+  head.className = "wd-auto-setaside-head";
+  head.textContent = `Looked at and not started: ${setAside.length}`;
+  el.append(head);
+  for (const item of setAside) {
+    const row = document.createElement("div");
+    row.className = "wd-auto-setaside-row";
+    const title = document.createElement("span");
+    title.className = "wd-auto-setaside-title";
+    title.textContent = item.title;
+    const why = document.createElement("span");
+    why.className = "wd-auto-setaside-why";
+    why.textContent = item.reason;
+    row.append(title, why);
+    row.title = `${item.title}\n${item.reason}\n\nThe full explanation is on the card in Jot. Remove its "needs-clarification" tag, or edit its wording, and it will be judged again.`;
+    el.append(row);
+  }
 }
 
 /**
@@ -8995,6 +9055,9 @@ function autoCaptainControlsEl() {
       bits.push(`${res.waiting} waiting`);
     }
     showToast(bits.length ? `Auto-captain: ${bits.join(", ")}.` : "Auto-captain: nothing tagged \"auto\" is queued.");
+    // Repaint the set-aside list from the pass that just ran, explicitly. The toast
+    // is transient; this is the part that has to still be there in a minute.
+    void paintAutoSetAside();
     repaintDashboard();
   });
 
