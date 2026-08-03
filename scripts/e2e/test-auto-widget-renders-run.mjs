@@ -137,6 +137,86 @@ try {
     "the same run does not also appear in the captain's own column"
   );
 
+  // --- WHY IT WAS EMPTY FOR A WHOLE DAY ------------------------------------
+  // The data above was all correct in Aidin's real app, and the widget was still
+  // blank. The cause was one line of config: the project's fleet node was in
+  // archivedSecondMates, and the dashboard excludes archived nodes - so every auto
+  // run dispatched under it was invisible. Permanently and silently: the run
+  // happened, cost money and edited the repo. Locked in here as the DIAGNOSIS, so a
+  // future blank widget can be told apart from this one in a single test run.
+  const archived = await app.eval(`(async () => {
+    const matesRes = await window.helm.listMates();
+    const smRes = await window.helm.listSecondMates();
+    state.config.archivedSecondMates = [${JSON.stringify(SM_ID)}];
+    const model = await buildFleetModel(matesRes.active || [], smRes?.secondMates || []);
+    const host = document.createElement("div");
+    host.append(widgetBodyAuto({ mates: matesRes.active || [], secondMates: model.secondMates }));
+    state.config.archivedSecondMates = [];
+    return { rows: host.querySelectorAll(".fleet-branch").length, text: host.textContent };
+  })()`);
+  ok(archived.rows === 0, `an ARCHIVED project node hides its auto runs entirely (${archived.rows} rows) - this was the bug`);
+  ok(
+    /Nothing started yet|Off\./.test(archived.text),
+    "and the widget then shows exactly the empty state Aidin was looking at all day"
+  );
+
+  // --- AND THE FIX: NEW WORK UN-ARCHIVES THE ROW ---------------------------
+  // Archiving says "I am done looking at this"; dispatching work to it says the
+  // opposite. The two were never connected - the auto-captain re-proposed the node
+  // on every dispatch, and the archive overlay outlived that every time.
+  const mainSrc = fs
+    .readFileSync(new URL("../../src/main.js", import.meta.url), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .split("\n")
+    .filter((l) => !l.trim().startsWith("//"))
+    .join("\n");
+  ok(/function unarchiveSecondMateForNewWork\(/.test(mainSrc), "main.js can un-archive a node being dispatched to");
+  const proposeSites = [...mainSrc.matchAll(/proposeSecondMate\(/g)].length;
+  const unarchiveCalls = [...mainSrc.matchAll(/unarchiveSecondMateForNewWork\(/g)].length - 1; // minus the definition
+  ok(
+    unarchiveCalls >= 3,
+    `every dispatch site un-archives first (${unarchiveCalls} calls for ${proposeSites} propose sites)`
+  );
+  // Order matters: un-archiving AFTER the dispatch would still leave the first run
+  // of a re-used project invisible.
+  for (const site of ["proposeSecondMate(\"direct\", where.projectPath", "proposeSecondMate(request.dispatchedBy || \"direct\", relayProject"]) {
+    const at = mainSrc.indexOf(site);
+    const before = mainSrc.slice(Math.max(0, at - 400), at);
+    ok(
+      /unarchiveSecondMateForNewWork\(/.test(before),
+      `un-archived BEFORE proposing at: ${site.slice(0, 45)}...`
+    );
+  }
+
+  // --- UN-ARCHIVING RESTORES A ROW, NOT A CONVERSATION --------------------
+  // Aidin's objection when he saw the fix, and it is the right question: if a node
+  // was archived, shouldn't new work start a FRESH session - otherwise its context
+  // just keeps growing?
+  //
+  // It does start fresh, and not by accident: archiveSecondMateIds writes the
+  // overlay AND calls removeSecondMates, which deletes the BINDING - session id
+  // included. A later dispatch re-proposes the node as status "proposed" with
+  // sessionId null, so the session is minted on first engagement. Un-archiving
+  // therefore un-hides a row; there is nothing left to resume.
+  //
+  // Asserted rather than argued, because the day someone makes archiving keep the
+  // binding, un-archiving would silently start resuming old sessions and the context
+  // growth he asked about becomes real - with no test to notice.
+  const { bindSecondMateSession, readBindings, proposeSecondMate, removeSecondMates } = await import(
+    "../../src/lib/secondMates.js"
+  );
+  const probeProject = path.join(tmp, "archive-probe");
+  const probeId = secondMateId("direct", probeProject);
+  proposeSecondMate("direct", probeProject, { brief: "first round" });
+  bindSecondMateSession(probeId, "session-from-before");
+  ok(readBindings()[probeId]?.sessionId === "session-from-before", "a second mate can hold a session");
+  removeSecondMates([probeId]); // what archiving does, beyond the overlay
+  ok(readBindings()[probeId] === undefined, "archiving deletes the binding outright - the session id does not survive it");
+  proposeSecondMate("direct", probeProject, { brief: "new work after archiving" });
+  const reproposed = readBindings()[probeId];
+  ok(reproposed?.sessionId === null, `and new work re-proposes it with NO session (${JSON.stringify(reproposed?.sessionId)})`);
+  ok(reproposed?.status === "proposed", `status "proposed", so a fresh session is minted on first engagement (${reproposed?.status})`);
+
   const errors = app.getConsoleErrors();
   ok(errors.length === 0, `no console errors (${errors.length})`);
   for (const e of errors) {

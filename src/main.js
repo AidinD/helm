@@ -1001,6 +1001,39 @@ function archiveSecondMateIds(ids) {
   writeConfig({ ...cfg, archivedSecondMates: [...set] });
   removeSecondMates(list);
 }
+
+/**
+ * Un-park a fleet node because new work is being sent to it.
+ *
+ * Archiving a node means "I am done looking at this". Dispatching work to it says
+ * the opposite, and the two were never connected: the auto-captain re-proposes the
+ * project's second mate on every dispatch, but the archive overlay outlived that, so
+ * once a project's row had been archived EVERY later auto run for that project was
+ * invisible. Permanently, and in silence - the run still happened, still cost money,
+ * still edited the repo.
+ *
+ * That is what a full day of "the widget is empty" turned out to be (2026-08-03).
+ * Helm's own project node had been archived while cleaning up after a test run, and
+ * from then on nothing auto did in this repo could appear anywhere.
+ */
+function unarchiveSecondMateForNewWork(id) {
+  if (!id) {
+    return;
+  }
+  try {
+    const cfg = loadConfig();
+    const list = cfg.archivedSecondMates || [];
+    if (!list.includes(id)) {
+      return;
+    }
+    writeConfig({ ...cfg, archivedSecondMates: list.filter((x) => x !== id) });
+    console.log(`[helm] un-archived fleet node ${id} - new work was dispatched to it`);
+  } catch (err) {
+    // Non-fatal: the work still runs. It would just be invisible, which is the
+    // whole bug, so it is worth a loud line.
+    console.error("[helm] could not un-archive a fleet node being dispatched to:", err?.message || err);
+  }
+}
 /**
  * Drop fleet-node parkings that can no longer mean anything.
  *
@@ -3470,6 +3503,10 @@ async function autoCaptainTick({ force = false } = {}) {
         // Named after the PROJECT, because that is what this row now represents.
         // The task titles belong on the crew rows underneath it. Idempotent -
         // re-proposing an existing id merges.
+        // New work means this row is relevant again - see
+        // unarchiveSecondMateForNewWork. Without it an archived project row swallowed
+        // every later auto run for that project, silently.
+        unarchiveSecondMateForNewWork(smId);
         proposeSecondMate("direct", where.projectPath, {
           brief: `Auto-started tasks for ${path.basename(where.projectPath)}. Each one runs as its own autopilot below.`,
         });
@@ -4664,6 +4701,7 @@ function processDispatchRequests(metaHome) {
           continue;
         }
         try {
+          unarchiveSecondMateForNewWork(secondMateId(request.dispatchedBy || "direct", proposeProject));
           const sm = proposeSecondMate(request.dispatchedBy || "direct", proposeProject, { brief: request.brief });
           writeAck(metaHome, dispatchId, { status: "accepted", secondMateId: sm.secondMateId });
           writeFleetStateSnapshot(metaHome);
@@ -4704,6 +4742,7 @@ function processDispatchRequests(metaHome) {
         }
         const smId = secondMateId(request.dispatchedBy || "direct", relayProject);
         try {
+          unarchiveSecondMateForNewWork(smId);
           proposeSecondMate(request.dispatchedBy || "direct", relayProject, {});
         } catch {
           // non-fatal - runRelayTurn resolves the parent from the derived mate
