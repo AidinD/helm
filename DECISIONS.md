@@ -5266,3 +5266,58 @@ correlates the declared criticality with the diff. The signing oracle is narrowe
 "a forgery must lie about a specific declared command at a specific commit", not
 closed. Both are on the relevant records' own `notVerified`, which is where a reader
 gives trust and therefore where the limits belong.
+
+## 2026-08-03 - The fix that named the auto run is the fix that hid it
+
+Aidin, twice, on the same feature: the auto-captain started, the board moved to
+in-progress, the card got its stripe, the work landed in review - and the Auto widget
+stayed empty.
+The second report came after the dashboard-liveness fixes had shipped, which ruled out
+the obvious explanation and pointed at the widget's own filter.
+
+**What was actually wrong.** The Auto widget selected its rows with
+`sm.isSessionNode && sm.startedBy === "auto"`, and both halves were false for a real
+auto run.
+`isSessionNode` is only set on a SYNTHETIC node the renderer derives from the session
+list; the dispatch now registers the run as a real second mate before starting it, so
+the renderer skipped the synthetic branch entirely.
+And `startedBy` only ever exists on the SESSION - a registered second mate has no such
+field at all.
+So the change that made an auto run carry its project's name instead of the prompt's
+first line is the same change that made it invisible, and the filter meant to find it
+could not match on either half.
+It fell out of both columns: not in Auto, and not in Direct either, since that filter
+was written the same way.
+
+**The decision.** Ask the property, not the proxy. Two named predicates now single-source
+the question - `isLiveWorkNode` (a session is bound to this node, however the node came
+to exist) and `isAutoStartedNode` - and `augmentSecondMatesWithSessions` carries
+`startedBy` across from the bound session so both kinds of node can answer it.
+All three call sites go through them.
+Direct now EXCLUDES auto runs rather than listing them twice: a column titled "work you
+drive yourself" must not contain work nobody started.
+The Auto widget reuses the captain's card by Aidin's own request, so the card takes an
+`as: "auto"` mode - same layout, honest wording, and no "+ Session" button in the one
+column whose whole point is that nothing there was started by hand.
+
+**Alternative rejected:** stop registering the second mate, so the synthetic node (and
+its `startedBy`) comes back.
+That would restore the widget by undoing the naming fix and by giving up the binding
+that lets a later relay or jump-in resume the SAME session.
+Reverting a good fix to satisfy a bad filter is the wrong direction.
+
+**Why this keeps happening.** This is the "fixed one instance, believed the class was
+closed" failure at one remove: nothing was wrong with the auto-captain, and nothing was
+wrong with the registration. What broke was an unstated assumption in a THIRD place -
+that a piece of direct work is always a synthetic node - held by a filter written before
+the second kind of node existed.
+`isSessionNode` was never a fact about the work; it was a fact about where the renderer
+happened to learn of it. A predicate that names the real question cannot rot that way.
+
+**Evidence.** `scripts/e2e/test-auto-widget-visibility.mjs` executes the real predicates
+and the real augmentation against a registered auto run copied from Aidin's own
+`second-mates.json`, and keeps the OLD filter in the test as a witness that must find
+nothing - without it the test would pass on either implementation.
+Mutation-verified: removing the `startedBy` carry-over turns three checks red.
+`test-widget-dashboard-fixes.mjs` then measures the same claim on the rendered widget in
+a launched app, with a seeded auto run, and asserts it is NOT also listed under Captain.
