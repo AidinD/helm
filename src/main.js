@@ -3164,6 +3164,43 @@ function rememberTriaged(taskId, fingerprint) {
   }
 }
 
+/**
+ * A started card's turn has ended: move it to REVIEW and free its slot.
+ *
+ * Both halves were missing entirely, and each is its own bug (Aidin, 2026-08-02,
+ * on his first real auto start: "varför hamnade den inte i review när den var
+ * klar?").
+ *
+ * The card: the whole promise of the auto-captain is that it starts work and you
+ * decide what happens to it. Leaving the card in in-progress forever means the
+ * one thing you have to do - look at what it did - is the one thing the board
+ * never asks you to do. Review, never done: done stays a joint decision.
+ *
+ * The slot: `autoRuns` was only ever added to. Nothing removed an entry, so after
+ * three auto starts the cap was permanently full and no further card could ever
+ * be started until Helm was restarted. A concurrency cap that only counts up is
+ * not a cap, it is a countdown to a silent stop.
+ *
+ * `auto-running` comes off either way. A card that says a machine is working on
+ * it when nothing is running is worse than an untagged one.
+ */
+function finishAutoRun(taskId) {
+  const run = autoRuns.get(taskId);
+  autoRuns.delete(taskId);
+  if (!run) {
+    return;
+  }
+  const { jot } = autoCaptainConfig();
+  const res = setTaskTags(jot, taskId, {
+    remove: [AUTO_RUNNING_TAG],
+    status: "review",
+    note: `[Auto-captain ${new Date().toISOString().slice(0, 10)}] Finished its turn. The work is in ${run.projectPath} - read it and decide. Nothing was marked done.`,
+  });
+  if (!res.ok) {
+    console.error("[helm] auto-captain finished a run but could not move the card:", res.error);
+  }
+}
+
 /** Hold a card back: tag it, say why on the card itself, and don't ask again. */
 function holdBack(jotConfig, todo, reason) {
   const res = setTaskTags(jotConfig, todo.id, {
@@ -3224,7 +3261,21 @@ async function autoCaptainTick({ force = false } = {}) {
         continue;
       }
       // GO. Same dispatch path a first mate's relay uses.
+      //
+      // Propose the second mate FIRST. runRelayTurn binds the session to this id
+      // when it starts, and bindSecondMateSession only writes { sessionId, status }
+      // - so for an id nobody had proposed, the binding came out with no
+      // projectPath. deriveSecondMates skips a binding without one, so the run
+      // could not become a named fleet member on its project; it survived only as
+      // a synthetic node carrying the prompt's first line as its name. Found on
+      // Aidin's first real auto start, 2026-08-02. Idempotent - re-proposing an
+      // existing id merges.
       const smId = secondMateId("direct", where.projectPath);
+      try {
+        proposeSecondMate("direct", where.projectPath);
+      } catch (err) {
+        console.error("[helm] auto-captain could not register the second mate:", err?.message || err);
+      }
       const message = [
         `Task from the board: ${todo.text}`,
         "",
@@ -3239,6 +3290,7 @@ async function autoCaptainTick({ force = false } = {}) {
         message,
         allowDirect: true,
         startedBy: "auto",
+        onFinished: () => finishAutoRun(todo.id),
       });
       if (!res?.ok) {
         // Busy or refused - leave the card alone entirely so the next pass retries.
@@ -4015,7 +4067,7 @@ function liveRunSnapshot() {
  * identifiable afterwards - it is what puts the run in the Auto column instead of
  * mixing it in with work the captain started by hand.
  */
-function runRelayTurn(metaHome, { secondMateId: smId, projectPath, message, allowDirect = false, startedBy = null }) {
+function runRelayTurn(metaHome, { secondMateId: smId, projectPath, message, allowDirect = false, startedBy = null, onFinished = null }) {
   const binding = readBindings()[smId] || {};
   const resumeSessionId = binding.sessionId || null;
   // Lock per bound session, OR per second mate when there's no session yet - so
@@ -4122,6 +4174,14 @@ function runRelayTurn(metaHome, { secondMateId: smId, projectPath, message, allo
     writeFleetStateSnapshot(metaHome);
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send("dispatch:report", { kind: "relay", secondMateId: smId });
+    }
+    if (onFinished) {
+      try {
+        onFinished();
+      } catch (err) {
+        // A caller's bookkeeping must never take the turn teardown with it.
+        console.error("[helm] relay onFinished failed:", err?.message || err);
+      }
     }
   });
   return { ok: true };

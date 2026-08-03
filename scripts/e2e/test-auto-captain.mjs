@@ -14,6 +14,7 @@ import {
   buildTriageInput,
   AUTO_WIDTH_CAP,
 } from "../../src/lib/autoCaptain.js";
+import fs from "node:fs";
 
 let code = 0;
 const ok = (c, m) => { console.log(`${c ? "OK  " : "FAIL"} - ${m}`); if (!c) code = 1; };
@@ -116,6 +117,47 @@ ok(/picked up again/.test(note), "and tells the user what happens after they fix
 const input = buildTriageInput({ text: "Fix the thing", description: "d".repeat(9000) }, { name: "Helm" });
 ok(/List: Helm/.test(input) && /Fix the thing/.test(input), "the triage sees the list and the title");
 ok(input.length < 5000, `an enormous description is truncated rather than sent whole (${input.length} chars)`);
+
+// --- a started run has to END somewhere -----------------------------------
+// Aidin, on his first real auto start: "varför hamnade den inte i review när den
+// var klar?" It didn't, and nothing was ever going to move it: the card stayed in
+// in-progress wearing auto-running forever.
+//
+// Worse, and invisible: `autoRuns` was only ever added to. Nothing removed an
+// entry, so after three starts the cap was permanently full and no card could be
+// started again until Helm restarted. A concurrency cap that only counts up is
+// not a cap, it is a countdown to a silent stop.
+//
+// Checked against the SHIPPED source: the wiring is in main.js's IPC layer, which
+// this file cannot import, and a comment claiming it is wired is not the wiring.
+// CODE only. Matching raw source would pass on a commented-out line: verified by
+// mutation - commenting out `autoRuns.delete(taskId)` left every check green,
+// because the call was still there as text. That is the atomicWrite guard's old
+// bug exactly, and the reason these checks strip comments before asserting.
+const stripComments = (s) =>
+  s
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .split("\n")
+    .filter((l) => !l.trim().startsWith("//"))
+    .join("\n");
+const mainSrc = stripComments(fs.readFileSync(new URL("../../src/main.js", import.meta.url), "utf8"));
+const finish = mainSrc.slice(mainSrc.indexOf("function finishAutoRun"));
+const finishBody = finish.slice(0, finish.indexOf("\n}\n") + 2);
+ok(finishBody.length > 0 && finishBody.startsWith("function finishAutoRun"), "a finished run has a handler at all");
+ok(/autoRuns\.delete\(/.test(finishBody), "it frees the slot, so the cap can never fill permanently");
+ok(/status:\s*"review"/.test(finishBody), "it moves the card to REVIEW - the one thing you have to do is now on the board");
+ok(!/status:\s*"done"/.test(finishBody), "and never to done: that stays a joint decision");
+ok(/remove:\s*\[AUTO_RUNNING_TAG\]/.test(finishBody), "the running tag comes off - a card claiming work is in flight when nothing runs is worse than an untagged one");
+ok(/note:/.test(finishBody), "and it says on the card what happened and where the work is");
+
+// The handler is worthless if the dispatch never asks for it.
+ok(
+  /onFinished:\s*\(\)\s*=>\s*finishAutoRun\(todo\.id\)/.test(mainSrc),
+  "the auto dispatch actually passes it to the relay"
+);
+const relay = mainSrc.slice(mainSrc.indexOf("function runRelayTurn"));
+ok(/onFinished\s*=\s*null/.test(relay.slice(0, 400)), "the relay accepts the callback");
+ok(/if \(onFinished\) \{/.test(relay.slice(0, 6000)), "and calls it when the turn ends, not only on the happy path");
 
 console.log(code === 0 ? "VERIFY OK: auto-captain selection, project resolution, capping and re-triage guards behave as intended (safe defaults - never fires on ambiguity)." : "VERIFY FAILED.");
 process.exit(code);

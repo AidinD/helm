@@ -1,5 +1,32 @@
 # Decisions
 
+## 2026-08-02 - The auto-captain's first real start, and the three things it exposed
+
+The first genuine auto-start worked: the card was triaged, a session started in the right repo, the work got done.
+Aidin's report was "den flyttades till in progress men sen verkar inget hända? inte som jag kan följa iaf. Auto widgeten är fortfarande tillsynes tom."
+Every defect behind that sentence was about the parts nobody had exercised, because every test to date decided its outcome without a model call or a started session.
+
+**1. A finished run finished nowhere.** `autoRuns` was only ever added to.
+No entry was ever removed, so the card stayed in in-progress wearing `auto-running` forever - and the concurrency cap could only count up.
+After three auto starts it would have been permanently full, and no further card could ever start until Helm restarted.
+A cap that only counts up is not a cap, it is a countdown to a silent stop, and nothing would have reported it.
+`runRelayTurn` now takes an `onFinished` callback and the auto-captain uses it to move the card to REVIEW (never done - that stays joint), drop the running tag, and free the slot.
+
+**2. Two repaints reading stale data.** The widget dashboard fetched mates, second mates, goals and budget fresh but read SESSIONS out of renderer memory - and the fleet widgets are derived from sessions, so the repaint fired by the pass that had just created one could not see it.
+Then `fillDashboardSections` returned immediately for the widget dashboard, so it never repainted on a poll either: once rendered, frozen.
+Both fixed; the poll repaint is fingerprint-gated and still refuses mid-drag, which was the original guard's real purpose.
+
+**3. A dispatch that never registered its second mate.** The auto-captain called `runRelayTurn` with an id nobody had proposed, and `bindSecondMateSession` writes only `{ sessionId, status }` - so the binding had no projectPath, and `deriveSecondMates` skips those.
+The run survived only as a synthetic node named after the first line of its prompt instead of a named fleet member on its project.
+It now proposes the second mate first.
+
+**The card itself was reverted, and that is the more useful lesson.**
+The test task was "add a `--version` flag that prints the version from package.json".
+The session did exactly that, and the result is wrong: `package.json` says `0.1.0` and always has - the real version is computed from git at build time (`major.minor.commitcount`).
+To make `node src/main.js --version` runnable at all it also rewrote the Electron import in three files, including the packaged-paths bootstrap, which is app-boot code.
+Careful work, correct reasoning in its comments, and the wrong thing to keep: a boot-path change serving a throwaway test card.
+**The prompt was mine and the flaw was in the prompt.** An agent that faithfully implements an underspecified card produces something defensible and useless, and that is the failure mode the triage gate cannot catch - it checks whether a card is specific, not whether it is right.
+
 ## 2026-08-02 - The docs-drift nudge gets a Reconcile button
 
 Aidin, on the same nudge for the second time: "jag vet fortfarande inte vad jag ska göra med denna? Borde det finnas en 'fix' knapp eller liknande?"
