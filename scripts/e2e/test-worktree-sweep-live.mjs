@@ -75,8 +75,21 @@ try {
   git("worktree", "add", "-b", "helm/goal-dirty", wt3);
   fs.writeFileSync(path.join(wt3, "scratch.txt"), "not committed\n");
 
+  // Worktree 4: DETACHED, holding a commit that exists on no branch. The review's
+  // headline finding: git prints no `branch` line for it, which used to skip the
+  // Helm-prefix guard entirely and get it deleted, leaving the commit dangling.
+  const wt4 = path.join(tmp, "repo-worktrees", "detached-review");
+  git("worktree", "add", "--detach", wt4, "main");
+  fs.writeFileSync(path.join(wt4, "precious.txt"), "only copy\n");
+  execFileSync("git", ["-C", wt4, "add", "-A"], { windowsHide: true });
+  execFileSync("git", ["-C", wt4, "commit", "-m", "detached work"], { windowsHide: true });
+  const detachedSha = execFileSync("git", ["-C", wt4, "rev-parse", "HEAD"], { encoding: "utf8", windowsHide: true }).trim();
+
   // A branch of the user's own, merged, with no worktree. Must be untouched.
   git("branch", "my-own-merged", "main");
+  // And the repo is left checked out on something OTHER than its primary branch -
+  // routine, and the state in which `git branch -d` refuses every merged branch.
+  git("checkout", "-b", "side-work");
 
   // The junction, inside worktree 1 - exactly how createWorktree provisions deps.
   fs.symlinkSync(sharedModules, path.join(wt1, "node_modules"), "junction");
@@ -84,9 +97,15 @@ try {
 
   // --- what git tells the sweep ---------------------------------------------
   const worktrees = listWorktrees(repo);
-  ok(worktrees.length === 4, `git reports the main checkout plus three worktrees (${worktrees.length})`);
+  ok(worktrees.length === 5, `git reports the main checkout plus four worktrees (${worktrees.length})`);
+  ok(
+    worktrees.find((w) => path.basename(w.path) === "detached-review")?.branch === null,
+    "a detached worktree really does come back with no branch - the input that caused the headline bug"
+  );
   ok(worktrees[0].isMain === true && worktrees.filter((w) => w.isMain).length === 1, "exactly one entry is flagged as the main checkout");
-  ok(worktrees[0].branch === "main", `the main checkout's branch is read correctly (${worktrees[0].branch})`);
+  // "side-work" because the repo was deliberately moved off its primary branch
+  // above - reading it correctly here is what proves the parse, not the name.
+  ok(worktrees[0].branch === "side-work", `the main checkout's branch is read correctly (${worktrees[0].branch})`);
   const byName = Object.fromEntries(worktrees.map((w) => [path.basename(w.path), w.branch]));
   ok(byName["goal-merged"] === "helm/goal-merged", `each worktree's branch is read correctly (${JSON.stringify(byName)})`);
 
@@ -106,7 +125,12 @@ try {
     ],
     isMerged: (b) => isBranchMerged(repo, b, "main"),
     isDirty: (p) => hasUncommittedWork(p),
+    exists: (p) => fs.existsSync(p),
   });
+  ok(
+    !plan.remove.some((r) => path.basename(String(r.target)) === "detached-review"),
+    "the DETACHED worktree is not planned for removal"
+  );
   // The distinction that makes the sweep work at all. Worktree 1 holds ONLY the
   // dependency junction as an untracked path, so the plain check calls it dirty
   // and it would be kept forever - in this repo AND in any project that has not
@@ -146,7 +170,22 @@ try {
     "including the file inside it - this is the exact damage that hit the real repo on 2026-08-03"
   );
 
-  // Branches, after the checkouts are gone.
+  ok(fs.existsSync(wt4), "and the detached worktree is still on disk after the sweep ran");
+  ok(fs.existsSync(path.join(wt4, "precious.txt")), "with its only copy of the work still in it");
+  const stillReachable = execFileSync("git", ["-C", repo, "rev-parse", "--verify", detachedSha], {
+    encoding: "utf8",
+    windowsHide: true,
+  }).trim();
+  ok(stillReachable === detachedSha, "and its commit is still there, not dangling");
+
+  // Branches, after the checkouts are gone. NOTE the repo is on `side-work`, not
+  // `main`: plain `git branch -d` refuses a master-merged branch in this state, so
+  // this is the case that made the whole branch half of the feature a no-op.
+  const headNow = execFileSync("git", ["-C", repo, "rev-parse", "--abbrev-ref", "HEAD"], {
+    encoding: "utf8",
+    windowsHide: true,
+  }).trim();
+  ok(headNow === "side-work", `the main checkout is deliberately NOT on the primary branch (${headNow})`);
   const plan2 = planSweep({
     projectPath: repo,
     worktrees: listWorktrees(repo),
@@ -154,10 +193,19 @@ try {
     runs: [],
     isMerged: (b) => isBranchMerged(repo, b, "main"),
     isDirty: () => true,
+    exists: (p) => fs.existsSync(p),
   });
   for (const action of plan2.remove.filter((a) => a.kind === "branch")) {
-    deleteBranch(repo, action.target);
+    deleteBranch(repo, action.target, { mergedInto: "main" });
   }
+  // deleteBranch must re-verify the base itself, not take the caller's word.
+  let refusedUnmerged = false;
+  try {
+    deleteBranch(repo, "helm/goal-unmerged", { mergedInto: "main" });
+  } catch (err) {
+    refusedUnmerged = /not fully merged/i.test(err.message);
+  }
+  ok(refusedUnmerged, "deleteBranch({mergedInto}) REFUSES a branch that is not actually merged into that base");
   const after = listLocalBranches(repo);
   ok(!after.includes("helm/goal-merged"), `the merged Helm branch is deleted (${after.join(", ")})`);
   ok(after.includes("helm/goal-unmerged"), "the UNMERGED Helm branch survives - its commits are still reachable");

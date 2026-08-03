@@ -96,6 +96,21 @@ export function listWorktrees(projectPath) {
   return list;
 }
 
+/**
+ * Drop git's registration of worktrees whose directories are gone.
+ *
+ * `git worktree remove` cannot do this - there is nothing on disk to remove - so
+ * without a prune the entry survived every sweep, and the sweep reported the same
+ * phantom removal on every app start (independent review, 2026-08-03).
+ */
+export function pruneWorktrees(projectPath) {
+  try {
+    runGit(path.resolve(projectPath), ["worktree", "prune"]);
+  } catch (err) {
+    throw new Error(`git worktree prune failed for ${projectPath}: ${err.message}`);
+  }
+}
+
 /** Local branch names in the repo (no remotes), for the housekeeping sweep. */
 export function listLocalBranches(projectPath) {
   try {
@@ -435,7 +450,18 @@ export function removeWorktree(projectPath, worktreePath, options = {}) {
   // link, so this can never mistake a real (non-junctioned) node_modules
   // directory for a junction and is safe to run unconditionally.
   const nodeModulesPath = path.join(resolvedWorktree, NODE_MODULES_DIR);
+  let junctionTarget = null;
   if (isJunctionOrSymlink(nodeModulesPath)) {
+    try {
+      // Remember where it pointed, so a FAILED removal can put it back. Unlinking
+      // first is mandatory (see above), but it used to be unconditional and
+      // one-way: when git then refused to remove the worktree, the worktree was
+      // left without its dependencies - unbuildable, and unusable for a later
+      // resume (found by independent review, 2026-08-03).
+      junctionTarget = fs.readlinkSync(nodeModulesPath);
+    } catch {
+      junctionTarget = null;
+    }
     try {
       fs.rmSync(nodeModulesPath, { recursive: true, force: true });
     } catch (err) {
@@ -446,12 +472,33 @@ export function removeWorktree(projectPath, worktreePath, options = {}) {
   }
 
   const args = ["worktree", "remove", resolvedWorktree];
-  if (options.force) {
+  // git applies its OWN untracked-files check and refuses without --force. That
+  // check does not know about Helm's bookkeeping: the orchestrator's `.helm-goal/`
+  // notes are untracked in every repo that has not gitignored them (which is every
+  // repo except Helm's own), and a provisioned `node_modules` is untracked too. So
+  // a caller that has already established there is no real WORK here - the
+  // `isDirty()` gate above, which is the whole point of ignoreBookkeeping - would
+  // otherwise be refused by git forever, cleaning nothing anywhere (independent
+  // review, 2026-08-03: "the feature does not work in any repo except Helm's own").
+  //
+  // Passing --force here is therefore NOT the same as the caller passing `force`:
+  // it is only reached after our own stricter check said the worktree holds no
+  // work, and a worktree that DOES hold work has already thrown above.
+  if (options.force || options.ignoreBookkeeping) {
     args.push("--force");
   }
   try {
     runGit(resolvedProject, args);
   } catch (err) {
+    // Put the dependency link back, so a worktree we failed to remove is left
+    // exactly as we found it rather than subtly broken.
+    if (junctionTarget && fs.existsSync(resolvedWorktree) && !fs.existsSync(nodeModulesPath)) {
+      try {
+        fs.symlinkSync(junctionTarget, nodeModulesPath, "junction");
+      } catch {
+        // best effort - the removal error below is the one that matters
+      }
+    }
     throw new Error(`git worktree remove failed for ${resolvedWorktree}: ${err.message}`);
   }
 }
@@ -513,14 +560,34 @@ export function isBranchMerged(projectPath, branchName, base) {
 /**
  * Deletes a local branch. Defaults to git's own safe delete (`-d`), which
  * refuses to drop a branch that isn't merged; pass `{ force: true }` for `-D`.
- * Callers that want the "merged to the integration branch" gate should check
- * `isBranchMerged` first (git's `-d` checks merged-to-HEAD/upstream, which is
- * not the same question).
+ *
+ * `mergedInto: "<base>"` is the third option, and the one automated cleanup
+ * should use. git's `-d` asks "is this contained in HEAD or its upstream", which
+ * is NOT the question the caller asked - so with the main checkout sitting on any
+ * other branch, `-d` refused to delete branches that were fully merged into
+ * master, and the sweep produced a permanent failure on every app start while
+ * cleaning nothing (independent review, 2026-08-03).
+ *
+ * Rather than let the caller reach for `force` to work around that - which would
+ * throw away git's refusal for every other case too - this verifies the ancestry
+ * ITSELF, right here, immediately before deleting. The check and the deletion
+ * cannot drift apart, and a caller cannot get the forceful behaviour without
+ * naming a base that the branch genuinely descends into.
  */
 export function deleteBranch(projectPath, branchName, options = {}) {
-  const flag = options.force ? "-D" : "-d";
+  const resolved = path.resolve(projectPath);
+  let flag = options.force ? "-D" : "-d";
+  if (!options.force && options.mergedInto) {
+    if (!isBranchMerged(resolved, branchName, options.mergedInto)) {
+      throw new Error(
+        `Refusing to delete ${branchName}: it is not fully merged into ${options.mergedInto}.`
+      );
+    }
+    // Every commit on it is also on the base - verified one line ago.
+    flag = "-D";
+  }
   try {
-    runGit(path.resolve(projectPath), ["branch", flag, branchName]);
+    runGit(resolved, ["branch", flag, branchName]);
   } catch (err) {
     throw new Error(`git branch ${flag} failed for ${branchName}: ${err.message}`);
   }

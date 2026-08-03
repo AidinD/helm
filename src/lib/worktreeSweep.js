@@ -43,6 +43,29 @@ export const HELM_BRANCH_PREFIXES = ["helm/", "maestro/"];
 /** Run statuses that mean a run may still be USING its worktree. */
 const LIVE_STATUSES = new Set(["running", "live", "starting"]);
 
+/**
+ * A run whose worktree must survive because the run is meant to CONTINUE.
+ *
+ * A run paused on quota or escalated to the captain is persisted as
+ * `status: "done", resumable: true` - finished as a process, unfinished as a piece
+ * of work. Its worktree is fully committed, so it looked clean and got removed,
+ * and `goal:resume` then fails outright with "the run's worktree is no longer on
+ * disk". The commits survive on the branch, but the one path the escalation flow
+ * exists to serve is gone (found by independent review, 2026-08-03). Status alone
+ * cannot answer this question - `resumable` can.
+ */
+function isResumable(run) {
+  if (!run) {
+    return false;
+  }
+  return (
+    run.resumable === true ||
+    Boolean(run.escalation) ||
+    run.stoppedReason === "escalated" ||
+    run.stoppedReason === "quota_exhausted"
+  );
+}
+
 /** True for a branch Helm created, i.e. one the sweep is allowed to consider. */
 export function isHelmBranch(branchName) {
   const name = String(branchName || "");
@@ -77,7 +100,18 @@ function normalizePath(p) {
  * @returns {{remove: Array, keep: Array}} `remove` is ordered worktrees-first,
  *   because git refuses to delete a branch that is still checked out.
  */
-export function planSweep({ projectPath, worktrees = [], branches = [], runs = [], isMerged, isDirty }) {
+export function planSweep({
+  projectPath,
+  worktrees = [],
+  branches = [],
+  runs = [],
+  isMerged,
+  isDirty,
+  // Whether the worktree directory is still on disk. Injected like the other two
+  // probes so the decision table stays testable without a filesystem; defaults to
+  // "it is there", which is the conservative reading (removal rather than prune).
+  exists = () => true,
+}) {
   const remove = [];
   const keep = [];
 
@@ -94,21 +128,50 @@ export function planSweep({ projectPath, worktrees = [], branches = [], runs = [
   const checkedOut = new Set();
 
   for (const wt of worktrees) {
-    if (wt.isMain) {
-      continue; // the repo itself is never a candidate
-    }
+    // BEFORE the isMain skip. The main checkout's own branch is checked out too,
+    // and registering it only for non-main worktrees meant the branch loop kept
+    // trying to delete whatever the repo had checked out - git refused, and the
+    // sweep logged the same failure on every start (independent review,
+    // 2026-08-03). A branch cannot be deleted while it is checked out anywhere,
+    // main worktree included.
     if (wt.branch) {
       checkedOut.add(wt.branch);
     }
-    // Only worktrees on a Helm-created branch. A worktree you made yourself,
-    // even under the same parent folder, is left completely alone.
-    if (wt.branch && !isHelmBranch(wt.branch)) {
-      keep.push({ kind: "worktree", target: wt.path, branch: wt.branch, reason: "not a Helm run's worktree" });
+    if (wt.isMain) {
+      continue; // the repo itself is never a candidate for removal
+    }
+    // Only worktrees on a Helm-created branch. A worktree you made yourself, even
+    // under the same parent folder, is left completely alone.
+    //
+    // `!wt.branch` is the load-bearing half. A DETACHED worktree (`git worktree
+    // add --detach`) has no branch line in git's output at all, so `branch` is
+    // null - and the old `wt.branch && !isHelmBranch(...)` short-circuited to
+    // false for it, skipping this guard entirely. It then had no run record, so it
+    // was removed as an "orphan": an independent review reproduced the deletion of
+    // a detached worktree whose commit was reachable from no ref, leaving it
+    // dangling and its files gone (2026-08-03). A worktree we cannot ATTRIBUTE to
+    // Helm is not ours to remove, and "no branch" means exactly that.
+    if (!wt.branch || !isHelmBranch(wt.branch)) {
+      keep.push({
+        kind: "worktree",
+        target: wt.path,
+        branch: wt.branch,
+        reason: wt.branch ? "not a Helm run's worktree" : "detached - nothing identifies it as a Helm run",
+      });
       continue;
     }
     const run = runByWorktree.get(normalizePath(wt.path));
     if (run && LIVE_STATUSES.has(String(run.status))) {
       keep.push({ kind: "worktree", target: wt.path, branch: wt.branch, reason: "a run is still using it" });
+      continue;
+    }
+    if (isResumable(run)) {
+      keep.push({
+        kind: "worktree",
+        target: wt.path,
+        branch: wt.branch,
+        reason: "the run is paused and can be resumed - resuming needs this worktree",
+      });
       continue;
     }
     let dirty = true;
@@ -131,7 +194,18 @@ export function planSweep({ projectPath, worktrees = [], branches = [], runs = [
       target: wt.path,
       branch: wt.branch,
       projectPath,
-      reason: run ? `run finished (${run.status})` : "no run record - orphaned checkout",
+      // A worktree still registered with git but GONE from disk needs
+      // `git worktree prune`, not `git worktree remove` - the old code planned a
+      // removal, skipped it because the path did not exist, and reported it as
+      // removed anyway. It stayed registered, so the next sweep reported the same
+      // removal again, forever, and the UI counted work that never happened
+      // (independent review, 2026-08-03).
+      prune: !exists(wt.path),
+      reason: !exists(wt.path)
+        ? "already gone from disk - git still lists it"
+        : run
+          ? `run finished (${run.status})`
+          : "no run record - orphaned checkout",
     });
   }
 

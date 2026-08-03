@@ -2069,7 +2069,11 @@ body.advanced .row-jot {
   color: var(--text);
   font: inherit;
   font-size: 12.5px;
-  resize: none;
+  /* Draggable, and sized by autoSizeComposer. `resize: none` was why a long
+     prompt could only be read two lines at a time. Vertical only - horizontal
+     would break out of the shell. */
+  resize: vertical;
+  min-height: 34px;
   padding: 2px 2px 4px;
 }
 

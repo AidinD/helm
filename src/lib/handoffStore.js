@@ -109,6 +109,26 @@ export function writeHandoff(metaHome, slug, text, { title = null, now = Date.no
     `_Saved ${stamp}${title ? ` from "${title}"` : ""}._\n\n` +
     text.trim() +
     "\n";
+  // Keep the version being replaced. "Latest-only" is about what a later session
+  // READS - it was never meant to make a filing mistake destructive, and it was:
+  // a leadership handoff was filed under the topic holding Aidin's physical
+  // training notes, and overwriting it left no copy of what had been there
+  // (2026-08-03). One previous version per topic is enough to undo a mis-file by
+  // hand, costs one small file, and does not turn the folder into a history.
+  let superseded = null;
+  if (fs.existsSync(file)) {
+    try {
+      const prevDir = path.join(dir, "superseded");
+      fs.mkdirSync(prevDir, { recursive: true });
+      const prevPath = path.join(prevDir, `${safe}.md`);
+      fs.copyFileSync(file, prevPath);
+      superseded = prevPath;
+    } catch (err) {
+      // Best effort: failing to keep a copy must not stop the handoff itself from
+      // being saved, but it IS worth saying out loud.
+      console.error(`[handoff] could not keep the previous ${safe} handoff: ${err?.message || err}`);
+    }
+  }
   try {
     // Shared atomic write with the Dropbox-lock retry (task efcaf486). A handoff is
     // written precisely when a session is about to end, so losing it to a sync lock
@@ -117,7 +137,7 @@ export function writeHandoff(metaHome, slug, text, { title = null, now = Date.no
     if (!res.ok) {
       return { ok: false, error: `Could not write the handoff: ${res.error}` };
     }
-    return { ok: true, path: file, category: safe };
+    return { ok: true, path: file, category: safe, superseded };
   } catch (err) {
     return { ok: false, error: err.message };
   }
@@ -146,9 +166,9 @@ export function resolveHandoffCategory(proposed, existing = [], fallback = "gene
   if (known.includes(slug)) {
     return { category: slug, isNew: false };
   }
-  // Near-miss reuse: the proposal is a prefix/suffix variant of an existing
-  // topic ("training-log" vs "training"). Only accept a containment match on
-  // whole hyphen-separated words, so "job" never swallows "jobbot".
+  // Near-miss: the proposal shares all of its words with an existing topic
+  // ("training-log" vs "training"). Reported as a CANDIDATE, never applied here -
+  // see below.
   const words = (s) => s.split("-").filter(Boolean);
   const slugWords = words(slug);
   for (const candidate of known) {
@@ -156,7 +176,15 @@ export function resolveHandoffCategory(proposed, existing = [], fallback = "gene
     const shorter = slugWords.length <= candWords.length ? slugWords : candWords;
     const longer = slugWords.length <= candWords.length ? candWords : slugWords;
     if (shorter.length > 0 && shorter.every((w) => longer.includes(w))) {
-      return { category: candidate, isNew: false };
+      // `nearMiss` is what makes this a proposal rather than a decision. This rule
+      // used to reuse the existing topic silently, and it cannot be made correct:
+      // "training" -> "training-coaching" is right and "coaching" ->
+      // "training-coaching" is wrong, and the two are structurally identical, so
+      // no amount of lexical care distinguishes them. It filed a handoff about
+      // Aidin's LEADERSHIP development into the topic holding his PHYSICAL
+      // training notes, on the strength of one shared word (2026-08-03).
+      // An exact match still decides on its own; only a guess asks.
+      return { category: candidate, isNew: false, nearMiss: true, proposed: slug };
     }
   }
   return { category: slug, isNew: true };
@@ -178,7 +206,15 @@ export function resolveHandoffCategory(proposed, existing = [], fallback = "gene
  */
 export function planHandoffFiling({ proposed = null, existing = [], title = "" } = {}) {
   if (proposed) {
-    return resolveHandoffCategory(proposed, existing, title || "general");
+    const resolved = resolveHandoffCategory(proposed, existing, title || "general");
+    // A guess at which existing topic this belongs to is exactly as unsafe as no
+    // proposal at all, and for the same reason: reuse OVERWRITES that topic. So a
+    // near-miss asks, offering both the topic it matched (already in `existing`)
+    // and the slug it would otherwise have created.
+    if (resolved.nearMiss) {
+      return { needsCategory: true, existing, suggestion: resolved.proposed, nearMiss: resolved.category };
+    }
+    return resolved;
   }
   // No proposal. Try the title against the existing topics first - if it clearly
   // belongs to one, there is nothing to ask about. Only a title that would create

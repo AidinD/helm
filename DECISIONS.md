@@ -5407,3 +5407,119 @@ afterwards - the exact damage a plain `git worktree remove` did to this repo, an
 into Jot's build output, the same day.
 `test-housekeeping-line.mjs` measures the line on the rendered page in a launched app and
 that sweeping twice removes nothing new.
+
+## 2026-08-03 - The housekeeping sweep was not safe, and an independent review proved it by running it
+
+`/ship-review` on the sweep commit came back **not safe to push**, criticality **critical**,
+with seven findings - every one of them reproduced against throwaway git repos rather than
+argued from reading.
+It was right, and the two most valuable findings were things no amount of re-reading the diff
+would have surfaced.
+
+**The headline: a detached worktree was deleted, and its commit existed nowhere else.**
+The blast-radius guard read `if (wt.branch && !isHelmBranch(wt.branch))`.
+A detached worktree has no branch line in git's output at all, so `branch` is null, the
+condition short-circuits to false, and the guard is skipped entirely - after which the
+worktree has no run record and is removed as an "orphan".
+The review's probe deleted a worktree holding a commit reachable from no ref, leaving it
+dangling.
+The decision: a worktree we cannot ATTRIBUTE to Helm is not ours to touch, and "no branch"
+means exactly that. `!wt.branch` now keeps it.
+This is the same lesson as the Auto widget's `isSessionNode`: a condition written for the
+shape of the data you had in mind silently stops applying when a different shape arrives.
+
+**The feature did not work in any repo except Helm's own.**
+`ignoreBookkeeping` relaxed Helm's own dirtiness check but `git worktree remove` still ran
+without `--force`, and git applies its OWN untracked-files check - which trips over
+`.helm-goal/` in every repo that has not gitignored it, i.e. every repo except this one.
+So the sweep would have logged the same failure forever while cleaning nothing.
+Worse, the junction pre-removal ran BEFORE git's refusal, so a failed removal left the
+worktree without its dependencies: subtly broken rather than untouched.
+Now `ignoreBookkeeping` also passes `--force` to git - reachable only after our own stricter
+check established there is no real work - and a failed removal puts the junction back.
+
+**Three more, each a silent non-event rather than a crash.**
+A run paused on quota or escalated is persisted as `done` with `resumable: true`; its worktree
+was clean, so it was removed, and `goal:resume` then fails outright - the one path the
+escalation flow exists for.
+`git branch -d` asks "contained in HEAD", not "merged into the primary branch", so with the
+repo checked out on any other branch every merged branch failed to delete; `deleteBranch` now
+takes `mergedInto` and re-verifies the ancestry itself, which keeps git's refusal intact for
+every other caller instead of reaching for `force`.
+And a worktree registered with git but gone from disk was reported as removed while staying
+registered, so the same phantom removal was re-reported on every start - the exact
+"everything is tidy" lie the feature was written to prevent.
+It now prunes.
+
+**Two mutations survived the first test suite, and they were the two worst possible.**
+Swapping `ignoreBookkeeping` for `force` (which would let the unattended startup sweep discard
+real uncommitted work) and flipping `deleteBranch`'s default from `-d` to `-D` both left every
+check green, because the checks asserted the function NAMES and never the arguments.
+Both are now asserted literally, and both mutations verified red.
+The rule this makes explicit: a guard expressed as an ARGUMENT needs a test that reads the
+argument.
+
+**Also from the review, and worth its own note:** the sweep was synchronous on Electron's main
+thread, measured at 9.6 seconds for one repo with 30 kept branches because `isBranchMerged`
+re-resolved the primary branch on every call.
+Resolved once per repo now, and the whole sweep is deferred off the startup path - housekeeping
+is never urgent enough to freeze the first paint.
+That deferral then made the Autopilot line say "no sweep has run yet" for the first few
+seconds, which is a lie; the main process now reports `pending` so it can say "checking"
+instead.
+
+**What I would do differently:** ask for the review BEFORE writing the tests, not after.
+Every finding here was reachable by the same method I already had - build a temp repo and run
+it - and I had written a suite that felt thorough while never constructing a detached worktree,
+a repo checked out off its primary branch, or a second sweep pass.
+The suite tested the cases I had thought of, which is the definition of the blind spot a
+reviewer is for.
+
+## 2026-08-03 - A handoff topic can be guessed wrong, and the guess used to overwrite
+
+Aidin: "Archive by topic gjorde helt fel" - a handoff about his professional leadership
+development was filed under the topic holding his exercise-and-diet notes, and replaced them.
+
+Three separate causes, and the fix for each is different.
+
+**The name came from translating a title, not from reading the note.**
+The classifier is given both the note and the session title, and "Träning och kost" came back
+as `training-coaching` - "kost" (diet) rendered as "coaching".
+That name then reads, in English, as professional development, which is what later drew a
+leadership note to it.
+The prompt now says to name the topic from what the NOTE is about, never to translate the
+title word for word, and to prefer the plainest unambiguous word (exercise, diet) over one
+that means different things in different parts of a life (training, coaching, development).
+
+**The near-miss rule guessed, and could not have been right.**
+It reused an existing topic when the proposal's words were all contained in it - so `coaching`
+matched `training-coaching` on one shared word.
+The rule cannot be fixed by being more careful: `training` -> `training-coaching` is right and
+`coaching` -> `training-coaching` is wrong, and the two are structurally identical.
+So it no longer decides. An EXACT match still files silently; a near-miss now ASKS, listing the
+topic it was drawn to alongside the new one it would otherwise create, and saying which
+choice replaces existing content.
+Unattended (the bulk retire path) it takes the NEW topic, because an extra file can be merged
+by hand and an overwrite cannot be undone.
+
+**And the overwrite kept no copy.**
+"Latest-only" was always about what a later session READS; it was never meant to make a filing
+mistake destructive, and it was.
+`writeHandoff` now copies the version it is about to replace into `handoffs/superseded/`.
+One version per topic - enough to undo a mis-file, not enough to turn the folder into a
+history.
+
+**Aidin's own data:** the misfiled note was re-filed as `leadership-development`, with the
+original kept under `superseded/`.
+Whether an exercise-and-diet handoff existed before it and was overwritten cannot be
+established from the folder - the overwrite left no copy, which is precisely the hazard now
+fixed.
+Either way a handoff is a derived summary and the session it came from still exists, so
+nothing original was lost.
+
+**Considered and not done:** splitting one session's handoff across two topics (Aidin's
+suggestion - an `exercise` file and a `diet` file).
+A handoff is one session's state; cutting it in two means each file holds a partial account
+and neither is the thing the session actually said.
+Better that a session focused on one of them gets its own topic when it happens, which the
+naming rules above now make likely.
