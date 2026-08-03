@@ -8888,7 +8888,16 @@ function widgetBodyQuota(data) {
   const sub = document.createElement("div");
   sub.className = "wd-quota-sub";
   const resetSuffix = worst?.resetText ? ` · resets in ${worst.resetText}` : "";
-  sub.textContent = worst ? worst.barValueText + resetSuffix : "run a turn to get a fresh reading";
+  // HOW OLD THE NUMBER IS. Helm never polls for quota - it only records what arrives
+  // on a rate-limit event from a running session, so a window's figure is exactly as
+  // old as the last turn that happened to report it. quotaPanelRows already computes
+  // that age, the context popover already shows it, and this widget threw it away:
+  // it printed a 26-hour-old weekly reading as though it were current. That is why
+  // the captain's Helm said 36% while Claude Desktop said 29% "på samma" - not a rounding
+  // difference, a day-old number presented as live. An unlabelled stale number is
+  // worse than no number, because you act on it.
+  const agePrefix = worst?.freshness ? `${worst.freshness} · ` : "";
+  sub.textContent = worst ? agePrefix + worst.barValueText + resetSuffix : "run a turn to get a fresh reading";
   frag.append(head, sub);
   if (worst && worst.hasPct) {
     frag.append(quotaBar(worst.pct, worst.level));
@@ -8905,7 +8914,18 @@ function widgetBodyQuota(data) {
     const v = document.createElement("span");
     v.className = "wd-quota-val" + (row.level === "hot" ? " crit" : row.level === "warm" ? " warn" : row.stale ? " faint" : "");
     v.textContent = row.barValueText;
+    // Same for the secondary rows: the age belongs next to the number, not only in a
+    // tooltip nobody hovers.
+    if (row.freshness) {
+      const age = document.createElement("span");
+      age.className = "wd-quota-age";
+      age.textContent = row.freshness;
+      l.append(age);
+    }
     line.append(l, v);
+    if (row.title) {
+      line.title = row.title + (row.freshness ? ` · ${row.freshness}` : "");
+    }
     frag.append(line);
   }
   const spend = orchestrationChipContent(data.budget);
