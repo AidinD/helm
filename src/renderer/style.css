@@ -4340,8 +4340,23 @@ button.primary {
   font-size: 11.5px;
   color: var(--text-dim);
 }
+/* "Denna syns knappt" (task 72670135). The state that wants something from you
+   was 11.5px text in a slightly different colour, at the very bottom of the
+   card - a signal you had to be looking for already. It now reads as a chip: the
+   same amber the rest of the app uses for waiting, on a tinted ground, at the
+   size of the card's other labels. The all-clear state is left exactly as quiet
+   as it was; only the state that needs you gets louder. */
+.fleet-report-rollup.has-needs {
+  border-top-color: color-mix(in srgb, var(--waiting) 45%, var(--border));
+}
 .fleet-report-rollup.has-needs .fleet-report-rollup-head {
   color: var(--waiting);
+  font-size: 12.5px;
+  font-weight: 600;
+  background: color-mix(in srgb, var(--waiting) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--waiting) 35%, transparent);
+  border-radius: 7px;
+  padding: 4px 8px;
 }
 .fleet-report-rollup-head:hover {
   color: var(--text);
