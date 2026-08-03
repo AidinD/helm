@@ -8463,6 +8463,88 @@ function fleetCrewItemEl(run) {
  * yourself" and offer a "+ Session" button that starts something by hand in the
  * column whose whole point is that it doesn't.
  */
+// "+ Session" went straight to the operating system's folder browser, so
+// starting a session in the folder used most often meant clicking through a
+// dialog every single time (task 0d9599bd). These are the quick picks: the home
+// folder Helm already resolves for itself (the one holding the CLAUDE.md that
+// every session inherits), then the projects Helm has actually seen, most
+// recently worked in first. Browsing is still there, one item down.
+//
+// Every item carries its full path as a hint, because the folder NAME alone is a
+// guess - "claude", "helm" and "scripts" all exist in more than one place here.
+const NEW_SESSION_RECENT_PICKS = 5;
+async function newSessionFolderMenuItems() {
+  const items = [];
+  const seen = new Set();
+  const norm = (p) => p.replace(/[\\/]+$/, "").toLowerCase();
+  // Must be a real cwd: augmentSecondMatesWithSessions filters sessions on
+  // `s.cwd` truthy, so a session opened with cwd="" can never be matched back
+  // into the Direct list - it starts, but is unfindable from the fleet tree ever
+  // after ("new session hamnar inte under captain - hittar inte tillbaka").
+  const add = (cwd) => {
+    if (!cwd || seen.has(norm(cwd))) {
+      return false;
+    }
+    seen.add(norm(cwd));
+    items.push({
+      label: cwd.split(/[\\/]/).filter(Boolean).pop() || cwd,
+      hint: truncatePathForMenu(cwd),
+      onClick: () => {
+        openFreshDraftInPane(cwd, "", { forceIndex: 0 });
+        navigateToPage("chat");
+      },
+    });
+    return true;
+  };
+
+  let home = null;
+  try {
+    home = (await window.helm.getOrchestratorInfo())?.cwd || null;
+  } catch {
+    // No home resolved - the recents and Browse below still stand on their own.
+  }
+  if (add(home)) {
+    items.push({ sep: true });
+  }
+
+  const recents = state.sessions
+    .filter((s) => s.cwd)
+    .slice()
+    .sort((a, b) => (b.lastActivityAt || 0) - (a.lastActivityAt || 0));
+  let added = 0;
+  for (const s of recents) {
+    if (added >= NEW_SESSION_RECENT_PICKS) {
+      break;
+    }
+    if (add(s.cwd)) {
+      added++;
+    }
+  }
+  if (added > 0) {
+    items.push({ sep: true });
+  }
+
+  items.push({
+    label: "Browse…",
+    onClick: async () => {
+      const folder = await window.helm.pickFolder();
+      if (!folder) {
+        return;
+      }
+      openFreshDraftInPane(folder, "", { forceIndex: 0 });
+      navigateToPage("chat");
+    },
+  });
+  return items;
+}
+
+// Keeps a long path readable in a menu without hiding the part that identifies
+// it: the tail (…\Repo\Tools\helm) is what tells two same-named folders apart,
+// so that is the end that is kept.
+function truncatePathForMenu(p, max = 46) {
+  return p.length <= max ? p : "…" + p.slice(p.length - max + 1);
+}
+
 function fleetDirectCardEl(sms, { as = "captain" } = {}) {
   const isAuto = as === "auto";
   const card = document.createElement("div");
@@ -8495,19 +8577,11 @@ function fleetDirectCardEl(sms, { as = "captain" } = {}) {
   const startBtn = document.createElement("button");
   startBtn.className = "fleet-btn";
   startBtn.textContent = "+ Session";
-  startBtn.title = "Start a fresh session here (you pick the project)";
+  startBtn.title = "Start a fresh session - pick from your usual folders, or browse";
   startBtn.addEventListener("click", async (e) => {
     e.stopPropagation();
-    // Must have a real cwd: augmentSecondMatesWithSessions filters sessions on
-    // `s.cwd` truthy, so a session opened with cwd="" can never be matched back
-    // into the Direct list - it starts, but is unfindable from the fleet tree
-    // ever after ("new session hamnar inte under captain - hittar inte tillbaka").
-    const folder = await window.helm.pickFolder();
-    if (!folder) {
-      return;
-    }
-    openFreshDraftInPane(folder, "", { forceIndex: 0 });
-    navigateToPage("chat");
+    const rect = startBtn.getBoundingClientRect();
+    showContextMenu(rect.left, rect.bottom + 4, await newSessionFolderMenuItems());
   });
   top.append(anchor, idBox);
   if (!isAuto) {
