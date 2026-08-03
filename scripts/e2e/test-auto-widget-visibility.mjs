@@ -179,9 +179,20 @@ ok(orphan[0].startedBy === undefined, "a node whose session is gone gets no inve
 // Behaviour above proves the predicates are right; these prove the three places
 // that had the bug are wired to them, since those live inside DOM builders this
 // file cannot execute.
+// Matched on WHICH predicates the line uses, not on its exact spelling. The
+// previous version pinned the whole expression character for character, so
+// correcting the filter (an auto run has no session of its own any more) broke a
+// test that was supposedly guarding that very behaviour. A text-scan that pins
+// spelling fails on fixes and passes on regressions of a different shape - see
+// test-review-followups.mjs for the behavioural version of this assertion.
+const autoFilterLine = (code.match(/const autoSms = .*/) || [""])[0];
 ok(
-  /const autoSms = \(data\.secondMates \|\| \[\]\)\.filter\(\(s\) => isLiveWorkNode\(s\) && isAutoStartedNode\(s\)\)/.test(code),
-  "the Auto widget filters through the predicates"
+  /isAutoStartedNode\(s\)/.test(autoFilterLine) && /hasWorkUnderNode\(s\)/.test(autoFilterLine),
+  `the Auto widget filters on "started by auto" AND "has work under it": ${JSON.stringify(autoFilterLine)}`
+);
+ok(
+  !/isLiveWorkNode\(s\) && isAutoStartedNode\(s\)/.test(autoFilterLine),
+  "and no longer demands a session the auto flow cannot produce"
 );
 ok(
   (code.match(/isLiveWorkNode\(s\) && !isAutoStartedNode\(s\)/g) || []).length === 2,

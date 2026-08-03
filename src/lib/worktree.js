@@ -86,11 +86,25 @@ export function listWorktrees(projectPath) {
   for (const rawLine of output.split("\n")) {
     const line = rawLine.trim();
     if (line.startsWith("worktree ")) {
-      current = { path: line.slice("worktree ".length).trim(), branch: null, isMain: list.length === 0 };
+      current = {
+        path: line.slice("worktree ".length).trim(),
+        branch: null,
+        isMain: list.length === 0,
+        prunable: null,
+      };
       list.push(current);
     } else if (line.startsWith("branch ") && current) {
       // "branch refs/heads/foo" -> "foo"
       current.branch = line.slice("branch ".length).trim().replace(/^refs\/heads\//, "");
+    } else if (line === "prunable" && current) {
+      current.prunable = "prunable";
+    } else if (line.startsWith("prunable ") && current) {
+      // git's OWN verdict on whether `git worktree prune` would drop this entry,
+      // in the same machine-readable output we already parse. See pruneWorktrees:
+      // the previous attempt to learn this asked `prune --dry-run --verbose`, whose
+      // answer goes to stderr in an unquoted, path-less human format - so the veto
+      // built on it could never fire (independent review, 2026-08-03).
+      current.prunable = line.slice("prunable ".length).trim() || "prunable";
     }
   }
   return list;
@@ -112,17 +126,29 @@ export function pruneWorktrees(projectPath, { onlyIfAllMatch = null } = {}) {
   // from the side (independent review, 2026-08-03). It also silently deregisters a
   // worktree that is merely absent for an unrelated reason, e.g. an offline drive.
   //
-  // So: look first (--dry-run names what it WOULD prune), and only proceed when
-  // every one of those is a path the caller vouched for.
+  // So: look first, and only proceed when every entry git would drop is one the
+  // caller vouched for.
+  //
+  // The FIRST version of this guard asked `git worktree prune --dry-run --verbose`
+  // and parsed quoted paths out of its output. It never fired even once: git writes
+  // that report to stderr (which we do not capture) and its lines carry neither
+  // quotes nor filesystem paths, only the admin-entry name. So the match list was
+  // always empty, "every entry is vouched for" was vacuously true, and the guard was
+  // an assertion that could not fail - a fix that had replaced git's own refusal
+  // with a check of our own (independent review, 2026-08-03). It is now built on
+  // `worktree list --porcelain`, which reports git's OWN prunable verdict in a
+  // format we already parse, plus our own absent-on-disk test as a floor for git
+  // versions predating that field.
   if (onlyIfAllMatch) {
-    let planned;
+    let strays;
     try {
-      planned = runGit(resolved, ["worktree", "prune", "--dry-run", "--verbose"]);
+      strays = listWorktrees(resolved)
+        .filter((w) => !w.isMain && (w.prunable || !fs.existsSync(w.path)))
+        .map((w) => w.path)
+        .filter((p) => !onlyIfAllMatch(p));
     } catch (err) {
-      throw new Error(`git worktree prune --dry-run failed for ${resolved}: ${err.message}`);
+      throw new Error(`could not tell what git would prune in ${resolved}: ${err.message}`);
     }
-    const mentioned = [...planned.matchAll(/'([^']+)'/g)].map((m) => m[1]);
-    const strays = mentioned.filter((p) => !onlyIfAllMatch(p));
     if (strays.length > 0) {
       return { pruned: false, skipped: strays };
     }
