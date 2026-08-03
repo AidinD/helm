@@ -1,5 +1,19 @@
 # Decisions
 
+## 2026-08-03 - The flaky Jot bridge test was a real data-loss bug in @jot/core, fixed there
+
+`scripts/e2e/test-jot-ipc-bridge.mjs` failed roughly every other `npm run test:fast` run (never alone), with `EPERM ... rename 'todos.json.tmp' -> 'todos.json'` from `@jot/core`'s save.
+Two changes were tempting and both would have been wrong: give the test its own serialized slot in the runner, or retry the assertion.
+Either one hides a defect that belongs to the code Helm's Jot board actually writes through - the same path the auto-captain uses to move a card and tag it.
+
+**Decided.** Fixed in the jot repo (`src/core/storage.ts`, `src/core/store.ts`; see jot's DECISIONS 2026-08-03), no change on Helm's side.
+`LocalJsonStorage.save` got the same bounded retry-on-locked-target Helm's own `src/lib/atomicWrite.js` has had since 2026-07-27.
+That exposed the real root cause underneath: `TodoStore.reloadFromDisk` overwrote in-memory state with a one-revision-old file whenever a save was still in flight, silently reverting the change - so the mutation was lost even when the write itself succeeded.
+Reloads are now gated on in-flight writes.
+
+Worth remembering as a pattern: this flake was not test infrastructure noise, it was the only thing reporting a write Helm would otherwise have lost quietly on a Dropbox-synced board.
+Helm's parallel runner is doing useful work by making slow writes likely.
+
 ## 2026-08-02 - The auto-captain's first real start, and the three things it exposed
 
 The first genuine auto-start worked: the card was triaged, a session started in the right repo, the work got done.
