@@ -75,7 +75,11 @@ contextBridge.exposeInMainWorld("helm", {
   // the work, never from the UI - but the UI can sign off (setReviewStatus) and
   // run the record's declared checks, whose real exit codes are the half of the
   // evidence the author doesn't get to write.
-  listReviews: () => ipcRenderer.invoke("reviews:list"),
+  // opts.maxAgeMs lets a caller that only needs the COUNT accept a recent result
+  // instead of paying for a fresh one - the queue costs a git spawn per project in the
+  // main process, measured at up to 2 seconds (see reviews:list). The review PAGE
+  // passes nothing and always recomputes.
+  listReviews: (opts) => ipcRenderer.invoke("reviews:list", opts || {}),
   acknowledgeNoRecord: (taskId) => ipcRenderer.invoke("reviews:acknowledgeNoRecord", { taskId }),
   setReviewStatus: (taskId, status, note) => ipcRenderer.invoke("reviews:setStatus", { taskId, status, note }),
   runReviewChecks: (taskId) => ipcRenderer.invoke("reviews:runChecks", { taskId }),

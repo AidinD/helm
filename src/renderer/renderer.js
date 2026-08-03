@@ -1388,7 +1388,9 @@ async function paintReviewBadge(tally = null) {
   let t = tally;
   if (!t) {
     try {
-      const res = await window.helm.listReviews();
+      // A COUNT can be a few seconds old; recomputing costs a git spawn per project in
+      // the main process (up to 2 seconds, measured) and this runs on a 60s tick.
+      const res = await window.helm.listReviews({ maxAgeMs: 20_000 });
       t = res?.tally || null;
     } catch {
       return; // leave whatever is there rather than clearing a real count on a hiccup
@@ -9522,7 +9524,9 @@ async function paintReviewWidget(el = document.getElementById("widgetReviewBody"
   }
   let res = null;
   try {
-    res = await window.helm.listReviews();
+    // Same reasoning as the badge: this is a summary, not the page, so a recent result
+    // is the right trade against blocking the main process on every repaint.
+    res = await window.helm.listReviews({ maxAgeMs: 20_000 });
   } catch {
     return; // leave what is there; never blank a count on a hiccup
   }
@@ -12570,7 +12574,12 @@ setInterval(renderScheduledPromptBar, 60 * 1000);
 // review"). One board read a minute, in a renderer that already polls for more than
 // that - and the same call runs after any review action, so it never lags behind a
 // stamp by a whole tick.
-void paintReviewBadge();
+// The FIRST paint waits, deliberately. Startup is the busiest moment the main process
+// has (the housekeeping sweep alone blocks it, measured), and a badge nobody is looking
+// at in the first seconds is not worth adding to that queue.
+setTimeout(() => {
+  void paintReviewBadge();
+}, 15 * 1000);
 setInterval(() => {
   void paintReviewBadge();
 }, 60 * 1000);
