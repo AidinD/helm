@@ -88,6 +88,7 @@ import {
   planAutoTick,
   resolveTaskProject,
   selectStrandedAutoCards,
+  staleTriageEntries,
   taskFingerprint,
 } from "./lib/autoCaptain.js";
 import { secondMateAppendPrompt } from "./lib/secondMatePrompt.js";
@@ -3189,6 +3190,25 @@ function autoCaptainConfig() {
   return { enabled: cfg.autoCaptain?.enabled === true, triaged: cfg.autoCaptain?.triaged || {}, jot: cfg.jot || {} };
 }
 
+/** Drop triage memories for cards that are no longer set aside (see staleTriageEntries). */
+function forgetTriaged(taskIds) {
+  if (!taskIds || taskIds.length === 0) {
+    return;
+  }
+  try {
+    const cfg = loadConfig();
+    const triaged = { ...(cfg.autoCaptain?.triaged || {}) };
+    for (const id of taskIds) {
+      delete triaged[id];
+    }
+    writeConfig({ ...cfg, autoCaptain: { ...(cfg.autoCaptain || {}), triaged } });
+  } catch (err) {
+    // A failed write means the card is judged again next pass anyway - the wrong
+    // direction to fail in is the safe one here.
+    console.error("[helm] auto-captain could not forget a triage verdict:", err?.message || err);
+  }
+}
+
 /** Remember that this exact wording was judged unclear, so it isn't re-judged. */
 function rememberTriaged(taskId, fingerprint) {
   try {
@@ -3326,11 +3346,20 @@ function holdBack(jotConfig, todo, reason) {
     add: [NEEDS_CLARIFICATION_TAG],
     note: clarificationNote(reason),
   });
-  rememberTriaged(todo.id, taskFingerprint(todo));
   if (!res.ok) {
-    console.error("[helm] auto-captain could not tag a held task:", res.error);
+    // DO NOT remember it. The memory suppresses re-triage until the card's wording
+    // changes, so writing it when the tag and the explanation never reached the card
+    // makes the card permanently invisible to auto with nothing on it saying why -
+    // and a board write failing is not hypothetical, it is the locked-file case fixed
+    // in @jot/core the same day. The captain hit exactly this (2026-08-03): "jag körde run
+    // one pass" and nothing happened, on a card wearing no tag and carrying no note.
+    // Not remembering costs one repeated triage call on the next pass. Remembering
+    // wrongly costs the card.
+    console.error("[helm] auto-captain could not tag a held task, so it stays eligible:", res.error);
+    return false;
   }
-  return res.ok;
+  rememberTriaged(todo.id, taskFingerprint(todo));
+  return true;
 }
 
 /**
@@ -3358,7 +3387,25 @@ async function autoCaptainTick({ force = false } = {}) {
       autoLastTick = { at: Date.now(), acted: 0, held: 0, error: "Couldn't read the board." };
       return { ok: false, error: autoLastTick.error };
     }
-    const { act, skipped } = planAutoTick(state, { running: autoRuns.size, triaged, handledIds: new Set(autoRuns.keys()) });
+    // Forget any card that is no longer set aside - most importantly one whose
+    // "needs-clarification" tag you took off, which is the gesture for "look at this
+    // again" and until now meant nothing. Done before planning, so the same pass that
+    // notices acts on it.
+    const stale = staleTriageEntries(state, triaged);
+    let effectiveTriaged = triaged;
+    if (stale.length > 0) {
+      effectiveTriaged = { ...triaged };
+      for (const id of stale) {
+        delete effectiveTriaged[id];
+      }
+      forgetTriaged(stale);
+      console.log(`[helm] auto-captain: ${stale.length} card${stale.length === 1 ? "" : "s"} no longer set aside - will be judged again`);
+    }
+    const { act, skipped } = planAutoTick(state, {
+      running: autoRuns.size,
+      triaged: effectiveTriaged,
+      handledIds: new Set(autoRuns.keys()),
+    });
     for (const todo of act) {
       // WHERE. A list with no folder binding cannot be acted on, and saying that
       // plainly is more useful than a triage verdict about the wording.
@@ -3472,7 +3519,19 @@ async function autoCaptainTick({ force = false } = {}) {
       }
       acted += 1;
     }
-    autoLastTick = { at: Date.now(), acted, held, waiting: skipped.length, error: null };
+    // The cards this pass declined to start, WITH the reason, so the widget can say
+    // so. Without it "nothing happened" was the entire user-visible output of a pass
+    // that had looked at a card and decided against it - and the one feature that
+    // spends money unattended is the last place where silence should mean anything.
+    // Trimmed to what a row needs; the full explanation lives on the card itself.
+    autoLastTick = {
+      at: Date.now(),
+      acted,
+      held,
+      waiting: skipped.length,
+      setAside: skipped.slice(0, 8).map((s) => ({ id: s.todo?.id || null, title: s.todo?.text || "(untitled)", reason: s.reason })),
+      error: null,
+    };
     return { ok: true, acted, held, waiting: skipped.length };
   } catch (err) {
     autoLastTick = { at: Date.now(), acted, held, error: err?.message || String(err) };

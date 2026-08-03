@@ -5557,6 +5557,51 @@ button.primary {
   margin-bottom: 8px;
 }
 
+/* Cards a pass looked at and did not start. Deliberately quiet - this is
+   information, not an alert: the pass did the right thing, it just had no way to
+   say so. Uses the same muted/secondary tokens as the rest of the widget bodies so
+   it reads as part of the column rather than a warning bolted onto it. */
+.wd-auto-setaside {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.wd-auto-setaside:not(:empty) {
+  margin-bottom: 8px;
+}
+
+.wd-auto-setaside-head {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.wd-auto-setaside-row {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.wd-auto-setaside-title {
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 0 1 auto;
+}
+
+.wd-auto-setaside-why {
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1 1 auto;
+}
+
 /* Scheduled prompts (task 7d9d2188): the queued bar. The send-later button
    itself has no rules of its own on purpose - it is a plain .icon-btn, so it
    matches the paperclip and the mic and can never drift away from them. */

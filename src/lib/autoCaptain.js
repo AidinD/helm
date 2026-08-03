@@ -240,6 +240,41 @@ export function selectAutoQueuedTasks(state, opts = {}) {
 }
 
 /**
+ * Triage memories that no longer describe a card that is set aside.
+ *
+ * The memory exists so a card judged unclear is not re-judged on every tick, and it
+ * is keyed on the card's WORDING - so the only way to make auto look at a card again
+ * was to edit its text. Taking the "needs-clarification" tag off, which is the
+ * obvious gesture for "look at this again", did nothing at all: the card sat there
+ * eligible-looking and was skipped in silence every pass (the captain, 2026-08-03).
+ *
+ * Removing the tag now clears the memory. So does the card disappearing, which
+ * otherwise leaves an entry per deleted card in the config forever.
+ *
+ * @param {{todos: any[], tags: any[]}} state
+ * @param {Record<string,string>} triaged  taskId -> fingerprint
+ * @returns {string[]} taskIds whose memory should be forgotten
+ */
+export function staleTriageEntries(state, triaged = {}) {
+  const ids = Object.keys(triaged || {});
+  if (ids.length === 0) {
+    return [];
+  }
+  const tagId = tagIdByName(state?.tags, NEEDS_CLARIFICATION_TAG);
+  const byId = new Map((state?.todos || []).map((t) => [t.id, t]));
+  return ids.filter((id) => {
+    const todo = byId.get(id);
+    if (!todo) {
+      return true; // the card is gone
+    }
+    if (!tagId) {
+      return true; // the tag does not exist on the board at all any more
+    }
+    return !(Array.isArray(todo.tags) && todo.tags.includes(tagId));
+  });
+}
+
+/**
  * Cards still wearing the "auto-running" stripe with no run behind them.
  *
  * Nothing could ever take that stripe off after a restart. It goes on at dispatch
