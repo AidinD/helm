@@ -112,6 +112,7 @@ try {
       nodeCrew: node ? (node.crew || []).length : -1,
       autoRows: host.querySelectorAll(".fleet-branch").length,
       autoText: host.textContent,
+      archiveBtns: host.querySelectorAll(".fleet-archive-btn").length,
       captainText: captainHost.textContent,
     };
   })()`);
@@ -130,6 +131,9 @@ try {
     "and the widget does NOT claim nothing has started while a run is going"
   );
   ok(/Auto-captain/.test(res.autoText), "the column is titled Auto-captain, not Captain");
+  // A session-less project row had no controls at all, so there was no answer to "how
+  // do I archive this?" - measured on the RENDERED row, not on the branch that builds it.
+  ok(res.archiveBtns >= 1, `and the row can be archived from here (${res.archiveBtns} Archive control)`);
 
   // --- and it is not double-counted as the captain's own work ---------------
   ok(

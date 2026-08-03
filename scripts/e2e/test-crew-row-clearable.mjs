@@ -101,6 +101,31 @@ ok(
   "and never from the raw record alongside it"
 );
 
+// --- and the NODE itself must have a way off the board ----------------------
+// The Archive control was rendered only for a second mate backed by a real session.
+// The auto lane's project row never has one - it is a grouping row for its autopilot
+// runs - so it had no controls at all, and "hur arkiverar jag 2nd maten (helm) fran
+// auto?" had no answer (the captain, 2026-08-03). Same shape as the crew-row dead end one
+// level up: something visible with no way to act on it.
+{
+  const at = code.indexOf("function fleetSecondMateEl(");
+  const nextFn = code.indexOf("\nasync function", at);
+  const fn = code.slice(at, nextFn > at ? nextFn : at + 20000);
+  const guard = fn.indexOf("if (backingSession) {");
+  ok(guard >= 0, "the session-backed branch is still there");
+  const elseAt = fn.indexOf("} else {", guard);
+  ok(elseAt > guard, "and a session-LESS node now has its own branch");
+  const elseBranch = fn.slice(elseAt, elseAt + 1800);
+  ok(/archiveSecondMate\(sm\.secondMateId\)/.test(elseBranch), "which offers Archive, parking the row via the second-mate channel");
+  ok(/fleet-archive-btn/.test(elseBranch), "styled as the same Archive control as everywhere else, not a new-looking button");
+  // One request, not two: calling finishSecondMateArchive here would repeat it.
+  ok(
+    (elseBranch.match(/archiveSecondMate\(/g) || []).length === 1,
+    "and sends the archive request exactly once"
+  );
+  ok(/refreshDashboardIfVisible\(\)/.test(elseBranch), "then repaints, so the row goes without waiting for a poll");
+}
+
 console.log(
   exit === 0
     ? "VERIFY OK: no crew row can be shown without either being live or offering a way to clear it, and both crew lists judge the run the user is looking at."
