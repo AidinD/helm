@@ -54,6 +54,9 @@ import {
   hasUncommittedWork,
   pruneWorktrees,
   primaryBranch,
+  createWorktree,
+  worktreeExists,
+  worktreePathFor,
 } from "./lib/worktree.js";
 import { planSweep, describeSweep } from "./lib/worktreeSweep.js";
 import { docsStaleness, staleProjectsAsync, docsNudgeCandidates, DOCS_NUDGE_ACTIVE_DAYS } from "./lib/docsStaleness.js";
@@ -82,6 +85,7 @@ import {
   AUTO_CAPTAIN_TAGS,
   AUTO_RUNNING_TAG,
   autoRunLabel,
+  autoWorktreeFor,
   NEEDS_CLARIFICATION_TAG,
   TRIAGE_SYSTEM_PROMPT,
   buildTriageInput,
@@ -3205,6 +3209,50 @@ function rememberTriaged(taskId, fingerprint) {
  * `auto-running` comes off either way. A card that says a machine is working on
  * it when nothing is running is worse than an untagged one.
  */
+/**
+ * The isolated checkout one auto task runs in, created if it does not exist yet.
+ *
+ * Returns `{ ok: true, cwd, branchName }`, where `branchName` is null when the
+ * project is not a git repo - there is nothing to isolate then, so it runs in the
+ * folder itself and only one such task can run at a time (the old behaviour, kept
+ * deliberately rather than refusing to work at all on a non-repo).
+ *
+ * Reuse is by design: the id is derived from the task, so moving a card back to
+ * `open` and running it again returns to the SAME worktree with its previous work
+ * still in it, instead of starting a fresh one beside it.
+ */
+function ensureAutoWorktree(projectPath, taskId) {
+  try {
+    if (!fs.existsSync(path.join(projectPath, ".git"))) {
+      return { ok: true, cwd: projectPath, branchName: null };
+    }
+  } catch {
+    return { ok: true, cwd: projectPath, branchName: null };
+  }
+  const { id, branchName } = autoWorktreeFor(taskId);
+  const target = worktreePathFor(projectPath, id);
+  try {
+    if (fs.existsSync(target)) {
+      if (worktreeExists(projectPath, target)) {
+        return { ok: true, cwd: target, branchName, reused: true };
+      }
+      // A directory git does not know about. Deleting it could destroy work, and
+      // running in it would be running somewhere git cannot account for, so this
+      // reports rather than guesses.
+      return { ok: false, error: `${target} exists but is not a registered worktree - left alone` };
+    }
+    const made = createWorktree(projectPath, { id, branchName, deps: "junction" });
+    if (made.depsError) {
+      // Not fatal: the run can still read and edit files, it just may not be able
+      // to build or test until dependencies are there.
+      console.error(`[helm] auto-captain worktree has no dependencies (${made.depsError})`);
+    }
+    return { ok: true, cwd: made.worktreePath, branchName: made.branchName };
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err) };
+  }
+}
+
 function finishAutoRun(taskId) {
   const run = autoRuns.get(taskId);
   autoRuns.delete(taskId);
@@ -3212,10 +3260,17 @@ function finishAutoRun(taskId) {
     return;
   }
   const { jot } = autoCaptainConfig();
+  // WHERE the work is has to be on the card, and it is no longer simply the
+  // project folder: each auto run gets its own worktree so several can run in one
+  // repo at once, so the card must name the folder AND the branch or the work is
+  // effectively hidden.
+  const where = run.worktreePath
+    ? `in ${run.worktreePath} on branch ${run.branchName} (an isolated worktree of ${run.projectPath}, not merged)`
+    : `in ${run.projectPath}`;
   const res = setTaskTags(jot, taskId, {
     remove: [AUTO_RUNNING_TAG],
     status: "review",
-    note: `[Auto-captain ${new Date().toISOString().slice(0, 10)}] Finished its turn. The work is in ${run.projectPath} - read it and decide. Nothing was marked done.`,
+    note: `[Auto-captain ${new Date().toISOString().slice(0, 10)}] Finished its turn. The work is ${where} - read it and decide. Nothing was marked done.`,
   });
   if (!res.ok) {
     console.error("[helm] auto-captain finished a run but could not move the card:", res.error);
@@ -3291,7 +3346,24 @@ async function autoCaptainTick({ force = false } = {}) {
       // a synthetic node carrying the prompt's first line as its name. Found on
       // the captain's first real auto start, 2026-08-02. Idempotent - re-proposing an
       // existing id merges.
-      const smId = secondMateId("direct", where.projectPath);
+      // ITS OWN WORKTREE. Two auto tasks in one repo previously collided on a
+      // single second-mate identity (hashed from the first mate + path) and the
+      // second was refused as "busy with a turn" - and even if it had started, two
+      // agents editing the same files at once would have corrupted each other's
+      // work. An isolated checkout fixes both: the identity is derived from the
+      // path, so distinct paths are distinct mates with no extra key to keep in
+      // sync (the captain, 2026-08-03: "jag vill kunna jobba parallellt med auto tasks i
+      // samma projekt. därför vi har agenter och worktrees").
+      const isolated = ensureAutoWorktree(where.projectPath, todo.id);
+      if (!isolated.ok) {
+        // Could not isolate it. Running in the shared checkout anyway is what this
+        // change exists to prevent, so leave the card alone and let the next pass
+        // retry rather than start something that can trample a sibling run.
+        console.error(`[helm] auto-captain could not isolate "${todo.text.slice(0, 60)}": ${isolated.error}`);
+        continue;
+      }
+      const runCwd = isolated.cwd;
+      const smId = secondMateId("direct", runCwd);
       try {
         // Name it after the TASK, not just the project. The Auto widget shows one
         // row per run, and every run in the same repo read simply "helm" - which
@@ -3299,7 +3371,7 @@ async function autoCaptainTick({ force = false } = {}) {
         // two different tasks (the captain, 2026-08-03: "Namnet på auto sessionen").
         // The project stays in the name because a row is read on its own, without
         // the column header for context.
-        proposeSecondMate("direct", where.projectPath, {
+        proposeSecondMate("direct", runCwd, {
           name: autoRunLabel(where.projectPath, todo.text),
           brief: todo.text,
         });
@@ -3313,10 +3385,18 @@ async function autoCaptainTick({ force = false } = {}) {
         "",
         "This was started automatically from the Auto lane. When you are done, leave the work in a reviewable state -",
         "do not mark anything as finished on the board; the captain does that.",
+        ...(isolated.branchName
+          ? [
+              "",
+              `You are in an ISOLATED worktree of ${where.projectPath}, on branch ${isolated.branchName}.`,
+              "Other auto-started tasks may be running in their own worktrees of the same repo at the same time,",
+              "so stay inside this folder, commit your work on this branch, and do not merge, rebase or push.",
+            ]
+          : []),
       ].join("\n");
       const res = runRelayTurn(metaHome, {
         secondMateId: smId,
-        projectPath: where.projectPath,
+        projectPath: runCwd,
         message,
         allowDirect: true,
         startedBy: "auto",
@@ -3332,6 +3412,11 @@ async function autoCaptainTick({ force = false } = {}) {
         taskId: todo.id,
         title: todo.text,
         projectPath: where.projectPath,
+        // Where the work actually happens, and on which branch. Both are read by
+        // finishAutoRun (so the card says where to look) and by the housekeeping
+        // sweep (so a LIVE auto run's worktree is never swept out from under it).
+        worktreePath: isolated.branchName ? runCwd : null,
+        branchName: isolated.branchName,
         secondMateId: smId,
         startedAt: Date.now(),
       });
@@ -3559,7 +3644,23 @@ function sweepFinishedGoalWorktrees() {
   const removed = [];
   const kept = [];
   const failed = [];
-  const allRuns = loadGoalRunHistory();
+  // Goal runs from history, PLUS the auto runs in flight right now. An auto run is
+  // a relay, not a goal run, so it has no history record at all - and without this
+  // its worktree would look like an orphaned checkout and be swept out from under a
+  // session that is actively working in it. Presented as "running" because that is
+  // exactly what they are.
+  const allRuns = [
+    ...loadGoalRunHistory(),
+    ...[...autoRuns.values()]
+      .filter((r) => r.worktreePath)
+      .map((r) => ({
+        goalRunId: `auto:${r.taskId}`,
+        status: "running",
+        projectPath: r.projectPath,
+        worktreePath: r.worktreePath,
+        branchName: r.branchName,
+      })),
+  ];
   for (const projectPath of sweepCandidateProjects()) {
     // ONCE per repo. isBranchMerged resolves the primary branch on every call -
     // up to three git spawns each - so a repo with N kept branches paid it N

@@ -196,6 +196,43 @@ export function buildTriageInput(todo, category) {
   ].join("\n");
 }
 
+/**
+ * Branch-name prefix for an auto run's own worktree branch.
+ *
+ * Deliberately under `helm/` so the housekeeping sweep already recognises it as
+ * Helm's, and deliberately distinguishable from a goal run's branch so the sweep
+ * can apply a different rule: an auto run's worktree is the surface you REVIEW it
+ * on, so it survives until its branch is merged, whereas a goal run's worktree is
+ * removable once its commits are safe on the branch.
+ */
+export const AUTO_BRANCH_PREFIX = "helm/auto/";
+
+/**
+ * The worktree id and branch for one auto-started task.
+ *
+ * Each task gets its OWN worktree, which is what lets several run at once in the
+ * same repo (the captain, 2026-08-03: "jag vill kunna jobba parallellt med auto tasks i
+ * samma projekt"). Two agents editing the same files concurrently would corrupt
+ * each other's work, and before this they could not even start: a second mate's
+ * identity is derived from (first mate, path), so two tasks in one repo hashed to
+ * the SAME id and the second was refused as "busy with a turn".
+ *
+ * Isolating the path therefore fixes both halves at once - the identity follows
+ * the isolation, with no extra key to keep in sync.
+ *
+ * Derived from the task id (stable across re-runs of the same card, so resuming
+ * finds the same worktree) and readable at a glance in a folder listing.
+ */
+export function autoWorktreeFor(taskId) {
+  const short = String(taskId || "").replace(/[^a-zA-Z0-9]/g, "").slice(0, 8) || "unknown";
+  return { id: `auto-${short}`, branchName: `${AUTO_BRANCH_PREFIX}${short}` };
+}
+
+/** True for a branch created for an auto run's own worktree. */
+export function isAutoBranch(branchName) {
+  return String(branchName || "").startsWith(AUTO_BRANCH_PREFIX);
+}
+
 /** How much of the task title a run's label carries before it is cut. */
 const AUTO_LABEL_TITLE_MAX = 44;
 

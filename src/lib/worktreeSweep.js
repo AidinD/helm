@@ -72,6 +72,21 @@ export function isHelmBranch(branchName) {
   return HELM_BRANCH_PREFIXES.some((p) => name.startsWith(p));
 }
 
+/**
+ * An AUTO run's own branch (see autoCaptain.js's AUTO_BRANCH_PREFIX).
+ *
+ * These get a stricter rule than a goal run's: an auto run's worktree is the
+ * surface the captain REVIEWS it on - the card sits in "review" pointing at that
+ * folder - so removing it while the branch is unmerged would take away the thing
+ * the card tells him to go and read. A goal run's worktree is safe to remove once
+ * its commits are on its branch, because the Goal page keeps the run's own record
+ * and notes. Duplicated as a literal rather than imported so this module stays
+ * dependency-free and purely a decision table.
+ */
+export function isAutoRunBranch(branchName) {
+  return String(branchName || "").startsWith("helm/auto/");
+}
+
 function normalizePath(p) {
   // Windows gives back a mix of separators and cases between `git worktree
   // list` and a stored record; comparing raw strings silently fails to match a
@@ -164,6 +179,27 @@ export function planSweep({
     if (run && LIVE_STATUSES.has(String(run.status))) {
       keep.push({ kind: "worktree", target: wt.path, branch: wt.branch, reason: "a run is still using it" });
       continue;
+    }
+    // An auto run's worktree survives until its branch is merged: the board card
+    // is sitting in "review" naming that folder as the place to go and read the
+    // work, so removing it would delete the review surface the card points at.
+    // Merged means it has been dealt with, and then it is just clutter.
+    if (isAutoRunBranch(wt.branch)) {
+      let merged = false;
+      try {
+        merged = isMerged(wt.branch);
+      } catch {
+        merged = false;
+      }
+      if (!merged) {
+        keep.push({
+          kind: "worktree",
+          target: wt.path,
+          branch: wt.branch,
+          reason: "an auto run's work, not merged yet - this folder is what its card points at",
+        });
+        continue;
+      }
     }
     if (isResumable(run)) {
       keep.push({

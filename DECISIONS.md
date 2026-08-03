@@ -5523,3 +5523,54 @@ A handoff is one session's state; cutting it in two means each file holds a part
 and neither is the thing the session actually said.
 Better that a session focused on one of them gets its own topic when it happens, which the
 naming rules above now make likely.
+
+## 2026-08-03 - Auto tasks run in parallel by each getting its own worktree
+
+The captain: "jag vill kunna jobba parallellt med auto tasks i samma projekt. därför vi har agenter
+och worktrees."
+
+Two auto tasks in the same repo could not both run.
+A second mate's identity is hashed from (first mate, path), so two tasks in one project
+produced the SAME id and the second dispatch was refused as "busy with a turn".
+And that refusal was, accidentally, protective: had it started, both agents would have been
+editing the same working tree at the same time.
+
+**The decision: isolate the path, and let identity follow from it.**
+Each auto task now runs in its own worktree, `<repo>-worktrees/auto-<task>` on branch
+`helm/auto/<task>`, with dependencies provisioned as a junction so creation is near-instant.
+Because the second-mate id is derived from the path, distinct worktrees are distinct mates
+automatically - there is no second key to invent or keep in sync.
+One change closes both halves.
+
+The worktree id is derived from the TASK id, not from a timestamp, so moving a card back to
+`open` and running it again returns to the same worktree with its previous work still in it
+rather than starting a fresh one beside it.
+
+**Alternative rejected:** add a discriminator to `secondMateId` (a task-scoped hash) and keep
+running in the shared checkout.
+That would have unblocked the second dispatch and made the actual problem worse - two agents
+writing the same files, which does not parallelise work, it corrupts it.
+
+**Refusing beats falling back.** If a worktree cannot be created, the task is skipped and
+retried on the next pass. Running in the shared checkout "just this once" is exactly the state
+this change exists to prevent, and a silent fallback would reintroduce it precisely when
+several tasks are queued.
+A project that is not a git repo has nothing to isolate, so it runs in the folder itself - one
+task at a time, as before, rather than the feature refusing to work there at all.
+
+**The sweep needed two new rules, or it would have deleted the work.**
+An auto run is a relay, not a goal run, so it has NO goal-run history record - which to the
+housekeeping sweep looks exactly like an orphaned checkout.
+So (1) in-flight auto runs are handed to the sweep as running runs, protecting a folder a
+session is actively working in, and (2) a worktree on an auto branch is kept until that branch
+is MERGED, because the board card sits in "review" naming that folder as the place to go and
+read the work - removing it would delete the thing the card points at.
+A goal run's worktree stays removable once its commits are on its branch, because the Goal page
+keeps that run's own record and notes; an auto run has only the folder.
+Once merged, an auto worktree is cleanable like anything else, or they accumulate forever.
+
+**Evidence.** `test-auto-parallel-worktrees.mjs` builds a real repo, creates both worktrees,
+writes DIFFERENT content to the same file in each, and asserts both edits stand and the
+project's own checkout is untouched - the property that actually matters, not just that two ids
+differ. It also asserts the two sweep rules, and mutation-verifies the auto-branch rule (three
+checks turn red without it).
