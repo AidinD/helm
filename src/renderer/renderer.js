@@ -7737,7 +7737,9 @@ function fleetMateCardEl(mate, sms, boardSummary = {}) {
   // dispatchedEver stays over the FULL set (it did dispatch work at some point).
   const keepCrew = (r) => !(isTerminalRun(r) && isGoalRunAcknowledged(r.goalRunId));
   const dispatchedEver = sms.some((s) => s.crew.length > 0);
-  const crew = sms.flatMap((s) => s.crew.filter(keepCrew).map(crewLiveRun));
+  // Same ordering as fleetSecondMateEl, and for the same reason: keepCrew must judge
+  // the run the row will actually show, not the record behind it.
+  const crew = sms.flatMap((s) => s.crew.map(crewLiveRun).filter(keepCrew));
   const anyLive = crew.some(crewRunning);
   const anyNeeds = crew.some(crewNeedsCaptain);
   const saturated = pct != null && pct >= FIRST_MATE_HANDOFF_PCT;
@@ -7851,9 +7853,22 @@ function fleetSecondMateEl(sm) {
   // removed the button but not the row, leaving no way to clear them (the captain:
   // "I don't know what to do with them - I can't get rid of them"). Live runs
   // and sub-agents are never hidden this way.
+  // MAP FIRST, THEN FILTER. The two steps used to disagree about the same run: the
+  // filter read the PERSISTED record while the row rendered the LIVE/rehydrated view,
+  // and those differ exactly when a run was interrupted - the record still says
+  // "running" (no process ever wrote a terminal status), the view has already
+  // reclassified it as "interrupted". So an acknowledged interrupted run was kept by
+  // the filter (not terminal, said the record) and got no Done button (already
+  // acknowledged, said the row): a row with no way to clear it (the captain, 2026-08-03,
+  // pointing at the last one left: "vet inte hur jag ska göra med den").
+  //
+  // The comment below this used to describe the same dead end in its other shape,
+  // fixed then for the record's own statuses only. One instance closed, the class
+  // left open - so now everything downstream sees ONE view of a run, the one the user
+  // is looking at.
   const crew = sm.crew
-    .filter((r) => !(isTerminalRun(r) && isGoalRunAcknowledged(r.goalRunId)))
-    .map(crewLiveRun);
+    .map(crewLiveRun)
+    .filter((r) => !(isTerminalRun(r) && isGoalRunAcknowledged(r.goalRunId)));
   const anyLive = crew.some(crewRunning);
   const anyNeeds = crew.some(crewNeedsCaptain);
   const branch = document.createElement("div");
