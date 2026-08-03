@@ -1,5 +1,38 @@
 # Decisions
 
+## 2026-08-03 - The Auto widget was empty because a config line hid the row, not because of the widget
+
+A full day went into "auto runs are not visible in the Auto widget".
+Five real defects were found and fixed in front of the actual cause, and the cause was one entry in `archivedSecondMates`.
+
+Helm's own project node had been archived that morning while cleaning up after a test run.
+The dashboard excludes archived nodes, so from that moment every auto run dispatched under that project was invisible - permanently and silently, while the runs still happened, spent money and edited the repo.
+
+**The four that were not the cause, each genuine.**
+The widget filtered on `startedBy` living on a *session*, a field the app could no longer produce after auto tasks became autopilot runs under a project's second mate.
+A card stranded by an interrupted run wore `auto-running` forever, because the taskId-to-run link lived only in memory and only OPEN cards are ever re-examined.
+A triage that timed out was reported as a *verdict about the card* - so a perfectly clear card was told to "add what's missing", and the memory that suppresses re-judging was written even when the explanation never reached the board.
+And the switch was simply off, with "Run one pass" working anyway by design.
+
+**Decided.** Dispatching work to a node un-archives it, at all three dispatch sites, before proposing.
+Archiving means "I am done looking at this"; dispatching says the opposite, and nothing had connected the two.
+The captain's objection was the right question - if it was archived, shouldn't new work start a FRESH session, or its context keeps growing?
+It does start fresh, and that is now asserted rather than assumed: archiving also deletes the BINDING, session id included, so a re-propose yields `proposed` with `sessionId: null` and the session is minted on first engagement.
+Un-archiving restores a ROW, not a conversation. The day someone makes archiving keep the binding, that stops being true - hence the test.
+
+**The lesson, and it is mine.** Every check I ran was one level inside the thing he looks at: the filter is right, the data exists, the code is wired - reported as "the widget works".
+The test that finally settled it renders the real widget and reads its text, and it could have been written in the morning.
+It now also locks in the DIAGNOSIS: with the node archived it renders 0 rows and the exact empty state, so a future blank widget is one test run away from being distinguished from this one.
+
+**Two dead ends of the same shape, found on the way.**
+A crew row could be shown with no way to clear it: the filter that drops acknowledged terminal runs read the PERSISTED record while the row rendered the rehydrated view, and those differ for exactly one case - an interrupted run, whose record still says "running".
+Both crew lists now map to the live view before filtering, and the test asserts the invariant over every (status, acknowledged) pair rather than spot-checking call sites.
+And a session-less fleet node had no controls at all, so the auto lane's project row could not be archived from the board it appeared on; the backend already existed and never needed a session, only the button was missing.
+
+**A note on deleting dead code.** `autoRunLabel` was removed that morning as uncalled, correctly.
+But "uncalled" meant "never wired up", not "the problem is gone" - and the moment the rows rendered, the problem was visible again as five identical row labels printing whole prompts.
+Deleting an unused thing is right; concluding that its reason has expired is not.
+
 ## 2026-08-03 - v0.1.507 shipped before its review; the review then found three false claims
 
 The first release today that went out before the independent review finished, on the captain's instruction, with the review dispatched immediately after.
