@@ -103,12 +103,36 @@ export function listWorktrees(projectPath) {
  * without a prune the entry survived every sweep, and the sweep reported the same
  * phantom removal on every app start (independent review, 2026-08-03).
  */
-export function pruneWorktrees(projectPath) {
+export function pruneWorktrees(projectPath, { onlyIfAllMatch = null } = {}) {
+  const resolved = path.resolve(projectPath);
+  // `git worktree prune` is REPO-GLOBAL - it deregisters every absent worktree,
+  // not just the one we decided about. That matters because a detached worktree's
+  // HEAD is a reachability root: deregistering one makes its commit collectable,
+  // which is the very hazard the detached-worktree guard exists to prevent, reached
+  // from the side (independent review, 2026-08-03). It also silently deregisters a
+  // worktree that is merely absent for an unrelated reason, e.g. an offline drive.
+  //
+  // So: look first (--dry-run names what it WOULD prune), and only proceed when
+  // every one of those is a path the caller vouched for.
+  if (onlyIfAllMatch) {
+    let planned;
+    try {
+      planned = runGit(resolved, ["worktree", "prune", "--dry-run", "--verbose"]);
+    } catch (err) {
+      throw new Error(`git worktree prune --dry-run failed for ${resolved}: ${err.message}`);
+    }
+    const mentioned = [...planned.matchAll(/'([^']+)'/g)].map((m) => m[1]);
+    const strays = mentioned.filter((p) => !onlyIfAllMatch(p));
+    if (strays.length > 0) {
+      return { pruned: false, skipped: strays };
+    }
+  }
   try {
-    runGit(path.resolve(projectPath), ["worktree", "prune"]);
+    runGit(resolved, ["worktree", "prune"]);
   } catch (err) {
     throw new Error(`git worktree prune failed for ${projectPath}: ${err.message}`);
   }
+  return { pruned: true, skipped: [] };
 }
 
 /** Local branch names in the repo (no remotes), for the housekeeping sweep. */
@@ -372,14 +396,32 @@ export function hasUncommittedWork(worktreePath) {
   }
   return output
     .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean)
+    .filter((l) => l.trim().length > 0)
     .some((line) => {
-      // Porcelain v1: "XY path" (and "XY old -> new" for renames). Take the
-      // path, strip any surrounding quotes git adds for odd characters.
-      const raw = line.slice(2).trim().split(" -> ").pop() || "";
-      const rel = raw.replace(/^"|"$/g, "").replace(/\\/g, "/");
-      return !SWEEP_IGNORED_PREFIXES.some((p) => rel === p.replace(/\/$/, "") || rel.startsWith(p));
+      // Porcelain v1 is COLUMN-oriented: two status characters, a space, then the
+      // path ("XY path", or "XY old -> new" for a rename). Trimming first would
+      // lose the leading space that distinguishes " M" (tracked, modified) from
+      // "?? " (untracked), which is the whole distinction below.
+      const status = line.slice(0, 2);
+      const raw = line.slice(3).trim().split(" -> ").pop() || "";
+      // Not `.replace(/\\/g, "/")`: git C-quotes odd paths, and rewriting
+      // backslashes corrupts those escapes - goalOrchestrator's producedRealChanges
+      // documents the same trap and deliberately omits it.
+      const rel = raw.replace(/^"|"$/g, "");
+      // The trailing slash is required, so only the DIRECTORY (or something inside
+      // it) is bookkeeping. Accepting the bare name too meant a FILE literally
+      // called `.helm-goal` or `node_modules` was ignored - untracked content that
+      // exists nowhere else, which --force would then have deleted.
+      const isBookkeeping = SWEEP_IGNORED_PREFIXES.some((p) => rel.startsWith(p));
+      // ONLY an UNTRACKED bookkeeping path is ignorable. This used to ignore the
+      // path whatever its status, and once `ignoreBookkeeping` started passing
+      // --force to git, that turned into unattended data loss: in any repo that has
+      // not gitignored `.helm-goal/`, the run's own `git add -A` COMMITS those
+      // notes, so on the next run a modification to them is tracked - invisible to
+      // this check, and no longer refused by git either. An independent review
+      // reproduced the worktree being deleted with the work in it (2026-08-03).
+      // A tracked change is work, wherever it lives.
+      return !(isBookkeeping && status === "??");
     });
 }
 
@@ -547,7 +589,13 @@ export function isBranchMerged(projectPath, branchName, base) {
   const resolved = path.resolve(projectPath);
   const target = base || primaryBranch(resolved);
   try {
-    execFileSync("git", ["-C", resolved, "merge-base", "--is-ancestor", branchName, target], {
+    // FULLY QUALIFIED. A bare "helm/x" is ambiguous, and git prefers a TAG of that
+    // name - so a tag pointing at main could answer "yes, merged" while the BRANCH
+    // of the same name held unmerged commits, which `git branch -D` would then
+    // delete. Found by independent review, 2026-08-03. The base stays as given: a
+    // caller naming "main" means the branch, and refs/heads/ would break a caller
+    // passing a remote or a commit.
+    execFileSync("git", ["-C", resolved, "merge-base", "--is-ancestor", `refs/heads/${branchName}`, target], {
       windowsHide: true,
       stdio: "ignore",
     });
@@ -578,6 +626,13 @@ export function deleteBranch(projectPath, branchName, options = {}) {
   const resolved = path.resolve(projectPath);
   let flag = options.force ? "-D" : "-d";
   if (!options.force && options.mergedInto) {
+    // A branch is its own ancestor, so `mergedInto` naming the branch itself would
+    // pass trivially and hand out the forceful delete for nothing. Not reachable
+    // from the sweep (it always passes the primary branch), but an API that can be
+    // held that way eventually is.
+    if (options.mergedInto === branchName || options.mergedInto === `refs/heads/${branchName}`) {
+      throw new Error(`Refusing to delete ${branchName}: "mergedInto" names the branch itself.`);
+    }
     if (!isBranchMerged(resolved, branchName, options.mergedInto)) {
       throw new Error(
         `Refusing to delete ${branchName}: it is not fully merged into ${options.mergedInto}.`

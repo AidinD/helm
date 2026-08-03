@@ -150,14 +150,23 @@ ok(!/status:\s*"done"/.test(finishBody), "and never to done: that stays a joint 
 ok(/remove:\s*\[AUTO_RUNNING_TAG\]/.test(finishBody), "the running tag comes off - a card claiming work is in flight when nothing runs is worse than an untagged one");
 ok(/note:/.test(finishBody), "and it says on the card what happened and where the work is");
 
-// The handler is worthless if the dispatch never asks for it.
+// The handler is worthless if the dispatch never asks for it. An auto task is
+// dispatched as an AUTOPILOT RUN under the project's second mate (the captain's shape:
+// "en 2nd mate för det projektet och sedan autopilots under den för tasken"), so
+// the finish hook hangs off the run's completion, not off a relay turn.
+ok(/finishAutoRun\(todo\.id, result, meta\)/.test(mainSrc), "the run's completion calls the finish handler");
+ok(/dispatchedBy: smId/.test(mainSrc), "the run is dispatched UNDER the project's second mate, so it appears beneath it");
 ok(
-  /onFinished:\s*\(\)\s*=>\s*finishAutoRun\(todo\.id\)/.test(mainSrc),
-  "the auto dispatch actually passes it to the relay"
+  /const smId = secondMateId\("direct", where\.projectPath\)/.test(mainSrc),
+  "and that second mate is per PROJECT - one row per repo, with its runs underneath"
 );
-const relay = mainSrc.slice(mainSrc.indexOf("function runRelayTurn"));
-ok(/onFinished\s*=\s*null/.test(relay.slice(0, 400)), "the relay accepts the callback");
-ok(/if \(onFinished\) \{/.test(relay.slice(0, 6000)), "and calls it when the turn ends, not only on the happy path");
+// Anchored on the auto tick's own body. `mainSrc` has comments stripped (a source
+// check that matches a comment proves nothing), so the marker has to be code.
+const tick = mainSrc.slice(mainSrc.indexOf("const smId = secondMateId(\"direct\", where.projectPath)"));
+const tickBody = tick.slice(0, 4000);
+ok(/startGoalRun\(\{/.test(tickBody), "it goes through the same autopilot path a first mate's dispatch uses");
+ok(/writeReport\(metaHome, report\)/.test(tickBody), "and writes a report, so jumping into the second mate can tell you what happened");
+ok(/maxIterations: AUTO_RUN_MAX_ITERATIONS/.test(tickBody), "with a bounded number of iterations, not an open-ended run");
 
 console.log(code === 0 ? "VERIFY OK: auto-captain selection, project resolution, capping and re-triage guards behave as intended (safe defaults - never fires on ambiguity)." : "VERIFY FAILED.");
 process.exit(code);

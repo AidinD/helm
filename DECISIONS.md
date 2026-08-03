@@ -5574,3 +5574,77 @@ writes DIFFERENT content to the same file in each, and asserts both edits stand 
 project's own checkout is untouched - the property that actually matters, not just that two ids
 differ. It also asserts the two sweep rules, and mutation-verifies the auto-branch rule (three
 checks turn red without it).
+
+## 2026-08-03 - Auto tasks became autopilots under a per-project second mate
+
+Superseding the entry above ("Auto tasks run in parallel by each getting its own worktree").
+The captain, shown the result: "jag är inte säker på att jag gillar det ... min förhoppning vore att
+få se en 2nd mate för det projektet och sedan autopilots under den för tasken."
+
+He was right, and the shape he described is the fleet's own hierarchy - first mate → second
+mate (project) → crew (autonomous runs).
+Three shapes were tried; the third is the one the app already models.
+
+1. **Relay to a per-project second mate.** Serialised: one session cannot hold two turns, so
+   two tasks in a repo could not both run.
+2. **A second mate per TASK, each in its own worktree.** Unblocked it, and flattened the
+   hierarchy - two sibling rows with no project above them, each carrying a duplicate copy of
+   the same project context, and nowhere to go to ask "what is happening in this repo". It also
+   needed a whole second worktree convention (`helm/auto/<task>`) with its own cleanup rules,
+   parallel to the one the goal orchestrator already has.
+3. **Dispatch each task as CREW under the project's second mate.** An autopilot run already
+   creates its own worktree, its own branch and its own run record, so parallelism is free and
+   the housekeeping sweep needs no special rules at all - the two it had gained for shape 2
+   were deleted. The second mate becomes what it should be: one row per project, the place you
+   jump into to be walked through what its runs did.
+
+The run's completion, not a relay turn ending, is what moves the card to review - shape 2 moved
+it when the dispatching turn ended, which for a delegating mate would have been long before the
+work was done. The card's note now carries the outcome (committed / nothing committed / errored),
+the worktree, the branch, and where to jump in.
+A dispatch report is written on completion, so "jump in and ask what happened" has something to
+read rather than only commits in a folder.
+
+**What this cost:** an `autoRunLabel` helper (naming a per-task mate) is now unused by the app,
+and the per-task worktree helpers are deleted. Task titles live on the crew rows instead.
+
+## 2026-08-03 - The fix round re-opened the data-loss hole through a new door
+
+The re-review of the housekeeping fixes came back **not safe to push** again, and it was right
+about the most important thing: the fix for "the sweep cannot clean anything outside Helm's own
+repo" traded git's independent refusal for Helm's own single check, and that check was wrong in
+a way that mattered.
+
+`hasUncommittedWork` ignored `.helm-goal/` and `node_modules/` **whatever their git status**.
+That was harmless while `git worktree remove` still refused on untracked files. Once
+`ignoreBookkeeping` started passing `--force`, it became unattended deletion: in any repo that
+has NOT gitignored `.helm-goal/` - every repo except this one - the run's own `git add -A`
+COMMITS those notes, so on the next run a modification to them is TRACKED, invisible to the
+check, and no longer refused by git either.
+The review reproduced the worktree being deleted with the work in it.
+
+**The rule now:** only an UNTRACKED bookkeeping path is ignorable, and only the directory form.
+A tracked change is work wherever it lives, and a FILE literally named `.helm-goal` is content,
+not a folder to skip. Both are asserted against real git, including that the removal still
+SUCCEEDS when the only outstanding paths are untracked bookkeeping - the fix that made the
+feature work at all had no test, so dropping `--force` again was silently re-breakable.
+
+Three smaller ones from the same pass. `isBranchMerged` asked git about a bare name, and git
+prefers a TAG - so a tag could vouch for a branch that held unmerged commits, which `-D` would
+then delete; it now asks about `refs/heads/<branch>`. `deleteBranch({mergedInto})` accepted the
+branch itself as its own base, which passes trivially. And `git worktree prune` is repo-global:
+one missing Helm worktree deregistered every absent worktree in the repo, and deregistering a
+DETACHED one makes its commit collectable - the exact hazard the detached guard was added to
+prevent, reached from the side. It now looks first (`--dry-run`) and proceeds only when every
+registration it would drop is one the sweep decided about.
+
+**And a finding I had called fixed was not.** The plan-only run's deliverable was persisted on
+the run record but nothing ever read it back - the renderer's rehydration built its result from
+four fields and hardcoded the plan to null. Persisting data is not the same as restoring it, and
+I reported the former as if it were the latter.
+
+**A mistake of my own, found by running the suite rather than the file:** the new parallel test
+statically imported `secondMates.js` after setting `HELM_SECOND_MATES_PATH`. ESM imports are
+hoisted, and that module resolves its path once at import time - so the seam was ignored and the
+test wrote two stray entries into the DEV repo's real `second-mates.json`. Now a dynamic import
+after the env var is set. Any test seam that is a module-level constant has this shape.

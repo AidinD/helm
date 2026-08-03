@@ -239,7 +239,12 @@ ok(
 );
 ok(!/deleteBranch\([^)]*force:\s*true/.test(sweepBody), "never with force - that would drop an unmerged branch");
 ok(/sweepFinishedGoalWorktrees\(\);/.test(mainSrc), "it actually runs at startup, not just on demand");
-ok(/pruneWorktrees\(projectPath\)/.test(sweepBody), "and prunes registrations whose directory is gone, so they cannot be re-reported forever");
+ok(/pruneWorktrees\(projectPath, \{/.test(sweepBody), "and prunes registrations whose directory is gone, so they cannot be re-reported forever");
+// Prune is repo-GLOBAL: it deregisters every absent worktree, and deregistering a
+// detached one makes its commit collectable - the hazard the detached guard exists
+// to prevent, reached from the side. So it must be gated on every path it would
+// touch being one we planned.
+ok(/onlyIfAllMatch:/.test(sweepBody), "only when every registration it would drop is one the sweep decided about");
 // Deferred off the startup path: every git call in the sweep is synchronous, and a
 // repo with many kept branches froze the main thread for seconds before first paint.
 ok(
