@@ -47,7 +47,13 @@ export const sessionsRoot = path.join(CLAUDE_ROOT, "claude-code-sessions");
 // Transcripts live at the REAL ~/.claude/projects (written by the CLI, not the
 // MSIX desktop app), which a standalone process can read directly - no
 // virtualization fallback needed here (verified 2026-07-11).
-export const projectsRoot = path.join(os.homedir(), ".claude", "projects");
+// HELM_PROJECTS_ROOT is a TEST seam. Without it the transcript index could not be
+// tested at all - the only available root was the real one, 292 directories of the
+// user's own history, which a test must neither depend on nor write into. Resolved once
+// at import time like every other seam in this codebase, so a test must set it BEFORE
+// importing this module (ESM imports are hoisted; a static import reads the ambient
+// value and the seam is silently ignored).
+export const projectsRoot = process.env.HELM_PROJECTS_ROOT || path.join(os.homedir(), ".claude", "projects");
 
 /**
  * The sessions metadata lives under a nested <accountId>/<deviceId> folder.
@@ -125,6 +131,84 @@ export function encodeProjectDir(cwd) {
   return cwd.replace(/[^a-zA-Z0-9]/g, "-");
 }
 
+// An index of transcript FILE NAME -> the project dirs that contain it.
+//
+// findTranscriptPath used to answer every lookup by stat-ing the same candidate path in
+// every project directory: 292 statSync calls per id on this machine, measured at 25ms a
+// lookup, and 938ms for the 40 lookups a session list does. Callers loop over sessions
+// (session:liveSubAgents, the status classifier, the context-size estimate), so that cost
+// multiplies - and it is all synchronous in the Electron main process, which is Aidin's
+// "hela appen laggar faktiskt till ibland" (measured 2026-08-03: a trivial IPC took
+// 1672ms in the first seconds after paint, against 3ms in a settled app).
+//
+// It also explains "mycket segare an tidigare" without any code having changed: the cost
+// is proportional to how many project directories exist, and that grows every day. 419 MB
+// across 1155 files in 292 directories here.
+//
+// One pass over the directories builds the whole map, and a lookup then stats only the
+// one or two real candidates. Short TTL rather than a permanent cache: a transcript file
+// appears the moment a new session starts, and a stale index must never make a live
+// session look transcript-less. A MISS also forces one rebuild, so a brand-new session
+// resolves immediately instead of waiting out the TTL.
+const TRANSCRIPT_INDEX_TTL_MS = 5000;
+// Cooldown between MISS-triggered rescans. Keyed on when a rescan last happened, NOT on
+// the index's age: a freshly built index is exactly when a just-created transcript is
+// most likely to be absent from it, so gating on age refused to rescan in the one case
+// that needed it. Caught by test-transcript-index, which is why that test asserts a
+// new file resolves rather than only that lookups are fast.
+const TRANSCRIPT_MISS_RESCAN_COOLDOWN_MS = 1000;
+let transcriptIndex = null; // { at, byFile: Map<string, string[]> }
+let lastMissRescanAt = 0;
+
+function buildTranscriptIndex() {
+  const byFile = new Map();
+  let projectDirs;
+  try {
+    projectDirs = fs.readdirSync(projectsRoot, { withFileTypes: true });
+  } catch {
+    return { at: Date.now(), byFile };
+  }
+  for (const entry of projectDirs) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+    const dir = path.join(projectsRoot, entry.name);
+    let files;
+    try {
+      files = fs.readdirSync(dir);
+    } catch {
+      continue;
+    }
+    for (const f of files) {
+      if (!f.endsWith(".jsonl")) {
+        continue;
+      }
+      const list = byFile.get(f);
+      if (list) {
+        list.push(path.join(dir, f));
+      } else {
+        byFile.set(f, [path.join(dir, f)]);
+      }
+    }
+  }
+  return { at: Date.now(), byFile };
+}
+
+function transcriptIndexFresh() {
+  if (!transcriptIndex || Date.now() - transcriptIndex.at > TRANSCRIPT_INDEX_TTL_MS) {
+    transcriptIndex = buildTranscriptIndex();
+  }
+  return transcriptIndex;
+}
+
+/** Drop the cached index, e.g. right after creating a session whose transcript must resolve now. */
+export function invalidateTranscriptIndex() {
+  transcriptIndex = null;
+  // Also clear the rescan cooldown: an explicit invalidation means the caller KNOWS the
+  // filesystem changed, and it must not be throttled by a rescan that happened before it.
+  lastMissRescanAt = 0;
+}
+
 export function findTranscriptPath(transcriptIds) {
   const ids = (Array.isArray(transcriptIds) ? transcriptIds : [transcriptIds])
     .filter(Boolean)
@@ -132,44 +216,45 @@ export function findTranscriptPath(transcriptIds) {
   if (ids.length === 0 || !fs.existsSync(projectsRoot)) {
     return null;
   }
-  let projectDirs;
-  try {
-    projectDirs = fs.readdirSync(projectsRoot, { withFileTypes: true });
-  } catch {
-    return null;
-  }
-  for (const id of ids) {
-    const fileName = `${id}.jsonl`;
-    // Collect EVERY matching file across project dirs rather than returning
-    // on the first hit — after switchSessionRootFolder copies a transcript
-    // into a new project dir, the SAME session id briefly exists in two
-    // places (old + new folder) until the next real turn is written. Which
-    // one fs.readdirSync happens to list first is directory-enumeration
-    // order, not meaningfully "correct" — picking the most recently
-    // MODIFIED copy is the one actually reflecting the live conversation,
-    // and costs nothing extra when (the overwhelmingly common case) only
-    // one copy exists at all.
-    let best = null;
-    let bestMtime = -1;
-    for (const entry of projectDirs) {
-      if (!entry.isDirectory()) {
-        continue;
+  let index = transcriptIndexFresh();
+  let rebuilt = false;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    for (const id of ids) {
+      const candidates = index.byFile.get(`${id}.jsonl`) || [];
+      // Collect EVERY matching file rather than taking the first - after
+      // switchSessionRootFolder copies a transcript into a new project dir, the SAME
+      // session id briefly exists in two places until the next real turn is written.
+      // Which one the directory happens to list first is enumeration order, not
+      // meaningfully "correct"; the most recently MODIFIED copy is the one reflecting
+      // the live conversation. Usually there is exactly one, so this stats once.
+      let best = null;
+      let bestMtime = -1;
+      for (const candidate of candidates) {
+        let stat;
+        try {
+          stat = fs.statSync(candidate);
+        } catch {
+          continue; // indexed but gone since - the rebuild below will drop it
+        }
+        if (stat.mtimeMs > bestMtime) {
+          bestMtime = stat.mtimeMs;
+          best = candidate;
+        }
       }
-      const candidate = path.join(projectsRoot, entry.name, fileName);
-      let stat;
-      try {
-        stat = fs.statSync(candidate);
-      } catch {
-        continue;
-      }
-      if (stat.mtimeMs > bestMtime) {
-        bestMtime = stat.mtimeMs;
-        best = candidate;
+      if (best) {
+        return best;
       }
     }
-    if (best) {
-      return best;
+    // Nothing found. If the index could be older than a brand-new session's transcript,
+    // rebuild ONCE and look again - bounded so a genuinely unknown id cannot make every
+    // caller pay for a rescan.
+    if (rebuilt || Date.now() - lastMissRescanAt < TRANSCRIPT_MISS_RESCAN_COOLDOWN_MS) {
+      break;
     }
+    lastMissRescanAt = Date.now();
+    transcriptIndex = buildTranscriptIndex();
+    index = transcriptIndex;
+    rebuilt = true;
   }
   return null;
 }

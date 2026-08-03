@@ -23,7 +23,7 @@ import { continueOnMobile } from "./lib/remoteControl.js";
 import { suggestModelEffort } from "./lib/suggest.js";
 import { readTranscript } from "./lib/transcript.js";
 import { liveSubAgents } from "./lib/subAgents.js";
-import { findTranscriptPath, projectsRoot, encodeProjectDir } from "./lib/paths.js";
+import { invalidateTranscriptIndex, findTranscriptPath, projectsRoot, encodeProjectDir } from "./lib/paths.js";
 import { listSkills, skillMdPath } from "./lib/skills.js";
 import { appendUsageLog, readUsageSummary, computeSuggestionAccuracyVerdict } from "./lib/usage.js";
 import { judgeModelFit } from "./lib/judge.js";
@@ -2000,6 +2000,11 @@ ipcMain.handle("secondMates:propose", (_event, { firstMateId, project, brief, as
 // "only bump an existing entry" - used on resume/completion so resuming a
 // DESKTOP session (which Helm didn't create) never fabricates a stray entry.
 function recordHelmSession(sessionId, { cwd, model, effort, permissionMode, title, startedBy, createIfAbsent } = {}) {
+  // A brand-new session's transcript file has just appeared, and the transcript index is
+  // cached (paths.js). Drop it here rather than relying on the TTL, so the session
+  // resolves its own transcript on the very next lookup instead of looking empty for a
+  // few seconds - the one case where a cache could be user-visible rather than just fast.
+  invalidateTranscriptIndex();
   if (!sessionId) {
     return;
   }
