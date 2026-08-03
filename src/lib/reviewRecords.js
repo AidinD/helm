@@ -181,8 +181,39 @@ function criticalityProblems(rec) {
     } else if (typeof ind.findings !== "number") {
       problems.push("independentReview.findings must be a number - how many issues the independent pass raised (0 is a real answer)");
     }
+    // MUTATION EVIDENCE. A green suite proves the tests pass; it does not prove they
+    // would fail if the thing they guard broke. Every one of the worst misses on
+    // 2026-08-03 was a guard whose removal left the suite green: two checks asserted
+    // the NAMES of the functions being called and never the arguments, so swapping a
+    // safety option for a forceful one, and flipping a branch delete from safe to
+    // forced, were both invisible. At this tier a test nobody has tried to break is
+    // an untested test.
+    if (!hasMutationEvidence(rec)) {
+      problems.push(
+        "a critical item needs mutation evidence - break one guard on purpose, name it, and say which check went red. A guard whose removal leaves the suite green is not a guard (2026-08-03: two such survived a suite that read as thorough)"
+      );
+    }
   }
   return problems;
+}
+
+/**
+ * True when some evidence entry describes having BROKEN something and watched a
+ * check notice. Matched on the claim's own words rather than a checkbox, because a
+ * boolean field would be ticked by the same optimism that writes a guard nobody
+ * tried to break; a sentence has to describe a thing that actually happened.
+ */
+function hasMutationEvidence(rec) {
+  const claims = [
+    ...(Array.isArray(rec.evidence) ? rec.evidence : []).map((e) => `${e?.claim || ""} ${e?.detail || ""}`),
+    String(rec.summary || ""),
+  ];
+  return claims.some((text) => {
+    const t = text.toLowerCase();
+    const brokeIt = /\bmutat|mutation|broke (it|the guard|one)|disabl|commented out|removed the guard|reverted the guard/.test(t);
+    const noticed = /\bred\b|fail|caught|notice/.test(t);
+    return brokeIt && noticed;
+  });
 }
 
 /**
@@ -227,7 +258,30 @@ export function recordCaveats(rec) {
   for (const f of forced) {
     caveats.push(`Check "${f.label}" cannot fail (${f.why}) - a green result from it means nothing.`);
   }
+  // ONE FILE IS NOT THE SUITE. Running a single test file proves that file passes in
+  // isolation; it cannot show interference between tests, and interference is where
+  // some of the nastiest bugs hide. On 2026-08-03 a new test passed on its own and
+  // failed under the runner - because, run standalone, it had written to a real data
+  // file instead of its temp one. The file said green; the suite said what was true.
+  if (checks.length > 0 && !checks.some((c) => runsWholeSuite(c?.cmd))) {
+    caveats.push(
+      "No check runs the whole suite - single test files pass in isolation, so nothing here would have shown one test interfering with another."
+    );
+  }
   return caveats;
+}
+
+/**
+ * True for a command that runs the project's whole test suite rather than one file.
+ * Deliberately narrow and name-based: a broader guess would quietly accept a single
+ * file whose name happens to contain "test".
+ */
+function runsWholeSuite(cmd) {
+  const c = String(cmd || "").trim();
+  if (/\.mjs\b|\.js\b|\.ts\b/.test(c)) {
+    return false; // names a specific file
+  }
+  return /\bnpm (run )?test\b|\brun-tests(\.mjs)?\b|\bnpm run test:fast\b|\byarn test\b|\bpnpm test\b/.test(c);
 }
 
 function acceptanceRecordProblems(rec) {
