@@ -186,6 +186,51 @@ try {
   ok(single.widgetUsesBuilder && single.classicUsesBuilder, `both dashboards go through the shared builder (${J(single)})`);
   ok(single.strayAugment === 0, "and neither re-derives the fleet on its own");
 
+  // --- 4. THE WIDGET DASHBOARD HAS TO STAY LIVE ----------------------------
+  // Aidin, 2026-08-02, watching the auto-captain's first real run: the card moved
+  // to in-progress, the work actually got done, "men sen verkar inget hända ...
+  // Auto widgeten är fortfarande tillsynes tom".
+  //
+  // Two defects behind that one sentence, both about looking at stale data:
+  //   a) renderWidgetDashboard fetched mates, second mates, goals and budget
+  //      fresh, but read SESSIONS out of renderer memory - and the fleet widgets
+  //      are derived from sessions. The repaint fired by the pass that had just
+  //      created a session could not see it. (Same shape as #3 above.)
+  //   b) fillDashboardSections returned immediately for the widget dashboard, so
+  //      it never repainted on a poll either. Once rendered, frozen.
+  const live = await app.eval(`(() => {
+    const src = renderWidgetDashboard.toString();
+    const fill = fillDashboardSections.toString();
+    return {
+      fetchesSessions: /getSessions\\(\\)/.test(src),
+      assignsSessions: /state\\.sessions\\s*=/.test(src),
+      pollRepaints: /renderDashboardPage\\(\\)/.test(fill),
+      guardsDrag: /widgetDragId/.test(fill),
+      hasFingerprint: typeof widgetDashboardFingerprint === "function",
+    };
+  })()`);
+  ok(live.fetchesSessions && live.assignsSessions, `the widget render fetches sessions itself (${J(live)})`);
+  ok(live.pollRepaints, "and a poll tick can repaint the widget dashboard instead of returning immediately");
+  ok(live.guardsDrag, "while still refusing to repaint mid-drag - the original reason for the guard");
+  ok(live.hasFingerprint, "gated on a fingerprint so an unchanged board is not rebuilt every tick");
+
+  // The fingerprint must MOVE when a session appears or changes status, or the
+  // gate silently reintroduces the frozen dashboard.
+  const fp = await app.eval(`(() => {
+    const before = widgetDashboardFingerprint();
+    const saved = state.sessions;
+    state.sessions = [...(saved || []), { sessionId: "probe-1", status: "active", startedBy: "auto", lastActivityAt: 1, cwd: "D:/x" }];
+    const added = widgetDashboardFingerprint();
+    state.sessions = state.sessions.map(s => s.sessionId === "probe-1" ? { ...s, status: "waiting" } : s);
+    const changed = widgetDashboardFingerprint();
+    state.sessions = saved;
+    const restored = widgetDashboardFingerprint();
+    return { before, added, changed, restored };
+  })()`);
+  ok(fp.before !== fp.added, "a new session changes the fingerprint - this is the auto-captain case exactly");
+  ok(fp.added !== fp.changed, "so does a status change on an existing one");
+  ok(fp.before === fp.restored, "and an unchanged board fingerprints identically, so idle ticks do nothing");
+
   const errs = app.getConsoleErrors();
   ok(errs.length === 0, `no console errors${errs.length ? ": " + errs[0].text.slice(0, 200) : ""}`);
 } catch (e) {
