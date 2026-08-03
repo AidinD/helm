@@ -13,6 +13,7 @@
 // purpose: each launches a real Electron window and several pin a fixed debug port,
 // so running them in parallel makes them fight over ports and focus.
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -81,10 +82,37 @@ if (failures.length) {
   process.exit(1);
 }
 
-console.log(`\n--- ${fast.length} fast tests (concurrent) ---`);
-const fastResults = await Promise.all(
-  fast.map(async (t) => ({ t, r: await run(process.execPath, [path.join("scripts", "e2e", t.file)], 120000) }))
-);
+// Concurrent, but BOUNDED. Promise.all over the whole list spawned all 57 node
+// processes at once, and some fast tests are not purely computational - a few
+// spawn a child of their own (the MCP server over stdio, git) and wait a fixed
+// number of milliseconds for it to answer. Under 57-way contention that child
+// can miss its window, and the test fails for load rather than for a defect:
+// test-fleet-state-tool failed twice in a row, passed on its own every time, and
+// tracking it by adding and removing an unrelated file was pure coincidence
+// (2026-08-03). A suite that fails at random is worse than a slow one, because
+// every real verification it is asked to back gets doubted too.
+const FAST_LANE_WIDTH = Math.max(2, Math.min(8, (os.cpus?.().length || 4) - 2));
+async function runPooled(items, width, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (true) {
+      const i = next++;
+      if (i >= items.length) {
+        return;
+      }
+      results[i] = await fn(items[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(width, items.length) }, worker));
+  return results;
+}
+
+console.log(`\n--- ${fast.length} fast tests (${FAST_LANE_WIDTH} at a time) ---`);
+const fastResults = await runPooled(fast, FAST_LANE_WIDTH, async (t) => ({
+  t,
+  r: await run(process.execPath, [path.join("scripts", "e2e", t.file)], 120000),
+}));
 for (const { t, r } of fastResults) {
   console.log(`${r.code === 0 ? "ok  " : "FAIL"}  ${t.file}`);
   if (r.code !== 0) {
