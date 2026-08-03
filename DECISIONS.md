@@ -5755,3 +5755,47 @@ asked to be thorough.
 writing the suite. Every finding in the day's two rounds was reachable by the method already in
 hand - build a temp fixture and run it - but the suite tested the cases the author had thought of.
 A suite written first also gives the author something to defend.
+
+## 2026-08-03 - The transcript is appended to, not rebuilt
+
+**Decision: a streamed message adds to the transcript instead of redrawing it, and the
+transcript container stays a flex column.**
+
+The renderer cleared and rebuilt every message on every streaming event: 11.8ms at 50
+messages, 32.6ms at 300, 97.1ms at 800, once per streamed block, on the one thread that
+also echoes keystrokes.
+That was the input lag, and it explains "segare an tidigare" without any code changing -
+the cost was proportional to the messages already on screen, and that number grows all day.
+
+renderPane now records what the pane's DOM shows - the count, the identity of the last turn,
+and the four bits of state that change how EARLIER messages are drawn - and appends only the
+new turns when the list is simply longer.
+Anything else falls back to the full rebuild.
+The alternative considered and rejected was caching a DOM node per turn and re-appending them
+all: it avoids rebuilding elements but still pays a full re-layout, and it needs the same
+guards against double-wiring, so it is the same work for less of the win.
+
+**Rejected by measurement: block layout for the transcript container.**
+What remains of a streamed block's cost is browser layout, and flex re-measures every item on
+a change, so block layout with a sibling margin looked like the obvious next step.
+It measured FOUR TIMES worse (28.7ms vs 7.5ms per block at 800 messages, 49ms vs 16.3ms at
+1600) and shifted the geometry by 10px.
+The comment on `.pane-scroll` records this so nobody "fixes" it again without measuring.
+The remaining option is `content-visibility` on off-screen messages, which makes the scroll
+height an estimate; in an auto-scrolling chat that risks visible jumping, so it was not taken
+speculatively.
+
+**The verification that mattered was not the timing.**
+The test compares the incrementally drawn transcript against a full rebuild of the same turns,
+element by element, because a faster renderer that draws a slightly different transcript is
+not a fix.
+Three real hazards only exist on the append path and each one loses content rather than merely
+looking odd: a tool result whose call is already drawn, a lone result with no call waiting, and
+a transcript RELOAD that replaces every turn object while keeping the count.
+
+**And a correction worth keeping:** the card for this said every streaming event rebuilt the
+composer as well, and told the next session to fix that FIRST because it was what he felt.
+It was wrong - the composer is only rebuilt when a session is opened or the layout changes -
+and the quoted evidence was a loosely worded comment, not a measurement.
+Diagnosing from a comment that sounds like it is about the hot path is the same mistake as
+measuring the step before the surface.
