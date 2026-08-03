@@ -253,6 +253,36 @@ export function planSweep({
 }
 
 /**
+ * Make a sweep's two lists tell one story: deduped, and disjoint.
+ *
+ * The sweep plans in two passes. In the first, a branch still checked out in a
+ * worktree it is about to remove is recorded as kept, "next sweep can take it" - and
+ * then the second pass, after the worktree is gone, takes it in this same sweep. The
+ * report then listed the same branch as BOTH deleted and kept-with-a-reason-it-
+ * survived, and inflated the kept count by exactly the number of branches deleted
+ * (independent review, 2026-08-03). This is the one report that says what an
+ * unattended deleter did to your repos, so a contradiction in it is not cosmetic.
+ *
+ * What was actually REMOVED wins: it is an observed outcome, where a keep is only a
+ * plan. Pure and exported so the invariant can be asserted directly - it lived inline
+ * in the Electron main process, where no test could reach it.
+ */
+export function reconcileSweepReport({ removed = [], kept = [] } = {}) {
+  const key = (x) => `${x.kind}:${x.target}`;
+  const removedKeys = new Set(removed.map(key));
+  const seen = new Set();
+  const outKept = kept.filter((k) => {
+    const id = key(k);
+    if (seen.has(id) || removedKeys.has(id)) {
+      return false;
+    }
+    seen.add(id);
+    return true;
+  });
+  return { removed, kept: outKept };
+}
+
+/**
  * A one-line, plain-language summary of a sweep. Used for the startup log and
  * the Goal page's housekeeping line.
  *

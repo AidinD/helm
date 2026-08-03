@@ -119,6 +119,16 @@ export function deriveSecondMates(runHistory, bindings = readBindings()) {
       byId.set(id, sm);
     }
     sm.crew.push(r);
+    // A project node is an AUTO node if anything under it was started by the
+    // auto-captain. The Auto widget needs this on the node, because after the
+    // reshape (2026-08-03) an auto task is no longer a session of its own - it is
+    // an autopilot run underneath the project's second mate, and the node itself
+    // is only ever "proposed" with no session bound. Sticky: one auto run makes the
+    // project's row the auto lane's, which is what the two columns must agree on so
+    // the same row cannot appear in both.
+    if (r.startedBy === "auto") {
+      sm.startedBy = "auto";
+    }
   }
   for (const sm of byId.values()) {
     const b = bindings[sm.secondMateId];

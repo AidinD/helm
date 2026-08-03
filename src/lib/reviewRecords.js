@@ -211,8 +211,26 @@ function hasMutationEvidence(rec) {
   return claims.some((text) => {
     const t = text.toLowerCase();
     const brokeIt = /\bmutat|mutation|broke (it|the guard|one)|disabl|commented out|removed the guard|reverted the guard/.test(t);
-    const noticed = /\bred\b|fail|caught|notice/.test(t);
-    return brokeIt && noticed;
+    // "fail" and "red" matched anywhere, including inside a DENIAL - so a record
+    // stating that breaking the guard left the suite green satisfied the gate written
+    // to catch exactly that, as did an empty detail behind a boilerplate claim
+    // (independent review, 2026-08-03). Three narrowings: the sentence must say a
+    // check went red, must name what noticed, and must not be a denial. Deliberately
+    // strict - this only gates the critical tier, where a false rejection costs a
+    // rewritten sentence and a false acceptance costs the whole point of the gate.
+    const noticed = /went red|turned red|\bred\b|failed|caught it|caught the|did notice|was noticed/.test(t);
+    const namesWhatNoticed = /\btest|\bcheck|\bsuite|\bspec|\bassert|scripts\//.test(t);
+    // Real evidence can point at what it ran. "broke one guard, a check failed" is
+    // technically all the right words and tells a reader nothing they could go and
+    // repeat, so it does not clear the bar for a critical claim.
+    const identifiesTheCheck = /[\w-]+\.(mjs|cjs|[jt]s|py)|scripts\/|\btest-[\w-]+|npm (run )?test|\bsuite\b|\bwhole suite\b/.test(t);
+    const denies =
+      /\bno (mutation|test|check)|not mutat|without mutat|stayed green|remained green|still green|nothing (failed|noticed|caught|went red)|did ?n[o']?t (fail|notice|catch)|no ?(test|check)s? (failed|noticed|caught)|none (failed|noticed)/.test(
+        t
+      );
+    // An empty sentence describes nothing, whatever words it borrows.
+    const hasSubstance = t.replace(/\s+/g, " ").trim().length >= 60;
+    return brokeIt && noticed && namesWhatNoticed && identifiesTheCheck && hasSubstance && !denies;
   });
 }
 
@@ -278,10 +296,29 @@ export function recordCaveats(rec) {
  */
 function runsWholeSuite(cmd) {
   const c = String(cmd || "").trim();
-  if (/\.mjs\b|\.js\b|\.ts\b/.test(c)) {
-    return false; // names a specific file
+  // THE RUNNER FIRST. `node scripts/run-tests.mjs` names a .mjs file and IS the whole
+  // suite, so the "names a specific file" rule below used to reject this repo's own
+  // canonical way of running everything - the `run-tests` alternative sat behind an
+  // early return that always fired first, so it was dead (independent review,
+  // 2026-08-03). A caveat that cries wolf on the correct command is one people learn
+  // to ignore.
+  const runner = /\brun-tests(\.[cm]?js)?\b|\bnpm (run )?test\b|\byarn test\b|\bpnpm (run )?test\b|\bvitest run\b|\bjest\b|\bpytest\b|\bcargo test\b|\bdotnet test\b|\bgo test\b/.test(c);
+  if (!runner) {
+    return false;
   }
-  return /\bnpm (run )?test\b|\brun-tests(\.mjs)?\b|\bnpm run test:fast\b|\byarn test\b|\bpnpm test\b/.test(c);
+  // A filter argument turns the runner into a SUBSET of the suite, which is exactly
+  // what this predicate exists to distinguish. `npm run test:fast -- worktree` ran 2
+  // of 49 files and was accepted as the whole suite. Everything after a bare `--`, or
+  // any trailing bare word after the runner, counts as a filter. Ignore flags
+  // (`--fast`, `-x`) and path-shaped words, which select the runner itself.
+  const withoutRunner = c.replace(/^.*?\b(run-tests(\.[cm]?js)?|test(:[a-z0-9-]+)?|vitest run|jest|pytest|cargo test|dotnet test|go test)\b/, "");
+  const args = withoutRunner.split(/\s+/).filter(Boolean);
+  // Anything left that is not a flag, not the `--` separator and not a
+  // run-everything wildcard (`./...`) selects a subset: a name to grep test titles
+  // by, or a single file. `npm run test:fast -- worktree` ran 2 of 49 files and was
+  // being accepted as the whole suite.
+  const filters = args.filter((a) => a !== "--" && a !== "run" && !a.startsWith("-") && !a.includes("..."));
+  return filters.length === 0;
 }
 
 function acceptanceRecordProblems(rec) {

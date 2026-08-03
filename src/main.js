@@ -55,7 +55,7 @@ import {
   pruneWorktrees,
   primaryBranch,
 } from "./lib/worktree.js";
-import { planSweep, describeSweep } from "./lib/worktreeSweep.js";
+import { planSweep, describeSweep, reconcileSweepReport } from "./lib/worktreeSweep.js";
 import { docsStaleness, staleProjectsAsync, docsNudgeCandidates, DOCS_NUDGE_ACTIVE_DAYS } from "./lib/docsStaleness.js";
 import { loadDomains, registerDomain, removeDomain } from "./lib/domains.js";
 import { ensureMates, activeMates, findMateById, loadMates, renameMate, retireAndRespawn, bindMateSession, consumeMateHandoff, setMatePersona, rethemeMateNames, retireMateSlot, clampMateSlots, MATE_SLOT_COUNT, MATE_SLOT_MAX } from "./lib/mates.js";
@@ -87,6 +87,7 @@ import {
   clarificationNote,
   planAutoTick,
   resolveTaskProject,
+  selectStrandedAutoCards,
   taskFingerprint,
 } from "./lib/autoCaptain.js";
 import { secondMateAppendPrompt } from "./lib/secondMatePrompt.js";
@@ -2752,6 +2753,7 @@ function startGoalRun({
     projectPath,
     dispatchedBy: dispatch?.dispatchedBy || null,
     tier: dispatch?.tier || null,
+    startedBy: dispatch?.startedBy || null,
   });
 
   // Persist a compact "running" record now, before the run does anything —
@@ -2778,6 +2780,18 @@ function startGoalRun({
     dispatchedBy: dispatch?.dispatchedBy || null,
     dispatchId: dispatch?.dispatchId || null,
     tier: dispatch?.tier || null,
+    // WHO started this run, persisted on the run itself. It used to live only on a
+    // Helm session record, stamped by runRelayTurn - and when the auto-captain
+    // stopped going through runRelayTurn (it dispatches an autopilot run now), the
+    // value stopped existing anywhere in the app, so the Auto widget's filter for
+    // it could never match and the widget went blank while paid unattended runs
+    // were touching repos (independent review, 2026-08-03). The run record is the
+    // right home: it is what actually exists for the whole life of the work.
+    startedBy: dispatch?.startedBy || null,
+    // The board card this run was started for, so a restart can tell which cards
+    // still have a live run behind them and un-strand the ones that do not. Without
+    // it the taskId <-> run link existed only in memory (see selectStrandedAutoCards).
+    autoTaskId: dispatch?.autoTaskId || null,
     // Run CONFIG, persisted so a resume (goal:resume / resumeFleet) reconstructs
     // the run faithfully. Without these, a resumed run silently reverts to
     // runGoal's defaults - most dangerously verifyCommand -> undefined -> the
@@ -3250,6 +3264,62 @@ function finishAutoRun(taskId, result = null, meta = null) {
   }
 }
 
+/**
+ * Take the "auto-running" stripe off cards whose run did not survive a restart.
+ *
+ * Runs once at startup. A card is left alone if a run record links it to work that
+ * is genuinely still going - including in another Helm instance, whose fresh
+ * heartbeat is exactly what isForeignLiveRun reads. Everything else is moved to
+ * review with a note saying the run was interrupted, because the one thing the
+ * board must never do is claim a machine is working on something when none is.
+ */
+function reconcileStrandedAutoCards() {
+  const { jot } = autoCaptainConfig();
+  let stranded;
+  let records;
+  try {
+    records = loadGoalRunHistory();
+    const live = new Set(
+      records
+        .filter((r) => r?.autoTaskId && r.status === "running" && isForeignLiveRun(r))
+        .map((r) => r.autoTaskId)
+    );
+    for (const taskId of autoRuns.keys()) {
+      live.add(taskId);
+    }
+    stranded = selectStrandedAutoCards(readJotState(jot), { liveTaskIds: live });
+  } catch (err) {
+    console.error("[helm] could not check for stranded auto cards:", err?.message || err);
+    return { checked: false, freed: 0 };
+  }
+  let freed = 0;
+  for (const todo of stranded) {
+    // Say WHERE the work got to. An interrupted run still committed whatever it had
+    // finished, on its own branch, and a card that omits that reads as "nothing
+    // happened" when something did.
+    const rec = records.find((r) => r?.autoTaskId === todo.id) || null;
+    const where = rec?.worktreePath
+      ? `Whatever it had finished is in ${rec.worktreePath}${rec.branchName ? ` on branch ${rec.branchName}` : ""} (not merged).`
+      : "It may not have gotten as far as committing anything.";
+    const res = setTaskTags(jot, todo.id, {
+      remove: [AUTO_RUNNING_TAG],
+      status: "review",
+      note:
+        `[Auto-captain ${new Date().toISOString().slice(0, 10)}] The run was interrupted - Helm stopped before it finished. ` +
+        `${where} Nothing was marked done. Re-tag it "auto" to start over, or take it by hand.`,
+    });
+    if (res.ok) {
+      freed += 1;
+    } else {
+      console.error("[helm] could not free a stranded auto card:", res.error);
+    }
+  }
+  if (freed > 0) {
+    console.log(`[helm] auto-captain: freed ${freed} card${freed === 1 ? "" : "s"} left tagged auto-running by an interrupted run`);
+  }
+  return { checked: true, freed };
+}
+
 /** Hold a card back: tag it, say why on the card itself, and don't ask again. */
 function holdBack(jotConfig, todo, reason) {
   const res = setTaskTags(jotConfig, todo.id, {
@@ -3357,6 +3427,10 @@ async function autoCaptainTick({ force = false } = {}) {
             dispatchedBy: smId,
             dispatchId,
             tier: "crew",
+            // This is what makes the run visible in the Auto widget: the project's
+            // node inherits "auto" from any crew run carrying it (deriveSecondMates).
+            startedBy: "auto",
+            autoTaskId: todo.id,
             // The report the second mate hands you when you jump in and ask what
             // happened. Without it the run would finish into silence and the only
             // trace would be commits in a folder.
@@ -3728,15 +3802,9 @@ function sweepFinishedGoalWorktrees() {
       }
     }
   }
-  const seen = new Set();
-  const dedupedKept = kept.filter((k) => {
-    const key = `${k.kind}:${k.target}`;
-    if (seen.has(key)) {
-      return false;
-    }
-    seen.add(key);
-    return true;
-  });
+  // Deduped AND disjoint from what was removed - see reconcileSweepReport for why
+  // the same branch used to appear in both lists.
+  const { kept: dedupedKept } = reconcileSweepReport({ removed, kept });
   lastWorktreeSweep = { at: Date.now(), removed, kept: dedupedKept, failed };
   worktreeSweepPending = false;
   console.log(`[helm] worktree housekeeping: ${describeSweep(lastWorktreeSweep)}`);
@@ -4738,6 +4806,15 @@ function startDispatchWatcher() {
     } catch (err) {
       worktreeSweepPending = false;
       console.error("[helm] worktree housekeeping failed:", err?.message || err);
+    }
+    // Same deferral, same reason (board file I/O before first paint), and it has to
+    // run whether or not the auto-captain is switched on: a card stranded by an
+    // interrupted run keeps lying about being worked on even after the feature is
+    // turned off.
+    try {
+      reconcileStrandedAutoCards();
+    } catch (err) {
+      console.error("[helm] stranded auto card check failed:", err?.message || err);
     }
   }, 4000);
   // Put the auto-captain's tags on the board so the feature can actually be

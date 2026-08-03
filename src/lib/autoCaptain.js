@@ -201,40 +201,6 @@ export function buildTriageInput(todo, category) {
 // makes a worktree and a branch per run - a second convention of Helm's own was a
 // duplicate with its own cleanup rules to keep in sync (2026-08-03).
 
-/** How much of the task title a run's label carries before it is cut. */
-const AUTO_LABEL_TITLE_MAX = 44;
-
-/**
- * The name an auto-started run wears in the fleet: the project it works in, then
- * what it is doing.
- *
- * Every auto run in the same repo used to be called just "helm" - correct, and
- * useless: it does not say which task, and two runs in the same repo are then
- * indistinguishable. The project stays in the label because a fleet row is read
- * on its own, without its column header for context.
- *
- * Cut on a word boundary where there is one, so the label ends mid-thought rather
- * than mid-word, and with an ellipsis so a truncated title is never mistaken for
- * the whole task.
- */
-export function autoRunLabel(projectPath, taskText) {
-  const project = String(projectPath || "")
-    .split(/[\\/]/)
-    .filter(Boolean)
-    .pop();
-  const title = String(taskText || "").replace(/\s+/g, " ").trim();
-  if (!title) {
-    return project || "auto run";
-  }
-  let short = title;
-  if (short.length > AUTO_LABEL_TITLE_MAX) {
-    const cut = short.slice(0, AUTO_LABEL_TITLE_MAX);
-    const lastSpace = cut.lastIndexOf(" ");
-    short = (lastSpace > AUTO_LABEL_TITLE_MAX * 0.6 ? cut.slice(0, lastSpace) : cut).trimEnd() + "…";
-  }
-  return project ? `${project} · ${short}` : short;
-}
-
 /**
  * The note left on a card that was held back. It has to explain itself on the
  * board, where the user reads it - a bare "needs-clarification" tag would just be
@@ -271,6 +237,36 @@ export function selectAutoQueuedTasks(state, opts = {}) {
         !handled.has(t.id)
     )
     .sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
+}
+
+/**
+ * Cards still wearing the "auto-running" stripe with no run behind them.
+ *
+ * Nothing could ever take that stripe off after a restart. It goes on at dispatch
+ * (and the card moves to in-progress), and comes off in finishAutoRun - which is
+ * driven by an IN-MEMORY map, so a Helm that quits or crashes mid-run loses the
+ * link. The card cannot self-heal either: selectAutoQueuedTasks only looks at OPEN
+ * cards, and this one was moved to in-progress at dispatch. So it sat there
+ * claiming a machine was working on it, forever (independent review, 2026-08-03) -
+ * which the code that writes the stripe explicitly calls worse than no stripe.
+ *
+ * `liveTaskIds` is the caller's answer to "which of these really are still
+ * running", including runs owned by ANOTHER Helm instance - two instances are
+ * normal here, and stealing the other one's card would be the same bug mirrored.
+ *
+ * @param {{todos: any[], tags: any[]}} state
+ * @param {{liveTaskIds?: Set<string>}} [opts]
+ * @returns {any[]} the stranded todos
+ */
+export function selectStrandedAutoCards(state, opts = {}) {
+  const live = opts.liveTaskIds || new Set();
+  const runningTagId = tagIdByName(state?.tags, AUTO_RUNNING_TAG);
+  if (!runningTagId) {
+    return [];
+  }
+  return (state?.todos || []).filter(
+    (t) => Array.isArray(t.tags) && t.tags.includes(runningTagId) && !live.has(t.id)
+  );
 }
 
 /**

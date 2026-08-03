@@ -1,5 +1,38 @@
 # Decisions
 
+## 2026-08-03 - v0.1.507 shipped before its review; the review then found three false claims
+
+The first release today that went out before the independent review finished, on Aidin's instruction, with the review dispatched immediately after.
+It came back "do not rely on this build" and was right.
+The findings are recorded here because their shape matters more than the fixes.
+
+**The prune veto could not fire, ever.**
+`pruneWorktrees` claimed to ask git what it would deregister (`prune --dry-run --verbose`) and to proceed only when every entry was one the sweep had decided about.
+git writes that report to stderr, which the helper does not capture, and its lines carry neither quotes nor filesystem paths - so the parsed match list was always empty, "everything is vouched for" was vacuously true, and the guard was an assertion that could not fail.
+Meanwhile the guard had already replaced git's own independent refusal.
+Consequence, reproduced: a detached worktree absent from disk was deregistered, and its commit - reachable only through that worktree's HEAD - became collectable. That is exactly the loss the detached-worktree guard exists to prevent, reached from the side.
+**Decided.** The veto now reads git's own `prunable` verdict out of `worktree list --porcelain`, which we already parse, with an absent-on-disk test as a floor for older git.
+Alternative rejected: capture stderr and parse the human report. It is a human-facing format with no paths in it; building a data-loss guard on it is how this happened once already.
+
+**The Auto widget went blank again, through a new mechanism.**
+The widget filters on a node whose `startedBy` is `"auto"`. That value was only ever written by `runRelayTurn` onto a *session* record - and after the reshape the auto-captain dispatches an autopilot run instead, so nothing in the app could produce it any more.
+A card would be picked up, moved to in-progress, money spent and a repo edited, while the one control surface for the only unattended feature said "Nothing started yet."
+**Decided.** `startedBy` now lives on the RUN record, which exists for the whole life of the work, and a project node inherits it from any crew run underneath it. The widget also stopped requiring a session, because an auto node is `proposed` and never has one.
+The general rule, which is the part worth keeping: **a filter is only as good as whether the app can still produce the state it asks for.**
+
+**A card could claim a machine was working on it forever.**
+The `taskId` to `goalRunId` link lived in an in-memory map, so a Helm that quit mid-run never untagged the card - and the card could not self-heal, because the auto-captain only ever looks at OPEN cards and this one was moved to in-progress at dispatch.
+**Decided.** The run record carries `autoTaskId`, and a startup pass frees any card whose run is not live - asking the existing cross-instance heartbeat, so a second Helm's live run is never stolen. It runs whether or not the auto-captain is switched on: a stranded card lies either way.
+
+**Two smaller ones, same species.** `runsWholeSuite` rejected `node scripts/run-tests.mjs` - this repo's own way of running everything - while accepting `npm run test:fast -- worktree`, which runs 2 of 49 files; a caveat that cries wolf on the correct command is one people learn to ignore.
+And the mutation-evidence gate accepted a sentence stating that breaking the guard left the suite *green*, because it matched `fail` anywhere, including inside a denial.
+
+**Why the tests missed all of it, which is the real finding.**
+Every one of these guards had a test that read as thorough and asserted on something other than the behaviour: two matched source TEXT (`onlyIfAllMatch:` was present while the veto was absent), one fabricated its own precondition (`startedBy: "auto"` hand-written onto a fake session), and one asserted a value was persisted and stopped there - twice, on the same fix.
+A mutation matrix of 23 broke guards found 8 with no test that noticed their removal, and the pattern among them was consistent: **the guards written to close the previous review's findings were the untested ones.**
+**Decided.** Three structural additions rather than three more assertions: a behavioural prune test against real git (with the detached commit's survival as the assertion), `reconcileSweepReport` extracted from the Electron main process so the report's invariant can be asserted at all, and a dead-export ratchet - 15 known, failing on the sixteenth.
+Writing that last one immediately caught itself: the file naming the dead exports as strings counted as their caller, so all 15 looked alive. A test that makes itself pass, found only by running it. Which is the argument for running a new check before believing it.
+
 ## 2026-08-03 - The flaky Jot bridge test was a real data-loss bug in @jot/core, fixed there
 
 `scripts/e2e/test-jot-ipc-bridge.mjs` failed roughly every other `npm run test:fast` run (never alone), with `EPERM ... rename 'todos.json.tmp' -> 'todos.json'` from `@jot/core`'s save.

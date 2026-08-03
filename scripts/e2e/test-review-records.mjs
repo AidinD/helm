@@ -178,7 +178,20 @@ try {
   );
   ok(
     reviewRecordProblems(
-      crit({ independentReview: reviewed, evidence: [{ claim: "broke the guard on purpose", detail: "the suite caught it" }] })
+      crit({
+        independentReview: reviewed,
+        evidence: [
+          {
+            claim: "broke the guard on purpose",
+            // TIGHTENED 2026-08-03: this used to be the two words "the suite caught
+            // it", which was enough. It no longer is - the gate now wants the sentence
+            // to name what noticed, because the loose version also accepted records
+            // stating that breaking the guard left the suite GREEN, which is the exact
+            // condition it exists to catch (independent review).
+            detail: "removed the merged-branch check and test-worktree-sweep-live went red on two cases",
+          },
+        ],
+      })
     ).length === 0,
     "and it reads the claim's own words rather than a checkbox a hopeful author would tick");
   ok(reviewRecordProblems(complete({ criticality: "critical", independentReview: { by: "a", summary: "b", findings: 0 } }))
@@ -481,11 +494,23 @@ try {
     ),
     "and one that runs the suite is not"
   );
+  // CORRECTED 2026-08-03. This assertion used to expect `node run-tests.mjs --fast`
+  // to be flagged as "not the suite" on the grounds that it names a .mjs file - which
+  // encoded the bug rather than the rule: run-tests.mjs IS the whole suite, and the
+  // caveat therefore cried wolf on the one command this repo uses to run everything
+  // (independent review). Naming a file is only evidence of a subset when the file is
+  // not the runner.
   ok(
-    recordCaveats(complete({ criticality: "core", checks: [{ label: "u", cmd: "node run-tests.mjs --fast" }] })).some((c) =>
+    !recordCaveats(complete({ criticality: "core", checks: [{ label: "u", cmd: "node run-tests.mjs --fast" }] })).some((c) =>
       /No check runs the whole suite/.test(c)
     ),
-    "a command naming a .mjs file is a file, not the suite, however suite-like the name"
+    "the suite RUNNER counts as the suite even though it names a .mjs file"
+  );
+  ok(
+    recordCaveats(complete({ criticality: "core", checks: [{ label: "u", cmd: "npm run test:fast -- worktree" }] })).some((c) =>
+      /No check runs the whole suite/.test(c)
+    ),
+    "but a filter argument makes it a subset again, however suite-like the command looks"
   );
 
   // --- a command that cannot fail is not a pass ------------------------------

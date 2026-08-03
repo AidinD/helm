@@ -6550,6 +6550,7 @@ async function rehydrateGoalRuns() {
       error: record.error || null,
       escalation: record.escalation || null,
       latestPlan: record.plan || null,
+      latestNotes: record.notes || null,
       persisted: true,
     });
   }
@@ -7168,6 +7169,23 @@ function isLiveWorkNode(sm) {
 /** An auto-captain run, as opposed to something the captain started by hand. */
 function isAutoStartedNode(sm) {
   return sm.startedBy === "auto";
+}
+
+/**
+ * Is there anything under this node worth showing, even with no session bound?
+ *
+ * `isLiveWorkNode` alone was the SECOND time this exact widget went blank. After the
+ * reshape an auto task is an autopilot run under the project's second mate, and that
+ * node is only ever "proposed" - no session of its own, ever. So a filter that
+ * insists on a session excludes precisely the shape the feature now produces, and
+ * the widget said "Nothing started yet" while a paid unattended run was editing a
+ * repo (independent review, 2026-08-03).
+ *
+ * The general lesson, worth more than the fix: a filter is only as good as whether
+ * the app can still PRODUCE the state it asks for.
+ */
+function hasWorkUnderNode(sm) {
+  return isLiveWorkNode(sm) || (Array.isArray(sm.crew) && sm.crew.length > 0);
 }
 
 function augmentSecondMatesWithSessions(secondMates, mates = []) {
@@ -8879,7 +8897,7 @@ function widgetBodyAuto(data) {
   // auto captain's own column (Aidin: "auto ska vara en separat widget som ser
   // precis ut som captain men med autostartade sessioner").
   //
-  const autoSms = (data.secondMates || []).filter((s) => isLiveWorkNode(s) && isAutoStartedNode(s));
+  const autoSms = (data.secondMates || []).filter((s) => isAutoStartedNode(s) && hasWorkUnderNode(s));
   const frag = document.createDocumentFragment();
   frag.append(autoCaptainControlsEl());
   if (autoSms.length === 0) {
@@ -11700,6 +11718,17 @@ function goalRunDetailEl(run) {
   if (planContent) {
     progress.append(goalPlanBlock(planContent));
   }
+  // notes.md is the run's continuity between iterations (each one starts in fresh
+  // context), which makes it the record of what it believed as it went - and since
+  // .helm-goal/ is gitignored it is no longer committed anywhere either. It was being
+  // persisted AND read back across a restart, and then rendered nowhere at all, so
+  // the user-visible symptom was untouched by both halves of the earlier fix
+  // (independent review, 2026-08-03: "persisting is not restoring" - and restoring is
+  // not showing).
+  const notesContent = run.result?.notes ?? run.latestNotes ?? null;
+  if (notesContent) {
+    progress.append(goalPlanBlock(notesContent, "Notes (.helm-goal/notes.md)"));
+  }
 
   run.iterations.forEach((rec) => {
     progress.append(goalIterationCard(rec));
@@ -11822,11 +11851,11 @@ const GOAL_PHASE_LABELS = { research: "Research", plan: "Plan", implement: "Impl
 // An expandable block showing the current `.helm-goal/plan.md` content -
 // reuses the same <details>/.tool-group pattern as tool-call output elsewhere
 // in the app, rather than inventing a new expandable widget.
-function goalPlanBlock(planContent) {
+function goalPlanBlock(planContent, label = "Plan (.helm-goal/plan.md)") {
   const details = document.createElement("details");
   details.className = "tool-group goal-plan-block";
   const summary = document.createElement("summary");
-  summary.textContent = "Plan (.helm-goal/plan.md)";
+  summary.textContent = label;
   details.append(summary);
   const pre = document.createElement("pre");
   pre.className = "tool-call-output goal-plan-content";
