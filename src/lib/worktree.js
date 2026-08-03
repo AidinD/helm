@@ -58,19 +58,54 @@ function runGit(projectPath, args) {
  * should filter out `path.resolve(projectPath)` themselves.
  */
 export function listWorktreePaths(projectPath) {
+  return listWorktrees(projectPath).map((w) => w.path);
+}
+
+/**
+ * The same `git worktree list --porcelain` output, but WITH each worktree's
+ * checked-out branch and whether it is the repo's own primary working tree.
+ *
+ * The housekeeping sweep (worktreeSweep.js) needs the branch to decide whether
+ * a worktree is even one of Helm's, and needs to know which entry is the main
+ * checkout so it can never be a candidate for removal. `listWorktreePaths`
+ * delegates here rather than parsing the same output a second time - two
+ * parsers for one command is how they drift apart.
+ *
+ * A detached worktree has no `branch` line, so `branch` is null there; git
+ * always lists the primary working tree first, which is what `isMain` marks.
+ */
+export function listWorktrees(projectPath) {
   let output;
   try {
     output = runGit(projectPath, ["worktree", "list", "--porcelain"]);
   } catch (err) {
     throw new Error(`Failed to list worktrees for ${projectPath}: ${err.message}`);
   }
-  const paths = [];
-  for (const line of output.split("\n")) {
+  const list = [];
+  let current = null;
+  for (const rawLine of output.split("\n")) {
+    const line = rawLine.trim();
     if (line.startsWith("worktree ")) {
-      paths.push(line.slice("worktree ".length).trim());
+      current = { path: line.slice("worktree ".length).trim(), branch: null, isMain: list.length === 0 };
+      list.push(current);
+    } else if (line.startsWith("branch ") && current) {
+      // "branch refs/heads/foo" -> "foo"
+      current.branch = line.slice("branch ".length).trim().replace(/^refs\/heads\//, "");
     }
   }
-  return paths;
+  return list;
+}
+
+/** Local branch names in the repo (no remotes), for the housekeeping sweep. */
+export function listLocalBranches(projectPath) {
+  try {
+    return runGit(projectPath, ["for-each-ref", "--format=%(refname:short)", "refs/heads"])
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean);
+  } catch (err) {
+    throw new Error(`Failed to list branches for ${projectPath}: ${err.message}`);
+  }
 }
 
 /** True if `worktreePath` is currently a registered worktree of `projectPath`. */
@@ -286,6 +321,54 @@ export function hasUncommittedChanges(worktreePath) {
 }
 
 /**
+ * Paths inside a worktree that are Helm's own bookkeeping, not the run's work:
+ * the orchestrator's scratch folder and the provisioned dependencies.
+ */
+const SWEEP_IGNORED_PREFIXES = [".helm-goal/", "node_modules/"];
+
+/**
+ * True when the worktree has uncommitted changes that are actually WORK -
+ * anything outside Helm's own bookkeeping.
+ *
+ * `hasUncommittedChanges` alone cannot answer the housekeeping question. A
+ * finished run's worktree is essentially always "dirty" by that measure: the
+ * dependency junction shows up as an untracked `node_modules/`, and the
+ * orchestrator's `.helm-goal/` notes are untracked in every repo that has not
+ * gitignored them (Helm's own repo has since 2026-08-03; a work repo it runs a
+ * goal in has not). So a sweep keyed on the plain check would keep every
+ * junctioned worktree forever and quietly never clean anything - which is how
+ * this was caught: the live test's junctioned worktree was skipped.
+ *
+ * Same distinction goalOrchestrator's `producedRealChanges` already draws for
+ * deciding whether an iteration did real work; this is the cleanup-side twin.
+ *
+ * Fails SAFE: any git error returns true, so an unreadable worktree is treated
+ * as holding work and is kept.
+ */
+export function hasUncommittedWork(worktreePath) {
+  let output;
+  try {
+    output = execFileSync("git", ["-C", worktreePath, "status", "--porcelain"], {
+      encoding: "utf8",
+      windowsHide: true,
+    });
+  } catch {
+    return true;
+  }
+  return output
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .some((line) => {
+      // Porcelain v1: "XY path" (and "XY old -> new" for renames). Take the
+      // path, strip any surrounding quotes git adds for odd characters.
+      const raw = line.slice(2).trim().split(" -> ").pop() || "";
+      const rel = raw.replace(/^"|"$/g, "").replace(/\\/g, "/");
+      return !SWEEP_IGNORED_PREFIXES.some((p) => rel === p.replace(/\/$/, "") || rel.startsWith(p));
+    });
+}
+
+/**
  * Removes a worktree and, if it still exists as a branch ref, leaves the
  * branch itself alone (only the worktree checkout is removed — deleting the
  * branch is a separate, more destructive decision left to the caller).
@@ -327,7 +410,20 @@ export function removeWorktree(projectPath, worktreePath, options = {}) {
     throw new Error(`${resolvedWorktree} is not a registered worktree of ${resolvedProject}`);
   }
 
-  if (!options.force && fs.existsSync(resolvedWorktree) && hasUncommittedChanges(resolvedWorktree)) {
+  // `ignoreBookkeeping` narrows what counts as "uncommitted changes" to actual
+  // WORK, i.e. anything outside `.helm-goal/` and `node_modules/`. The
+  // housekeeping sweep needs it: a finished run's worktree always shows the
+  // dependency junction (and, in a repo that hasn't ignored it, the
+  // orchestrator's notes) as untracked, so the plain check would refuse to
+  // remove every single one. Deliberately NOT the same thing as `force` - this
+  // still refuses when there is real uncommitted work, so the sweep can never
+  // discard anything, whereas `force` discards regardless. The interactive
+  // per-run delete keeps the plain check and its explicit force-discard confirm.
+  // Evaluated lazily, AFTER the existence check: hasUncommittedChanges throws on
+  // a path that is already gone, which used to be short-circuited away.
+  const isDirty = () =>
+    options.ignoreBookkeeping ? hasUncommittedWork(resolvedWorktree) : hasUncommittedChanges(resolvedWorktree);
+  if (!options.force && fs.existsSync(resolvedWorktree) && isDirty()) {
     throw new Error(
       `Worktree has uncommitted changes: ${resolvedWorktree}. Pass { force: true } to remove anyway.`
     );

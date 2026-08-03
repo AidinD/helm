@@ -5321,3 +5321,75 @@ nothing - without it the test would pass on either implementation.
 Mutation-verified: removing the `startedBy` carry-over turns three checks red.
 `test-widget-dashboard-fixes.mjs` then measures the same claim on the rendered widget in
 a launched app, with a seeded auto run, and asserts it is NOT also listed under Captain.
+
+## 2026-08-03 - Autonomous runs left branches nobody could see; the root cause was a missing .gitignore line
+
+The captain found three leftover branches by hand.
+One of them pointed at work that had been merged in July.
+Two were from goal runs whose entire output was the orchestrator's own notes.
+
+**The cleanup already existed.** `goal:cleanupRun` removes a run's worktree and deletes its
+branch, gated on "fully merged" so no commit can be lost, and `runGoal` already auto-cleans
+a run that ends with ZERO commits.
+Both are correct.
+Neither fired.
+
+**Why the zero-commit auto-clean never fired.** `.helm-goal/` - the orchestrator's own
+notes.md, plan.md and phase.json - was not gitignored.
+So a research-only iteration committed its own working notes, the run ended with
+commitCount 1 instead of 0, and it therefore looked like a run that had produced something
+worth keeping.
+That is the whole reason two of the three branches existed.
+Ignoring the folder is the root-cause fix: a notes-only run now genuinely ends with zero
+commits and removes itself.
+It also stops 50-250 lines of an agent's scratch notes landing on master the moment such a
+branch is merged, and - a bonus, since `git clean -fd` does not touch ignored files - the
+notes now SURVIVE the reset after a failed iteration instead of being discarded.
+
+**Why the per-run cleanup never fired.** It is a button on a report row.
+Nothing swept the runs he never pressed, and a run whose record aged out of the 200-record
+history was visible NOWHERE - not on the Goal page, not in any report.
+So a sweep now runs unprompted at startup (and on demand), covering the residual cases the
+root-cause fix cannot: interrupted runs, aged-out records, and runs that DID produce commits
+he simply never cleaned up.
+
+**The decision that makes it safe to run unattended.** The sweep acts only where the action
+provably cannot lose anything, and the bias is explicit: under-cleaning is recoverable by
+hand, over-cleaning is not.
+A branch is deleted only when every commit on it is already on the primary branch and it is
+not checked out; a worktree is removed only when it holds no uncommitted work.
+Anything uncertain - unmerged, dirty, unreadable, or a run still using it - is KEPT and
+reported with its reason on the Autopilot page, because a sweep that reported only its
+successes would read as "everything is tidy" while an unmerged branch sat there forever.
+Blast radius is capped by branch NAME: only `helm/` and `maestro/` prefixes are ever
+considered, so a branch the captain made is never a candidate however merged or stale it looks.
+That limit is what makes it safe in a work repo with other contributors - and it does reach
+work repos, since it sweeps wherever a goal run has run.
+
+**Alternative rejected:** sweep on the run records alone.
+That is what left the third branch invisible - its record was gone while the branch
+remained. The sweep therefore reads the REPO as the source of truth and treats a missing
+record as "orphaned", not as "nothing to do".
+
+**Two things the tests caught that reasoning had not.**
+A finished worktree always looks dirty: the dependency junction shows up as an untracked
+`node_modules/`, and `.helm-goal/` is untracked in any repo that has not ignored it.
+Keyed on the plain uncommitted-changes check, the sweep would have kept every worktree
+forever and cleaned nothing - silently, looking like it worked.
+Hence `hasUncommittedWork`, the cleanup-side twin of goalOrchestrator's own
+`producedRealChanges`, and a new `removeWorktree({ ignoreBookkeeping: true })` that narrows
+what counts as work WITHOUT becoming a second name for `force` - it still refuses a worktree
+holding real changes, so the sweep can never discard anything.
+Second: the first version of the UI test passed while the line still read "no sweep has run
+yet" with a report sitting right there, because it read the DOM before the report arrived.
+The placeholder now says "checking" - a placeholder that states the opposite of the truth is
+a lie the user cannot distinguish from the truth.
+
+**Evidence.** `test-worktree-sweep.mjs` asserts every branch of the decision table
+(mutation-verified: disabling the merged gate or the dirty gate each turns three checks red).
+`test-worktree-sweep-live.mjs` runs it against real git with real worktrees INCLUDING a
+node_modules junction, and asserts the junction's shared target still has its contents
+afterwards - the exact damage a plain `git worktree remove` did to this repo, and cascaded
+into Jot's build output, the same day.
+`test-housekeeping-line.mjs` measures the line on the rendered page in a launched app and
+that sweeping twice removes nothing new.

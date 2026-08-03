@@ -1017,7 +1017,20 @@ function commitIteration(worktreePath, iterationNumber, summary) {
       windowsHide: true,
     });
     if (status.trim().length === 0) {
-      console.error(`[goalOrchestrator] Iteration ${iterationNumber} reported success but left no changes to commit.`);
+      // Expected, not an error, since `.helm-goal/` became gitignored on
+      // 2026-08-03: a research or plan iteration's only deliverable lives in
+      // there, so it legitimately has nothing to commit. Keeping this as a
+      // console ERROR would have every such run logging a scary line about
+      // reporting success while doing nothing - and it is a real "did nothing"
+      // signal only for an implement iteration, which `producedRealChanges`
+      // already measures properly (and which drives the no-net-progress stop).
+      //
+      // A run that ends with zero commits still auto-cleans its own worktree +
+      // branch (see the end of runGoal), which is the intended outcome for a
+      // run whose entire output was its own notes.
+      console.log(
+        `[goalOrchestrator] Iteration ${iterationNumber} had nothing to commit outside .helm-goal/ (normal for research/plan).`
+      );
       return false;
     }
     runGit(worktreePath, ["add", "-A"]);

@@ -203,6 +203,11 @@ contextBridge.exposeInMainWorld("helm", {
   // Report-back "Done + clean up": remove the worktree + delete the branch only
   // if it's merged (unmerged branches are kept). Keeps the run record.
   cleanupGoalRun: (opts) => ipcRenderer.invoke("goal:cleanupRun", opts),
+  // Housekeeping sweep across ALL finished runs: the report from the sweep that
+  // ran at startup, and a way to run one now. Only removes what provably loses
+  // nothing; whatever it kept comes back with a reason to show.
+  getWorktreeSweepReport: () => ipcRenderer.invoke("worktrees:sweepReport"),
+  sweepWorktrees: () => ipcRenderer.invoke("worktrees:sweep"),
   // Coach: commits since a project's PLAN.md/DECISIONS.md were last touched
   // (pane-header staleness nudge).
   docsStaleness: (cwd) => ipcRenderer.invoke("docs:staleness", { cwd }),

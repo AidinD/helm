@@ -10898,6 +10898,105 @@ function focusGoalBreakdown(goal) {
 // The orchestrator never pushes/merges, and there is deliberately no push
 // affordance in this pass.
 
+/**
+ * One line on the Autopilot page saying what the last housekeeping sweep did,
+ * and - the part that matters - what it deliberately did NOT clean, with the
+ * reason for each.
+ *
+ * A sweep that reported only its successes would read as "everything is tidy"
+ * while an unmerged branch sat there forever, which is the exact failure this
+ * whole feature exists to fix (three of them accumulated unseen until the captain
+ * found them by hand). So the kept items are the prominent half, and "Sweep
+ * now" is here because a stale report you cannot refresh is not information.
+ */
+function housekeepingLineEl() {
+  const wrap = document.createElement("div");
+  wrap.className = "goal-housekeeping";
+
+  const line = document.createElement("div");
+  line.className = "goal-housekeeping-line";
+  wrap.append(line);
+
+  const sweepBtn = document.createElement("button");
+  sweepBtn.type = "button";
+  sweepBtn.className = "text-btn";
+  sweepBtn.textContent = "Sweep now";
+  sweepBtn.title =
+    "Remove finished runs' worktrees and delete Helm branches that are fully merged. Never touches uncommitted work, an unmerged branch, or a branch you made yourself.";
+
+  const paint = (report, { pending = false } = {}) => {
+    line.innerHTML = "";
+    if (!report) {
+      // "Checking" while the report is still in flight, NOT "no sweep has run
+      // yet" - the startup sweep has almost always already run by the time this
+      // renders, and a placeholder that states the opposite is a lie the user has
+      // no way to tell from the truth. Only say a sweep is missing once we know.
+      line.append(
+        document.createTextNode(pending ? "Housekeeping: checking… " : "Housekeeping: no sweep has run yet. ")
+      );
+      line.append(sweepBtn);
+      return;
+    }
+    const removedWt = (report.removed || []).filter((r) => r.kind === "worktree").length;
+    const removedBr = (report.removed || []).filter((r) => r.kind === "branch").length;
+    const bits = [];
+    if (removedWt) {
+      bits.push(`removed ${removedWt} finished worktree${removedWt === 1 ? "" : "s"}`);
+    }
+    if (removedBr) {
+      bits.push(`deleted ${removedBr} merged branch${removedBr === 1 ? "" : "es"}`);
+    }
+    line.append(document.createTextNode(`Housekeeping: ${bits.length ? bits.join(", ") : "nothing to clean"}. `));
+    line.append(sweepBtn);
+
+    const kept = report.kept || [];
+    const failed = report.failed || [];
+    if (kept.length || failed.length) {
+      const details = document.createElement("details");
+      details.className = "tool-group";
+      const summary = document.createElement("summary");
+      summary.textContent = `Kept ${kept.length}${failed.length ? ` · ${failed.length} could not be removed` : ""}`;
+      details.append(summary);
+      const list = document.createElement("div");
+      list.className = "goal-housekeeping-kept";
+      for (const item of [...kept, ...failed]) {
+        const row = document.createElement("div");
+        // Path-tail only: the full worktree path made an earlier menu unusable
+        // (bug 58bb6ca7), and the tail is what identifies the run.
+        const name = String(item.target || "").split(/[\\/]/).filter(Boolean).pop() || item.target;
+        row.textContent = `${item.kind === "branch" ? "branch" : "worktree"} ${name} - ${item.reason}`;
+        row.title = item.target;
+        list.append(row);
+      }
+      details.append(list);
+      wrap.append(details);
+    }
+  };
+
+  sweepBtn.addEventListener("click", async () => {
+    sweepBtn.disabled = true;
+    sweepBtn.textContent = "Sweeping…";
+    const res = await window.helm.sweepWorktrees();
+    sweepBtn.disabled = false;
+    sweepBtn.textContent = "Sweep now";
+    if (!res?.ok) {
+      showToast(`Housekeeping failed: ${res?.error || "unknown"}`);
+      return;
+    }
+    paint(res.report);
+    showToast(`Housekeeping: ${(res.report?.removed || []).length} removed, ${(res.report?.kept || []).length} kept.`);
+    renderGoalPage();
+  });
+
+  // The startup sweep's report, fetched without blocking the page render.
+  paint(null, { pending: true });
+  window.helm
+    .getWorktreeSweepReport()
+    .then((res) => paint(res?.report || null))
+    .catch(() => paint(null));
+  return wrap;
+}
+
 function renderGoalPage() {
   const page = document.getElementById("goalPage");
   page.innerHTML = "";
@@ -10911,6 +11010,7 @@ function renderGoalPage() {
   intro.textContent =
     "Describe what you want done and in which project - the crew settings (how to verify, how many iterations, model) are filled in for you, and you approve before it runs (open Advanced to override any of them). It works through fresh autonomous claude iterations in an isolated git worktree, commits each successful step, and never pushes or merges - the work is left for you to review. Several runs can go at once.";
   page.append(intro);
+  page.append(housekeepingLineEl());
 
   // ---- Launcher form: starts a NEW run (several may run concurrently) ----
   const form = document.createElement("div");
