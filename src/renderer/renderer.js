@@ -6968,7 +6968,11 @@ async function buildFleetModel(activeMates, rawSecondMates) {
   // working (an idle session has none), so we tail-read only a couple of
   // transcripts, not all ~15.
   const activeSessionNodes = secondMates
-    .filter((sm) => sm.isSessionNode && sm.sessionId)
+    // Nodes with no crew of their own, so a registered run (an auto-captain
+    // dispatch) also shows its live sub-agents instead of reading "crew idle"
+    // while it works. Never for a node that already HAS crew from its dispatch
+    // history - that would overwrite the real rows with a live snapshot.
+    .filter((sm) => isLiveWorkNode(sm) && sm.sessionId && (sm.crew || []).length === 0)
     .map((sm) => ({ sm, sess: state.sessions.find((s) => (s.cliSessionId || s.sessionId) === sm.sessionId) }))
     .filter((x) => x.sess && x.sess.status === "active");
   if (activeSessionNodes.length) {
@@ -7006,8 +7010,42 @@ async function buildFleetModel(activeMates, rawSecondMates) {
   return { secondMates, boardSummary };
 }
 
+/**
+ * Does this node have a real session behind it - one the captain can jump into?
+ *
+ * `isSessionNode` used to be the proxy for that, because the only way a piece of
+ * Direct work existed was as a synthetic node derived from the session list. The
+ * auto-captain now REGISTERS its run as a second mate before starting it (so the
+ * run carries the project's name instead of the prompt's first line), and a
+ * registered node is not a synthetic one - so every filter written as
+ * `isSessionNode` silently stopped matching the auto runs. The work ran, the
+ * board moved, and both the Auto column and the Direct column stayed empty
+ * (the captain, 2026-08-03: "den hamnar fortfarande inte i auto captenens widget").
+ *
+ * Ask the property, not the proxy: a node is live work if a session is bound to
+ * it, however that node came to exist.
+ */
+function isLiveWorkNode(sm) {
+  return !!(sm.isSessionNode || sm.sessionId);
+}
+
+/** An auto-captain run, as opposed to something the captain started by hand. */
+function isAutoStartedNode(sm) {
+  return sm.startedBy === "auto";
+}
+
 function augmentSecondMatesWithSessions(secondMates, mates = []) {
-  const list = [...secondMates];
+  // Who started it lives on the SESSION, not on the second mate - a registered
+  // node has no such field of its own. Carry it across so the Auto column can
+  // tell an auto run apart from the captain's own work regardless of which of
+  // the two kinds of node it is looking at.
+  const list = secondMates.map((s) => {
+    if (s.startedBy || !s.sessionId) {
+      return s;
+    }
+    const bound = state.sessions.find((x) => (x.cliSessionId || x.sessionId) === s.sessionId);
+    return bound?.startedBy ? { ...s, startedBy: bound.startedBy } : s;
+  });
   const boundIds = new Set(list.map((s) => s.sessionId).filter(Boolean));
   // A first mate's OWN session IS that mate (its card's "jump in" resumes it),
   // not a piece of Direct work - so exclude it, or a session started while
@@ -7158,7 +7196,9 @@ function dashboardFleetSection(mates = [], secondMates = [], boardSummary = {}) 
   // (an autonomous run with no session) would otherwise show as a confusing
   // duplicate that jumps somewhere different than the same-named session - those
   // live on the Autopilot page instead.
-  const directSms = secondMates.filter((s) => s.firstMateId === "direct" && s.isSessionNode);
+  // Auto runs are deliberately NOT here: they have their own column/widget, and
+  // listing them in both made "your own work" include work you never started.
+  const directSms = secondMates.filter((s) => s.firstMateId === "direct" && isLiveWorkNode(s) && !isAutoStartedNode(s));
   cols.append(fleetColumnEl("Direct · your own work", fleetDirectCardEl(directSms), true));
 
   section.append(cols);
@@ -7845,7 +7885,16 @@ function fleetCrewItemEl(run) {
 
 // Direct column: project sessions the captain started himself (grouped as
 // "direct" second mates). Same shape, minus a first-mate header.
-function fleetDirectCardEl(sms) {
+/**
+ * The Captain's own card - and, with `as: "auto"`, the same card for the
+ * auto-captain's runs. The captain asked for the Auto widget to look exactly like the
+ * captain's, which it now literally does; what it must NOT do is keep the
+ * captain's wording, or it would label work nobody started as "work you drive
+ * yourself" and offer a "+ Session" button that starts something by hand in the
+ * column whose whole point is that it doesn't.
+ */
+function fleetDirectCardEl(sms, { as = "captain" } = {}) {
+  const isAuto = as === "auto";
   const card = document.createElement("div");
   card.className = "fleet-mate-card direct";
   const top = document.createElement("div");
@@ -7868,10 +7917,10 @@ function fleetDirectCardEl(sms) {
   idBox.className = "fleet-mate-idbox";
   const name = document.createElement("div");
   name.className = "fleet-mate-name";
-  name.textContent = "Captain";
+  name.textContent = isAuto ? "Auto-captain" : "Captain";
   const role = document.createElement("div");
   role.className = "fleet-mate-role";
-  role.textContent = "work you drive yourself";
+  role.textContent = isAuto ? "started from the board, lands in review" : "work you drive yourself";
   idBox.append(name, role);
   const startBtn = document.createElement("button");
   startBtn.className = "fleet-btn";
@@ -7890,7 +7939,10 @@ function fleetDirectCardEl(sms) {
     openFreshDraftInPane(folder, "", { forceIndex: 0 });
     navigateToPage("chat");
   });
-  top.append(anchor, idBox, startBtn);
+  top.append(anchor, idBox);
+  if (!isAuto) {
+    top.append(startBtn);
+  }
   card.append(top);
 
   const list = document.createElement("div");
@@ -7898,7 +7950,9 @@ function fleetDirectCardEl(sms) {
   if (sms.length === 0) {
     const empty = document.createElement("div");
     empty.className = "fleet-empty";
-    empty.textContent = "Project sessions you start yourself land here.";
+    empty.textContent = isAuto
+      ? "Nothing running. A task tagged \"auto\" starts here."
+      : "Project sessions you start yourself land here.";
     list.append(empty);
   } else {
     for (const sm of sms) {
@@ -7910,7 +7964,10 @@ function fleetDirectCardEl(sms) {
   // Report roll-up for the captain's OWN finished runs (ownerId null). Without
   // this a Direct/Autopilot run you launched yourself dropped off the Dashboard
   // the moment it stopped running - no report row, no needs-you (flow review P1).
-  const rollup = fleetReportRollupEl(null, "rollup:direct", "Your runs finished");
+  // Captain only. This rolls up finished GOAL runs, which the auto-captain never
+  // creates - and rendering it twice would give both copies the same persisted
+  // expand key, so opening one would open the other.
+  const rollup = isAuto ? null : fleetReportRollupEl(null, "rollup:direct", "Your runs finished");
   if (rollup) {
     card.append(rollup);
   }
@@ -8626,7 +8683,9 @@ function widgetBodyFirstMate(data, widget) {
 function widgetBodyCaptain(data) {
   // "Direct - your own work": the captain's own sessions, exactly as the Fleet
   // section renders them (+ Session button, per-session jump-in and Archive).
-  const directSms = (data.secondMates || []).filter((s) => s.firstMateId === "direct" && s.isSessionNode);
+  const directSms = (data.secondMates || []).filter(
+    (s) => s.firstMateId === "direct" && isLiveWorkNode(s) && !isAutoStartedNode(s)
+  );
   return fleetDirectCardEl(directSms);
 }
 
@@ -8635,7 +8694,7 @@ function widgetBodyAuto(data) {
   // auto captain's own column (the captain: "auto ska vara en separat widget som ser
   // precis ut som captain men med autostartade sessioner").
   //
-  const autoSms = (data.secondMates || []).filter((s) => s.isSessionNode && s.startedBy === "auto");
+  const autoSms = (data.secondMates || []).filter((s) => isLiveWorkNode(s) && isAutoStartedNode(s));
   const frag = document.createDocumentFragment();
   frag.append(autoCaptainControlsEl());
   if (autoSms.length === 0) {
@@ -8648,7 +8707,7 @@ function widgetBodyAuto(data) {
     );
     return frag;
   }
-  frag.append(fleetDirectCardEl(autoSms));
+  frag.append(fleetDirectCardEl(autoSms, { as: "auto" }));
   return frag;
 }
 

@@ -33,10 +33,51 @@ const ok = (c, m) => {
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "helm-wd-"));
 const configPath = path.join(tmp, "config.json");
-fs.writeFileSync(configPath, JSON.stringify({ dashboardWidgets: { enabled: true } }), "utf8");
+// A seeded auto-captain run, shaped exactly like a real one: the session carries
+// startedBy "auto" (that field only ever exists on the session), and the run is a
+// REGISTERED second mate under "direct" - which is what the dispatch does so the
+// run is named after its project instead of the prompt's first line. Both halves
+// matter: it was the combination that made the Auto widget unable to see it.
+const AUTO_SESSION_ID = "e2e-auto-session";
+const AUTO_PROJECT = path.join(tmp, "e2e-auto-run");
+fs.mkdirSync(AUTO_PROJECT, { recursive: true });
+fs.writeFileSync(
+  configPath,
+  JSON.stringify({
+    dashboardWidgets: { enabled: true },
+    autoCaptain: { enabled: false },
+    helmSessions: {
+      [AUTO_SESSION_ID]: {
+        sessionId: AUTO_SESSION_ID,
+        cliSessionId: AUTO_SESSION_ID,
+        cwd: AUTO_PROJECT,
+        model: "claude-opus-4-8",
+        title: "Task from the board: add a --version flag",
+        startedBy: "auto",
+        isArchived: false,
+        createdAt: Date.now(),
+        lastActivityAt: Date.now(),
+      },
+    },
+  }),
+  "utf8"
+);
 process.env.HELM_CONFIG_PATH = configPath;
 process.env.HELM_MATES_PATH = path.join(tmp, "mates.json");
 process.env.HELM_SECOND_MATES_PATH = path.join(tmp, "second-mates.json");
+fs.writeFileSync(
+  process.env.HELM_SECOND_MATES_PATH,
+  JSON.stringify({
+    sm_e2eauto: {
+      firstMateId: "direct",
+      projectPath: AUTO_PROJECT,
+      name: "e2e-auto-run",
+      status: "created",
+      sessionId: AUTO_SESSION_ID,
+    },
+  }),
+  "utf8"
+);
 process.env.HELM_META_HOME_OVERRIDE = path.join(tmp, "meta-home");
 process.env.HELM_E2E_PORT = "9382";
 
@@ -230,6 +271,36 @@ try {
   ok(fp.before !== fp.added, "a new session changes the fingerprint - this is the auto-captain case exactly");
   ok(fp.added !== fp.changed, "so does a status change on an existing one");
   ok(fp.before === fp.restored, "and an unchanged board fingerprints identically, so idle ticks do nothing");
+
+  // --- 5. AND THE AUTO WIDGET HAS TO SHOW THE RUN --------------------------
+  // the captain, 2026-08-03, after the liveness fixes above shipped: "ramen fungerar
+  // men den hamnar fortfarande inte i auto captenens widget". The dashboard was
+  // live by then; the widget's own filter was the problem. See
+  // test-auto-widget-visibility.mjs for the why. This is the same claim measured
+  // on the RENDERED widget, with a seeded auto run that mirrors his real data.
+  const autoWidget = await app.eval(`(async () => {
+    const matesRes = await window.helm.listMates();
+    const smRes = await window.helm.listSecondMates();
+    const model = await buildFleetModel(matesRes.active || [], smRes?.secondMates || []);
+    const data = { mates: matesRes.active || [], secondMates: model.secondMates };
+    const host = document.createElement("div");
+    host.append(widgetBodyAuto(data));
+    const autoNodes = model.secondMates.filter(s => s.startedBy === "auto");
+    return {
+      autoNodes: autoNodes.length,
+      names: autoNodes.map(s => s.name),
+      text: host.textContent,
+      rows: host.querySelectorAll(".fleet-branch").length,
+      inDirect: widgetBodyCaptain(data).textContent.includes("${"e2e-auto-run"}"),
+    };
+  })()`);
+  ok(autoWidget.autoNodes === 1, `the seeded auto run is in the fleet model (${J(autoWidget.names)})`);
+  ok(autoWidget.rows === 1, `and the Auto widget renders it as a row (${autoWidget.rows} rows)`);
+  ok(/e2e-auto-run/.test(autoWidget.text), "the row names the project the work ran in");
+  ok(!/Nothing started yet/.test(autoWidget.text), "so the widget is not showing its empty state while a run exists");
+  ok(/Auto-captain/.test(autoWidget.text), "the card is labelled Auto-captain, not Captain");
+  ok(!/work you drive yourself/.test(autoWidget.text), "and does not call work nobody started your own");
+  ok(!autoWidget.inDirect, "the same run is not double-listed in the Captain widget");
 
   const errs = app.getConsoleErrors();
   ok(errs.length === 0, `no console errors${errs.length ? ": " + errs[0].text.slice(0, 200) : ""}`);
