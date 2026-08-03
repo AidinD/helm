@@ -7776,8 +7776,45 @@ function fleetNodeToggler(el, key) {
   };
 }
 
-function fleetMateReportRollupEl(mate) {
-  return fleetReportRollupEl(mate.mateId, "rollup:" + mate.mateId, "Crew reported back");
+function fleetMateReportRollupEl(mate, sms) {
+  return fleetReportRollupEl(mate.mateId, "rollup:" + mate.mateId, "Crew reported back", runIdsShownUnderNodes(sms));
+}
+
+// The runs that are ALREADY rows under the project nodes this card is about to
+// render.
+//
+// A terminal run the captain has not acknowledged is kept as a crew row by
+// fleetSecondMateEl, so the card's roll-up listed the same finished run a second
+// time - and on the captain's card under the wrong owner entirely, because that
+// roll-up's bucket is "runs with no dispatcher" and an auto-captain run has no
+// dispatcher either. That is what Aidin was looking at: "det ser ut som
+// autopilots - borde de inte ligga under respektive 2nd mate som äger dem?"
+// (task 86fefa68). He decided per project, "precis som i auto widgeten" - which
+// is where they already are: deriveSecondMates groups every run with a
+// projectPath onto its project's node.
+//
+// Derived from the nodes the card is rendering, and asking the NODE'S OWN
+// visibility rule rather than restating it, so the two surfaces cannot drift into
+// disagreeing about the same run - the failure that produced the un-clearable
+// crew row and the stuck amber frame.
+//
+// A run that no node claims still has to appear in the roll-up. A finished run
+// nobody is told about is worse than one reported in a slightly odd place.
+function runIdsShownUnderNodes(sms) {
+  const ids = new Set();
+  for (const sm of sms || []) {
+    for (const rec of sm.crew || []) {
+      const view = crewLiveRun(rec);
+      if (!view?.goalRunId) {
+        continue;
+      }
+      if (isTerminalRun(view) && isGoalRunAcknowledged(view.goalRunId)) {
+        continue; // the node drops these too - so the roll-up must not claim them
+      }
+      ids.add(view.goalRunId);
+    }
+  }
+  return ids;
 }
 
 // The report roll-up for one owner's terminal runs. ownerId === null means the
@@ -7785,8 +7822,8 @@ function fleetMateReportRollupEl(mate) {
 // verb differs. Extracted so the Direct card gets the same review surface mate
 // cards have had all along (flow review P1: captain-launched runs used to vanish
 // from the Dashboard the moment they stopped running).
-function fleetReportRollupEl(ownerId, toggleKey, verb) {
-  const runs = terminalRunsBy(ownerId);
+function fleetReportRollupEl(ownerId, toggleKey, verb, shownUnderNodes = null) {
+  const runs = terminalRunsBy(ownerId).filter((r) => !shownUnderNodes?.has(r.goalRunId));
   if (runs.length === 0) {
     return null;
   }
@@ -8079,7 +8116,7 @@ function fleetMateCardEl(mate, sms, boardSummary = {}) {
     }
   }
   card.append(list);
-  const rollup = fleetMateReportRollupEl(mate);
+  const rollup = fleetMateReportRollupEl(mate, sms);
   if (rollup) {
     card.append(rollup);
   }
@@ -8624,10 +8661,14 @@ function fleetDirectCardEl(sms, { as = "captain" } = {}) {
   // Report roll-up for the captain's OWN finished runs (ownerId null). Without
   // this a Direct/Autopilot run you launched yourself dropped off the Dashboard
   // the moment it stopped running - no report row, no needs-you (flow review P1).
-  // Captain only. This rolls up finished GOAL runs, which the auto-captain never
-  // creates - and rendering it twice would give both copies the same persisted
+  // Captain only: rendering it twice would give both copies the same persisted
   // expand key, so opening one would open the other.
-  const rollup = isAuto ? null : fleetReportRollupEl(null, "rollup:direct", "Your runs finished");
+  //
+  // It now carries only what is NOT already a row under a project node above it.
+  // The comment that used to sit here said the auto-captain never creates goal
+  // runs; that stopped being true with the reshape on 2026-08-03, which is exactly
+  // how auto runs ended up reported under the captain (task 86fefa68).
+  const rollup = isAuto ? null : fleetReportRollupEl(null, "rollup:direct", "Your runs finished", runIdsShownUnderNodes(sms));
   if (rollup) {
     card.append(rollup);
   }
