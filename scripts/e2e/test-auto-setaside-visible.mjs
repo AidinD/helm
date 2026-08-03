@@ -123,7 +123,7 @@ console.log("\n-- a failed board write must not suppress the card --");
 console.log("\n-- the pass is visible in the widget --");
 {
   const mainSrc = stripComments(src("main.js"));
-  ok(/setAside: skipped\.slice\(/.test(mainSrc), "the pass records WHICH cards it declined, not just how many");
+  ok(/setAside: \[/.test(mainSrc) && /skipped\.slice\(/.test(mainSrc), "the pass records WHICH cards it declined, not just how many");
   ok(/reason: s\.reason/.test(mainSrc), "with the reason each one was declined");
 
   const rSrc = stripComments(src("renderer/renderer.js"));
@@ -153,6 +153,55 @@ console.log("\n-- the pass is visible in the widget --");
   const tokens = [...new Set([...block.slice(0, 1400).matchAll(/var\((--[a-z-]+)\)/g)].map((m) => m[1]))];
   const undefinedTokens = tokens.filter((t) => !new RegExp(`\\${t}\\s*:`).test(css));
   ok(undefinedTokens.length === 0, `every colour token it uses is defined${undefinedTokens.length ? `: MISSING ${undefinedTokens.join(", ")}` : ` (${tokens.join(", ")})`}`);
+}
+
+// ===========================================================================
+// 4. A triage that could not RUN is not a verdict about the card
+// ===========================================================================
+console.log("\n-- a failed triage call must not blame the card --");
+{
+  // Aidin: "den skickar hela tiden tillbaka min task med needs clarification", on a
+  // card whose triage - run by hand against the same prompt - answered fine in 16.4
+  // seconds with a concrete, useful reason. The app gave up at 30s and could not tell
+  // "I could not judge this" from "I judged it unclear", so it tagged the card and
+  // told him to add what was missing. Blaming the user's wording for our own timeout
+  // is the worst available outcome, and it poisoned the do-not-re-judge memory too.
+  const mainSrc = stripComments(src("main.js"));
+  const tickStart = mainSrc.indexOf("async function autoCaptainTick(");
+  const tick = mainSrc.slice(tickStart, mainSrc.indexOf("ipcMain.handle(\"autoCaptain:status\"", tickStart));
+
+  ok(/if \(!verdict\) \{/.test(tick), "the null case - the call could not be made - is its own branch");
+  const nullBranch = tick.slice(tick.indexOf("if (!verdict) {"), tick.indexOf("if (!verdict.dispatchable)"));
+  ok(!/holdBack\(/.test(nullBranch), "and it does NOT hold the card back - no tag, no note, no memory");
+  ok(/triageFailures\.push\(/.test(nullBranch), "it is recorded as OUR failure instead");
+  ok(/continue;/.test(nullBranch), "and the card is left completely untouched for the next pass to retry");
+
+  const declined = tick.slice(tick.indexOf("if (!verdict.dispatchable)"));
+  ok(/holdBack\(/.test(declined.slice(0, 400)), "a real verdict of 'not specific enough' still holds the card back");
+  ok(
+    /verdict\.reason \|\|/.test(declined.slice(0, 400)) && !/verdict\?\.reason/.test(declined.slice(0, 400)),
+    "carrying the model's own reason, which is the useful part"
+  );
+  ok(
+    !/The triage couldn't be completed/.test(declined.slice(0, 400)),
+    "and the old 'couldn't be completed' fallback is no longer what a declined card is told"
+  );
+
+  // The two must stay apart all the way to the surface.
+  ok(/triageFailed: triageFailures\.length/.test(mainSrc), "the count reaches the widget as its own field");
+  const rSrc = stripComments(src("renderer/renderer.js"));
+  ok(/could not be judged - will retry/.test(rSrc), "and the UI words it as our failure, not the card's");
+  ok(
+    !/held back \$\{res\.triageFailed\}/.test(rSrc),
+    "never folded into the 'held back for clarification' count"
+  );
+
+  // And the timeout that caused it is no longer tighter than a measured real call.
+  const helper = src("lib/orchestratorHelper.js");
+  const m = helper.match(/const TRIAGE_TIMEOUT_MS = ([0-9_]+);/);
+  const ms = m ? Number(m[1].replace(/_/g, "")) : 0;
+  ok(ms >= 60_000, `the triage timeout leaves real headroom over the 16.4s measured (${ms}ms)`);
+  ok(/\}, TRIAGE_TIMEOUT_MS\);/.test(helper), "and the triage actually uses it rather than the shared classifier cap");
 }
 
 console.log(

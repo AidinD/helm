@@ -3381,6 +3381,10 @@ async function autoCaptainTick({ force = false } = {}) {
   autoTickInFlight = true;
   let acted = 0;
   let held = 0;
+  // Cards this pass could not JUDGE, as opposed to judged and declined. Kept apart
+  // all the way to the widget: one is a fact about the card, the other is a fact
+  // about us.
+  const triageFailures = [];
   try {
     const state = readJotState(jot);
     if (!state.ok) {
@@ -3421,8 +3425,25 @@ async function autoCaptainTick({ force = false } = {}) {
         systemPrompt: TRIAGE_SYSTEM_PROMPT,
         input: buildTriageInput(todo, where.category),
       });
-      if (!verdict || !verdict.dispatchable) {
-        holdBack(jot, todo, verdict?.reason || "The triage couldn't be completed, so this wasn't started.");
+      // A FAILED CALL IS NOT A VERDICT. triageAutoTask resolves null when it could
+      // not judge at all - the model call timed out, the binary would not spawn, the
+      // output did not parse. That was being handled in the same branch as "judged
+      // and found unclear": the card got the needs-clarification tag and a note
+      // telling Aidin to add what was missing, for a card that was perfectly clear
+      // (2026-08-03: "den skickar hela tiden tillbaka min task med needs
+      // clarification", on a card whose triage, run by hand, answered fine in 16.4
+      // seconds). Blaming the user's wording for our own failure is the worst
+      // available outcome, and it also poisoned the do-not-re-judge memory.
+      //
+      // So: leave the card completely alone and let the next pass retry it. The
+      // failure is reported as a failure, in the widget, where it belongs.
+      if (!verdict) {
+        triageFailures.push({ id: todo.id, title: todo.text, reason: "The triage call could not be completed - will try again next pass." });
+        console.error(`[helm] auto-captain: triage failed for "${todo.text}" - leaving the card untouched`);
+        continue;
+      }
+      if (!verdict.dispatchable) {
+        holdBack(jot, todo, verdict.reason || "The triage judged this not specific enough to hand to an agent.");
         held += 1;
         continue;
       }
@@ -3529,10 +3550,14 @@ async function autoCaptainTick({ force = false } = {}) {
       acted,
       held,
       waiting: skipped.length,
-      setAside: skipped.slice(0, 8).map((s) => ({ id: s.todo?.id || null, title: s.todo?.text || "(untitled)", reason: s.reason })),
+      setAside: [
+        ...skipped.slice(0, 8).map((s) => ({ id: s.todo?.id || null, title: s.todo?.text || "(untitled)", reason: s.reason })),
+        ...triageFailures.slice(0, 4),
+      ],
+      triageFailed: triageFailures.length,
       error: null,
     };
-    return { ok: true, acted, held, waiting: skipped.length };
+    return { ok: true, acted, held, waiting: skipped.length, triageFailed: triageFailures.length };
   } catch (err) {
     autoLastTick = { at: Date.now(), acted, held, error: err?.message || String(err) };
     return { ok: false, error: autoLastTick.error };

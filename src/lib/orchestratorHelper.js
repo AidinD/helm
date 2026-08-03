@@ -64,6 +64,14 @@ const CLASSIFIER_SYSTEM_PROMPT = (() => {
 // --bare, which would also drop subscription auth). Deliberately the SAME
 // recipe, not a new one — this is establishing that pattern's second user.
 const CLASSIFIER_TIMEOUT_MS = 30_000;
+const TRIAGE_TIMEOUT_MS = 120_000;
+// The auto-captain's triage gets its own, longer budget. Measured against a real
+// card on 2026-08-03 it took 16.4 seconds - comfortably inside 30s on an idle
+// machine, and over it on a loaded one. Timing out there is not a cheap miss: the
+// caller could not tell "I could not judge this" from "I judged it unclear", so a
+// slow machine tagged Aidin's perfectly clear card needs-clarification and told him
+// to add what was missing. Nothing waits on this pass, so a generous cap costs
+// nothing that matters.
 // The handoff classifier gets longer. The others run on a timer against a
 // background session, where giving up cheaply is right. This one runs on an
 // explicit "save a handoff and archive" click, and giving up means the note is
@@ -492,7 +500,7 @@ export function triageAutoTask({ cwd, systemPrompt, input }) {
     const timeoutId = setTimeout(() => {
       child.kill();
       finish(null);
-    }, CLASSIFIER_TIMEOUT_MS);
+    }, TRIAGE_TIMEOUT_MS);
     child.stdout.on("data", (d) => {
       if (out.length < MAX_OUTPUT_BYTES) {
         out += d.toString("utf8");

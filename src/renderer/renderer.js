@@ -9054,6 +9054,12 @@ function autoCaptainControlsEl() {
     if (res.waiting) {
       bits.push(`${res.waiting} waiting`);
     }
+    // Reported separately from "held back": a card we could not judge is our
+    // failure, not a verdict about the card, and saying "held back for
+    // clarification" about it blames the wording for our own timeout.
+    if (res.triageFailed) {
+      bits.push(`${res.triageFailed} could not be judged - will retry`);
+    }
     showToast(bits.length ? `Auto-captain: ${bits.join(", ")}.` : "Auto-captain: nothing tagged \"auto\" is queued.");
     // Repaint the set-aside list from the pass that just ran, explicitly. The toast
     // is transient; this is the part that has to still be there in a minute.
