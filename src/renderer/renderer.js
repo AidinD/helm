@@ -1353,18 +1353,50 @@ async function renderReviewPage() {
 
   // Badge on the subnav: the count that actually needs him, not the total - a
   // total would nag about work that is already settled.
+  paintReviewBadge(tally);
+}
+
+// How many review rows actually need him: the count that raises the subnav badge.
+// Not the total - a total would nag about work that is already settled.
+//
+// `incomplete` counts too. It was omitted once, which meant the case the comment
+// below calls "the more alarming" - a record EXISTS, so something claims to be
+// reviewed, but the claim is inadmissible - raised no badge at all. Under-flagging an
+// attention signal is the failure mode the captain explicitly rejects. Unconfirmed counts
+// for the same reason: a record claiming done whose own checks have not passed is
+// something he needs to know about.
+function reviewAttentionCount(tally) {
+  const t = tally || {};
+  return (t.judgment || 0) + (t.unrecorded || 0) + (t.incomplete || 0) + (t.unconfirmed || 0);
+}
+
+/**
+ * Paint the subnav's review badge.
+ *
+ * Split out of renderReviewPage because it used to BE the last statement of it - so
+ * the number only existed after you had already opened the page you were meant to be
+ * nudged towards (the captain: "siffran över review syns inte förrän man öppnar review").
+ * An attention signal that requires you to look first is not one.
+ *
+ * Pass a tally to paint, or nothing to fetch one.
+ */
+async function paintReviewBadge(tally = null) {
   const badge = document.getElementById("reviewBadge");
-  if (badge) {
-    // `incomplete` counts too. It was omitted, which meant the case my own code
-    // comment calls "the more alarming" - a record EXISTS, so something claims to be
-    // reviewed, but the claim is inadmissible - raised no badge at all. Under-flagging
-    // an attention signal is the failure mode the captain explicitly rejects.
-    // Unconfirmed counts too: a record claiming done whose own checks have not
-    // passed is something he needs to know about, not something already settled.
-    const n = tally.judgment + tally.unrecorded + (tally.incomplete || 0) + (tally.unconfirmed || 0);
-    badge.textContent = n > 0 ? String(n) : "";
-    badge.classList.toggle("hidden", n === 0);
+  if (!badge) {
+    return;
   }
+  let t = tally;
+  if (!t) {
+    try {
+      const res = await window.helm.listReviews();
+      t = res?.tally || null;
+    } catch {
+      return; // leave whatever is there rather than clearing a real count on a hiccup
+    }
+  }
+  const n = reviewAttentionCount(t);
+  badge.textContent = n > 0 ? String(n) : "";
+  badge.classList.toggle("hidden", n === 0);
 }
 
 // --- Scheduled prompts (task 7d9d2188) ---
@@ -8749,6 +8781,7 @@ const WIDGET_CATALOG = {
   firstMate: { label: "First mate", span: 4, accent: "mate", perMate: true },
   goals: { label: "Goals", span: 6, accent: "blue", singleton: true },
   docsDrift: { label: "Docs drift", span: 4, accent: "acc", singleton: true },
+  review: { label: "Review", span: 4, accent: "acc", singleton: true },
   // Layout-only entries, so a row can be left deliberately short instead of the
   // grid packing every widget against the previous one (the captain: "jag kan inte
   // lämna tomt på rad 1 för att börja på rad 2"). They are ordinary layout
@@ -8885,6 +8918,13 @@ function widgetBodyQuota(data) {
   // 2026-08-03: "ingen veckokvot t.ex"). It was there the whole time, just
   // anonymous.
   head.textContent = worst ? (worst.hasPct ? `${worst.label} ${worst.pct}%` : worst.chipText) : "No current reading";
+  // COLOUR THE STATE. "5-hour limit - limited" was rendered in the same neutral
+  // headline colour as a comfortable 12%, so the one reading that changes what you can
+  // do looked like any other (the captain: "Limited borde synas tydligare"). Colour only for
+  // the state, never the whole row - the same rule the rest of the app follows.
+  if (worst && (worst.level === "hot" || worst.level === "warm")) {
+    head.classList.add(worst.level === "hot" ? "crit" : "warn");
+  }
   const sub = document.createElement("div");
   sub.className = "wd-quota-sub";
   const resetSuffix = worst?.resetText ? ` · resets in ${worst.resetText}` : "";
@@ -8901,6 +8941,12 @@ function widgetBodyQuota(data) {
   frag.append(head, sub);
   if (worst && worst.hasPct) {
     frag.append(quotaBar(worst.pct, worst.level));
+  } else if (worst && !worst.stale && (worst.level === "hot" || worst.level === "warm")) {
+    // A definite limited/near state with no percentage still gets a full bar, so the
+    // severity reads without a number - exactly what the context popover already does
+    // (cpopWindowRow). The widget had neither the colour nor the bar, which is how the
+    // most consequential reading became the least visible one.
+    frag.append(quotaBar(100, worst.level));
   }
   // Every other accumulated window, compact - the desktop-style stack (bc6786c7).
   for (const row of rows) {
@@ -9369,6 +9415,86 @@ function driftLineEl(row) {
   return line;
 }
 
+/**
+ * The Review widget: how many items are waiting, split by what they need, and one
+ * click to the page (task 06c79d8a - "en review widget med antalet i review och snabb
+ * navigering dit").
+ *
+ * Fetches its own tally rather than taking one from the dashboard's data bundle: the
+ * review queue is not part of that bundle, and threading it through would couple every
+ * dashboard repaint to a board read. Repaints itself, so the numbers cannot sit frozen
+ * behind a fingerprint computed from data this widget does not use.
+ */
+function widgetBodyReview() {
+  const wrap = document.createElement("div");
+  wrap.className = "wd-review";
+  wrap.id = "widgetReviewBody";
+  void paintReviewWidget(wrap);
+  return wrap;
+}
+
+async function paintReviewWidget(el = document.getElementById("widgetReviewBody")) {
+  if (!el) {
+    return;
+  }
+  let res = null;
+  try {
+    res = await window.helm.listReviews();
+  } catch {
+    return; // leave what is there; never blank a count on a hiccup
+  }
+  const tally = res?.tally || {};
+  const needs = reviewAttentionCount(tally);
+  el.textContent = "";
+
+  const head = document.createElement("div");
+  head.className = "wd-review-head" + (needs > 0 ? " warn" : "");
+  head.textContent = needs > 0 ? `${needs} need${needs === 1 ? "s" : ""} you` : "Nothing waiting";
+  const sub = document.createElement("div");
+  sub.className = "wd-review-sub";
+  // The SAME wording the Review page's own subtitle uses, so the two never describe
+  // the same board differently.
+  sub.textContent =
+    (tally.total || 0) === 0
+      ? "Move something to review on the Jot board and it lands here."
+      : `${tally.stamp || 0} ready to stamp · ${tally.total || 0} in review`;
+  el.append(head, sub);
+
+  // The breakdown, only for the bands that are non-zero - a row of zeroes is noise.
+  const BANDS = [
+    ["judgment", "need your judgment"],
+    ["unconfirmed", "claimed but unconfirmed"],
+    ["incomplete", "below the bar"],
+    ["unrecorded", "no record at all"],
+    ["stamp", "ready to stamp"],
+  ];
+  for (const [key, label] of BANDS) {
+    const n = tally[key] || 0;
+    if (n === 0) {
+      continue;
+    }
+    const line = document.createElement("div");
+    line.className = "wd-review-line";
+    const l = document.createElement("span");
+    l.textContent = label;
+    const v = document.createElement("span");
+    v.className = "wd-review-val" + (key === "judgment" || key === "unrecorded" ? " warn" : "");
+    v.textContent = String(n);
+    line.append(l, v);
+    el.append(line);
+  }
+
+  const go = document.createElement("button");
+  go.type = "button";
+  go.className = "text-btn";
+  go.textContent = "Open review →";
+  go.addEventListener("click", (e) => {
+    e.stopPropagation();
+    navigateToPage("review");
+  });
+  el.append(go);
+}
+
 const WIDGET_BODIES = {
   quota: widgetBodyQuota,
   needsYou: widgetBodyNeedsYou,
@@ -9377,6 +9503,7 @@ const WIDGET_BODIES = {
   firstMate: widgetBodyFirstMate,
   goals: widgetBodyGoals,
   docsDrift: widgetBodyDocsDrift,
+  review: widgetBodyReview,
 };
 
 /**
@@ -12352,6 +12479,18 @@ renderScheduledPromptBar();
 // Also refresh it on a slow tick so a countdown label ("in 2h") doesn't go stale
 // while nothing else happens.
 setInterval(renderScheduledPromptBar, 60 * 1000);
+
+// The review badge, on the same footing: painted at startup and kept current on a
+// slow tick, so the number exists BEFORE you visit the page it points at. It used to
+// be written only by renderReviewPage, which meant the nudge appeared after you had
+// already followed it (the captain: "siffran över review syns inte förrän man öppnar
+// review"). One board read a minute, in a renderer that already polls for more than
+// that - and the same call runs after any review action, so it never lags behind a
+// stamp by a whole tick.
+void paintReviewBadge();
+setInterval(() => {
+  void paintReviewBadge();
+}, 60 * 1000);
 
 // carries goalRunId; events from a stale run (a previous run, or after a new
 // one started) are ignored so late events can't clobber current state.
