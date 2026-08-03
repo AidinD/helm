@@ -7892,6 +7892,19 @@ function fleetMateCardEl(mate, sms, boardSummary = {}) {
   kind.textContent = "💬 session";
   const role = document.createElement("div");
   role.className = "fleet-mate-role";
+  // Whether this card is genuinely blocked on Aidin is decided ONCE, here, and
+  // both surfaces that show it - the "needs you" chip and the amber bar down the
+  // card's left edge - read that one decision.
+  //
+  // They used to be decided separately, and disagreed: the chip asked the
+  // session's STATUS (which honours the "done" acknowledgement and the other
+  // status overrides), the bar asked the raw lifecycle state, which stays
+  // "waiting" regardless. So acknowledging a reply took the chip away and left
+  // the bar burning - an amber marker with no word anywhere on the card to say
+  // what it meant, permanently on ("varför är den här ramen där hela tiden?",
+  // task 8d14d861). The bar is not being removed; it is being tied to the thing
+  // that already decides whether there is something to say.
+  let needsYou = false;
   if (mateStatus === "waiting" || mateStatus === "active" || cw.has) {
     const badge = document.createElement("span");
     let bkind;
@@ -7916,6 +7929,7 @@ function fleetMateCardEl(mate, sms, boardSummary = {}) {
     } else {
       bkind = "need";
       btext = "needs you";
+      needsYou = true;
     }
     badge.className = "fleet-badge " + bkind;
     badge.textContent = btext;
@@ -7923,11 +7937,13 @@ function fleetMateCardEl(mate, sms, boardSummary = {}) {
   }
   role.append(kind, document.createTextNode(sms.length ? ` ${sms.length} second mate${sms.length === 1 ? "" : "s"}` : " idle"));
   idBox.append(name, role);
-  // Amber "needs you" accent ONLY for a genuine needs-input mate (waiting, no
-  // crew). A crew-waiting mate (incl. errored crew) stays calm - the crew rows
-  // carry the alarm.
-  if (boundSession?.lifecycleState === "waiting" && !cw.has) {
+  // Amber accent for exactly the mate that showed the "needs you" chip above: a
+  // mate genuinely awaiting your reply with no crew to explain the wait. A
+  // crew-waiting mate (including one whose crew errored) stays calm here - the
+  // crew rows carry that alarm.
+  if (needsYou) {
     card.classList.add("fleet-mate-needs");
+    card.title = "This mate is waiting on your reply.";
   }
   const actions = document.createElement("div");
   actions.className = "fleet-mate-actions";
