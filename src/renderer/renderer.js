@@ -5528,6 +5528,69 @@ function paneComposerEl(index) {
     }
   });
 
+  // DROP an image onto the composer, not only paste it (task 90251904 - "kan inte drag
+  // and droppa bilder in till prompten"). It had never worked: nothing in the renderer
+  // handled `drop`, so Chromium's default took over - which for a file dropped on a
+  // page is to NAVIGATE to it, i.e. the app window replaced itself with the image. That
+  // is worse than nothing happening, and it is why dragover must be prevented too:
+  // without it the drop event never reaches us at all.
+  //
+  // Same path as the paste handler on purpose - read to a data URL, hand the base64 to
+  // main, attach the saved path - so the two cannot drift into behaving differently.
+  const attachImageFiles = async (files) => {
+    for (const file of files) {
+      const ext = (file.type.split("/")[1] || "png").replace("jpeg", "jpg");
+      let dataUrl;
+      try {
+        dataUrl = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = () => reject(reader.error);
+          reader.readAsDataURL(file);
+        });
+      } catch {
+        showToast(`Couldn't read "${file.name || "that image"}".`);
+        continue;
+      }
+      const base64 = String(dataUrl).split(",")[1] || "";
+      const res = await window.helm.saveImage(base64, ext);
+      // The pane may have been reset or reused while the save round-tripped through
+      // main - the same guard the paste handler has, for the same reason.
+      if (res?.ok && panes[index] === pane) {
+        pane.pendingAttachments.push({ path: res.path, name: file.name || `dropped.${ext}`, isImage: true });
+        renderAttachments();
+      } else if (!res?.ok) {
+        showToast(`Couldn't attach "${file.name || "that image"}": ${res?.error || "unknown error"}`);
+      }
+    }
+  };
+
+  const isImageDrag = (e) => Array.from(e.dataTransfer?.items || []).some((it) => it.kind === "file");
+  promptEl.addEventListener("dragover", (e) => {
+    if (!isImageDrag(e)) {
+      return;
+    }
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+    promptEl.classList.add("drop-target");
+  });
+  promptEl.addEventListener("dragleave", () => promptEl.classList.remove("drop-target"));
+  promptEl.addEventListener("drop", async (e) => {
+    const files = Array.from(e.dataTransfer?.files || []).filter((f) => f.type && f.type.startsWith("image/"));
+    promptEl.classList.remove("drop-target");
+    if (files.length === 0) {
+      // Still swallow a file drop that is not an image, or Chromium navigates the
+      // window to it and the app disappears.
+      if (Array.from(e.dataTransfer?.files || []).length > 0) {
+        e.preventDefault();
+        showToast("Only images can be dropped into the prompt.");
+      }
+      return;
+    }
+    e.preventDefault();
+    await attachImageFiles(files);
+  });
+
   const controls = document.createElement("div");
   controls.className = "composer-controls";
 
