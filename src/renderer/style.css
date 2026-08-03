@@ -5379,6 +5379,10 @@ button.primary {
 .wd-quota-val.crit { color: var(--danger); }
 .wd-quota-val.warn { color: var(--waiting); }
 .wd-quota-val.faint { color: var(--text-faint); }
+/* How old a quota reading is, beside its window's name. Quiet on purpose: it is a
+   caveat on the number, not a number of its own - but it must be READABLE, because a
+   stale figure you act on is worse than no figure (the 36%-vs-29% report). */
+.wd-quota-age { color: var(--text-faint); font-size: 11px; margin-left: 6px; }
 
 /* Docs drift widget - same row rhythm as the quota lines, so it reads as a
    sibling module rather than a new visual language. Colour only for the count
