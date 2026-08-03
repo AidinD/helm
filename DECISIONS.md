@@ -5648,3 +5648,44 @@ statically imported `secondMates.js` after setting `HELM_SECOND_MATES_PATH`. ESM
 hoisted, and that module resolves its path once at import time - so the seam was ignored and the
 test wrote two stray entries into the DEV repo's real `second-mates.json`. Now a dynamic import
 after the env var is set. Any test seam that is a module-level constant has this shape.
+
+## 2026-08-03 - The gauntlet now demands mutation evidence, and names the suite gap
+
+Aidin: "kan du även gå igenom de misstag du gjort och gap för att täppa till dem i vår
+gauntlet? vi vill ju ha en så robust pipa som möjligt där så mycket som möjligt upptäcks och
+täpps till innan det blir min tur att granska."
+
+Two of the day's misses were mechanically checkable, so they are now checks rather than
+resolutions to be careful.
+
+**A critical record must carry mutation evidence.** A green suite proves the tests pass; it
+does not prove they would fail if the thing they guard broke. The two worst regressions of the
+day survived a suite that read as thorough, because the checks asserted which FUNCTION was
+called and never with what arguments - so swapping a safety option for a forceful one, and
+flipping a branch delete from safe to forced, were both invisible. At the `critical` tier a
+test nobody has tried to break is now an untested test, and the record is refused without a
+described mutation.
+Matched on the claim's own words, not a boolean field: a checkbox would be ticked by the same
+optimism that writes a guard nobody tried to break, whereas a sentence has to describe
+something that happened.
+
+**A record whose only check is one test FILE is flagged.** Not refused - a caveat, alongside
+"no executed check at all" and "this check cannot fail". A single file passing in isolation
+cannot show one test interfering with another, and that is not hypothetical: a new test passed
+standalone and failed under the runner the same day, because standalone it had written to the
+dev repo's REAL bindings file instead of its temp one. The file said green; the suite said what
+was true.
+
+**The rest went into the ship-review skill as a named failure list**, because they are
+judgement calls a checker cannot make: a source scan that matches a comment, an assertion that
+cannot fail, a mechanism changed while the symptom stayed (persisting is not restoring), a test
+seam defeated by ESM import hoisting, a placeholder that lies, one instance fixed with the class
+left open, a condition that short-circuits on absent data, a repo-global command used for a
+scoped decision, and a fix that removes an independent second opinion.
+Each entry is a real miss with its date, so the reviewer is told what to look for rather than
+asked to be thorough.
+
+**And an ordering decision:** dispatch the independent review as soon as the change works, BEFORE
+writing the suite. Every finding in the day's two rounds was reachable by the method already in
+hand - build a temp fixture and run it - but the suite tested the cases the author had thought of.
+A suite written first also gives the author something to defend.

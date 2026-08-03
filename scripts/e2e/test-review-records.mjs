@@ -152,8 +152,35 @@ try {
     "an independentReview with no summary doesn't count - a name alone proves nothing");
   ok(reviewRecordProblems(crit({ independentReview: { by: "code-review agent", summary: "found 2 real issues" } })).some((p) => /findings must be a number/.test(p)),
     "it must say HOW MANY findings the independent pass raised");
-  ok(reviewRecordProblems(crit({ independentReview: { by: "code-review agent", summary: "no issues found", findings: 0 } })).length === 0,
-    "zero findings is a real answer, as long as somebody independent actually looked");
+  const reviewed = { by: "code-review agent", summary: "no issues found", findings: 0 };
+  // MUTATION EVIDENCE, new on 2026-08-03. A green suite proves the tests pass, not
+  // that they would fail if the thing they guard broke - and the two worst misses
+  // that day were guards whose removal left every check green, because the checks
+  // asserted which FUNCTION was called and never with what arguments.
+  ok(
+    reviewRecordProblems(crit({ independentReview: reviewed })).some((p) => /mutation evidence/.test(p)),
+    "a CRITICAL item with an independent pass but NO mutation evidence is still refused"
+  );
+  ok(
+    reviewRecordProblems(
+      crit({
+        independentReview: reviewed,
+        evidence: [{ claim: "the merged-branch gate holds", detail: "mutation: disabled the gate and test-worktree-sweep went red on 3 checks" }],
+      })
+    ).length === 0,
+    "with an independent pass AND a described mutation, it is complete"
+  );
+  ok(
+    reviewRecordProblems(
+      crit({ independentReview: reviewed, evidence: [{ claim: "I ran the suite", detail: "49/49 passed" }] })
+    ).some((p) => /mutation evidence/.test(p)),
+    "a green suite alone does not satisfy it - passing is not the same as being able to fail"
+  );
+  ok(
+    reviewRecordProblems(
+      crit({ independentReview: reviewed, evidence: [{ claim: "broke the guard on purpose", detail: "the suite caught it" }] })
+    ).length === 0,
+    "and it reads the claim's own words rather than a checkbox a hopeful author would tick");
   ok(reviewRecordProblems(complete({ criticality: "critical", independentReview: { by: "a", summary: "b", findings: 0 } }))
     .some((p) => /needs at least one runnable check/.test(p)),
     "critical needs BOTH a check and an independent pass, not either/or");
@@ -437,6 +464,29 @@ try {
   ok(recordCaveats(complete({ criticality: "core", checks: [{ label: "u", cmd: "npm test || exit 0" }] }))
     .some((c) => /cannot fail/.test(c)), "a pass-forcing check is named in the caveats too");
   ok(recordCaveats(null).length === 0, "recordCaveats(null) is a safe empty list");
+
+  // ONE FILE IS NOT THE SUITE. A single test file passing in isolation cannot show
+  // one test interfering with another - and on 2026-08-03 a new test passed alone
+  // and failed under the runner, because standalone it had written to a REAL data
+  // file instead of its temp one. The file said green; the suite said what was true.
+  ok(
+    recordCaveats(complete({ criticality: "core", checks: [{ label: "u", cmd: "node scripts/e2e/test-thing.mjs" }] })).some((c) =>
+      /No check runs the whole suite/.test(c)
+    ),
+    "a record whose only check is one test FILE is flagged for never having run the suite"
+  );
+  ok(
+    !recordCaveats(complete({ criticality: "core", checks: [{ label: "u", cmd: "npm run test:fast" }] })).some((c) =>
+      /No check runs the whole suite/.test(c)
+    ),
+    "and one that runs the suite is not"
+  );
+  ok(
+    recordCaveats(complete({ criticality: "core", checks: [{ label: "u", cmd: "node run-tests.mjs --fast" }] })).some((c) =>
+      /No check runs the whole suite/.test(c)
+    ),
+    "a command naming a .mjs file is a file, not the suite, however suite-like the name"
+  );
 
   // --- a command that cannot fail is not a pass ------------------------------
   // The worst finding of the whole day, and it was mine: passForcingReason DETECTED a
