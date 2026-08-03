@@ -6934,6 +6934,40 @@ function dashboardFleetFingerprint(mates = [], secondMates = [], boardSummary = 
 function crewLiveRun(rec) {
   return goalRuns.get(rec.goalRunId) || rec;
 }
+
+/** How much of a run's goal a crew row shows before it is cut. */
+const CREW_HEADLINE_MAX = 58;
+
+/**
+ * A one-line headline for a crew row, out of a run's whole goal prompt.
+ *
+ * The row used to print the entire prompt. For an auto-started run that prompt is
+ * "Task from the board: <card title>\n\n<the whole description>\n\n<the standing
+ * instructions about branches and not merging>" - so five rows in one project all
+ * began with the same words, the card title appeared twice, and whatever actually
+ * distinguished them sat past the ellipsis (the captain, 2026-08-03, on first seeing the
+ * tree work: "radetiketterna är obrukbara").
+ *
+ * A helper for exactly this was written and then deleted the same morning as dead
+ * code. It WAS uncalled - but that meant it had never been wired up, not that the
+ * problem was gone, and the problem only became visible once the rows themselves
+ * finally rendered. Cut on a word boundary, with an ellipsis so a truncated title is
+ * never mistaken for the whole thing; the full prompt moves to the row's tooltip.
+ */
+function crewRunHeadline(goal) {
+  const first =
+    String(goal || "")
+      .split("\n")
+      .map((l) => l.trim())
+      .find(Boolean) || "(no goal)";
+  const stripped = first.replace(/^Task from the board:\s*/i, "").trim() || first;
+  if (stripped.length <= CREW_HEADLINE_MAX) {
+    return stripped;
+  }
+  const cut = stripped.slice(0, CREW_HEADLINE_MAX);
+  const lastSpace = cut.lastIndexOf(" ");
+  return (lastSpace > CREW_HEADLINE_MAX * 0.6 ? cut.slice(0, lastSpace) : cut).trimEnd() + "…";
+}
 function crewCommitCount(r) {
   return (typeof r.result?.commitCount === "number" ? r.result.commitCount : r.commitCount) || 0;
 }
@@ -8046,8 +8080,9 @@ function fleetCrewItemEl(run) {
   g.textContent = running ? "⚙" : run.status === "error" ? "✕" : "✓";
   const label = document.createElement("span");
   label.className = "fleet-crew-label";
-  // No JS truncation - .fleet-crew-label already ellipsizes via CSS.
-  label.textContent = (run.isSubAgent ? "agent · " : "autopilot · ") + run.goal;
+  label.textContent = (run.isSubAgent ? "agent · " : "autopilot · ") + crewRunHeadline(run.goal);
+  // The whole prompt is still one hover away - it just isn't what the row is FOR.
+  item.title = String(run.goal || "").trim();
   const stateEl = document.createElement("span"); // NOT `state` - that's the app-wide global (review: shadowing footgun)
   stateEl.className = "fleet-crew-state";
   const n = run.iterations?.length || 0;
