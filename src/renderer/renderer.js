@@ -6538,11 +6538,18 @@ async function rehydrateGoalRuns() {
               branchName: record.branchName,
               commitCount: record.commitCount,
               stoppedReason: record.stoppedReason,
+              // The run's OWN output, carried across a restart. Persisting it on the
+              // record was only half the fix: nothing read it back, so a plan-only
+              // run's plan - its entire deliverable, and no longer committed now that
+              // .helm-goal/ is gitignored - was still gone after a restart (found by
+              // independent review, 2026-08-03, on a fix I had called done).
+              plan: record.plan || null,
+              notes: record.notes || null,
             }
           : null,
       error: record.error || null,
       escalation: record.escalation || null,
-      latestPlan: null,
+      latestPlan: record.plan || null,
       persisted: true,
     });
   }

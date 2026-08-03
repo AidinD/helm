@@ -138,6 +138,54 @@ try {
   ok(hasUncommittedChanges(wt1) === true, "the plain uncommitted-changes check sees the junction as a change");
   ok(hasUncommittedWork(wt1) === false, "but the work check ignores Helm's own bookkeeping - so a finished worktree is cleanable");
   ok(hasUncommittedWork(wt3) === true, "while a genuinely dirty worktree still reports work");
+
+  // THE untracked/tracked distinction, and why it is load-bearing.
+  //
+  // Ignoring these paths whatever their status was safe only while git's own
+  // refusal was the backstop. Once ignoreBookkeeping started passing --force, it
+  // became data loss: in any repo that has NOT gitignored `.helm-goal/` - every
+  // repo except Helm's own - the run's `git add -A` commits those notes, so on the
+  // next run a change to them is TRACKED, invisible to this check, and no longer
+  // refused by git either. An independent review reproduced the worktree being
+  // deleted with the work still in it (2026-08-03).
+  const wt5 = path.join(tmp, "repo-worktrees", "goal-tracked");
+  git("worktree", "add", "-b", "helm/goal-tracked", wt5);
+  fs.mkdirSync(path.join(wt5, ".helm-goal"), { recursive: true });
+  fs.writeFileSync(path.join(wt5, ".helm-goal", "plan.md"), "the plan\n");
+  execFileSync("git", ["-C", wt5, "add", "-A"], { windowsHide: true });
+  execFileSync("git", ["-C", wt5, "commit", "-m", "notes"], { windowsHide: true });
+  ok(hasUncommittedWork(wt5) === false, "a COMMITTED bookkeeping file is not outstanding work");
+  fs.writeFileSync(path.join(wt5, ".helm-goal", "plan.md"), "the plan, edited and not committed\n");
+  ok(
+    hasUncommittedWork(wt5) === true,
+    "but a TRACKED, MODIFIED one is - it is a change that exists nowhere else, wherever it lives"
+  );
+  let refusedTracked = false;
+  try {
+    removeWorktree(repo, wt5, { ignoreBookkeeping: true });
+  } catch (err) {
+    refusedTracked = /uncommitted changes/i.test(err.message);
+  }
+  ok(refusedTracked && fs.existsSync(wt5), "so the sweep REFUSES it, even though the path is one it would otherwise ignore");
+  // And a file literally NAMED like a bookkeeping folder is work too.
+  const wt6 = path.join(tmp, "repo-worktrees", "goal-named");
+  git("worktree", "add", "-b", "helm/goal-named", wt6);
+  fs.writeFileSync(path.join(wt6, ".helm-goal"), "a FILE, not the orchestrator's folder\n");
+  ok(hasUncommittedWork(wt6) === true, "an untracked FILE named .helm-goal counts as work, not as the folder");
+
+  // The other half of the same fix: the removal must actually SUCCEED when the only
+  // outstanding paths ARE untracked bookkeeping. git refuses without --force, which
+  // is why the sweep could not clean anything outside Helm's own repo.
+  const wt7 = path.join(tmp, "repo-worktrees", "goal-untracked");
+  git("worktree", "add", "-b", "helm/goal-untracked", wt7);
+  fs.mkdirSync(path.join(wt7, ".helm-goal"), { recursive: true });
+  fs.writeFileSync(path.join(wt7, ".helm-goal", "notes.md"), "untracked notes\n");
+  fs.symlinkSync(sharedModules, path.join(wt7, "node_modules"), "junction");
+  ok(hasUncommittedChanges(wt7) === true, "git sees untracked bookkeeping in this worktree");
+  ok(hasUncommittedWork(wt7) === false, "our check does not call it work");
+  removeWorktree(repo, wt7, { ignoreBookkeeping: true });
+  ok(!fs.existsSync(wt7), "and the removal SUCCEEDS - without this the sweep cleaned nothing outside Helm's own repo");
+  ok(sharedFileCount() === 1, "with the shared package folder still intact");
   const removeWts = plan.remove.filter((r) => r.kind === "worktree").map((r) => path.basename(r.target));
   ok(removeWts.includes("goal-merged") && removeWts.includes("goal-unmerged"), `both clean worktrees are planned for removal (${removeWts.join(",")})`);
   ok(!removeWts.includes("goal-dirty"), "the dirty one is not - real git status, not a stub");
