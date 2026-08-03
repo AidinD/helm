@@ -48,9 +48,22 @@ try {
 
   // The startup sweep must have RUN, and its report must be reachable from the
   // renderer - a report that only exists in a console line is not a surface.
-  const report = await app.eval(`window.helm.getWorktreeSweepReport()`);
+  // The startup sweep is DEFERRED (every git call in it is synchronous, and running
+  // it inline froze the main thread before the first paint). So this waits for it -
+  // which also proves the deferred sweep actually fires, rather than being
+  // scheduled and forgotten.
+  const report = await app.eval(`(async () => {
+    const until = Date.now() + 20000;
+    let res = await window.helm.getWorktreeSweepReport();
+    while (Date.now() < until && !res?.report) {
+      await new Promise(r => setTimeout(r, 250));
+      res = await window.helm.getWorktreeSweepReport();
+    }
+    return res;
+  })()`);
   ok(report?.ok === true, "the sweep report is reachable over the bridge");
-  ok(report?.report !== null && report?.report !== undefined, "and a sweep already ran at startup, unprompted");
+  ok(report?.report !== null && report?.report !== undefined, "and the deferred startup sweep does fire, unprompted");
+  ok(report?.pending === false, "and stops reporting itself as pending once it has");
   ok(typeof report?.report?.at === "number", "the report is stamped with when it ran");
   ok(Array.isArray(report?.report?.kept), "it carries what it kept");
   ok(Array.isArray(report?.report?.removed), "and what it removed");

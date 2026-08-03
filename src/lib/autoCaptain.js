@@ -196,6 +196,40 @@ export function buildTriageInput(todo, category) {
   ].join("\n");
 }
 
+/** How much of the task title a run's label carries before it is cut. */
+const AUTO_LABEL_TITLE_MAX = 44;
+
+/**
+ * The name an auto-started run wears in the fleet: the project it works in, then
+ * what it is doing.
+ *
+ * Every auto run in the same repo used to be called just "helm" - correct, and
+ * useless: it does not say which task, and two runs in the same repo are then
+ * indistinguishable. The project stays in the label because a fleet row is read
+ * on its own, without its column header for context.
+ *
+ * Cut on a word boundary where there is one, so the label ends mid-thought rather
+ * than mid-word, and with an ellipsis so a truncated title is never mistaken for
+ * the whole task.
+ */
+export function autoRunLabel(projectPath, taskText) {
+  const project = String(projectPath || "")
+    .split(/[\\/]/)
+    .filter(Boolean)
+    .pop();
+  const title = String(taskText || "").replace(/\s+/g, " ").trim();
+  if (!title) {
+    return project || "auto run";
+  }
+  let short = title;
+  if (short.length > AUTO_LABEL_TITLE_MAX) {
+    const cut = short.slice(0, AUTO_LABEL_TITLE_MAX);
+    const lastSpace = cut.lastIndexOf(" ");
+    short = (lastSpace > AUTO_LABEL_TITLE_MAX * 0.6 ? cut.slice(0, lastSpace) : cut).trimEnd() + "…";
+  }
+  return project ? `${project} · ${short}` : short;
+}
+
 /**
  * The note left on a card that was held back. It has to explain itself on the
  * board, where the user reads it - a bare "needs-clarification" tag would just be

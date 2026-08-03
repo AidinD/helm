@@ -1931,7 +1931,7 @@ async function sessionTurnCount(session) {
 // Reuses the app's own context-menu popup rather than a native dialog: same
 // reason dropdownPill does (Chromium's native popups render unreadable in this
 // Electron build), and it keeps the picker looking like every other menu.
-function pickHandoffTopic({ existing = [], suggestion = "general", error = null }, title = "") {
+function pickHandoffTopic({ existing = [], suggestion = "general", error = null, nearMiss = null }, title = "") {
   return new Promise((resolve) => {
     let settled = false;
     const done = (value) => {
@@ -1940,12 +1940,29 @@ function pickHandoffTopic({ existing = [], suggestion = "general", error = null 
         resolve(value);
       }
     };
+    // `nearMiss` is the topic the matcher WOULD have reused on its own. Naming the
+    // consequence matters here: picking it replaces whatever that topic currently
+    // holds, and doing that silently is what buried the captain's training notes under a
+    // leadership handoff. So it is listed first, with what it costs.
     const items = [
-      { label: `Which topic should the handoff for "${title}" go under?`, hint: error || "", onClick: null },
+      {
+        label: nearMiss
+          ? `"${title}" looks like it might belong to an existing topic - which one?`
+          : `Which topic should the handoff for "${title}" go under?`,
+        hint: error || (nearMiss ? `guessed "${nearMiss}" from the wording alone - check it` : ""),
+        onClick: null,
+      },
       { sep: true },
-      ...existing.map((slug) => ({ label: slug, hint: "existing", onClick: () => done(slug) })),
+      ...(nearMiss ? [{ label: nearMiss, hint: "the guess - REPLACES what it holds", onClick: () => done(nearMiss) }] : []),
+      ...existing
+        .filter((slug) => slug !== nearMiss)
+        .map((slug) => ({ label: slug, hint: "existing - replaces its contents", onClick: () => done(slug) })),
       { sep: true },
-      { label: `New topic: ${suggestion}`, hint: "from the session name", onClick: () => done(suggestion) },
+      {
+        label: `New topic: ${suggestion}`,
+        hint: nearMiss ? "keeps both subjects separate" : "from the session name",
+        onClick: () => done(suggestion),
+      },
       { label: "Don't save a handoff", danger: true, onClick: () => done(null) },
     ];
     showContextMenu(Math.round(window.innerWidth / 2) - 140, Math.round(window.innerHeight / 3), items);
@@ -1968,6 +1985,10 @@ function pickHandoffTopic({ existing = [], suggestion = "general", error = null 
 //
 // `ask: false` is for the unattended bulk path, where blocking on a menu would
 // stall a batch: it takes the suggestion knowingly and reports that it guessed.
+// Note which way that falls for a near-miss: `suggestion` is the NEW slug, not the
+// existing topic the matcher was drawn to. Unattended, a fresh file is the safe
+// error - it can be merged later by hand, whereas reusing the wrong topic replaces
+// notes that cannot be reconstructed.
 async function saveHandoffResolvingTopic(session, text, { ask = true } = {}) {
   let res = await window.helm.saveHandoff(session.cwd, text, session.title);
   if (!res || !res.needsCategory) {
@@ -2294,6 +2315,10 @@ function quotaReadout(q, nowMs) {
       level,
       label: typeLabel,
       chipText: `Quota ${pct}%`,
+      // Exposed so a surface with room (the Quota widget) can show the reset
+      // without re-deriving it from the tooltip string. The captain, 2026-07-22: "jag
+      // vill bara veta kvot och när det resetas".
+      resetText,
       barValueText: `${pct}% used`,
       title: `${typeLabel} · ${pct}% used` + (resetText ? ` · resets in ${resetText}` : ""),
     };
@@ -5107,6 +5132,48 @@ function showMockupBanner(index, filePath) {
   }
 }
 
+/**
+ * Size a composer textarea to its content, bounded below by any height the user
+ * dragged it to and above by a share of the pane so it can never swallow the
+ * transcript it belongs to.
+ *
+ * Module-level and self-locating (it finds its own pane) so that ANY code which
+ * sets the composer's value programmatically can size it too - a draft loaded
+ * from a Jot task, a quoted selection, a handoff. Those assignments do not fire
+ * an `input` event, so without this they would drop a long text into a box still
+ * sized for the old one.
+ */
+const COMPOSER_MIN_PX = 34;
+// How far it grows ON ITS OWN, and how far you may drag it. The two differ on
+// purpose: the automatic ceiling protects the transcript from a long paste, but a
+// height you dragged to is an explicit choice and outranks my guess about what you
+// want to see. Only the hard ceiling is absolute, so the transcript never vanishes.
+const COMPOSER_MAX_SHARE = 0.45;
+const COMPOSER_DRAG_MAX_SHARE = 0.85;
+
+function autoSizeComposer(promptEl) {
+  if (!promptEl) {
+    return;
+  }
+  const paneEl = promptEl.closest(".pane");
+  const pane = paneEl ? panes[Number(paneEl.dataset.pane)] : null;
+  const paneHeight = paneEl?.getBoundingClientRect().height || 0;
+  const basis = paneHeight || 600;
+  const autoMax = Math.max(120, Math.round(basis * COMPOSER_MAX_SHARE));
+  const hardMax = Math.max(autoMax, Math.round(basis * COMPOSER_DRAG_MAX_SHARE));
+  // Measuring content height requires releasing the explicit height first.
+  promptEl.style.height = "auto";
+  const content = promptEl.scrollHeight;
+  const floor = Math.max(COMPOSER_MIN_PX, pane?.composerHeight || 0);
+  // Content is capped by the automatic ceiling; the dragged floor is not, because
+  // clamping it there let my ceiling silently undo a size the user had chosen.
+  const next = Math.min(Math.max(Math.min(content, autoMax), floor), hardMax);
+  promptEl.style.height = `${next}px`;
+  // Only scroll internally once it has genuinely run out of room.
+  promptEl.style.overflowY = content > next ? "auto" : "hidden";
+  promptEl.dataset.autoHeight = String(next);
+}
+
 function paneComposerEl(index) {
   const pane = panes[index];
   const wrap = document.createElement("div");
@@ -5137,6 +5204,49 @@ function paneComposerEl(index) {
   promptEl.rows = 2;
   promptEl.placeholder = pane.sessionId ? `Continue "${pane.title}"…` : "What should this session do?";
   shell.append(promptEl);
+
+  // The box grows with the text, and can also be dragged (the captain, 2026-08-03:
+  // "just nu är det väldigt svårt att se långa texter"). It was two fixed rows
+  // with `resize: none`, so a long prompt scrolled inside a two-line slit and
+  // neither option was available.
+  //
+  // A dragged height is a FLOOR, not a lock: the box never gets smaller than
+  // what you dragged it to, but still grows past it as the text gets longer. That
+  // avoids the usual trap where manual and automatic sizing fight each other and
+  // the app needs a mode - and it means there is nothing to switch back off.
+  promptEl.addEventListener("input", () => autoSizeComposer(promptEl));
+  promptEl.addEventListener("mouseup", () => {
+    // A drag-resize ends with a mouseup on the textarea. If the height no longer
+    // matches what autoSizeComposer set, the user moved it themselves.
+    const h = Math.round(promptEl.getBoundingClientRect().height);
+    const set = Number(promptEl.dataset.autoHeight || 0);
+    if (set && Math.abs(h - set) > 2) {
+      // On the PANE, so it survives the composer being rebuilt from scratch on
+      // every render - a local variable here would lose the size on the next
+      // streaming event.
+      pane.composerHeight = h;
+      promptEl.dataset.autoHeight = String(h);
+    }
+  });
+  // A dozen places already assign `promptEl.value` directly - a draft from a Jot
+  // task, a quoted bubble, a queued message, a picked slash command, clearing on
+  // send - and none of them fire an `input` event. Patching the property on THIS
+  // element (not the prototype) makes every one of them resize, including the
+  // next one somebody adds. Enumerating the call sites instead is how the
+  // thirteenth gets missed.
+  const valueDesc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(promptEl), "value");
+  Object.defineProperty(promptEl, "value", {
+    configurable: true,
+    get() {
+      return valueDesc.get.call(this);
+    },
+    set(v) {
+      valueDesc.set.call(this, v);
+      autoSizeComposer(this);
+    },
+  });
+  // Not yet in the document, so scrollHeight is meaningless until after layout.
+  requestAnimationFrame(() => autoSizeComposer(promptEl));
 
   // ---- Slash-command menu -------------------------------------------------
   // Typing `/name` at the very start of the composer opens an autocomplete of
@@ -6754,7 +6864,26 @@ function widgetDashboardFingerprint() {
     .join("|");
   const runs = [...goalRuns.values()].map((r) => `${r.goalRunId}:${r.status}`).sort().join("|");
   const layout = (state.config?.dashboardWidgets?.layout || []).map((w) => `${w.id}:${w.span}`).join("|");
-  return [sessions, runs, layout, state.config?.autoCaptain?.enabled === true].join("##");
+  // VIEW state, not just data. The fingerprint's job is "would the rendered
+  // output differ", and an expand/collapse toggle changes the output without
+  // changing a single session. Leaving it out made the archive group's "Review"
+  // button do nothing on the widget dashboard: the click flipped the flag and
+  // asked for a repaint, the fingerprint said nothing had changed, and the
+  // repaint was skipped (the captain, 2026-08-03: "review gör ingenting i needs you
+  // widgeten"). Any future toggle that repaints belongs here too - the bug is
+  // silent, because a button that does nothing looks identical to a button whose
+  // work you cannot see.
+  const view = `arch:${dashboardArchiveGroupExpanded ? 1 : 0}|focus:${dashboardFocusMode}`;
+  // Quota, for the same reason. A fresh reading arrives on its own event and only
+  // repainted the top-bar chip, so the Quota widget's numbers sat frozen until
+  // something unrelated changed - which is what "den verkar inte uppdateras så
+  // konsekvent" (the captain, 2026-08-03) actually was. Keyed on the reading itself,
+  // not its timestamp, so an identical re-read still costs nothing.
+  const quota = (state.quotaWindows || [])
+    .map((w) => `${w?.info?.rateLimitType || "?"}:${w?.info?.utilization ?? "-"}:${w?.info?.status || "-"}:${w?.info?.resetsAt || 0}`)
+    .sort()
+    .join("|");
+  return [sessions, runs, layout, state.config?.autoCaptain?.enabled === true, view, quota].join("##");
 }
 
 function dashboardFleetFingerprint(mates = [], secondMates = [], boardSummary = {}) {
@@ -7166,6 +7295,46 @@ function choosePersona(mate, key, running) {
     "Switch persona",
     () => retireMateWithCarryOver(mate, next)
   );
+}
+
+/**
+ * The Dashboard's one-line subtitle, DERIVED from who is actually on watch.
+ *
+ * Both dashboards call this once they have the mates, because both already fetch
+ * them - and because the alternative (a constant string) is what produced a page
+ * that claimed no first mate was on watch while naming two of them a few hundred
+ * pixels lower down.
+ *
+ * When mates ARE on watch it names them and says where to act on them, which is
+ * the page's actual top-level state. When none are, the old explanation of what
+ * a first mate is becomes true again, so it is kept for exactly that case.
+ */
+// Last known first mates, so a re-render can fill the subtitle IMMEDIATELY instead
+// of depending on an async fetch landing after the element exists. Getting that
+// ordering wrong left the line permanently blank in the widget dashboard.
+let lastKnownMates = null;
+
+function paintDashboardSubtitle(mates = null) {
+  if (Array.isArray(mates)) {
+    lastKnownMates = mates;
+  }
+  const el = document.getElementById("dashSubtitle");
+  if (!el) {
+    return;
+  }
+  const known = Array.isArray(mates) ? mates : lastKnownMates;
+  if (!Array.isArray(known)) {
+    el.textContent = ""; // genuinely unknown yet - say nothing rather than guess
+    return;
+  }
+  const names = known.map((m) => m.name).filter(Boolean);
+  if (names.length === 0) {
+    el.textContent =
+      "No first mate on watch right now. It's a role you fill when you need it, not a session that stays open - start one fresh whenever you like.";
+    return;
+  }
+  const listed = names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+  el.textContent = `${listed} ${names.length === 1 ? "is" : "are"} on watch. Retire, rename or hand one off from the Fleet below.`;
 }
 
 function dashboardFleetSection(mates = [], secondMates = [], boardSummary = {}) {
@@ -8214,6 +8383,7 @@ async function fillDashboardSections({ force = false } = {}) {
 
   const [matesResult, secondMatesResult] = await Promise.all([window.helm.listMates(), window.helm.listSecondMates()]);
   const activeMatesList = matesResult?.ok ? matesResult.active : [];
+  paintDashboardSubtitle(activeMatesList);
   // Shared with the widget dashboard - see buildFleetModel for why this must not
   // be two separate derivations.
   const { secondMates: secondMatesList, boardSummary } = await buildFleetModel(
@@ -8596,10 +8766,18 @@ function widgetBodyQuota(data) {
   const worst = worstFreshQuotaRow(rows);
   const head = document.createElement("div");
   head.className = "wd-quota-head";
-  head.textContent = worst ? worst.chipText : "No current reading";
+  // NAME the window. `chipText` is written for the cramped top-bar chip, where it
+  // reads "Quota 36%" with no room to say which limit that is - and the widget was
+  // reusing it as its headline. The effect: the weekly window, being the most
+  // constrained one, became the unlabelled headline while the labelled rows below
+  // showed only the 5-hour limit, so the weekly quota looked absent (the captain,
+  // 2026-08-03: "ingen veckokvot t.ex"). It was there the whole time, just
+  // anonymous.
+  head.textContent = worst ? (worst.hasPct ? `${worst.label} ${worst.pct}%` : worst.chipText) : "No current reading";
   const sub = document.createElement("div");
   sub.className = "wd-quota-sub";
-  sub.textContent = worst ? worst.barValueText : "run a turn to get a fresh reading";
+  const resetSuffix = worst?.resetText ? ` · resets in ${worst.resetText}` : "";
+  sub.textContent = worst ? worst.barValueText + resetSuffix : "run a turn to get a fresh reading";
   frag.append(head, sub);
   if (worst && worst.hasPct) {
     frag.append(quotaBar(worst.pct, worst.level));
@@ -9298,6 +9476,7 @@ async function renderWidgetDashboard(page) {
     state.sessions = sessionData.sessions;
   }
   const mates = matesResult?.ok ? matesResult.active : [];
+  paintDashboardSubtitle(mates);
   // The SAME derivation the classic Fleet uses. Passing the raw bindings here is
   // what left the Captain widget empty: the captain's own sessions are derived
   // nodes, not bindings, so they only exist after buildFleetModel runs.
@@ -9372,8 +9551,32 @@ async function renderDashboardPage() {
   const sub = document.createElement("div");
   sub.className = "analysis-totals";
   sub.style.marginBottom = "0";
-  sub.textContent = "No first mate on watch right now. It's a role you fill when you need it, not a session that stays open - start one fresh whenever you like.";
+  sub.id = "dashSubtitle";
+  // Left EMPTY until the mates are actually known. This line used to be a
+  // hardcoded "No first mate on watch right now...", which the app printed
+  // unconditionally - directly above a Fleet section listing two first mates on
+  // watch (the captain, 2026-08-03: "Vad betyder den här texten egentligen?"). It was
+  // stale copy from when a first mate was an on-demand role you started by hand;
+  // ensureMates has guaranteed standing mates for a long time. A subtitle that
+  // contradicts the page under it is worse than no subtitle, and saying nothing
+  // for the moment before the data lands is honest.
+  sub.textContent = "";
   heading.append(h2, sub);
+  // Paint from the cache right away; whichever dashboard renders next repaints it
+  // with a fresh list. Doing it here rather than only after the fetch is what keeps
+  // the line from depending on which render finishes first.
+  if (Array.isArray(lastKnownMates)) {
+    queueMicrotask(() => paintDashboardSubtitle());
+  } else {
+    // Nothing cached yet (first dashboard render of the session). Ask directly
+    // rather than waiting for whatever else happens to fetch mates - the line was
+    // blank until an unrelated refresh ran, which is not something a reader can
+    // know or trigger. One IPC, once.
+    window.helm
+      .listMates()
+      .then((res) => paintDashboardSubtitle(res?.ok ? res.active || [] : []))
+      .catch(() => {});
+  }
   const topbarActions = document.createElement("div");
   topbarActions.className = "dash-topbar-actions";
   // Token-quota readout on the Dashboard too (6ed0b09e) - previously only in the
@@ -10992,7 +11195,10 @@ function housekeepingLineEl() {
   paint(null, { pending: true });
   window.helm
     .getWorktreeSweepReport()
-    .then((res) => paint(res?.report || null))
+    // `pending` means the first sweep is scheduled but has not fired yet (it is
+    // deliberately deferred off the startup path). Saying "no sweep has run yet"
+    // then would be a lie with a several-second window.
+    .then((res) => paint(res?.report || null, { pending: Boolean(res?.pending) }))
     .catch(() => paint(null));
   return wrap;
 }

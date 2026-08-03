@@ -52,6 +52,8 @@ import {
   listWorktrees,
   listLocalBranches,
   hasUncommittedWork,
+  pruneWorktrees,
+  primaryBranch,
 } from "./lib/worktree.js";
 import { planSweep, describeSweep } from "./lib/worktreeSweep.js";
 import { docsStaleness, staleProjectsAsync, docsNudgeCandidates, DOCS_NUDGE_ACTIVE_DAYS } from "./lib/docsStaleness.js";
@@ -79,6 +81,7 @@ import {
   AUTO_WIDTH_CAP,
   AUTO_CAPTAIN_TAGS,
   AUTO_RUNNING_TAG,
+  autoRunLabel,
   NEEDS_CLARIFICATION_TAG,
   TRIAGE_SYSTEM_PROMPT,
   buildTriageInput,
@@ -2875,6 +2878,16 @@ function startGoalRun({
         // with a cumulative commit count (Phase-2 Slice 5).
         baseCommit: result?.baseCommit || null,
         resumable: !!result?.resumable,
+        // The run's OWN output, kept on the record. A research- or plan-only run's
+        // entire deliverable lives in `.helm-goal/`, which became gitignored on
+        // 2026-08-03 - so it is no longer committed, the run therefore ends with
+        // zero commits, and the existing zero-commit cleanup then removes the
+        // worktree it lived in. Without this the plan existed only in the live
+        // renderer and was gone after a restart (independent review, 2026-08-03).
+        // Bounded: this index is meant to stay compact, and the full text remains
+        // in the run's transcript.
+        plan: typeof result?.plan === "string" ? result.plan.slice(0, 20000) : null,
+        notes: typeof result?.notes === "string" ? result.notes.slice(0, 20000) : null,
         // Release the cross-instance claim: the run is no longer live here.
         livePid: null,
         liveHeartbeatAt: null,
@@ -3280,7 +3293,16 @@ async function autoCaptainTick({ force = false } = {}) {
       // existing id merges.
       const smId = secondMateId("direct", where.projectPath);
       try {
-        proposeSecondMate("direct", where.projectPath);
+        // Name it after the TASK, not just the project. The Auto widget shows one
+        // row per run, and every run in the same repo read simply "helm" - which
+        // says where it is working but not what it is doing, and is identical for
+        // two different tasks (the captain, 2026-08-03: "Namnet på auto sessionen").
+        // The project stays in the name because a row is read on its own, without
+        // the column header for context.
+        proposeSecondMate("direct", where.projectPath, {
+          name: autoRunLabel(where.projectPath, todo.text),
+          brief: todo.text,
+        });
       } catch (err) {
         console.error("[helm] auto-captain could not register the second mate:", err?.message || err);
       }
@@ -3509,6 +3531,11 @@ ipcMain.handle("goal:cleanupRun", (_event, { projectPath, worktreePath, branchNa
 // junction into the SHARED package folder and empties it, which is exactly what
 // happened to this repo (and cascaded into Jot's build output) the same day.
 let lastWorktreeSweep = null;
+// True between "a sweep is scheduled" and "it finished". Without this the Goal page
+// cannot tell "no sweep has ever run" from "the first one has not fired yet", and
+// says the former - which is a lie for the first few seconds after launch now that
+// the sweep is deferred off the startup path.
+let worktreeSweepPending = false;
 
 /** Repos worth sweeping: wherever a goal run has actually run, plus Helm itself. */
 function sweepCandidateProjects() {
@@ -3532,26 +3559,37 @@ function sweepFinishedGoalWorktrees() {
   const removed = [];
   const kept = [];
   const failed = [];
+  const allRuns = loadGoalRunHistory();
   for (const projectPath of sweepCandidateProjects()) {
+    // ONCE per repo. isBranchMerged resolves the primary branch on every call -
+    // up to three git spawns each - so a repo with N kept branches paid it N
+    // times. An independent review measured 9.6 seconds for 30 unmerged branches
+    // in a single repo, all of it blocking Electron's main thread before the first
+    // render (2026-08-03).
+    let primary;
+    const exists = (p) => {
+      try {
+        return fs.existsSync(p);
+      } catch {
+        return false;
+      }
+    };
+    // "Work" means changes outside Helm's own bookkeeping - the dependency
+    // junction and the orchestrator's .helm-goal/ notes are untracked in any repo
+    // that has not ignored them, and keying on those would keep every finished
+    // worktree forever. Fails SAFE: unreadable counts as holding work.
+    const isDirty = (worktreePath) => (exists(worktreePath) ? hasUncommittedWork(worktreePath) : false);
     let plan;
     try {
-      const runs = loadGoalRunHistory().filter((r) => r?.projectPath === projectPath);
+      primary = primaryBranch(projectPath);
       plan = planSweep({
         projectPath,
         worktrees: listWorktrees(projectPath),
         branches: listLocalBranches(projectPath),
-        runs,
-        isMerged: (branchName) => isBranchMerged(projectPath, branchName),
-        // "Work" means changes outside Helm's own bookkeeping - the dependency
-        // junction and the orchestrator's .helm-goal/ notes are untracked in any
-        // repo that has not ignored them, and keying on those would keep every
-        // finished worktree forever. Fails SAFE: unreadable counts as holding work.
-        isDirty: (worktreePath) => {
-          if (!fs.existsSync(worktreePath)) {
-            return false; // already gone from disk - nothing to lose
-          }
-          return hasUncommittedWork(worktreePath);
-        },
+        runs: allRuns.filter((r) => r?.projectPath === projectPath),
+        isMerged: (branchName) => isBranchMerged(projectPath, branchName, primary),
+        isDirty,
+        exists,
       });
     } catch (err) {
       // A repo we cannot read is skipped, never guessed at.
@@ -3560,9 +3598,14 @@ function sweepFinishedGoalWorktrees() {
     }
     kept.push(...plan.keep);
     // Worktrees first: git refuses to delete a branch that is still checked out.
+    let prunedAny = false;
     for (const action of plan.remove.filter((a) => a.kind === "worktree")) {
       try {
-        if (fs.existsSync(action.target)) {
+        if (action.prune) {
+          // Registered but gone from disk: `git worktree remove` has nothing to do
+          // and the entry would survive forever, so prune once after the loop.
+          prunedAny = true;
+        } else {
           // Never `force`: the sweep must be unable to discard work even if the
           // planner ever decided wrongly. ignoreBookkeeping only narrows what
           // counts as work; the refusal on real changes stays in place.
@@ -3571,6 +3614,13 @@ function sweepFinishedGoalWorktrees() {
         removed.push(action);
       } catch (err) {
         failed.push({ ...action, reason: err?.message || String(err) });
+      }
+    }
+    if (prunedAny) {
+      try {
+        pruneWorktrees(projectPath);
+      } catch (err) {
+        failed.push({ kind: "repo", target: projectPath, reason: `git worktree prune failed: ${err?.message || err}` });
       }
     }
     // Re-derive branches after the removals so a branch freed by this same pass
@@ -3582,23 +3632,27 @@ function sweepFinishedGoalWorktrees() {
         worktrees: listWorktrees(projectPath),
         branches: listLocalBranches(projectPath),
         runs: [],
-        isMerged: (branchName) => isBranchMerged(projectPath, branchName),
+        isMerged: (branchName) => isBranchMerged(projectPath, branchName, primary),
         isDirty: () => true, // worktrees already handled above; keep them all here
+        exists,
       });
     } catch {
       secondPass = { remove: [] };
     }
     for (const action of secondPass.remove.filter((a) => a.kind === "branch")) {
       try {
-        deleteBranch(projectPath, action.target);
+        // `mergedInto` (not `force`): deleteBranch re-verifies the ancestry itself
+        // and only then uses git's forceful delete. Plain `-d` asks a DIFFERENT
+        // question - "contained in HEAD" - so with the repo checked out on any
+        // other branch it refused every merged branch and the sweep cleaned
+        // nothing while logging a failure each start.
+        deleteBranch(projectPath, action.target, { mergedInto: primary });
         removed.push(action);
       } catch (err) {
         failed.push({ ...action, reason: err?.message || String(err) });
       }
     }
   }
-  // The second pass re-reports worktrees it was told to keep; drop those so the
-  // kept list is not doubled.
   const seen = new Set();
   const dedupedKept = kept.filter((k) => {
     const key = `${k.kind}:${k.target}`;
@@ -3609,6 +3663,7 @@ function sweepFinishedGoalWorktrees() {
     return true;
   });
   lastWorktreeSweep = { at: Date.now(), removed, kept: dedupedKept, failed };
+  worktreeSweepPending = false;
   console.log(`[helm] worktree housekeeping: ${describeSweep(lastWorktreeSweep)}`);
   for (const k of dedupedKept) {
     console.log(`[helm]   kept ${k.kind} ${k.target}: ${k.reason}`);
@@ -3617,7 +3672,7 @@ function sweepFinishedGoalWorktrees() {
 }
 
 // Read the last sweep (for the Goal page's housekeeping line) or run one now.
-ipcMain.handle("worktrees:sweepReport", () => ({ ok: true, report: lastWorktreeSweep }));
+ipcMain.handle("worktrees:sweepReport", () => ({ ok: true, report: lastWorktreeSweep, pending: worktreeSweepPending }));
 ipcMain.handle("worktrees:sweep", () => {
   try {
     return { ok: true, report: sweepFinishedGoalWorktrees() };
@@ -4596,11 +4651,20 @@ function startDispatchWatcher() {
   // Clean up after finished autonomous runs, so their worktrees and merged
   // branches stop accumulating where nothing looks. Provably-lossless actions
   // only; everything else is kept with a reason and shown on the Goal page.
-  try {
-    sweepFinishedGoalWorktrees();
-  } catch (err) {
-    console.error("[helm] worktree housekeeping failed:", err?.message || err);
-  }
+  //
+  // DEFERRED, not inline: every git call in it is synchronous, and an independent
+  // review measured 9.6 seconds for one repo with 30 kept branches - all of it
+  // freezing the main thread before the first paint (2026-08-03). Housekeeping is
+  // never urgent, so it waits until the window has had a chance to render.
+  worktreeSweepPending = true;
+  setTimeout(() => {
+    try {
+      sweepFinishedGoalWorktrees();
+    } catch (err) {
+      worktreeSweepPending = false;
+      console.error("[helm] worktree housekeeping failed:", err?.message || err);
+    }
+  }, 4000);
   // Put the auto-captain's tags on the board so the feature can actually be
   // reached: "auto" is the tag the user applies, and until now nothing created
   // it, so there was nothing to pick in Jot. Idempotent, and it does not touch

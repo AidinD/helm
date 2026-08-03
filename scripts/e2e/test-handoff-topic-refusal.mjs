@@ -105,9 +105,55 @@ ok(
   "and a failure is logged in plain words, not swallowed"
 );
 
+// --- a GUESS at an existing topic asks too ----------------------------------
+// Filing into a topic REPLACES what it holds, so guessing which existing topic a
+// note belongs to is exactly as unsafe as inventing a name. The old near-miss rule
+// reused a topic silently on one shared word, which put a handoff about the captain's
+// leadership development into the topic holding his exercise-and-diet notes and
+// overwrote them (2026-08-03). The rule cannot be made correct lexically -
+// "training" -> "training-coaching" is right, "coaching" -> "training-coaching" is
+// wrong, and the two are structurally identical - so it must ask.
+// The real case, verbatim: this is the pair that actually mis-filed.
+const nearMissPlan = planHandoffFiling({ proposed: "coaching", existing: ["training-coaching"], title: "Leadership" });
+ok(nearMissPlan.needsCategory === true, "a near-miss on an existing topic ASKS instead of reusing it silently");
+ok(nearMissPlan.nearMiss === "training-coaching", `and names the topic it was drawn to (${nearMissPlan.nearMiss})`);
+ok(nearMissPlan.suggestion === "coaching", "while offering the new topic it would otherwise have created");
+// The mirror case shows why guessing cannot be fixed lexically: identical shape,
+// opposite correct answer. Both must ask.
+ok(
+  planHandoffFiling({ proposed: "training", existing: ["training-coaching"], title: "t" }).needsCategory === true,
+  "and so does the case where reusing would have been RIGHT - the two are indistinguishable"
+);
+const exactPlan = planHandoffFiling({ proposed: "exercise-and-diet", existing: ["exercise-and-diet"], title: "x" });
+ok(exactPlan.needsCategory !== true && exactPlan.category === "exercise-and-diet", "an EXACT match still decides on its own - no needless interruption");
+
+// Overwriting a topic must keep the version it replaced, or a mis-file is
+// destructive rather than merely wrong.
+const dropComments = (s) =>
+  s
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .split("\n")
+    .filter((l) => !l.trim().startsWith("//"))
+    .join("\n");
+const writeSrc = fs.readFileSync(new URL("../../src/lib/handoffStore.js", import.meta.url), "utf8");
+const writeBody = dropComments(writeSrc.slice(writeSrc.indexOf("export function writeHandoff")));
+ok(/superseded/.test(writeBody) && /copyFileSync/.test(writeBody), "writeHandoff keeps a copy of the version it overwrites");
+ok(
+  writeBody.indexOf("copyFileSync") < writeBody.indexOf("writeFileAtomicSync"),
+  "and keeps it BEFORE writing the new one, which is the only order that helps"
+);
+
+// The classifier must be told to read the note, not translate the title - the
+// mistranslation is where the wrong name came from in the first place.
+const classifierSrc = fs.readFileSync(new URL("../../src/lib/orchestratorHelper.js", import.meta.url), "utf8");
+const prompt = classifierSrc.slice(classifierSrc.indexOf("HANDOFF_CATEGORY_PROMPT"), classifierSrc.indexOf("HANDOFF_CATEGORY_PROMPT") + 2200);
+ok(/never translate it word for word/i.test(prompt), "the classifier is told not to translate the session title");
+ok(/unambiguous/i.test(prompt), "and to prefer an unambiguous name");
+ok(/not symmetric|buries/i.test(prompt), "and that a wrong reuse costs more than an extra topic");
+
 console.log(
   fails === 0
-    ? "\nVERIFY OK: a handoff topic is matched or asked for, never invented."
+    ? "\nVERIFY OK: a handoff topic is matched, asked for, or newly named - never guessed silently, and never overwritten without a copy."
     : `\nVERIFY FAILED (${fails})`
 );
 process.exit(fails === 0 ? 0 : 1);
