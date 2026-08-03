@@ -247,10 +247,16 @@ ok(/pruneWorktrees\(projectPath, \{/.test(sweepBody), "and prunes registrations 
 ok(/onlyIfAllMatch:/.test(sweepBody), "only when every registration it would drop is one the sweep decided about");
 // Deferred off the startup path: every git call in the sweep is synchronous, and a
 // repo with many kept branches froze the main thread for seconds before first paint.
-ok(
-  /setTimeout\(\(\) => \{\s*try \{\s*sweepFinishedGoalWorktrees\(\);/.test(mainSrc),
-  "the startup sweep is deferred, not run inline before the first render"
-);
+// Matched on WHAT the timer runs, not on the exact statement that follows the brace -
+// the sweep now times itself, and pinning the shape broke on a line that added a
+// measurement rather than changing behaviour.
+const deferMatch = mainSrc.match(/setTimeout\(\(\) => \{[\s\S]{0,400}?sweepFinishedGoalWorktrees\(\);[\s\S]*?\}, (\d+)\);/);
+ok(!!deferMatch, "the startup sweep is deferred, not run inline before the first render");
+// And far enough out to be clear of first paint and the first clicks. Measured
+// 2026-08-03: a cheap IPC issued during startup took 421ms against 3ms in a settled app,
+// which is what Aidin feels as the app being slower than before.
+ok(Number(deferMatch?.[1] || 0) >= 8000, `and deferred well past first paint (${deferMatch?.[1]}ms)`);
+ok(/blocked the main process for/.test(mainSrc), "and it reports how long it blocked, so the cost stops being invisible");
 // One primary-branch resolution per repo, not one per branch (it costs up to three
 // git spawns each).
 ok(

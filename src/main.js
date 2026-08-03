@@ -4923,9 +4923,21 @@ function startDispatchWatcher() {
   // freezing the main thread before the first paint (2026-08-03). Housekeeping is
   // never urgent, so it waits until the window has had a chance to render.
   worktreeSweepPending = true;
+  // AT 12 SECONDS, not 4. Every git call in the sweep is synchronous, so while it runs
+  // the main process answers nothing - and at t+4s that lands exactly when the window
+  // has just painted and the first clicks arrive. Measured on 2026-08-03: an unrelated
+  // cheap IPC issued during startup took 421ms, while the same call in a settled app
+  // takes 3ms. That is the "hela appen laggar faktiskt till ibland" and the "segare an
+  // tidigare" - the review queue I suspected first costs 11ms once git's caches are
+  // warm, so it was not the offender.
+  //
+  // Moving it is a mitigation, not the fix. The fix is for those git calls to be async,
+  // which is a real change to worktree.js and its tests - filed rather than rushed.
   setTimeout(() => {
+    const sweepStartedAt = Date.now();
     try {
       sweepFinishedGoalWorktrees();
+      console.log(`[helm] worktree housekeeping blocked the main process for ${Date.now() - sweepStartedAt}ms`);
     } catch (err) {
       worktreeSweepPending = false;
       console.error("[helm] worktree housekeeping failed:", err?.message || err);
@@ -4939,7 +4951,7 @@ function startDispatchWatcher() {
     } catch (err) {
       console.error("[helm] stranded auto card check failed:", err?.message || err);
     }
-  }, 4000);
+  }, 12000);
   // Put the auto-captain's tags on the board so the feature can actually be
   // reached: "auto" is the tag the user applies, and until now nothing created
   // it, so there was nothing to pick in Jot. Idempotent, and it does not touch
@@ -5186,7 +5198,34 @@ function runDueScheduledPrompts() {
 // steps. Anything in review with no record is returned too, flagged - hiding it
 // would let unreviewed work pass as reviewed, which is the failure this exists to
 // prevent.
-ipcMain.handle("reviews:list", () => {
+// The review queue is EXPENSIVE: buildReviewQueue asks git for each project's HEAD and
+// for what changed between two commits, and every one of those is an execFileSync in the
+// main process. Measured on Aidin's real board (18 records) on 2026-08-03: 69ms cold,
+// then 2042ms and 842ms - and an unrelated cheap IPC issued during one took 421ms,
+// because the main process was blocked outright. That is his "hela appen laggar faktiskt
+// till ibland" and "mycket segare an tidigare", and I made it worse the same day by
+// adding two more callers: the subnav badge at startup AND on a 60s tick, plus the
+// Review widget. Three callers, each paying the full git bill.
+//
+// So: one computation, shared. Callers that only need a number (the badge, the widget)
+// pass maxAgeMs and get the last result when it is recent enough; the page passes
+// nothing and always gets a fresh one, because that is the surface where being current
+// matters. Deliberately NOT a longer-lived cache: stale review state is exactly the kind
+// of thing that should not be quietly out of date.
+let reviewQueueCache = null; // { at, payload }
+const REVIEW_QUEUE_DEFAULT_MAX_AGE_MS = 20_000;
+
+ipcMain.handle("reviews:list", (_e, opts = {}) => {
+  const maxAge = typeof opts?.maxAgeMs === "number" ? opts.maxAgeMs : 0;
+  if (maxAge > 0 && reviewQueueCache && Date.now() - reviewQueueCache.at <= maxAge) {
+    return { ...reviewQueueCache.payload, cached: true };
+  }
+  const payload = buildReviewsPayload();
+  reviewQueueCache = { at: Date.now(), payload };
+  return payload;
+});
+
+function buildReviewsPayload() {
   const config = loadConfig();
   const board = reviewTasks(config.jot || {});
   const metaHome = resolveMetaHome();
@@ -5216,7 +5255,7 @@ ipcMain.handle("reviews:list", () => {
     tally: reviewQueueTally(rows),
     doneWithoutRecord: unrecordedDone.ok ? unrecordedDone.tasks : [],
   };
-});
+}
 
 // Review actions: move a task on the board from the review page itself, so
 // signing off doesn't mean leaving Helm for Jot. A bounce back to in-progress

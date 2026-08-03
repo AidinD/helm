@@ -44,13 +44,25 @@ ok(count({}) === 0 && count(null) === 0 && count(undefined) === 0, "an empty or 
 
 // --- the badge is no longer a side effect of rendering the page --------------
 const paint = grab("paintReviewBadge");
-ok(/window\.helm\.listReviews\(\)/.test(paint), "the badge can fetch its own tally");
+ok(/window\.helm\.listReviews\(/.test(paint), "the badge can fetch its own tally");
 ok(/tally = null/.test(paint), "taking one when the page already has it, so opening review costs no extra read");
 ok(/catch/.test(paint), "and a failed read leaves the existing count alone rather than clearing it");
 
 const startupTail = rSrc.slice(rSrc.indexOf("setInterval(renderScheduledPromptBar"));
 ok(/void paintReviewBadge\(\);/.test(startupTail), "it is painted at startup, before any page visit");
 ok(/setInterval\(\(\) => \{\s*void paintReviewBadge\(\);/.test(startupTail), "and kept current on a tick");
+// The first paint must NOT land in the startup crush: every git call in the housekeeping
+// sweep is synchronous, and a cheap IPC issued during startup measured 421ms against 3ms
+// in a settled app (2026-08-03). A badge nobody is looking at yet is not worth queueing
+// behind that.
+ok(
+  /setTimeout\(\(\) => \{\s*void paintReviewBadge\(\);\s*\}, 15 \* 1000\);/.test(startupTail),
+  "the first paint is deferred out of the startup crush, not fired immediately"
+);
+ok(
+  /maxAgeMs: 20_000/.test(paint),
+  "and a count accepts a recent result rather than paying for a git spawn per project on every tick"
+);
 
 // The page must still paint it, or a stamp would not clear the badge until the tick.
 ok(/paintReviewBadge\(tally\);/.test(rSrc), "renderReviewPage still paints it with the tally it already has");
@@ -64,7 +76,7 @@ ok(
 ok(/review: \{ label: "Review", span: 4/.test(rSrc), "the Review widget is in the catalog, so it can be added");
 ok(/review: widgetBodyReview,/.test(rSrc), "and wired to a body");
 const widget = grab("paintReviewWidget");
-ok(/window\.helm\.listReviews\(\)/.test(widget), "it fetches its own tally rather than riding the dashboard bundle");
+ok(/window\.helm\.listReviews\(/.test(widget), "it fetches its own tally rather than riding the dashboard bundle");
 ok(/navigateToPage\("review"\)/.test(widget), "it navigates to the review page - the 'snabb navigering' half of the ask");
 ok(/reviewAttentionCount\(tally\)/.test(widget), "and uses the SAME count as the badge, so the two cannot disagree");
 ok(/if \(n === 0\) \{\s*continue;/.test(widget), "zero-value bands are skipped - a row of zeroes is noise");
