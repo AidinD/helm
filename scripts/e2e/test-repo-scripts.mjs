@@ -66,11 +66,34 @@ try {
       setTimeout(() => { clearInterval(t); resolve(null); }, 25000);
     });
     stop();
-    return { started, done, text: events.filter((e) => e.kind === "out").map((e) => e.text).join("") };
+    const outs = events.filter((e) => e.kind === "out");
+    return {
+      started,
+      done,
+      // An "out" payload carries ANSI-parsed SEGMENTS ([{text, style}]), not a flat string: the
+      // colour codes are parsed in the main process because the renderer is a classic script and
+      // cannot import the parser. This test still read the old flat text field, which stopped
+      // being sent when that moved - so it reported "its stdout streamed back" as empty against a
+      // run that had streamed perfectly. The renderer keeps a fallback for the old shape, so
+      // nothing was broken except the assertion. Read both, and check the shape separately below.
+      text: outs.map((e) => (e.segments || []).map((s) => s.text).join("") || e.text || "").join(""),
+      shapes: outs.map((e) => (Array.isArray(e.segments) ? "segments" : typeof e.text === "string" ? "text" : "neither")),
+      firstSegment: outs.find((e) => Array.isArray(e.segments))?.segments?.[0] || null,
+    };
   })()`);
   ok(run?.started?.ok === true, `the run starts (${run?.started?.command})`);
   ok(run?.done?.code === 0, `it reports exit 0 (got ${JSON.stringify(run?.done)})`);
   ok(/hello from script/.test(run?.text || ""), `its stdout streamed back (${JSON.stringify((run?.text || "").trim().slice(0, 60))})`);
+  // The SHAPE is asserted too, so this cannot drift again without saying so: an "out" event that
+  // stopped carrying segments would still pass the text assertion above through the fallback.
+  ok(
+    (run?.shapes || []).length > 0 && run.shapes.every((s) => s === "segments"),
+    `every out event carries ANSI segments (${JSON.stringify(run?.shapes)})`
+  );
+  ok(
+    run?.firstSegment && typeof run.firstSegment.text === "string" && typeof run.firstSegment.style === "object",
+    `and a segment is {text, style} as the renderer expects (${JSON.stringify(run?.firstSegment)})`
+  );
 
   // 4. a failing script surfaces its exit code rather than looking successful
   const failRun = await app.eval(`(async () => {
