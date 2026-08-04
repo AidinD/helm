@@ -5647,6 +5647,70 @@ function listContinuation(value, caret, caretEnd = caret) {
   };
 }
 
+/**
+ * Tab indents the list item the caret is on; Shift+Tab takes it back out.
+ *
+ * "jag vill att 1. space ska indentera raden" (Aidin, 2026-08-04, bouncing bd0900eb
+ * back). Two spaces per level, which is what Markdown reads as a nested item, so the
+ * indentation is not just visual - it means the same thing to whatever reads the prompt.
+ *
+ * Returns { from, to, text } or null. Null means the caret is NOT on a list item, and
+ * then Tab must be left alone: it moves focus, and stealing that from a text box is a
+ * real accessibility loss for a feature nobody asked for.
+ */
+/**
+ * Applies one { from, to, text } edit to the composer.
+ *
+ * Shared by the list-continuation and the indent paths so there is ONE place that knows
+ * how to edit this box. It uses the browser's own insert command rather than assigning
+ * to .value, because assigning wipes the textarea's native undo stack - one Ctrl+Z would
+ * then throw away everything typed instead of the marker just added.
+ *
+ * keepCaretOffset is for indenting: the caret should stay on the word you were writing,
+ * shifted by what the edit added or removed, instead of jumping to the start of the line
+ * where the indentation went in.
+ */
+function applyComposerEdit(promptEl, step, { keepCaretOffset = false } = {}) {
+  const caretBefore = promptEl.selectionStart;
+  const delta = step.text.length - (step.to - step.from);
+  promptEl.setSelectionRange(step.from, step.to);
+  if (!document.execCommand("insertText", false, step.text)) {
+    const before = promptEl.value.slice(0, step.from);
+    const after = promptEl.value.slice(step.to);
+    promptEl.value = before + step.text + after;
+    promptEl.setSelectionRange(step.from + step.text.length, step.from + step.text.length);
+  }
+  if (keepCaretOffset) {
+    const next = Math.max(step.from, caretBefore + delta);
+    promptEl.setSelectionRange(next, next);
+  }
+  autoSizeComposer(promptEl);
+}
+
+const LIST_INDENT = "  ";
+function listIndentStep(value, caret, caretEnd = caret, { outdent = false } = {}) {
+  if (typeof value !== "string" || typeof caret !== "number") {
+    return null;
+  }
+  const lineStart = value.lastIndexOf("\n", Math.min(caret, caretEnd) - 1) + 1;
+  const lineEnd = value.indexOf("\n", lineStart) === -1 ? value.length : value.indexOf("\n", lineStart);
+  const line = value.slice(lineStart, lineEnd);
+  if (!LIST_ITEM_RE.test(line)) {
+    return null;
+  }
+  const indent = /^[ \t]*/.exec(line)[0];
+  if (!outdent) {
+    return { from: lineStart, to: lineStart, text: LIST_INDENT };
+  }
+  if (indent.length === 0) {
+    // Already at the left margin. Report a no-op rather than null: the caller still has
+    // to swallow the key, or Shift+Tab would jump focus out of the composer mid-list.
+    return { from: lineStart, to: lineStart, text: "", noop: true };
+  }
+  const drop = indent.startsWith(LIST_INDENT) ? LIST_INDENT.length : indent[0] === "\t" ? 1 : indent.length;
+  return { from: lineStart, to: lineStart + drop, text: "" };
+}
+
 function autoSizeComposer(promptEl) {
   if (!promptEl) {
     return;
@@ -6400,7 +6464,25 @@ function paneComposerEl(index) {
   // incrementerar"). Shift+Enter is the newline key here - Enter sends - so this
   // hangs off Shift+Enter and cannot affect sending.
   promptEl.addEventListener("keydown", (e) => {
-    if (e.key !== "Enter" || !e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) {
+    if (e.ctrlKey || e.metaKey || e.altKey) {
+      return;
+    }
+    // Tab indents the list item you are on, Shift+Tab takes it back out. Only ever on a
+    // list item: on ordinary text Tab keeps moving focus, because taking that away from
+    // a text box costs more than this feature is worth.
+    if (e.key === "Tab") {
+      const indentStep = listIndentStep(promptEl.value, promptEl.selectionStart, promptEl.selectionEnd, { outdent: e.shiftKey });
+      if (!indentStep) {
+        return;
+      }
+      e.preventDefault();
+      if (indentStep.noop) {
+        return;
+      }
+      applyComposerEdit(promptEl, indentStep, { keepCaretOffset: true });
+      return;
+    }
+    if (e.key !== "Enter" || !e.shiftKey) {
       return;
     }
     const step = listContinuation(promptEl.value, promptEl.selectionStart, promptEl.selectionEnd);
@@ -6408,17 +6490,7 @@ function paneComposerEl(index) {
       return; // not in a list - let the browser insert its own newline
     }
     e.preventDefault();
-    promptEl.setSelectionRange(step.from, step.to);
-    // insertText, not a direct value assignment: assigning to .value wipes the
-    // textarea's native undo stack, so one Ctrl+Z would throw away everything
-    // typed rather than the marker just inserted.
-    if (!document.execCommand("insertText", false, step.text)) {
-      const before = promptEl.value.slice(0, step.from);
-      const after = promptEl.value.slice(step.to);
-      promptEl.value = before + step.text + after;
-      promptEl.setSelectionRange(step.from + step.text.length, step.from + step.text.length);
-    }
-    autoSizeComposer(promptEl);
+    applyComposerEdit(promptEl, step);
   });
 
   // Enter sends; Shift+Enter inserts a newline (matches the desktop app).
