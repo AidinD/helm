@@ -3599,7 +3599,10 @@ const CARRY_OVER_PROMPT =
   "brand-new session could pick up seamlessly: current state, key decisions " +
   "made and why, and concrete next steps. This will be pasted as the opening " +
   "message of a new session, so write it as context FOR that new session, " +
-  "not as a message to me.";
+  "not as a message to me. Don't duplicate content already captured in other " +
+  "durable artifacts (DECISIONS.md, PLAN.md, commits) - reference them by path " +
+  "instead. Redact any sensitive information such as API keys, passwords, or " +
+  "personally identifiable information.";
 
 // If a summarize launch's "done"/"error" event never arrives (a crashed main
 // process, a dropped IPC message), the callback registered below would
@@ -15042,7 +15045,7 @@ function mdInline(escaped) {
   const codes = [];
   s = s.replace(/`([^`]+)`/g, (_m, c) => {
     codes.push(c);
-    return " C" + (codes.length - 1) + " ";
+    return "\u0001C" + (codes.length - 1) + "\u0001";
   });
   // Links [text](url) - only safe schemes; anything else renders as plain text.
   // (url is already escaped, so &amp; etc. are valid inside the attribute.)
@@ -15056,17 +15059,21 @@ function mdInline(escaped) {
   s = s.replace(/\[\[([^\]]+)\]\]/g, (_m, t) => `<em>${t}</em>`);
   s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   s = s.replace(/(^|[^*])\*([^*\s][^*]*?)\*/g, "$1<em>$2</em>");
-  s = s.replace(/ C(\d+) /g, (_m, i) => `<code>${codes[Number(i)]}</code>`);
+  s = s.replace(/\u0001C(\d+)\u0001/g, (_m, i) => `<code>${codes[Number(i)]}</code>`);
   return s;
 }
 
 function renderMarkdown(md) {
-  const raw = String(md || "").replace(/\r\n/g, "\n");
+  const raw = String(md || "")
+    .replace(/\r\n/g, "\n")
+    // The code-span/fence placeholders below are \u0001-delimited; strip both
+    // control characters from the input so rendered text can never forge one.
+    .replace(/[\u0000\u0001]/g, "");
   // Pull fenced code blocks out first so their bodies escape the block parser.
   const fences = [];
   const withoutFences = raw.replace(/```[^\n]*\n([\s\S]*?)```/g, (_m, code) => {
     fences.push(code.replace(/\n$/, ""));
-    return "\n F" + (fences.length - 1) + " \n";
+    return "\n\u0001F" + (fences.length - 1) + "\u0001\n";
   });
   const lines = withoutFences.split("\n");
   const out = [];
@@ -15081,7 +15088,7 @@ function renderMarkdown(md) {
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    const fence = line.match(/^ F(\d+) $/);
+    const fence = line.match(/^\u0001F(\d+)\u0001$/);
     if (fence) {
       flushPara();
       out.push(`<pre><code>${mdEscape(fences[Number(fence[1])])}</code></pre>`);
