@@ -6191,10 +6191,59 @@ function paneComposerEl(index) {
   const shell = document.createElement("div");
   shell.className = "composer-shell";
 
+  // The whole box is resized by dragging its TOP EDGE (task dce9946c: "kan vi göra
+  // promptrutan dragbar för storleken istället för grejen i vänstra hörnet"). Before this,
+  // resizing meant finding the textarea's own small native corner grip and, worse, the size
+  // was detected AFTER the fact by comparing heights on mouseup - a second, invisible
+  // mechanism running beside autoSizeComposer.
+  //
+  // A full-width edge is the thing you actually reach for when a prompt has got long, and it
+  // is where every chat app puts it. Double-click hands the size back to the text.
+  const grip = document.createElement("div");
+  grip.className = "composer-grip";
+  grip.title = "Drag to resize · double-click to fit the text";
+  shell.append(grip);
+
   const promptEl = document.createElement("textarea");
   promptEl.rows = 2;
   promptEl.placeholder = pane.sessionId ? `Continue "${pane.title}"…` : "What should this session do?";
   shell.append(promptEl);
+
+  // Pointer events with capture, so the drag keeps tracking when the cursor leaves the strip -
+  // which it does immediately, since dragging up moves away from a 6px-tall element.
+  grip.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = promptEl.getBoundingClientRect().height;
+    const paneEl = grip.closest(".pane");
+    const basis = paneEl?.getBoundingClientRect().height || 600;
+    const hardMax = Math.round(basis * COMPOSER_DRAG_MAX_SHARE);
+    grip.setPointerCapture(e.pointerId);
+    grip.classList.add("dragging");
+    const onMove = (ev) => {
+      // Up is bigger: the box grows towards the transcript, the way its edge moves.
+      const next = Math.min(Math.max(startH + (startY - ev.clientY), COMPOSER_MIN_PX), hardMax);
+      pane.composerHeight = Math.round(next);
+      promptEl.style.height = `${Math.round(next)}px`;
+      promptEl.dataset.autoHeight = String(Math.round(next));
+      promptEl.style.overflowY = promptEl.scrollHeight > next ? "auto" : "hidden";
+    };
+    const onUp = () => {
+      grip.classList.remove("dragging");
+      grip.removeEventListener("pointermove", onMove);
+      grip.removeEventListener("pointerup", onUp);
+      grip.removeEventListener("pointercancel", onUp);
+    };
+    grip.addEventListener("pointermove", onMove);
+    grip.addEventListener("pointerup", onUp);
+    grip.addEventListener("pointercancel", onUp);
+  });
+  // Give the size back to the text. Without this a dragged floor is permanent for the pane's
+  // life, and the only way back to a small composer would be to drag it down again by eye.
+  grip.addEventListener("dblclick", () => {
+    pane.composerHeight = 0;
+    autoSizeComposer(promptEl);
+  });
 
   // The box grows with the text, and can also be dragged (Aidin, 2026-08-03:
   // "just nu är det väldigt svårt att se långa texter"). It was two fixed rows
@@ -6219,19 +6268,11 @@ function paneComposerEl(index) {
       applyComposerEdit(promptEl, step, { keepCaretOffset: true });
     }
   });
-  promptEl.addEventListener("mouseup", () => {
-    // A drag-resize ends with a mouseup on the textarea. If the height no longer
-    // matches what autoSizeComposer set, the user moved it themselves.
-    const h = Math.round(promptEl.getBoundingClientRect().height);
-    const set = Number(promptEl.dataset.autoHeight || 0);
-    if (set && Math.abs(h - set) > 2) {
-      // On the PANE, so it survives the composer being rebuilt from scratch on
-      // every render - a local variable here would lose the size on the next
-      // streaming event.
-      pane.composerHeight = h;
-      promptEl.dataset.autoHeight = String(h);
-    }
-  });
+  // The height used ALSO to be inferred here, on every mouseup on the textarea, by noticing
+  // that it no longer matched what autoSizeComposer had set - the native corner grip left no
+  // other trace. That is gone with the grip: the top-edge handle sets pane.composerHeight
+  // directly while dragging, so there is one place that decides the size instead of one
+  // deciding and another guessing after the fact.
   // A dozen places already assign `promptEl.value` directly - a draft from a Jot
   // task, a quoted bubble, a queued message, a picked slash command, clearing on
   // send - and none of them fire an `input` event. Patching the property on THIS
