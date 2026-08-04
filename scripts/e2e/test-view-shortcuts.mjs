@@ -78,10 +78,21 @@ try {
     out.jotLetter = await go({ key: "j", ctrlKey: true });
 
     // Ctrl+X must be LEFT ALONE. It is cut, and taking it would break cut in every text
-    // field in the app - which is why it was not used for Jot despite being asked for.
+    // field in the app - which is why Jot ended up on the SHIFTED form instead.
     navigateToPage("chat");
     await new Promise((r) => setTimeout(r, 200));
     out.cut = await go({ key: "x", ctrlKey: true });
+
+    // Ctrl+Shift+X -> Jot. One-handed, and no browser binds this chord.
+    navigateToPage("chat");
+    await new Promise((r) => setTimeout(r, 200));
+    out.jotChord = await go({ key: "X", code: "KeyX", ctrlKey: true, shiftKey: true });
+
+    // The physical key is what identifies it: on some layouts a shifted "x" still reports
+    // key:"x", so relying on the character alone would make the shortcut layout-dependent.
+    navigateToPage("chat");
+    await new Promise((r) => setTimeout(r, 200));
+    out.jotChordLower = await go({ key: "x", code: "KeyX", ctrlKey: true, shiftKey: true });
 
     // A shifted combination that is NOT space must be left alone, or the branch would
     // start swallowing keys other features rely on.
@@ -113,6 +124,9 @@ try {
   );
   ok(!res.cut.prevented, "Ctrl+X is NOT taken - it is cut, and taking it would break cut in every text field");
   ok(!res.cut.pages.includes("jotPage"), "and it navigates nowhere");
+  ok(res.jotChord.pages.includes("jotPage"), `Ctrl+Shift+X goes to Jot (${res.jotChord.pages.join(", ")})`);
+  ok(res.jotChord.prevented, "and claims the key, so nothing else acts on it too");
+  ok(res.jotChordLower.pages.includes("jotPage"), "identified by the physical key, so a layout reporting lowercase still works");
   ok(!res.shiftOne.prevented, "Ctrl+Shift+1 is left alone - only Space is ours to take");
   ok(!res.shiftOne.pages.includes("reviewPage"), "and it does not navigate anywhere");
   ok(!res.withPalette.prevented, "with the command palette open the shortcut yields to it");
@@ -145,7 +159,7 @@ try {
 
 console.log(
   exit === 0
-    ? "VERIFY OK: Ctrl+Space is Dashboard, Ctrl+Shift+Space is Review, Ctrl+1..4 follow the header's own tab order, Ctrl+X stays cut, and the command palette still wins."
+    ? "VERIFY OK: Ctrl+Space is Dashboard, Ctrl+Shift+Space is Review, Ctrl+Shift+X is Jot, Ctrl+1..4 follow the header's own tab order, Ctrl+X stays cut, and the command palette still wins."
     : "VERIFY FAILED."
 );
 process.exit(exit);
