@@ -2778,6 +2778,24 @@ body.advanced .row-jot {
   font-size: 11px;
 }
 
+/* A DESCRIPTION under the label, for a menu whose entries are names that stand for a
+   behaviour (the persona picker). The hint above is a right-floated monospace tail, right
+   for a command and wrong for a sentence - it would wrap up into the label. */
+.context-menu .item-desc {
+  display: block;
+  max-width: 340px;
+  margin-top: 2px;
+  color: var(--text-faint);
+  font-size: 11.5px;
+  line-height: 1.45;
+  white-space: normal;
+}
+
+/* The menu sizes itself to its widest row, so a menu with descriptions needs the room. */
+.context-menu:has(.item-desc) {
+  max-width: 380px;
+}
+
 .context-menu .item.danger {
   color: var(--accent);
 }
