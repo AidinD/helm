@@ -3967,6 +3967,92 @@ function openSessionInPane(session, paneIndex, _ignored) {
   }
 }
 
+/**
+ * Merges a reloaded transcript with what the pane already had on screen.
+ *
+ * "Mina promptar försvinner ibland ur flödet ... men ai har registrerat den" (Aidin, task
+ * 20009fdc). A sent prompt is pushed onto pane.turns IN MEMORY and only reaches the
+ * transcript file when the CLI writes it. Reloading did `pane.turns = turns`, a blunt
+ * replacement - so a reload that landed in the window before the file caught up erased the
+ * prompt from view while the run carried on with it. That is exactly "sometimes", and
+ * exactly "the AI got it".
+ *
+ * So a reload may only ever ADD - but only turns THIS APP created and the file has not got
+ * yet. Those carry `pending: true` from the moment they are pushed, and that flag is what
+ * makes the rule precise instead of a guess about shapes:
+ *
+ *   - a prompt sent seconds ago, absent from the file: pending, so it is kept;
+ *   - turns a REWIND deliberately cut away: they came from a file, never pending, so they
+ *     stay gone - which a shape-based heuristic got wrong, and the test caught;
+ *   - a different session opened in this pane: nothing of it is pending either.
+ *
+ * Matching is on role+kind+text over a generous window of the file's tail rather than only
+ * its last entry, because the file can come back with the same turns grouped differently.
+ * When in doubt a pending turn is kept, which can in principle show something twice - the
+ * right way round to be wrong, since a duplicate is visible and self-corrects on the next
+ * reload while a deleted prompt does neither.
+ */
+const RELOAD_MATCH_WINDOW = 60;
+const PENDING_PER_SESSION_CAP = 20;
+const turnKey = (t) => `${t?.role}|${t?.kind}|${String(t?.text ?? "")}`;
+
+/**
+ * Pending turns per SESSION, deliberately not per pane.
+ *
+ * This is the part that actually fixes his report, and the first version missed it. Opening
+ * a different session builds a brand-new pane object (freshPane), so a pending turn held on
+ * the pane dies with the pane - and his path is exactly that: send, go to another session,
+ * come back. By then the pane is new, its turn list is empty, and the reload has nothing to
+ * merge against. Keyed by session, the sent prompt survives the round trip.
+ *
+ * Entries are dropped as soon as a reloaded transcript contains them, so this never grows
+ * into a second source of truth - and it is capped per session as a backstop in case a
+ * session somehow never sees its own turns land.
+ */
+const pendingTurnsBySession = new Map();
+
+function rememberPendingTurn(sessionId, turn) {
+  if (!sessionId || !turn) {
+    return;
+  }
+  const list = pendingTurnsBySession.get(sessionId) || [];
+  list.push(turn);
+  pendingTurnsBySession.set(sessionId, list.slice(-PENDING_PER_SESSION_CAP));
+}
+
+function mergeReloadedTurns(previous, fromFile, sessionId = null) {
+  const prev = Array.isArray(previous) ? previous : [];
+  const file = Array.isArray(fromFile) ? fromFile : [];
+  const remembered = sessionId ? pendingTurnsBySession.get(sessionId) || [] : [];
+  if (prev.length === 0 && remembered.length === 0) {
+    return file;
+  }
+  const inFile = new Set(file.slice(-RELOAD_MATCH_WINDOW).map(turnKey));
+  // Order is preserved by filtering in place: pending turns are only ever appended at the
+  // tail, so what survives is already in the order it was written. The pane's own list wins
+  // over the remembered copy when both have the same turn, so nothing shows twice.
+  const seen = new Set();
+  const keep = [];
+  for (const t of [...prev.filter((x) => x?.pending), ...remembered]) {
+    const k = turnKey(t);
+    if (inFile.has(k) || seen.has(k)) {
+      continue;
+    }
+    seen.add(k);
+    keep.push(t);
+  }
+  if (sessionId) {
+    // Prune what the file has caught up with, so this buffer shrinks back to empty in
+    // normal use instead of quietly becoming a parallel transcript.
+    if (keep.length === 0) {
+      pendingTurnsBySession.delete(sessionId);
+    } else {
+      pendingTurnsBySession.set(sessionId, keep.slice(-PENDING_PER_SESSION_CAP));
+    }
+  }
+  return keep.length > 0 ? [...file, ...keep] : file;
+}
+
 async function loadTranscriptInto(paneIndex) {
   const pane = panes[paneIndex];
   if (!pane || !pane.cliSessionId) {
@@ -3979,7 +4065,9 @@ async function loadTranscriptInto(paneIndex) {
   if (panes[paneIndex] !== pane) {
     return; // pane was reassigned while loading
   }
-  pane.turns = turns;
+  // Additive, never destructive - see mergeReloadedTurns. A reload used to be able to
+  // delete a prompt that had been sent but not yet written to the file.
+  pane.turns = mergeReloadedTurns(pane.turns, turns, pane.sessionId);
   pane.hiddenCount = hiddenCount || 0;
   pane.contextTokens = typeof contextTokens === "number" ? contextTokens : null;
   // The composer was built before this async load finished, so its gauge
@@ -4829,7 +4917,11 @@ function renderPane(index) {
         cliSessionId: pane.cliSessionId,
         sessionId: pane.sessionId,
       });
-      pane.turns = turns;
+      // Same additive merge as loadTranscriptInto: expanding the history must not drop a
+      // prompt sent seconds ago that the file has not caught up with. This call site had
+      // the identical blunt replacement, and fixing only the other one would have left the
+      // class open.
+      pane.turns = mergeReloadedTurns(pane.turns, turns, pane.sessionId);
       // Reflect the reload's ACTUAL state rather than hardcoding 0 — on a
       // genuinely huge session the reload can still be byte-capped, and
       // pretending it's complete would wrongly re-enable rewind (which needs
@@ -6784,7 +6876,15 @@ async function sendFromPane(index, els) {
   els.renderAttachments();
   pane.cwd = cwd;
   updatePaneSubText(index, cwd);
-  pane.turns.push({ role: "user", kind: "text", text: prompt });
+  // pending: this turn exists only in memory until the CLI writes it to the transcript, and
+  // a reload landing in that window used to delete it (task 20009fdc). The flag is what lets
+  // mergeReloadedTurns tell "the file has not caught up yet" apart from "these turns were
+  // deliberately cut away".
+  const sentTurn = { role: "user", kind: "text", text: prompt, pending: true };
+  pane.turns.push(sentTurn);
+  // ALSO remembered per session, because the pane object does not survive opening another
+  // session and coming back - which is the exact path in his report.
+  rememberPendingTurn(pane.sessionId, sentTurn);
   els.promptEl.value = "";
   pane.busy = true;
   // A new turn is starting — whatever reply lastTurnStats described is no
@@ -15802,7 +15902,11 @@ window.helm.onSessionEvent((evt) => {
       pulsePaneStatusIcon(index);
       break;
     case "assistant":
-      pane.turns.push({ role: "assistant", kind: "text", text: evt.text });
+      {
+        const streamed = { role: "assistant", kind: "text", text: evt.text, pending: true };
+        pane.turns.push(streamed);
+        rememberPendingTurn(pane.sessionId, streamed);
+      }
       bumpSessionActivity(pane.sessionId);
       // Coalesced onto a frame so a burst of streaming blocks doesn't drive
       // several synchronous full rebuilds and starve typing (f41a7f4e).
@@ -15814,7 +15918,7 @@ window.helm.onSessionEvent((evt) => {
       pane.currentLaunchId = null;
       stopLiveStatsTicker(index);
       setPaneBusyUI(index, "");
-      pane.turns.push({ role: "assistant", kind: "text", text: "⚠ " + evt.message });
+      pane.turns.push({ role: "assistant", kind: "text", text: "⚠ " + evt.message, pending: true });
       bumpSessionActivity(pane.sessionId);
       renderPane(index);
       break;
@@ -15834,7 +15938,7 @@ window.helm.onSessionEvent((evt) => {
         // yet — reloading the transcript here would silently drop whatever
         // text already streamed live. Keep what's on screen instead.
         pane.stopRequested = false;
-        pane.turns.push({ role: "assistant", kind: "text", text: "⏹ Stopped." });
+        pane.turns.push({ role: "assistant", kind: "text", text: "⏹ Stopped.", pending: true });
         bumpSessionActivity(pane.sessionId);
         renderPane(index);
         // A queued prompt is deliberately NOT fired after an explicit stop —
