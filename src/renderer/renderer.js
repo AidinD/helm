@@ -807,6 +807,12 @@ function reviewRowEl(row, band = null) {
     warn.className = "rev-warn";
     warn.textContent = `No review record: ${row.problems.join("; ")}. Nothing here has been verified for you - treat it as unreviewed.`;
     el.append(warn);
+    // The actions come along even here. They used to be built AFTER this return, so
+    // this band had no controls at all and could never be cleared (f2ab6a5a). Marking
+    // one done still costs a deliberate confirm - a row with no record has, by
+    // definition, had nothing checked - and Send back is the honest move when it
+    // should have had a record in the first place.
+    el.append(reviewActionsEl(row));
     return el;
   }
 
@@ -1107,6 +1113,25 @@ function reviewRowEl(row, band = null) {
   }
 
   // Sign-off, so review doesn't mean leaving Helm for Jot.
+  el.append(reviewActionsEl(row));
+  return el;
+}
+
+/**
+ * The Mark done / Send back controls for one review row.
+ *
+ * Extracted because the row builder returns EARLY for a row with no review record,
+ * and that return sat before these buttons were ever created - so the one band that
+ * fills up (everything handed over before review records were required) was the only
+ * band with no way to act on it. The page's biggest pile was permanent and could
+ * only grow, which is a large part of why the whole page read as broken (task
+ * f2ab6a5a, the captain: "det finns ingen ageringsknapp på dessa, ingen I know").
+ *
+ * Extracted rather than duplicated at the two call sites on purpose: two copies of
+ * an action row is exactly how the two paths drift into offering different buttons.
+ */
+function reviewActionsEl(row) {
+  const g = row.gauntlet || { declared: 0, state: "none" };
   const actions = document.createElement("div");
   actions.className = "rev-actions";
   const doneBtn = document.createElement("button");
@@ -1126,7 +1151,9 @@ function reviewRowEl(row, band = null) {
     // unrun, stale, drifted and a record that doesn't meet its own bar all signed off
     // on a single click, which are precisely the states a rushed session produces.
     const reason =
-      g.state === "failing"
+      row.verdict === "unrecorded"
+        ? `has no review record at all - nothing about it has been checked for you`
+        : g.state === "failing"
         ? `has FAILING checks`
         : g.unusable > 0
           ? `has ${g.unusable} check(s) that cannot fail, or declare no command - a green result there means nothing`
@@ -1152,23 +1179,26 @@ function reviewRowEl(row, band = null) {
   backBtn.className = "text-btn";
   backBtn.textContent = "Send back";
   backBtn.addEventListener("click", () => {
-    const note = window.prompt(`Send "${row.title}" back to in-progress. What needs changing?`);
-    if (note === null) {
-      return;
-    }
-    const trimmed = note.trim();
-    if (!trimmed) {
-      showToast("A reason is required - a bounce without one wastes the next session.");
-      return;
-    }
-    window.helm.setReviewStatus(row.taskId, "in-progress", `[the captain ${new Date().toISOString().slice(0, 10)}] ${trimmed}`).then((res) => {
-      showToast(res?.ok ? `Sent back with your note.` : res?.error || "Couldn't update the board.");
-      renderReviewPage();
-    });
+    // customPrompt, NOT window.prompt: the latter is disabled in Electron and returns
+    // undefined, so this button silently did nothing at all from the day it was
+    // written (task ebb4e567). The rest of this handler was always what the captain asked
+    // for - a required reason, dated, written onto the Jot card as the task moves
+    // back a step - so only the asking was broken.
+    customPrompt(
+      `Send "${row.title}" back to in-progress. What needs changing?`,
+      (note) => {
+        window.helm
+          .setReviewStatus(row.taskId, "in-progress", `[the captain ${new Date().toISOString().slice(0, 10)}] ${note}`)
+          .then((res) => {
+            showToast(res?.ok ? "Sent back with your note." : res?.error || "Couldn't update the board.");
+            renderReviewPage();
+          });
+      },
+      { confirmLabel: "Send back", placeholder: "What needs changing, and why - this lands on the Jot card." }
+    );
   });
   actions.append(doneBtn, backBtn);
-  el.append(actions);
-  return el;
+  return actions;
 }
 
 async function renderReviewPage() {
@@ -7500,6 +7530,104 @@ function customConfirm(message, confirmLabel, onConfirm, { deliberate = false, o
   // See the deliberate flag: for a destructive confirm the focus goes to Cancel, so
   // a reflex Enter cannot complete it.
   (deliberate ? cancel : ok).focus();
+}
+
+/**
+ * Ask for a line of text, in-app.
+ *
+ * window.prompt is disabled in Electron - it returns undefined immediately - so a
+ * button that called it did nothing at all, with no error and no hint. "Send back"
+ * on the review page had never worked for exactly that reason (task ebb4e567,
+ * the captain: "Trycker på send back, inget händer"), and silence is the worst failure a
+ * button can have: it reads as the app ignoring you. The codebase already knew the
+ * trap - the mate rename button carries a comment about it - but there was no text
+ * equivalent of customConfirm to reach for, so this call site kept the dead API.
+ *
+ * Deliberately the same shell as customConfirm: same overlay, same escape/backdrop
+ * dismissal, same one-shot settling so a caller awaiting an answer cannot hang.
+ * Calls onSubmit(text) with a trimmed, non-empty string, or onCancel() - never both,
+ * and never with an empty string, since every caller so far needs a real reason.
+ */
+function customPrompt(message, onSubmit, { confirmLabel = "Save", placeholder = "", multiline = true, onCancel = null } = {}) {
+  const overlay = document.createElement("div");
+  overlay.className = "confirm-overlay";
+  const box = document.createElement("div");
+  box.className = "confirm-box prompt-box";
+  const msg = document.createElement("div");
+  msg.className = "confirm-msg";
+  msg.textContent = message;
+  const field = document.createElement(multiline ? "textarea" : "input");
+  field.className = "prompt-field";
+  field.placeholder = placeholder;
+  if (multiline) {
+    field.rows = 4;
+  }
+  const row = document.createElement("div");
+  row.className = "confirm-row";
+  const cancel = document.createElement("button");
+  cancel.className = "confirm-cancel";
+  cancel.textContent = "Cancel";
+  const ok = document.createElement("button");
+  ok.className = "confirm-ok";
+  ok.textContent = confirmLabel;
+
+  let settled = false;
+  const onKey = (ev) => {
+    if (ev.key === "Escape") {
+      close();
+    }
+  };
+  const close = (submitted = false) => {
+    overlay.remove();
+    document.removeEventListener("keydown", onKey);
+    if (settled) {
+      return;
+    }
+    settled = true;
+    if (!submitted && onCancel) {
+      onCancel();
+    }
+  };
+  const submit = () => {
+    const text = field.value.trim();
+    if (!text) {
+      // Say why nothing happened rather than closing on an empty answer - the whole
+      // point of this dialog is that a button never fails in silence again.
+      field.classList.add("prompt-field-empty");
+      field.focus();
+      return;
+    }
+    close(true);
+    onSubmit(text);
+  };
+  cancel.addEventListener("click", (e) => {
+    e.stopPropagation();
+    close();
+  });
+  ok.addEventListener("click", (e) => {
+    e.stopPropagation();
+    submit();
+  });
+  field.addEventListener("input", () => field.classList.remove("prompt-field-empty"));
+  // Enter submits, Shift+Enter is a newline - the same pair as the composer, so the
+  // muscle memory carries over.
+  field.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      submit();
+    }
+  });
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) {
+      close();
+    }
+  });
+  document.addEventListener("keydown", onKey);
+  row.append(cancel, ok);
+  box.append(msg, field, row);
+  overlay.append(box);
+  document.body.append(overlay);
+  field.focus();
 }
 
 // Second mates are DERIVED from run history (main.js), which only surfaces
