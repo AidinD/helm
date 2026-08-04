@@ -5799,3 +5799,37 @@ It was wrong - the composer is only rebuilt when a session is opened or the layo
 and the quoted evidence was a loosely worded comment, not a measurement.
 Diagnosing from a comment that sounds like it is about the hot path is the same mistake as
 measuring the step before the surface.
+
+## 2026-08-04 - Why Helm cannot know the current weekly quota
+
+The captain, reasonably: "hur kan den inte veta vad min veckokvot är? måste finnas tillgänglig vid
+varje prompt."
+The number does exist on every request - but not anywhere Helm can reach, and this is worth
+writing down because it will look like a bug again.
+
+**One event describes one window.**
+A real payload, from his own transcripts:
+`"rate_limit_info":{"status":"allowed_warning","resetsAt":...,"rateLimitType":"seven_day","utilization":0.92,"isUsingOverage":false,"surpassedThreshold":0.75}`.
+There is no array and no sibling window, so nothing is being thrown away on our side - the
+launcher takes `evt.rate_limit_info` whole.
+
+**And it is a warning, not a reading.**
+`surpassedThreshold: 0.75` gives it away: the weekly window is reported when it CROSSES a
+threshold.
+A weekly window sitting at 36% crosses nothing, so nothing arrives - which is exactly the 39
+hours of silence he was looking at.
+The five-hour window does arrive constantly, but with `status: "allowed"` and NO `utilization`
+field at all, so it is a state, not a percentage.
+
+**There is no way to ask.**
+`claude --help` has no usage/quota subcommand; `/usage` is an interactive dialog inside the
+CLI's own terminal UI.
+And Helm reads the CLI's JSON stream, not its HTTP traffic, so the `anthropic-ratelimit-*`
+response headers - where a current figure would live - are not visible to it either.
+
+**So the decision is to state the number honestly rather than chase a fresher one.**
+An hours-old reading inside an un-reset window is a floor (`≥36% used`, with its age), because
+usage in a window only goes up.
+Rejected: estimating the weekly percentage from Helm's own usage log - it knows what IT spent,
+but not the subscription's weekly allowance, so it has a numerator and no denominator.
+That is why the Fleet-spend fallback shows tracked dollars and refuses to render a percentage.
