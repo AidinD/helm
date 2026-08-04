@@ -135,6 +135,12 @@ const rowsFn = new Function(
   `${grab("quotaFreshness")}
    ${grab("quotaWindowLabel")}
    ${grab("quotaReadout")}
+   // quotaPanelRows also composes the lower-bound qualifier now (an hours-old
+   // reading inside an un-reset window is a floor, not a figure - see
+   // test-quota-lower-bound.mjs). Assembling the real function means assembling its
+   // real dependencies; leaving this out made the row builder throw.
+   const QUOTA_LOWER_BOUND_AFTER_MS = ${(rSrc.match(/const QUOTA_LOWER_BOUND_AFTER_MS = ([^;]+);/) || [])[1]};
+   ${grab("quotaLowerBound")}
    const QUOTA_WINDOW_ORDER = ${JSON.stringify(
      JSON.parse((rSrc.match(/const QUOTA_WINDOW_ORDER = (\[[^\]]*\]);/) || [])[1].replace(/'/g, '"'))
    )};

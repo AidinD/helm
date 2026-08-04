@@ -116,6 +116,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 let mainWindow = null;
 let latestQuota = null;
+// When latestQuota actually arrived. Kept beside it because the refresh payload
+// used to report `Date.now()` whenever a reading existed in memory, so the age of
+// the newest reading was always "just now" from the first rate-limit event of the
+// launch onwards - a timestamp that cannot say anything but "fresh". Every surface
+// deciding how much to trust a number was reading that.
+let latestQuotaAt = null;
 // Accumulated last-known reading PER rate-limit window (bc6786c7 follow-up: show
 // the quota like the Claude desktop app's usage panel - 5-hour, weekly-all,
 // weekly-per-model all at once). The CLI's rate_limit_event only reports ONE
@@ -167,6 +173,7 @@ function recordQuota(q) {
   }
   latestQuota = q;
   const at = Date.now();
+  latestQuotaAt = at;
   quotaWindows.set(q.rateLimitType || "unknown", { info: q, at });
   try {
     const cfg = loadConfig();
@@ -408,7 +415,7 @@ ipcMain.handle("sessions:get", () => {
     // Fall back to the persisted last-known quota so the Dashboard chip shows a
     // value even before this launch has run a turn (6ed0b09e).
     quota: latestQuota || config.lastQuota || null,
-    quotaAt: latestQuota ? Date.now() : config.lastQuotaAt || null,
+    quotaAt: latestQuota ? latestQuotaAt : config.lastQuotaAt || null,
     // Accumulated per-window readings for the usage panel (bc6786c7): each { info, at }.
     quotaWindows: quotaWindowsSnapshot(),
     generatedAt: Date.now(),

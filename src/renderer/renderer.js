@@ -2404,6 +2404,42 @@ const QUOTA_WINDOW_ORDER = ["five_hour", "seven_day", "seven_day_opus", "seven_d
 // window type and its "as of" freshness. Windows are remembered independently, so
 // each row's staleness is judged on its own reset (a spent 5-hour window can read
 // stale while the weekly window is still live).
+// An old reading inside a window that has NOT reset is a floor, not a figure.
+//
+// "weekly är fortfarande fast på 36% och verkar inte uppdateras" (Aidin, task
+// 60738335, third pass). Checked against his running app rather than reasoned
+// about: the weekly window's last reading was 39 HOURS old at 36%, while the
+// five-hour window had reported four minutes earlier. He is right that it does not
+// update, and Helm cannot make it - it never polls for quota, it only records what
+// arrives on a rate-limit event, and the API reports the weekly window only when
+// it has something to say about it. Telling him to wait for a number that may not
+// come is not an answer.
+//
+// What IS knowable: usage inside an un-reset window only ever goes UP. So a
+// 39-hour-old 36% is not "36% used", it is "at least 36% used" - and after a full
+// day of work the real figure is certainly higher. The old wording erred in the
+// one direction that costs something, telling him he had more room than he had,
+// which is exactly why his Helm disagreed with Claude Desktop.
+//
+// Under the threshold nothing is qualified: a reading minutes old is the current
+// figure, and hedging every number would make the qualifier meaningless.
+const QUOTA_LOWER_BOUND_AFTER_MS = 60 * 60 * 1000;
+function quotaLowerBound(readout, ageMs) {
+  if (!readout?.hasPct || readout.stale || typeof ageMs !== "number" || ageMs < QUOTA_LOWER_BOUND_AFTER_MS) {
+    return {};
+  }
+  return {
+    // "≥" rather than "at least" because these strings live in a cramped widget
+    // row; the tooltip spells it out in words.
+    atLeast: true,
+    chipText: `Quota ≥${readout.pct}%`,
+    barValueText: `≥${readout.pct}% used`,
+    title:
+      `${readout.label} · at least ${readout.pct}% used - that reading is old, and usage inside a window only goes up, so the real figure is this or higher` +
+      (readout.resetText ? ` · resets in ${readout.resetText}` : ""),
+  };
+}
+
 function quotaPanelRows(windows, nowMs) {
   if (!Array.isArray(windows)) {
     return [];
@@ -2417,14 +2453,16 @@ function quotaPanelRows(windows, nowMs) {
     if (!r) {
       continue;
     }
+    const ageMs = typeof w.at === "number" && w.at > 0 ? Math.max(0, nowMs - w.at) : null;
     rows.push({
       ...r,
+      ...quotaLowerBound(r, ageMs),
       type: w.info.rateLimitType || "unknown",
       freshness: quotaFreshness(w.at, nowMs),
       // The raw age, so the headline choice can be made on it (see
       // QUOTA_HEADLINE_MAX_AGE_MS). `freshness` is a sentence for humans; this is
       // the number a decision can be based on.
-      ageMs: typeof w.at === "number" && w.at > 0 ? Math.max(0, nowMs - w.at) : null,
+      ageMs,
     });
   }
   rows.sort((a, b) => {
@@ -2580,7 +2618,17 @@ function toggleContextPopover(anchor, pane) {
   if (rows.length === 0 && state.quota) {
     const r = quotaReadout(state.quota, Date.now());
     if (r) {
-      rows.push({ ...r, type: state.quota.rateLimitType || "unknown", freshness: quotaFreshness(state.quotaAt, Date.now()) });
+      // The same lower-bound treatment as the accumulator path. A fallback that
+      // skipped it would state a bare percentage in the one situation where the
+      // accumulator has nothing - i.e. with the OLDEST possible data.
+      const singleAge = typeof state.quotaAt === "number" && state.quotaAt > 0 ? Math.max(0, Date.now() - state.quotaAt) : null;
+      rows.push({
+        ...r,
+        ...quotaLowerBound(r, singleAge),
+        type: state.quota.rateLimitType || "unknown",
+        freshness: quotaFreshness(state.quotaAt, Date.now()),
+        ageMs: singleAge,
+      });
     }
   }
   if (rows.length > 0) {
@@ -6496,7 +6544,11 @@ async function renderDashQuota() {
   let r = worstFreshQuotaRow(rows);
   if (!r && state.quota) {
     const single = quotaReadout(state.quota, Date.now());
-    r = single && !single.stale ? single : null;
+    // Same lower-bound treatment as the accumulator path - see the context
+    // popover's fallback. Three surfaces read this shape; a qualifier applied to
+    // two of them is how the app comes to disagree with itself about one number.
+    const singleAge = typeof state.quotaAt === "number" && state.quotaAt > 0 ? Math.max(0, Date.now() - state.quotaAt) : null;
+    r = single && !single.stale ? { ...single, ...quotaLowerBound(single, singleAge) } : null;
   }
   if (r && !r.stale) {
     // Real quota signal: a % when the API reports utilization, otherwise the limit
@@ -9306,7 +9358,15 @@ function widgetBodyQuota(data) {
   // showed only the 5-hour limit, so the weekly quota looked absent (Aidin,
   // 2026-08-03: "ingen veckokvot t.ex"). It was there the whole time, just
   // anonymous.
-  head.textContent = worst ? (worst.hasPct ? `${worst.label} ${worst.pct}%` : worst.chipText) : "No current reading";
+  // The "≥" on an hours-old reading has to survive into the headline too. This line
+  // builds its own text from label+pct rather than using chipText, so a qualifier
+  // added to chipText alone would show on the small rows and silently vanish from
+  // the largest number in the widget - the one surface that actually gets read.
+  head.textContent = worst
+    ? worst.hasPct
+      ? `${worst.label} ${worst.atLeast ? "≥" : ""}${worst.pct}%`
+      : worst.chipText
+    : "No current reading";
   // COLOUR THE STATE. "5-hour limit - limited" was rendered in the same neutral
   // headline colour as a comfortable 12%, so the one reading that changes what you can
   // do looked like any other (Aidin: "Limited borde synas tydligare"). Colour only for
