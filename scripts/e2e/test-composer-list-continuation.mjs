@@ -97,6 +97,49 @@ try {
   ok(rule.midLine === JSON.stringify("- mi\n- lk"), `splitting an item mid-word still continues (${rule.midLine})`);
   ok(rule.afterBlank === null, "only the caret's OWN line decides - an earlier list does not make prose a list");
 
+  // --- Tab indents the item, Shift+Tab takes it back out --------------------
+  // "jag vill att 1. space ska indentera raden" (the captain, bouncing this task back). Two
+  // spaces per level, which Markdown reads as a nested item, so the indent means the
+  // same thing to whatever reads the prompt as it looks like on screen.
+  const indent = await app.eval(`(() => {
+    const at = (s, opts) => {
+      const caret = s.indexOf("|");
+      const v = s.replace("|", "");
+      const step = listIndentStep(v, caret, caret, opts || {});
+      if (!step) { return null; }
+      return JSON.stringify(v.slice(0, step.from) + step.text + v.slice(step.to));
+    };
+    return {
+      numbered: at("1. one|"),
+      dash: at("- milk|"),
+      already: at("  - nested|"),
+      outdent: at("  - nested|", { outdent: true }),
+      outdentTab: at("\t- tabbed|", { outdent: true }),
+      atMargin: (() => {
+        const v = "- milk";
+        const step = listIndentStep(v, 6, 6, { outdent: true });
+        return step ? { noop: !!step.noop, text: step.text } : null;
+      })(),
+      plainLine: at("just prose|"),
+      plainOutdent: at("just prose|", { outdent: true }),
+      caretKept: (() => {
+        // The caret must stay on the word being written, not jump to the line start.
+        const v = "1. one";
+        const step = listIndentStep(v, 6, 6, {});
+        return step.from === 0 && step.text === "  ";
+      })(),
+    };
+  })()`);
+
+  ok(indent.numbered === JSON.stringify("  1. one"), `Tab indents a numbered item by two spaces (${indent.numbered})`);
+  ok(indent.dash === JSON.stringify("  - milk"), `and a bullet (${indent.dash})`);
+  ok(indent.already === JSON.stringify("    - nested"), `indenting again goes one level deeper (${indent.already})`);
+  ok(indent.outdent === JSON.stringify("- nested"), `Shift+Tab takes a level back off (${indent.outdent})`);
+  ok(indent.outdentTab === JSON.stringify("- tabbed"), `including one indented with a tab (${indent.outdentTab})`);
+  ok(indent.atMargin?.noop === true, "at the left margin Shift+Tab is a no-op that STILL swallows the key - or focus would jump out of the composer mid-list");
+  ok(indent.plainLine === null && indent.plainOutdent === null, "on ordinary text Tab is left alone, so it still moves focus");
+  ok(indent.caretKept, "the edit goes in at the line start, and the caller keeps the caret on the word you were writing");
+
   // --- the surface: the real textarea, real Shift+Enter ---------------------
   const typed = await app.eval(`(async () => {
     const ta = document.querySelector("#chatPage .composer-shell textarea");
