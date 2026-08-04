@@ -140,6 +140,64 @@ try {
   ok(indent.plainLine === null && indent.plainOutdent === null, "on ordinary text Tab is left alone, so it still moves focus");
   ok(indent.caretKept, "the edit goes in at the line start, and the caller keeps the caret on the word you were writing");
 
+  // --- starting a list indents it, with nothing pressed ---------------------
+  // "jag menar att jag trodde den skulle autoindentera bulletlist vid skapandet".
+  // Driven with the browser's OWN insert command so the input event carries a real
+  // inputType and data - the feature is gated on those, and a hand-made Event() would
+  // pass the assertion while the real typing path stayed broken.
+  const auto = await app.eval(`(async () => {
+    const ta = document.querySelector("#chatPage .composer-shell textarea");
+    const typeReal = (s) => { ta.focus(); document.execCommand("insertText", false, s); };
+    const out = {};
+
+    ta.value = ""; ta.setSelectionRange(0, 0);
+    typeReal("-"); typeReal(" ");
+    out.dash = ta.value;
+    typeReal("milk");
+    out.dashItem = ta.value;
+
+    ta.value = ""; ta.setSelectionRange(0, 0);
+    typeReal("1"); typeReal("."); typeReal(" ");
+    out.numbered = ta.value;
+
+    // Continuation must carry the indent the first item just got, so the whole list
+    // lines up rather than only its first row. Content FIRST: Shift+Enter on an empty
+    // item deliberately leaves the list, which is what the earlier version of this probe
+    // accidentally tested.
+    typeReal("one");
+    ta.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true, cancelable: true }));
+    typeReal("two");
+    out.secondItem = ta.value;
+
+    // Mid-sentence must be left alone.
+    ta.value = "a -"; ta.setSelectionRange(3, 3);
+    typeReal(" ");
+    out.midSentence = ta.value;
+
+    // An already-indented marker must not gain another level from this.
+    ta.value = "  -"; ta.setSelectionRange(3, 3);
+    typeReal(" ");
+    out.alreadyIndented = ta.value;
+
+    // A PASTE that happens to end in "- " must not be reformatted.
+    ta.value = ""; ta.setSelectionRange(0, 0);
+    ta.value = "- ";
+    ta.dispatchEvent(new InputEvent("input", { inputType: "insertFromPaste", data: null, bubbles: true }));
+    await new Promise((r) => setTimeout(r, 50));
+    out.pasted = ta.value;
+
+    ta.value = "";
+    return out;
+  })()`);
+
+  ok(auto.dash === "  - ", `typing "- " indents the new list item on its own (${JSON.stringify(auto.dash)})`);
+  ok(auto.dashItem === "  - milk", `and typing continues normally after it (${JSON.stringify(auto.dashItem)})`);
+  ok(auto.numbered === "  1. ", `a numbered list indents the same way (${JSON.stringify(auto.numbered)})`);
+  ok(auto.secondItem === "  1. one\n  2. two", `the next item lines up under the first (${JSON.stringify(auto.secondItem)})`);
+  ok(auto.midSentence === "a - ", `a dash mid-sentence is not a list and is left alone (${JSON.stringify(auto.midSentence)})`);
+  ok(auto.alreadyIndented === "  - ", `an already-indented marker does not gain another level (${JSON.stringify(auto.alreadyIndented)})`);
+  ok(auto.pasted === "- ", `a paste ending in a marker is NOT reformatted (${JSON.stringify(auto.pasted)})`);
+
   // --- the surface: the real textarea, real Shift+Enter ---------------------
   const typed = await app.eval(`(async () => {
     const ta = document.querySelector("#chatPage .composer-shell textarea");
