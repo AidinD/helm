@@ -171,17 +171,39 @@ export function planAutoTick(state, opts = {}) {
  * back with questions. It does not plan the work, estimate it, or decide whether it
  * is a good idea - all of which it would do badly and none of which is the gate.
  */
+// The question this asks was changed on 2026-08-04, and the change is the whole point.
+//
+// It used to ask whether a card was WELL DEFINED - "clearly enough WHAT to change and HOW you
+// would know it worked" - and was told to bias to false. Almost no real card on the captain's board
+// clears that bar: "en copy code knapp" does not say how you would know it worked. So the lane
+// spent its time handing cards back (his words, task e4ba1807: "auto är alldeles för
+// restriktiv. Går till needs clarification alldeles för enkelt"), which reads as the app
+// refusing to work rather than as a safety net.
+//
+// The bar he chose instead: hold back only what genuinely CANNOT be acted on. The `auto` tag is
+// already his judgement that the card is worth doing, and re-litigating it was the mistake -
+// so this asks a much narrower question, and the answer field is renamed with it. Calling the
+// new answer `well_defined` would have quietly redefined an agreed term into its opposite.
 export const TRIAGE_SYSTEM_PROMPT = [
-  "You judge whether a task card is specific enough to hand to an autonomous coding agent.",
+  "You judge ONE thing: could an autonomous coding agent START on this card at all?",
   "",
-  "Answer well_defined: true ONLY if the card says clearly enough WHAT to change and HOW you would know it worked.",
-  "Answer false if it is a vague intention, a question, a topic, a decision that has not been made,",
-  "or anything where a competent agent would have to guess at the actual ask.",
+  "The person who wrote it has already tagged it for automatic start, so whether it is worth",
+  "doing is settled and is not your call. You are not grading the wording either.",
   "",
-  "Bias to false. A wrongly-dispatched task spends real money and produces work nobody asked for;",
-  "a wrongly-held task costs one sentence from the user.",
+  "Answer can_start: false ONLY when there is nothing to act on:",
+  "  - it asks the author a question, or waits on a decision nobody has made yet;",
+  "  - it is a topic or a wish with no change requested anywhere in it;",
+  "  - acting on it needs information only the author has, and the card does not contain it.",
   "",
-  "reason: one sentence, addressed to the person who wrote the card, saying what is missing.",
+  "Otherwise answer true. A terse card is fine. A card naming a symptom with no cause is fine -",
+  "finding the cause IS the work. A card whose success cannot be stated precisely is fine: the",
+  "run lands in review, where the author reads it before anything is called done.",
+  "",
+  "Bias to TRUE. A wrongly-held card reads as the app refusing to work and costs the author a",
+  "round trip through the board; a wrongly-started run lands in review on its own branch, which",
+  "is where every run lands anyway.",
+  "",
+  "reason: only when false. One sentence, addressed to the author, naming what is missing.",
   "Do not restate the task. Do not be encouraging. Say the specific thing to add.",
 ].join("\n");
 
@@ -305,11 +327,17 @@ export function selectStrandedAutoCards(state, opts = {}) {
 }
 
 /**
- * Parse the triage model's output into a verdict. The triage prompt asks the
- * model whether a task is well-defined enough to dispatch to crew, answering with
- * a JSON object { well_defined: boolean, reason: string }. Tolerant of prose
- * around the JSON and of a missing/garbled response (defaults to NOT dispatchable
- * with a clear reason, so an unparseable triage never silently fires work).
+ * Parse the triage model's output into a verdict. The triage prompt asks whether an agent
+ * could START on the card at all, answering with a JSON object
+ * { can_start: boolean, reason: string }. Tolerant of prose around the JSON and of a
+ * missing/garbled response (defaults to NOT dispatchable with a clear reason, so an
+ * unparseable triage never silently fires work).
+ *
+ * `well_defined` is still accepted: it was the field name until 2026-08-04, when the question
+ * narrowed (see TRIAGE_SYSTEM_PROMPT). Renaming the field without accepting the old one here
+ * would have turned every answer in the old shape into "unparseable" - which this function
+ * reports as not-dispatchable, so the lane would have gone quietly MORE restrictive while the
+ * change it belongs to was meant to loosen it.
  *
  * @param {string} text
  * @returns {{dispatchable: boolean, reason: string}}
@@ -323,9 +351,15 @@ export function parseTriageVerdict(text) {
   if (match) {
     try {
       const obj = JSON.parse(match[0]);
-      if (typeof obj.well_defined === "boolean") {
-        const reason = typeof obj.reason === "string" && obj.reason.trim() ? obj.reason.trim() : obj.well_defined ? "Well-defined." : "Not specific enough to hand to crew as-is.";
-        return { dispatchable: obj.well_defined, reason };
+      const answer = typeof obj.can_start === "boolean" ? obj.can_start : typeof obj.well_defined === "boolean" ? obj.well_defined : null;
+      if (answer !== null) {
+        const reason =
+          typeof obj.reason === "string" && obj.reason.trim()
+            ? obj.reason.trim()
+            : answer
+              ? "Nothing blocks a start."
+              : "There is nothing here an agent could act on yet.";
+        return { dispatchable: answer, reason };
       }
     } catch {
       // fall through

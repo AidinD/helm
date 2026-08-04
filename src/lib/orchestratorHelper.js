@@ -424,13 +424,17 @@ export function classifyHandoffCategory({ cwd, title, text, existingCategories =
   });
 }
 
+// `can_start`, not `well_defined`: the question changed on 2026-08-04 from "is this card
+// specific enough" to "is there anything here to act on at all" (see TRIAGE_SYSTEM_PROMPT in
+// autoCaptain.js for why). Keeping the old field name would have left the schema asserting one
+// thing while the prompt asked its near-opposite.
 const TRIAGE_SCHEMA = JSON.stringify({
   type: "object",
   properties: {
-    well_defined: { type: "boolean" },
+    can_start: { type: "boolean" },
     reason: { type: "string" },
   },
-  required: ["well_defined", "reason"],
+  required: ["can_start", "reason"],
 });
 
 /**
@@ -511,9 +515,9 @@ export function triageAutoTask({ cwd, systemPrompt, input }) {
       try {
         const parsed = JSON.parse(out);
         const result = parsed.structured_output;
-        if (result && typeof result.well_defined === "boolean") {
+        if (result && typeof result.can_start === "boolean") {
           finish({
-            dispatchable: result.well_defined,
+            dispatchable: result.can_start,
             reason: typeof result.reason === "string" ? result.reason.trim() : "",
             costUsd: parsed.total_cost_usd || 0,
           });

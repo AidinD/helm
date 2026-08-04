@@ -45,13 +45,23 @@ ok(selectAutoQueuedTasks({ tags, todos: [] }).length === 0, "empty board -> noth
 ok(selectAutoQueuedTasks({ tags: [{ id: "x", name: "AUTO" }], todos: [todo("z", { tags: ["x"] })] }).length === 1, "the 'auto' tag match is case-insensitive");
 
 // --- triage verdict parsing ---
-ok(parseTriageVerdict('{"well_defined": true, "reason": "clear scope"}').dispatchable === true, "well_defined:true -> dispatchable");
-ok(parseTriageVerdict('{"well_defined": false, "reason": "too vague"}').dispatchable === false, "well_defined:false -> not dispatchable");
-const withProse = parseTriageVerdict('Here is my verdict:\n{"well_defined": false, "reason": "needs an acceptance criterion"} hope that helps');
-ok(withProse.dispatchable === false && /acceptance criterion/.test(withProse.reason), "parses JSON embedded in prose + keeps the reason");
+ok(parseTriageVerdict('{"can_start": true, "reason": "clear enough to begin"}').dispatchable === true, "can_start:true -> dispatchable");
+ok(parseTriageVerdict('{"can_start": false, "reason": "waits on your decision"}').dispatchable === false, "can_start:false -> not dispatchable");
+const withProse = parseTriageVerdict('Here is my verdict:\n{"can_start": false, "reason": "it asks you which option to take"} hope that helps');
+ok(withProse.dispatchable === false && /which option/.test(withProse.reason), "parses JSON embedded in prose + keeps the reason");
 ok(parseTriageVerdict("").dispatchable === false, "empty output -> NOT dispatchable (never fires on no signal)");
 ok(parseTriageVerdict("total garbage no json").dispatchable === false, "unparseable -> NOT dispatchable (left for review)");
-ok(parseTriageVerdict('{"well_defined": true}').reason.length > 0, "a missing reason still yields a non-empty reason");
+ok(parseTriageVerdict('{"can_start": true}').reason.length > 0, "a missing reason still yields a non-empty reason");
+// The field was renamed on 2026-08-04 when the question narrowed from "is this well defined"
+// to "can an agent start at all". An answer in the OLD shape must still parse: treating it as
+// unparseable means "not dispatchable", so the rename would have made the lane quietly MORE
+// restrictive while the change it belongs to exists to loosen it.
+ok(parseTriageVerdict('{"well_defined": true, "reason": "clear scope"}').dispatchable === true, "the old field name still parses rather than reading as a failure");
+ok(parseTriageVerdict('{"well_defined": false, "reason": "too vague"}').dispatchable === false, "in both directions");
+ok(
+  parseTriageVerdict('{"can_start": false, "well_defined": true}').dispatchable === false,
+  "and the new name wins when both are present, so a stale field cannot override the current question"
+);
 
 // --- WHERE does the work run? -------------------------------------------------
 // Guessing a project from a list NAME would occasionally start real work in the
