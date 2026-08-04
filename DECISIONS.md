@@ -5868,3 +5868,65 @@ broke when a page that referenced one was actually drawn.
 Booting the app and rendering every remaining view is what caught it, which is the argument
 for that test existing at all: for a deletion, "it still parses" and "it still works" are
 completely different claims.
+
+## 2026-08-04 - Personas became advisory seats a working session can consult, and the ceiling that makes that safe is an ALLOW list
+
+The captain: "jag skulle vilja att en 2nd mate ska kunna invoka en agent med en persona.
+Så 2nd mate ska själv kunna be en architect granska jobb. Men om vi flyttar dem behöver vi nog
+också härda och förbättra personas. Vi vill kanske inte att de ska kunna ändra kod t.ex."
+
+**The decision: the four personas are now also published as read-only sub-agents (`architect`,
+`red-team`, `researcher`, `teacher`) that a second mate can consult mid-task**, injected per
+launch via the CLI's `--agents` flag and generated from `personas.js` so there is one source of
+truth.
+A persona used to colour only a first mate's temperament at spawn - a layer the captain rarely
+reads, chosen blind and locked for the session, which is why there was little reason to use one.
+As a seat, consulting one costs a tool call: a second mate can have an Architect review its diff
+before it reports up, or a Red team attack a plan before it commits.
+
+**The hardening turned out to be the load-bearing half, and the obvious spelling of it does not
+work.**
+Three things were measured against the real CLI rather than reasoned about, and all three matter:
+
+1. **A deny list contains nothing.** A session launched with `Edit`, `Write`, `NotebookEdit`,
+   `Task` AND `Bash` all denied still rewrote a file - through the built-in `PowerShell` tool,
+   which no deny list had thought to name. A deny list can only close the doors someone
+   remembered; there is no version of it that is complete.
+2. **A scoped shell grant is not scoped.** A seat granted `Bash(git log:*)`, meaning "read
+   history, change nothing", ran `echo "CHANGED" > seed.txt`. The specifier is a permission
+   rule, while the tool list decides which tools EXIST - so granting any form of Bash grants the
+   shell. There is therefore no shell in a seat at all, and a seat that needs command output
+   must be handed it by the caller. That cost is stated in each seat's own prompt.
+3. **A sub-agent's tool list IS an allow list, and it holds.** Given only `Read`/`Grep`/`Glob`,
+   every seat - told to write by any means, under `bypassPermissions`, the most permissive mode
+   there is - left the tree untouched and said plainly that it could not.
+
+So the ceiling is `["Read", "Grep", "Glob"]`, frozen, and the guarantee comes from the allow
+list rather than from naming things to forbid.
+`scripts/e2e/test-persona-agent-containment.mjs` re-measures it against the real binary; it is
+opt-in (`HELM_LIVE_CLI_TESTS=1`) because it spends tokens, and the test runner now reports a
+self-skipped test as `skip` and names it, instead of counting an un-run check as a pass.
+
+**Why injected per launch rather than written into `~/.claude/agents/`.**
+That directory exists and is Dropbox-synced, so writing the four files there would also give
+The captain the seats in his own sessions.
+It would also leave copies that go stale the moment `personas.js` changes, and would mean Helm
+mutating the machine's global config as a side effect of launching a session.
+`--agents` keeps the definitions generated, versioned with the app, and scoped to launches Helm
+actually made.
+The trade is that his own hands-on sessions do not get the seats - if that turns out to be the
+thing he wants, generating the files is the follow-up, not a redesign.
+
+**Only second mates get them, because only second mates can call them.**
+A first mate is denied `Task` by the tier guard, so injecting seats there would advertise a
+capability it structurally cannot reach.
+
+**A backgrounded consult is a consult nobody reads.**
+Measured: a sub-agent launched in the background returned "async agent launched" metadata and
+the one-shot turn closed before any verdict arrived.
+The manual now tells a second mate to consult synchronously and to say so explicitly if it
+deliberately fires one off, because the alternative is paying for a judgment that reaches
+nobody.
+The same result shape also carries an `agentId:` footer AFTER the answer - stripping metadata
+from the joined text threw the real verdict away with it and made a working consult look
+broken, twice, which is why the E2E strips per item.

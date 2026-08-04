@@ -108,13 +108,28 @@ async function runPooled(items, width, fn) {
   return results;
 }
 
+// A test can decline to run itself - one spawns the real claude CLI and spends
+// tokens, so it is opt-in behind an env flag. It exits 0, which the summary would
+// otherwise count as a pass: the same "green that means nothing" this runner
+// already refuses for the app tests it never started. A test that announces
+// "SKIPPED -" is reported as skipped and named at the end, so an opt-in check
+// cannot quietly become a check nobody runs.
+const selfSkipped = [];
+const mark = (t, r) => {
+  if (r.code === 0 && /^SKIPPED - /m.test(r.out || "")) {
+    selfSkipped.push({ file: t.file, why: (r.out.match(/^SKIPPED - (.*)$/m) || [])[1] || "" });
+    return "skip";
+  }
+  return r.code === 0 ? "ok  " : "FAIL";
+};
+
 console.log(`\n--- ${fast.length} fast tests (${FAST_LANE_WIDTH} at a time) ---`);
 const fastResults = await runPooled(fast, FAST_LANE_WIDTH, async (t) => ({
   t,
   r: await run(process.execPath, [path.join("scripts", "e2e", t.file)], 120000),
 }));
 for (const { t, r } of fastResults) {
-  console.log(`${r.code === 0 ? "ok  " : "FAIL"}  ${t.file}`);
+  console.log(`${mark(t, r)}  ${t.file}`);
   if (r.code !== 0) {
     failures.push({ file: t.file, out: r.out });
   }
@@ -126,7 +141,7 @@ if (slow.length) {
   for (const t of slow) {
     i += 1;
     const r = await run(process.execPath, [path.join("scripts", "e2e", t.file)], 300000);
-    console.log(`${r.code === 0 ? "ok  " : "FAIL"}  [${i}/${slow.length}] ${t.file}`);
+    console.log(`${mark(t, r)}  [${i}/${slow.length}] ${t.file}`);
     if (r.code !== 0) {
       failures.push({ file: t.file, out: r.out });
     }
@@ -135,13 +150,19 @@ if (slow.length) {
 
 // Count what RAN, not what exists - in --fast mode the app tests were never
 // started, and reporting them as passed is the kind of green that means nothing.
-const ran = fast.length + slow.length;
-const skipped = all.length - ran;
+const ran = fast.length + slow.length - selfSkipped.length;
+const skipped = all.length - (fast.length + slow.length);
 console.log(
   `\n=== ${ran - failures.length}/${ran} passed in ${secs().toFixed(0)}s` +
     (skipped ? ` (${skipped} app tests NOT run - use \`npm test\` for the full sweep)` : "") +
     " ==="
 );
+if (selfSkipped.length) {
+  console.log(`\n${selfSkipped.length} test(s) skipped themselves and are NOT counted above:`);
+  for (const s of selfSkipped) {
+    console.log(`  ${s.file}${s.why ? ` - ${s.why}` : ""}`);
+  }
+}
 if (failures.length) {
   console.log("\nFailures:");
   for (const f of failures) {

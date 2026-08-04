@@ -71,7 +71,7 @@ const configuredMateSlots = () => {
   const wanted = clampMateSlots(loadConfig().firstMateSlots ?? MATE_SLOT_COUNT);
   return clampMateSlots(Math.max(wanted, activeMates().length));
 };
-import { personaOverlay, PERSONAS } from "./lib/personas.js";
+import { personaOverlay, personaAgents, PERSONAS } from "./lib/personas.js";
 import { listSlashItems } from "./lib/slashCommands.js";
 import { trackHelmUsage, summarizeHelmUsage } from "./lib/helmUsage.js";
 import { mcpAllowedToolsFromConfig } from "./lib/userMcp.js";
@@ -2090,6 +2090,7 @@ ipcMain.handle(
     let disallowedTools;
     let appendSystemPrompt;
     let strictMcpConfig;
+    let agents;
     let effectiveSecondMateId = null;
     // A meta-home session is a FIRST MATE only when it is actually bound to one -
     // either the pane passed its mateId, or a resumed session resolves to a mate by
@@ -2170,6 +2171,16 @@ ipcMain.handle(
         // jump-in/direct second mates) gets the condensed delegate-vs-do reminder,
         // so the guardrail is present on EVERY turn - not just the first (9c358433).
         appendSystemPrompt = secondMateAppendPrompt(resumeSessionId, secondMateInstructions());
+        // Advisory seats (personas.js): the four persona temperaments published as
+        // read-only sub-agents this second mate can consult mid-task - an Architect
+        // to review a diff before reporting up, a Red team to attack a plan before
+        // committing to it. Passed on EVERY turn, not just a fresh one: --agents is
+        // a launch flag, so unlike the system prompt it is not carried by a resume.
+        //
+        // A second mate is the tier that can reach them: it has Task (a first mate
+        // is denied it by the tier guard, so injecting seats there would advertise
+        // something it structurally cannot call).
+        agents = personaAgents();
         // NOT strict: additive to the project's full MCP set (see comment above).
       }
     } catch (err) {
@@ -2211,6 +2222,7 @@ ipcMain.handle(
       disallowedTools,
       appendSystemPrompt,
       strictMcpConfig,
+      agents,
       onEvent: (evt) => {
         if (evt.kind === "session" && evt.sessionId && !internal && !liveTurnId) {
           liveTurnId = evt.sessionId;
