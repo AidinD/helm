@@ -462,6 +462,42 @@ try {
   ok(codeChangedBetween(null, base, afterCode) === true, "no project path counts as changed");
   ok(codeChangedBetween(dRepo, null, afterCode) === true, "a run with no recorded commit counts as changed");
 
+  // --- a stale run must say WHICH kind of stale (2026-08-04) -----------------
+  // Four quite different situations collapsed into one "stale", and the card printed a
+  // single explanation for all of them. So a check that went GREEN on an uncommitted tree
+  // was reported as "ran before the last change" - not what happened, and it sent him
+  // looking in the wrong place (the captain, task d6b33767: "Säger all checks passed men visar
+  // inte det på kortet"). The state is unchanged; what is new is that the reason travels
+  // with it.
+  const DIRTY = "66666666-8888-4888-8888-888888888888";
+  const dirtyChecks = [{ label: "suite", cmd: 'node -e "process.exit(0)"' }];
+  writeReviewRecord(metaHome, complete({ taskId: DIRTY, criticality: "core", checks: dirtyChecks, projectPath: dRepo }));
+  fs.writeFileSync(path.join(dRepo, "code.js"), "export const a = 3; // uncommitted\n");
+  recordCheckRun(metaHome, DIRTY, { label: "suite", cmd: 'node -e "process.exit(0)"', exitCode: 0 });
+  const dirtyRec = readReviewRecord(metaHome, DIRTY);
+  ok(dirtyRec.checkRuns[0].headDirty === true, "a run on an uncommitted tree records that it was dirty");
+  const dirtyG = gauntletStatus(dirtyRec, metaHome, {
+    head: dg("rev-parse", "HEAD").trim(),
+    codeChanged: (from, to) => codeChangedBetween(dRepo, from, to),
+  });
+  ok(dirtyG.state !== "passing", `a green run on an uncommitted tree still does not count (${dirtyG.state})`);
+  ok(
+    dirtyG.perCheck[0].staleReason === "ran on uncommitted changes",
+    `and it says WHY, in the words that match what happened (${JSON.stringify(dirtyG.perCheck[0].staleReason)})`
+  );
+  ok(dirtyG.perCheck[0].exitCode === 0, "the exit code is still reported as the zero it was - the run is not being called a failure");
+  // Commit it and the same run is admissible: the reason was the dirt, not the code.
+  dg("add", "-A");
+  dg("commit", "-m", "commit the change the run was made on");
+  recordCheckRun(metaHome, DIRTY, { label: "suite", cmd: 'node -e "process.exit(0)"', exitCode: 0 });
+  const cleanRec = readReviewRecord(metaHome, DIRTY);
+  const cleanG = gauntletStatus(cleanRec, metaHome, {
+    head: dg("rev-parse", "HEAD").trim(),
+    codeChanged: (from, to) => codeChangedBetween(dRepo, from, to),
+  });
+  ok(cleanG.state === "passing", `re-running on a clean tree counts (${cleanG.state})`);
+  ok(cleanG.perCheck[0].staleReason === null, "and carries no reason, because there is nothing to explain");
+
   // End to end through gauntletStatus: the same pass survives a docs commit and dies
   // on a code commit.
   const DOCPIN = "77777777-9999-4999-8999-999999999999";

@@ -1041,8 +1041,26 @@ function reviewRowEl(row, band = null) {
       // page lying about its own evidence.
       if (res.stored === false) {
         showToast(`Checks ran, but the outcome could NOT be stored: ${res.storeError}`);
+      } else if (failed.length > 0) {
+        showToast(`${failed.length} check(s) failed: ${failed.map((f) => f.label).join(", ")}`);
       } else {
-        showToast(failed.length === 0 ? "All checks passed." : `${failed.length} check(s) failed: ${failed.map((f) => f.label).join(", ")}`);
+        // Green exit codes are not the same question as "does this count", and saying the
+        // first while the card says the second is how the app came to contradict itself:
+        // "All checks passed." over a card still reading "Checks not confirmed (0/1 - 1
+        // stale)" (task d6b33767). The toast now reports the card's OWN verdict, which the
+        // handler recomputes and returns, and names the reason so it is actionable.
+        const g = res.gauntlet;
+        const notCounted = (g?.perCheck || []).filter((c) => c.state !== "passed");
+        if (!g || g.state === "passing" || notCounted.length === 0) {
+          showToast("All checks passed.");
+        } else {
+          const why = notCounted[0].staleReason || notCounted[0].state;
+          showToast(
+            notCounted.length === 1
+              ? `Checks ran green, but they do not count yet: ${why}.`
+              : `Checks ran green, but ${notCounted.length} do not count yet: ${why}.`
+          );
+        }
       }
       renderReviewPage();
     });
@@ -1100,7 +1118,7 @@ function reviewRowEl(row, band = null) {
                 ? `could not run · ${relTime(info.ranAt)}`
                 : "NOT VERIFIED — this outcome was not stamped by the app"
               : info.state === "stale"
-                ? "stale — ran before the last change"
+                ? `stale — ${info.staleReason || "ran before the last change"}`
                 : `exit ${info.exitCode} · ${relTime(info.ranAt)}`;
       if (info.tail) {
         state.title = info.tail;
