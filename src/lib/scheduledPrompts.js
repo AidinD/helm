@@ -231,7 +231,7 @@ export function markScheduledPromptFired(id, { ok = true, error = null, now = Da
  * `sawResult` is the launcher's own answer to "did the CLI produce a real reply", which is the
  * only trustworthy signal - a non-zero exit is not required for a run to have produced nothing.
  */
-export function markScheduledPromptOutcome(id, { sawResult = false, code = null, error = null, now = Date.now() } = {}) {
+export function markScheduledPromptOutcome(id, { sawResult = false, isError = false, code = null, error = null, now = Date.now() } = {}) {
   const all = readAll();
   const entry = all.find((p) => p.id === id);
   if (!entry) {
@@ -242,7 +242,11 @@ export function markScheduledPromptOutcome(id, { sawResult = false, code = null,
     return entry;
   }
   entry.finishedAt = now;
-  if (sawResult) {
+  // A result event is not the same as an ANSWER: the CLI also ends with one for an error, a
+  // max-turns stop and a run that hit the usage limit. Trusting sawResult alone recorded a prompt
+  // fired into a spent quota as DELIVERED - the headline case this function exists for (found by
+  // review, 2026-08-04). isError comes from the launcher, which now carries it out.
+  if (sawResult && !isError) {
     entry.status = "fired";
     entry.error = null;
   } else {
@@ -264,7 +268,13 @@ export function markScheduledPromptOutcome(id, { sawResult = false, code = null,
  */
 export function pruneScheduledPrompts(now = Date.now(), maxAgeMs = 7 * 24 * 60 * 60 * 1000) {
   const all = readAll();
-  const kept = all.filter((p) => p.status === "pending" || (now - (p.firedAt || p.createdAt || 0)) < maxAgeMs);
+  // An UNACKNOWLEDGED failure is never pruned, whatever its age. The notice is supposed to stay
+  // until dismissed, and prune runs at every launch - so a prompt that failed while he was away
+  // for a week was silently dropped on the next start, which is the same "de bara försvann" this
+  // was built to end (found by review, 2026-08-04).
+  const kept = all.filter(
+    (p) => p.status === "pending" || (p.status === "failed" && !p.acknowledgedAt) || (now - (p.firedAt || p.createdAt || 0)) < maxAgeMs
+  );
   if (kept.length !== all.length) {
     writeAll(kept);
   }

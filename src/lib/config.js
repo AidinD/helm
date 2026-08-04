@@ -15,7 +15,6 @@ const DEFAULT_CONFIG = {
   sort: "attention", // attention | recent | title
   hideArchived: true,
   viewMode: "simple", // simple | advanced
-  sidebarMode: "smart", // smart (attention + categories) | list (flat, all sessions)
   attentionWindowHours: 24, // assistant-ended sessions older than this are "idle", not "waiting"
   // Display-only session title overrides — never writes to the desktop app's
   // own session files, so "renaming a chat" can't corrupt live app state.

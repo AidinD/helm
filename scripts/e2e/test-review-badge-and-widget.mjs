@@ -65,7 +65,10 @@ ok(
 );
 
 // The page must still paint it, or a stamp would not clear the badge until the tick.
-ok(/paintReviewBadge\(tally\);/.test(rSrc), "renderReviewPage still paints it with the tally it already has");
+ok(
+  /paintReviewBadge\(reviewTallyFromRows\(visibleReviewRows\(allRows, \{ ignoreProjectFilter: true \}\)\)\)/.test(rSrc),
+  "renderReviewPage paints the badge from the same rows, minus the project chip"
+);
 // And the old inline block must be gone, not merely bypassed.
 ok(
   !/const n = tally\.judgment \+ tally\.unrecorded/.test(rSrc),
@@ -100,6 +103,13 @@ const board = [
   { repoPath: "D:\\Repo\\Tools\\helm", category: "Helm", band: "judgment" },
   ...Array.from({ length: 11 }, (_, i) => ({ repoPath: null, category: `life-${i}`, band: "unrecorded" })),
 ];
+// A second repo-rooted project, so an assertion about the PROJECT filter cannot be satisfied by
+// the repo filter alone - which is why "a project filter narrows it the same way" could not fail:
+// the only repo-rooted row in the board above is also the only "Helm" row.
+const twoProjects = [
+  { repoPath: "D:/Repo/Tools/helm", category: "Helm", band: "judgment" },
+  { repoPath: "D:/Repo/Tools/jot", category: "Jot", band: "unrecorded" },
+];
 const shown = filterFns.visibleReviewRows(board);
 ok(shown.length === 1, `the repo filter leaves exactly the row the page shows (${shown.length})`);
 ok(filterFns.reviewTallyFromRows(shown).total === 1, "and the tally over those rows is 1, not 12");
@@ -110,7 +120,7 @@ ok(
 filterFns.setFilter(false, null);
 ok(filterFns.visibleReviewRows(board).length === 12, "turning the filter off shows all twelve - the held-back rows are real work, not discarded");
 filterFns.setFilter(true, "Helm");
-ok(filterFns.visibleReviewRows(board).length === 1, "a project filter narrows it the same way for every surface");
+ok(filterFns.visibleReviewRows(twoProjects).length === 1, "a project filter narrows it the same way for every surface - checked against a board with TWO repo-rooted projects, so the repo filter alone cannot satisfy it");
 ok(filterFns.reviewTallyFromRows([]).total === 0, "an empty set tallies to zero rather than NaN");
 
 // All three surfaces must go through those two functions, or they drift apart again.
@@ -120,7 +130,21 @@ ok(
   /res\?\.rows/.test(widget) && /visibleReviewRows\(/.test(widget) && /reviewTallyFromRows\(/.test(widget),
   "the widget counts the rows the page would show, not the whole queue"
 );
-ok(/reviewTallyFromRows\(visibleReviewRows\(res\.rows\)\)/.test(paint), "and so does the badge when it fetches its own");
+ok(
+  /reviewTallyFromRows\(visibleReviewRows\(res\.rows, \{ ignoreProjectFilter: true \}\)\)/.test(paint),
+  "and the badge does the same when it fetches its own"
+);
+// The badge must NOT follow the project chip. Making the three surfaces agree also made the subnav
+// badge inherit a filter set on another page: picking one project left it counting only that one,
+// with nothing on screen saying so and no reset until the app restarted. Under-flagging an attention
+// signal is the failure Aidin has explicitly rejected (raised by an independent review, 2026-08-04).
+filterFns.setFilter(true, "Helm");
+ok(filterFns.visibleReviewRows(twoProjects).length === 1, "the PAGE narrows to the chosen project");
+ok(
+  filterFns.visibleReviewRows(twoProjects, { ignoreProjectFilter: true }).length === 2,
+  "while the badge still counts every repo-rooted row, whatever chip is selected"
+);
+filterFns.setFilter(true, null);
 ok(!/const tally = res\?\.tally \|\| \{\};/.test(widget), "the widget's old unfiltered tally is gone, not just bypassed");
 // What the filter holds back has to be SAID. A number that quietly shrank from 12 to 1 is
 // how the two surfaces came to disagree in the first place.

@@ -184,6 +184,15 @@ export function planAutoTick(state, opts = {}) {
 // already his judgement that the card is worth doing, and re-litigating it was the mistake -
 // so this asks a much narrower question, and the answer field is renamed with it. Calling the
 // new answer `well_defined` would have quietly redefined an agreed term into its opposite.
+// Bumped whenever the QUESTION above changes. A verdict is remembered per card so the same
+// wording is not re-judged every minute - but it is remembered without any note of which question
+// produced it, so loosening the bar left every already-held card held: the five cards that
+// motivated the change would have stayed set aside after shipping it, until each tag was stripped
+// by hand (found by an independent review, 2026-08-04). The tick forgets every remembered verdict
+// when this value moves, which is the only honest thing to do with an answer to a question no
+// longer being asked.
+export const TRIAGE_PROMPT_VERSION = 2;
+
 export const TRIAGE_SYSTEM_PROMPT = [
   "You judge ONE thing: could an autonomous coding agent START on this card at all?",
   "",
@@ -203,7 +212,13 @@ export const TRIAGE_SYSTEM_PROMPT = [
   "round trip through the board; a wrongly-started run lands in review on its own branch, which",
   "is where every run lands anyway.",
   "",
-  "reason: only when false. One sentence, addressed to the author, naming what is missing.",
+  // ALWAYS asked for, because the schema requires it. Telling the model to omit it when the
+  // answer is true was a contradiction with a nasty failure mode: a model that obeyed the prompt
+  // would produce output the schema rejects, no structured answer would come back, and a
+  // perfectly startable card would be recorded as a FAILED triage and backed off for up to an
+  // hour (raised by an independent review, 2026-08-04).
+  "reason: always. When false, one sentence addressed to the author naming what is missing.",
+  "When true, three or four words is enough (\"clear enough to start\").",
   "Do not restate the task. Do not be encouraging. Say the specific thing to add.",
 ].join("\n");
 
@@ -326,45 +341,12 @@ export function selectStrandedAutoCards(state, opts = {}) {
   );
 }
 
-/**
- * Parse the triage model's output into a verdict. The triage prompt asks whether an agent
- * could START on the card at all, answering with a JSON object
- * { can_start: boolean, reason: string }. Tolerant of prose around the JSON and of a
- * missing/garbled response (defaults to NOT dispatchable with a clear reason, so an
- * unparseable triage never silently fires work).
- *
- * `well_defined` is still accepted: it was the field name until 2026-08-04, when the question
- * narrowed (see TRIAGE_SYSTEM_PROMPT). Renaming the field without accepting the old one here
- * would have turned every answer in the old shape into "unparseable" - which this function
- * reports as not-dispatchable, so the lane would have gone quietly MORE restrictive while the
- * change it belongs to was meant to loosen it.
- *
- * @param {string} text
- * @returns {{dispatchable: boolean, reason: string}}
- */
-export function parseTriageVerdict(text) {
-  const raw = (text || "").trim();
-  if (!raw) {
-    return { dispatchable: false, reason: "Triage produced no output - left for review." };
-  }
-  const match = raw.match(/\{[\s\S]*\}/);
-  if (match) {
-    try {
-      const obj = JSON.parse(match[0]);
-      const answer = typeof obj.can_start === "boolean" ? obj.can_start : typeof obj.well_defined === "boolean" ? obj.well_defined : null;
-      if (answer !== null) {
-        const reason =
-          typeof obj.reason === "string" && obj.reason.trim()
-            ? obj.reason.trim()
-            : answer
-              ? "Nothing blocks a start."
-              : "There is nothing here an agent could act on yet.";
-        return { dispatchable: answer, reason };
-      }
-    } catch {
-      // fall through
-    }
-  }
-  // No parseable verdict - don't fire; flag for a human look.
-  return { dispatchable: false, reason: "Triage response wasn't parseable - left for review." };
-}
+// parseTriageVerdict lived here: a tolerant parser that pulled a verdict out of prose and
+// accepted both the old and new field names. An independent review found it was never called by
+// any production path - triageAutoTask reads structured output directly, and nothing imported this
+// but a test. So the three assertions arguing that the rename could not make the lane more
+// restrictive were guarding a function no user code reaches, which is worse than having no guard:
+// it read as protection. Deleted, and replaced by the parity check in
+// scripts/e2e/test-auto-triage-schema-parity.mjs, which asserts the thing that actually matters -
+// that the prompt, the schema and the live reader all name the SAME field.
+

@@ -48,11 +48,15 @@ try {
       navs: document.querySelectorAll("nav.sidebar").length,
       layoutColumns: getComputedStyle(document.getElementById("chatPage")).gridTemplateColumns,
       // The functions that only served it must be gone too, not merely unreferenced.
+      // A bare eval of "typeof x" returns a STRING - the first version of this wrapped it in
+      // another typeof and compared that to "function", which can never be true, so the whole
+      // clause did nothing. And the result was never asserted at all.
       leftovers: ["renderSidebar", "sectionEl", "rowEl", "moveSessionToGroup", "createCategory", "removeFromHelm", "computeSidebarFingerprint"]
-        .filter((n) => typeof window[n] === "function" || typeof eval("typeof " + n) === "function"),
+        .filter((n) => eval("typeof " + n) === "function"),
     };
   })()`);
   ok(gone.present.length === 0, `every sidebar element is gone (${gone.present.join(", ") || "none left"})`);
+  ok(gone.leftovers.length === 0, `and so are the functions that only served it (${gone.leftovers.join(", ") || "none left"})`);
   ok(gone.navs === 0, "and the nav itself");
   ok(!/300px/.test(gone.layoutColumns), `the chat grid no longer reserves the panel's column (${gone.layoutColumns})`);
 
@@ -120,6 +124,64 @@ try {
   ok(
     carried.hidePredicateStillExists,
     "and the hidden-session predicate stays, so anything previously removed from Helm is still hidden and still restorable"
+  );
+
+  // --- a declaration reached only from a CLICK ---------------------------------
+  // Rendering every view does not exercise a row builder, a context menu or a click handler:
+  // the fixture has no sessions, so none of them run. Proven by an independent review, which
+  // renamed `archiveMenuItems` - a top-level declaration reached only when Archive is clicked -
+  // and watched this test report VERIFY OK while clicking Archive would throw and archive
+  // nothing. Regexing the call-site text out of a function's source cannot see that: the call
+  // site is still there, it is the DEFINITION that is missing.
+  //
+  // So: inject a session, render its real Fleet row, and CLICK. Archive only opens a menu, so
+  // it is safe to click; Carry over would start a real summarize call, so its button is checked
+  // as rendered DOM and its handler's target as a live function, which is as far as this can go
+  // without spending tokens.
+  const clicked = await app.eval(`(async () => {
+    navigateToPage("dashboard");
+    state.sessions.push({
+      sessionId: "SIDEBAR_RM_1", cliSessionId: "SIDEBAR_RM_1", cwd: ${JSON.stringify(tmp.replace(/\\/g, "\\\\"))},
+      title: "probe session", status: "idle", isArchived: false, lastActivityAt: Date.now(),
+    });
+    const node = augmentSecondMatesWithSessions([]).find((s) => s.sessionId === "SIDEBAR_RM_1");
+    if (!node) {
+      return { rendered: false };
+    }
+    const row = fleetSecondMateEl(node);
+    document.body.append(row);
+    const labels = [...row.querySelectorAll("button")].map((b) => b.textContent.trim());
+    const archiveBtn = [...row.querySelectorAll("button")].find((b) => b.textContent.trim() === "Archive");
+    const carryBtn = [...row.querySelectorAll("button")].find((b) => b.textContent.trim() === "Carry over");
+    let archiveThrew = null;
+    let menuItems = [];
+    try {
+      archiveBtn.click();
+      await new Promise((r) => setTimeout(r, 250));
+      menuItems = [...document.querySelectorAll("#contextMenu .item")].map((i) => i.textContent.trim());
+      closeContextMenu();
+    } catch (err) {
+      archiveThrew = String(err && err.message ? err.message : err);
+    }
+    row.remove();
+    state.sessions = state.sessions.filter((s) => s.sessionId !== "SIDEBAR_RM_1");
+    return {
+      rendered: true,
+      labels,
+      hasCarry: !!carryBtn,
+      archiveThrew,
+      menuItems,
+      carryTargetIsLive: typeof summarizeAndCarryOver === "function",
+    };
+  })()`);
+
+  ok(clicked.rendered, "a real Fleet row renders for an injected session - the click paths are actually reachable in this fixture");
+  ok(clicked.hasCarry, `and it has a rendered Carry over button, not just the text in a source file (${JSON.stringify(clicked.labels)})`);
+  ok(clicked.carryTargetIsLive, "whose handler calls a function that still exists");
+  ok(clicked.archiveThrew === null, `clicking Archive does not throw (${clicked.archiveThrew || "no error"})`);
+  ok(
+    clicked.menuItems.length > 0,
+    `and really opens its menu, so the definition behind the click is present and not merely called (${JSON.stringify(clicked.menuItems)})`
   );
 
   const errors = app.getConsoleErrors();

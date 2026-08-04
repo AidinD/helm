@@ -144,7 +144,14 @@ try {
   // --- prune ---
   const removed = s.pruneScheduledPrompts(atReset + 40 * 24 * 60 * MIN);
   ok(removed >= 2, `prune drops old terminal entries (removed ${removed})`);
-  ok(s.listScheduledPrompts().every((p) => p.status === "pending" || p.status === "cancelled"), "prune never removes a pending entry");
+  // Pending is never pruned - and neither is an UNACKNOWLEDGED failure, whatever its age. Prune
+  // runs at every launch, so without that exemption a prompt that failed while he was away for a
+  // week was dropped on the next start: the same silent disappearance this was built to end
+  // (raised by an independent review, 2026-08-04).
+  const survivors = s.listScheduledPrompts();
+  ok(survivors.every((p) => p.status === "pending" || p.status === "cancelled" || (p.status === "failed" && !p.acknowledgedAt)), `prune keeps only pending, cancelled and undismissed failures (${survivors.map((p) => p.status).join(",")})`);
+  ok(survivors.some((p) => p.status === "failed" && !p.acknowledgedAt), "an undismissed failure survived a 40-day prune rather than ageing out");
+  ok(!survivors.some((p) => p.status === "failed" && p.acknowledgedAt), "while a DISMISSED one is pruned like any other terminal entry");
 
   // --- durability ---
   const leftovers = fs.existsSync(path.dirname(tmp)) ? fs.readdirSync(path.dirname(tmp)).filter((f) => f.startsWith(path.basename(tmp)) && f.includes(".tmp")) : [];

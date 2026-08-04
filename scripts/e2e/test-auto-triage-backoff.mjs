@@ -80,10 +80,34 @@ ok(api.noteTriageFailure("card-b", now).attempts === 1, "each card backs off on 
 
 // The tick's own use of it: skip BEFORE the model call, and forget on success.
 const tick = src.slice(src.indexOf("async function autoCaptainTick"), src.indexOf("\n}\n", src.indexOf("async function autoCaptainTick")));
-const skipAt = tick.indexOf("triageRetry.get(todo.id)");
+// Backed-off cards are removed before the board is PLANNED, which is stronger than skipping them
+// inside the loop - and the difference was a real defect. Skipping them later let three failing
+// cards occupy the concurrency cap while a healthy fourth was told "3 auto runs already in flight"
+// with zero running, so nothing started for up to an hour (demonstrated by an independent review,
+// 2026-08-04). Asserted by ORDER: the exclusion has to come before planAutoTick, which itself comes
+// before the model call and the folder lookup.
+const excludeAt = tick.indexOf("const backedOff = new Set(");
+const planAt = tick.indexOf("planAutoTick(plannableState");
 const callAt = tick.indexOf("await triageAutoTask(");
-ok(skipAt > 0 && callAt > 0 && skipAt < callAt, "the backoff is checked BEFORE the model call, so waiting actually saves the call");
-ok(tick.indexOf("resolveTaskProject(todo") > skipAt, "and before the folder lookup, which spawns git per project");
+const folderAt = tick.indexOf("resolveTaskProject(todo");
+ok(excludeAt > 0 && planAt > excludeAt, "backed-off cards are excluded BEFORE the pass is planned, so they cannot occupy the concurrency cap");
+ok(callAt > excludeAt, "which is also before the model call, so waiting actually saves the call");
+ok(folderAt > excludeAt, "and before the folder lookup, which spawns git per project");
+ok(
+  /planAutoTick\(plannableState/.test(tick),
+  "and the planner is handed the filtered board rather than being asked to know about backoffs"
+);
+// The other spend path: a card whose DISPATCH throws has already paid for its verdict, so retrying
+// it every pass pays a fresh one every minute. That branch was uncovered when the backoff landed.
+// Sliced from the catch's OPENING, not from its log line - the backoff call sits above that line,
+// so anchoring on the message searched the wrong half of the block and the assertion failed for a
+// reason that had nothing to do with the code.
+const dispatchCatchAt = tick.indexOf("// Leave the card alone entirely so the next pass retries");
+const dispatchCatch = dispatchCatchAt > 0 ? tick.slice(dispatchCatchAt, dispatchCatchAt + 1800) : "";
+ok(
+  /noteTriageFailure\(todo\.id\)/.test(dispatchCatch) && /could not dispatch/.test(dispatchCatch),
+  "a card whose dispatch fails is backed off too, not retried every minute - it has already paid for its verdict"
+);
 ok(/triageRetry\.delete\(todo\.id\)/.test(tick), "a card that answers is forgotten, so a later failure starts from the base wait again");
 ok(/waiting \d* more minute|waiting \$\{mins\} more minute/.test(tick), "and the wait is reported rather than looking like the card was ignored");
 

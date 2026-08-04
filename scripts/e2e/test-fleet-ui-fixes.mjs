@@ -91,17 +91,25 @@ try {
   assert(gaugeFix.winIsNumber, "contextWindowForModel returns a positive window size");
   assert(typeof gaugeFix.pct === "number", `a context % is computable for a non-open mate (got ${gaugeFix.pct})`);
 
-  // 5fda2a96 (round 2) - the SIDEBAR row names a mate-bound session by fleet name
-  // too, not just the chat header.
-  const sidebarLabel = await app.eval(`(() => {
+  // 5fda2a96 (round 2) - a mate-bound session is named by its FLEET name, not by the raw
+  // first-prompt title it happens to carry.
+  //
+  // This used to render the sidebar's own row and read its title element. The sidebar was
+  // removed on 2026-08-04 (task 22f85eda) and the call to its row builder threw, which stranded
+  // the 24 assertions BELOW this line - guards for five unrelated fixed bugs - while the suite's
+  // output looked unchanged. So the check is re-pointed at the rule rather than deleted: the
+  // naming lives in sessionDisplayName, which is what the chat header and every Fleet row use.
+  const mateLabel = await app.eval(`(() => {
     mateBySessionId = new Map([["c9", { mateId: "m9", name: "Captain Hook", sessionId: "c9" }]]);
     state.sessions.push({ sessionId: "s9", cliSessionId: "c9", cwd: "D:/x", title: "Jag vill jobba med beatdrop...", status: "idle", isArchived: false });
     const sess = state.sessions.find((s) => s.cliSessionId === "c9");
-    const row = rowEl(sess);
-    const el = row.querySelector(".row-title");
-    return el && el.textContent;
+    return { resolved: sessionDisplayName(sess), raw: sess.title };
   })()`);
-  assert(sidebarLabel === "Captain Hook", `sidebar names a first-mate session by fleet name (got ${JSON.stringify(sidebarLabel)})`);
+  assert(mateLabel.resolved === "Captain Hook", `a first-mate session is named by fleet name (got ${JSON.stringify(mateLabel.resolved)})`);
+  assert(
+    mateLabel.raw !== mateLabel.resolved,
+    "and the fixture really is a session whose raw title differs, so the assertion above could fail"
+  );
 
   // 2a5e6196 - openSessionInPane carries the resolved mate id, so a turn in a
   // RESUMED mate session attaches the dispatch config bound to THAT mate (not the

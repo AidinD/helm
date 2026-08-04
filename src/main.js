@@ -86,6 +86,7 @@ import {
   AUTO_RUNNING_TAG,
   NEEDS_CLARIFICATION_TAG,
   TRIAGE_SYSTEM_PROMPT,
+  TRIAGE_PROMPT_VERSION,
   buildTriageInput,
   clarificationNote,
   planAutoTick,
@@ -3299,6 +3300,40 @@ function forgetTriaged(taskIds) {
   }
 }
 
+/**
+ * Forget every remembered verdict when the triage QUESTION itself has changed.
+ *
+ * A verdict is stored per card, keyed on the card's own wording, with no note of which question
+ * produced it. So loosening the bar (TRIAGE_PROMPT_VERSION 1 -> 2, 2026-08-04) would have left
+ * every already-set-aside card set aside: the very cards that motivated the loosening. Found by an
+ * independent review, which demonstrated it - "en copy code knapp" stayed held, unchanged, and was
+ * never re-judged.
+ *
+ * Runs once per version bump, before the pass plans anything, so the first tick after an update
+ * re-judges what the old question rejected.
+ */
+function forgetTriagedOnPromptChange() {
+  try {
+    const cfg = loadConfig();
+    const stored = cfg.autoCaptain?.triageVersion ?? 1;
+    if (stored === TRIAGE_PROMPT_VERSION) {
+      return 0;
+    }
+    const count = Object.keys(cfg.autoCaptain?.triaged || {}).length;
+    writeConfig({
+      ...cfg,
+      autoCaptain: { ...(cfg.autoCaptain || {}), triaged: {}, triageVersion: TRIAGE_PROMPT_VERSION },
+    });
+    if (count > 0) {
+      console.log(`[helm] auto-captain: the triage question changed - ${count} remembered verdict${count === 1 ? "" : "s"} forgotten, they will be judged again`);
+    }
+    return count;
+  } catch (err) {
+    console.error("[helm] auto-captain could not reset its triage memory:", err?.message || err);
+    return 0;
+  }
+}
+
 /** Remember that this exact wording was judged unclear, so it isn't re-judged. */
 function rememberTriaged(taskId, fingerprint) {
   try {
@@ -3460,7 +3495,7 @@ async function autoCaptainTick({ force = false } = {}) {
   if (autoTickInFlight) {
     return { ok: true, skipped: "a pass is already running" };
   }
-  const { enabled, triaged, jot } = autoCaptainConfig();
+  let { enabled, triaged, jot } = autoCaptainConfig();
   if (!enabled && !force) {
     return { ok: true, skipped: "auto-captain is off" };
   }
@@ -3469,6 +3504,13 @@ async function autoCaptainTick({ force = false } = {}) {
     return { ok: true, skipped: "orchestration is stopped by the kill switch" };
   }
   autoTickInFlight = true;
+  // Before anything is planned: if the triage QUESTION has changed since these verdicts were
+  // stored, they answer a question nobody is asking any more. Re-read afterwards, or THIS pass
+  // would still plan against the memory that was just thrown away and the reset would only take
+  // effect a minute later.
+  if (forgetTriagedOnPromptChange() >= 0) {
+    ({ triaged } = autoCaptainConfig());
+  }
   let acted = 0;
   let held = 0;
   // Cards this pass could not JUDGE, as opposed to judged and declined. Kept apart
@@ -3495,25 +3537,36 @@ async function autoCaptainTick({ force = false } = {}) {
       forgetTriaged(stale);
       console.log(`[helm] auto-captain: ${stale.length} card${stale.length === 1 ? "" : "s"} no longer set aside - will be judged again`);
     }
-    const { act, skipped } = planAutoTick(state, {
+    // Cards waiting out a triage backoff are excluded from PLANNING, not skipped inside the loop.
+    //
+    // Skipping them later let them occupy the concurrency cap: three backed-off cards filled all
+    // three slots, a healthy fourth card was told "3 auto runs already in flight" when zero were,
+    // and nothing started for up to an hour. Demonstrated by an independent review - and it was a
+    // regression the backoff itself introduced, since before it those slots were at least churning.
+    // Handing the planner a filtered board is the honest fix: a card that cannot be judged yet is
+    // not a candidate this pass.
+    const backedOff = new Set(
+      [...triageRetry.entries()].filter(([, w]) => Date.now() < w.nextAt).map(([id]) => id)
+    );
+    const plannableState = backedOff.size > 0 ? { ...state, todos: (state.todos || []).filter((t) => !backedOff.has(t.id)) } : state;
+    for (const id of backedOff) {
+      const w = triageRetry.get(id);
+      const card = (state.todos || []).find((t) => t.id === id);
+      const mins = Math.max(1, Math.round((w.nextAt - Date.now()) / 60_000));
+      triageFailures.push({
+        id,
+        title: card?.text || id,
+        reason: `Could not be judged ${w.attempts} time${w.attempts === 1 ? "" : "s"} - waiting ${mins} more minute${mins === 1 ? "" : "s"} before trying again.`,
+      });
+    }
+    const { act, skipped } = planAutoTick(plannableState, {
       running: autoRuns.size,
       triaged: effectiveTriaged,
       handledIds: new Set(autoRuns.keys()),
     });
     for (const todo of act) {
-      // A card whose triage failed recently is waiting out its backoff. Checked BEFORE the
-      // folder lookup and the model call, because skipping after paying for them would make
-      // the backoff decorative.
-      const waiting = triageRetry.get(todo.id);
-      if (waiting && Date.now() < waiting.nextAt) {
-        const mins = Math.max(1, Math.round((waiting.nextAt - Date.now()) / 60_000));
-        triageFailures.push({
-          id: todo.id,
-          title: todo.text,
-          reason: `Triage failed ${waiting.attempts} time${waiting.attempts === 1 ? "" : "s"} - waiting ${mins} more minute${mins === 1 ? "" : "s"} before trying again.`,
-        });
-        continue;
-      }
+      // (The backoff skip that used to sit here is gone: cards waiting one out are now removed
+      // BEFORE planning, so they no longer occupy the concurrency cap. See plannableState above.)
       // WHERE. A list with no folder binding cannot be acted on, and saying that
       // plainly is more useful than a triage verdict about the wording.
       const where = resolveTaskProject(todo, state.categories);
@@ -3641,7 +3694,21 @@ async function autoCaptainTick({ force = false } = {}) {
       } catch (err) {
         // Leave the card alone entirely so the next pass retries. Deliberately NOT
         // held back: nothing was decided about the card itself.
-        console.error("[helm] auto-captain could not dispatch:", err?.message || err);
+        //
+        // But BACK OFF, and this is the point: the verdict above already ran, which means a
+        // model call was already paid for, and triageRetry was already cleared by that success.
+        // Retrying every 60 seconds therefore paid a fresh triage call every minute, forever,
+        // for a card whose DISPATCH is what keeps failing - a stale git lock, a branch-name
+        // collision, a full disk. That is precisely the unbounded spend the backoff exists to
+        // remove, in the one branch it did not cover; found by an independent review, not by me.
+        const { attempts, waitMs } = noteTriageFailure(todo.id);
+        const mins = Math.round(waitMs / 60_000);
+        triageFailures.push({
+          id: todo.id,
+          title: todo.text,
+          reason: `Could not start the run (${attempts} attempt${attempts === 1 ? "" : "s"}): ${err?.message || err}. Trying again in ${mins} minute${mins === 1 ? "" : "s"}.`,
+        });
+        console.error(`[helm] auto-captain could not dispatch: ${err?.message || err} - next attempt in ${mins}m`);
         continue;
       }
       autoRuns.set(todo.id, {
@@ -5252,8 +5319,10 @@ function fireScheduledPrompt(entry) {
           .trim();
         markScheduledPromptOutcome(entry.id, {
           sawResult: !!summary?.sawResult,
+          // An error result is not an answer - see markScheduledPromptOutcome.
+          isError: !!summary?.resultWasError,
           code: summary?.code ?? null,
-          error: summary?.error || stderr || null,
+          error: summary?.resultErrorText || summary?.error || stderr || null,
         });
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send("scheduledPrompts:changed");
