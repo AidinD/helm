@@ -104,7 +104,7 @@ ok(
 // --- and the NODE itself must have a way off the board ----------------------
 // The Archive control was rendered only for a second mate backed by a real session.
 // The auto lane's project row never has one - it is a grouping row for its autopilot
-// runs - so it had no controls at all, and "hur arkiverar jag 2nd maten (helm) fran
+// runs - so it had no controls at all, and "hur arkiverar jag 2nd maten (helm) från
 // auto?" had no answer (Aidin, 2026-08-03). Same shape as the crew-row dead end one
 // level up: something visible with no way to act on it.
 {

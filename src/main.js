@@ -4939,7 +4939,7 @@ function startDispatchWatcher() {
   // the main process answers nothing - and at t+4s that lands exactly when the window
   // has just painted and the first clicks arrive. Measured on 2026-08-03: an unrelated
   // cheap IPC issued during startup took 421ms, while the same call in a settled app
-  // takes 3ms. That is the "hela appen laggar faktiskt till ibland" and the "segare an
+  // takes 3ms. That is the "hela appen laggar faktiskt till ibland" and the "segare än
   // tidigare" - the review queue I suspected first costs 11ms once git's caches are
   // warm, so it was not the offender.
   //
@@ -5215,7 +5215,7 @@ function runDueScheduledPrompts() {
 // main process. Measured on Aidin's real board (18 records) on 2026-08-03: 69ms cold,
 // then 2042ms and 842ms - and an unrelated cheap IPC issued during one took 421ms,
 // because the main process was blocked outright. That is his "hela appen laggar faktiskt
-// till ibland" and "mycket segare an tidigare", and I made it worse the same day by
+// till ibland" and "mycket segare än tidigare", and I made it worse the same day by
 // adding two more callers: the subnav badge at startup AND on a 60s tick, plus the
 // Review widget. Three callers, each paying the full git bill.
 //

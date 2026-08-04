@@ -141,7 +141,7 @@ export function encodeProjectDir(cwd) {
 // "hela appen laggar faktiskt till ibland" (measured 2026-08-03: a trivial IPC took
 // 1672ms in the first seconds after paint, against 3ms in a settled app).
 //
-// It also explains "mycket segare an tidigare" without any code having changed: the cost
+// It also explains "mycket segare än tidigare" without any code having changed: the cost
 // is proportional to how many project directories exist, and that grows every day. 419 MB
 // across 1155 files in 292 directories here.
 //

@@ -77,7 +77,7 @@ try {
   assert(hotTrigger.cold === false, "a first mate at 5 turns does NOT trip it");
 
   // Layers 3 + 2 (live): ask a first mate to WRITE a file with the Write tool only.
-  const prompt = `Skapa filen poke.txt i katalogen ${metaHome} med innehallet hello. Anvand ENDAST Write-verktyget for detta - inte Bash eller nagot annat verktyg.`;
+  const prompt = `Skapa filen poke.txt i katalogen ${metaHome} med innehållet hello. Använd ENDAST Write-verktyget for detta - inte Bash eller något annat verktyg.`;
   const started = await app.eval(`window.helm.startSession({
     cwd: ${JSON.stringify(metaHome)},
     prompt: ${JSON.stringify(prompt)},
