@@ -3004,14 +3004,32 @@ document.addEventListener("pointercancel", releaseDashPointer);
 window.addEventListener("blur", releaseDashPointer);
 
 // Quick keyboard nav to the primary views. Ctrl+Space = Dashboard (the fast
-// key the captain wanted, simpler than a digit); Ctrl+1/2/3 = Plan/Analysis/Archive,
-// mirroring the header tab order (Dashboard is on Space, so the digits start at
-// Plan). Skipped while the command palette is open so it doesn't fight its keys.
+// key the captain wanted, simpler than a digit); Ctrl+Shift+Space = Review; Ctrl+1/2/3 =
+// Plan/Analysis/Archive, mirroring the header tab order (Dashboard is on Space, so the
+// digits start at Plan). Skipped while the command palette is open so it doesn't fight
+// its keys.
+//
+// Review sits on the SAME key as the dashboard with one more modifier, which is the whole
+// reason for the choice (the captain: Ctrl+4 is "för långt mellan fingrarna", and Ctrl+R is
+// Electron's reload, which would have thrown away every open pane). Same hand position,
+// and the pair reads as one idea: what is going on, then what is waiting for me.
 document.addEventListener("keydown", (e) => {
-  if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey) {
     return;
   }
   const isSpace = e.code === "Space" || e.key === " ";
+  if (e.shiftKey) {
+    if (!isSpace) {
+      return; // no other shifted combination is ours to take
+    }
+    const palette = document.getElementById("commandPalette");
+    if (palette && !palette.classList.contains("hidden")) {
+      return;
+    }
+    e.preventDefault();
+    navigateToPage("review");
+    return;
+  }
   const page = isSpace ? "dashboard" : { 1: "lavish", 2: "analysis", 3: "archive" }[e.key]; // lavish = the "Plan" tab
   if (!page) {
     return;
