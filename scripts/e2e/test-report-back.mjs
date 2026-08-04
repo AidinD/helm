@@ -1,8 +1,17 @@
-// E2E: the Dashboard "Report-back" section surfaces a COMPACT result for every
-// terminal dispatched/autopilot run - status + one-line what-changed + a
-// needs-captain flag - so the captain sees outcomes without opening each run.
-// Real launched Helm via CDP. Injects runs into goalRuns and re-renders (no real
-// goal run needed). Orchestration-model phase 2 ("Structured report-back").
+// E2E: what a finished run REPORTS - its one-line what-changed, whether it needs the captain,
+// and how it is labelled - built from the run's own record.
+//
+// This file used to wait for a separate Dashboard "Report-back" section (#dashReportSlot). That
+// section was deliberately removed on 2026-07-11 at the captain's own request ("Faculty, not a room"):
+// terminal runs report back UNDER their dispatcher's roll-up, and anything needing the captain
+// surfaces in the Needs-you queue. Two E2E files were updated in that commit; this one was not, so
+// it has been failing ever since on a selector that cannot exist - while
+// test-tiered-report-back.mjs asserts the OPPOSITE, that #dashReportSlot is absent. Two tests
+// contradicting each other, one of them red for weeks.
+//
+// The CONTENT assertions were worth keeping, and nothing else covered them: the roll-up test checks
+// which runs appear where, never what each row says. So they are repointed at dashReportRowEl - the
+// surviving unit that builds a report row wherever it is shown - which is what they were about.
 //
 // Run:  node scripts/e2e/test-report-back.mjs
 import { launch } from "./harness.mjs";
@@ -18,86 +27,127 @@ function assert(cond, msg) {
     exitCode = 1;
   }
 }
-const isHidden = (id) => app.eval(`!!document.getElementById(${JSON.stringify(id)})?.classList.contains("hidden")`);
-const count = (sel) => app.eval(`document.querySelectorAll(${JSON.stringify(sel)}).length`);
 
 try {
   await app.waitForSelector("#pageToggle", 30000, { visible: true });
-  // #pageToggle is static HTML and can become visible a hair BEFORE renderer.js
-  // finishes evaluating its top-level `let goalRuns = new Map()`, so seeding
-  // immediately races that and can throw "goalRuns is not defined". Settle first.
+  // #pageToggle is static HTML and can become visible a hair BEFORE renderer.js finishes
+  // evaluating its top-level state, so touching it immediately races that. Settle first.
   await new Promise((r) => setTimeout(r, 800));
 
-  // Inject a spread of terminal runs + one live run (which must NOT appear in
-  // report-back - it's not a finished result yet).
-  await app.eval(`(() => {
-    goalRuns.clear();
-    // done WITH commits + an implement iteration summary -> needs captain, "what changed" = the summary.
-    goalRuns.set("doneCommits", { goalRunId: "doneCommits", ordinal: ++goalRunSeq, goal: "Add the export button", projectPath: "P", dispatchedBy: null,
-      status: "done", result: { commitCount: 3, branchName: "helm/goal-abc", stoppedReason: "done" },
-      iterations: [{ ok: true, phase: "implement", result: { success: true, summary: "Wired the export button to the CSV writer" } }], error: null, escalation: null, latestPlan: null });
-    // done CLEAN, no commits -> no needs-captain flag.
-    goalRuns.set("doneClean", { goalRunId: "doneClean", ordinal: ++goalRunSeq, goal: "Investigate flaky test", projectPath: "P", dispatchedBy: null,
-      status: "done", result: { commitCount: 0, branchName: "helm/goal-def", stoppedReason: "converged" }, iterations: [], error: null, escalation: null, latestPlan: null });
-    // escalated (status done + escalation) -> paused, needs captain, dispatched origin.
-    goalRuns.set("esc", { goalRunId: "esc", ordinal: ++goalRunSeq, goal: "Refactor auth layer", projectPath: "P", dispatchedBy: "mate_work",
-      status: "done", result: { commitCount: 1, branchName: "helm/goal-ghi" }, iterations: [], error: null, escalation: { signal: "ambiguity_reported", detail: "Unclear which token store to use" }, latestPlan: null });
-    // errored -> failed, needs captain.
-    goalRuns.set("err", { goalRunId: "err", ordinal: ++goalRunSeq, goal: "Upgrade the bundler", projectPath: "P", dispatchedBy: null,
-      status: "error", result: null, iterations: [], error: "npm build failed", escalation: null, latestPlan: null });
-    // still running -> NOT a report-back row.
-    goalRuns.set("live", { goalRunId: "live", ordinal: ++goalRunSeq, goal: "Live run in progress", projectPath: "P", dispatchedBy: null,
-      status: "running", result: null, iterations: [{ ok: true, phase: "implement", result: { success: true, summary: "step" } }], error: null, escalation: null, latestPlan: null });
-    return true;
+  const res = await app.eval(`(() => {
+    const mk = (over) => ({
+      goalRunId: "r", ordinal: 1, goal: "g", projectPath: "P", dispatchedBy: null,
+      status: "done", result: null, iterations: [], error: null, escalation: null, latestPlan: null,
+      ...over,
+    });
+    const rowOf = (run) => {
+      const el = dashReportRowEl(run);
+      document.body.append(el);
+      const out = {
+        text: el.innerText,
+        needs: el.classList.contains("dash-report-needs"),
+        icon: el.querySelector(".dash-state-ic")?.textContent || "",
+        iconClass: el.querySelector(".dash-state-ic")?.className || "",
+      };
+      el.remove();
+      return out;
+    };
+
+    return {
+      // Done WITH commits: needs the captain, and its what-changed is the implement iteration's
+      // own summary rather than a generic "finished".
+      commits: rowOf(mk({
+        goalRunId: "doneCommits", goal: "Add the export button",
+        result: { commitCount: 3, branchName: "helm/goal-abc", stoppedReason: "done" },
+        iterations: [{ ok: true, phase: "implement", result: { success: true, summary: "Wired the export button to the CSV writer" } }],
+      })),
+      // Done CLEAN, nothing committed: finished, nothing for the captain to do.
+      clean: rowOf(mk({
+        goalRunId: "doneClean", goal: "Investigate flaky test",
+        result: { commitCount: 0, branchName: "helm/goal-def", stoppedReason: "converged" },
+      })),
+      // Escalated: the escalation's detail IS the what-changed line.
+      escalated: rowOf(mk({
+        goalRunId: "esc", goal: "Refactor auth layer", dispatchedBy: "mate_work",
+        result: { commitCount: 1, branchName: "helm/goal-ghi" },
+        escalation: { signal: "ambiguity_reported", detail: "Unclear which token store to use" },
+      })),
+      // Errored: failed, needs the captain, and the error is what it says.
+      errored: rowOf(mk({ goalRunId: "err", goal: "Upgrade the bundler", status: "error", error: "npm build failed" })),
+      // A still-running run is not a RESULT, and the gate for that is isTerminalRun - the
+      // predicate every report-back surface filters on before building a row.
+      //
+      // The first version of this asserted !!goalRunReport(run).terminal === false. goalRunReport
+      // has no terminal field at all, so that was !!undefined === false: an assertion that could
+      // not fail, on the very day two independent reviewers found three of them in this repo. It
+      // also reported status "done" for a running run, which is what gave it away - goalRunReport
+      // falls through to the finished shape because it is only ever CALLED for a terminal run.
+      live: {
+        running: isTerminalRun(mk({ status: "running" })),
+        done: isTerminalRun(mk({ status: "done" })),
+        error: isTerminalRun(mk({ status: "error" })),
+        interrupted: isTerminalRun(mk({ status: "interrupted" })),
+      },
+      // And the removed surface must stay removed - the opposite of what this file used to wait for.
+      slotGone: !document.getElementById("dashReportSlot"),
+    };
   })()`);
 
-  await app.eval(`(() => { navigateToPage("dashboard"); return true; })()`);
-  await app.waitForSelector("#dashReportSlot .dash-queue-row", 8000);
+  log("commits row:\n" + res.commits.text);
 
-  const slotText = await app.eval(`document.querySelector("#dashReportSlot").innerText`);
-  log("report-back slot text:\n" + slotText);
+  assert(/Add the export button/.test(res.commits.text), "a finished run's row names its goal");
+  assert(
+    /Wired the export button to the CSV writer/.test(res.commits.text),
+    "its 'what changed' line is the implement iteration's own summary, not a generic finished message"
+  );
+  assert(
+    /3 commits ready for review in helm\/goal-abc/.test(res.commits.text),
+    `and its needs-captain nudge names the commit count + branch (${JSON.stringify(res.commits.text.slice(0, 130))})`
+  );
+  assert(res.commits.needs === true, "a run with commits waiting carries the needs-captain accent");
+  assert(res.commits.icon === "⚠" && /dash-state-needs/.test(res.commits.iconClass), "and the warning icon");
 
-  // The four terminal runs appear; the live one does not.
-  assert(/Report-back/i.test(slotText), "the Report-back section header renders");
-  assert(/Add the export button/.test(slotText), "the done-with-commits run appears");
-  assert(/Wired the export button to the CSV writer/.test(slotText), "its 'what changed' line is the implement iteration's own summary");
-  assert(/3 commits ready for review in helm\/goal-abc/.test(slotText), "its needs-captain nudge names the commit count + branch");
-  assert(/Investigate flaky test/.test(slotText), "the clean-done run appears");
-  assert(/Refactor auth layer/.test(slotText), "the escalated run appears");
-  assert(/Unclear which token store to use/.test(slotText), "the escalated run's what-changed is its escalation detail");
-  assert(/Dispatched: "Refactor auth layer"/.test(slotText), "a dispatched run is labelled 'Dispatched'; an autopilot one 'Autopilot'");
-  assert(/Upgrade the bundler/.test(slotText), "the errored run appears");
-  assert(!/Live run in progress/.test(slotText), "a still-running run is NOT in report-back (it's not a finished result)");
+  assert(/Investigate flaky test/.test(res.clean.text), "a clean run's row renders too");
+  assert(res.clean.needs === false, "but carries no needs-captain accent - there is nothing to act on");
+  assert(res.clean.icon === "✓" && /dash-state-done/.test(res.clean.iconClass), "and shows the done check instead");
 
-  // Rows counts: 4 terminal rows, and exactly 3 of them (commits/escalated/error) carry the needs accent.
-  const rowCount = await count("#dashReportSlot .dash-queue-row");
-  const needsRows = await count("#dashReportSlot .dash-queue-row.dash-report-needs");
-  assert(rowCount === 4, `four report rows render (got ${rowCount})`);
-  assert(needsRows === 3, `exactly the commits+escalated+errored rows carry the needs-captain accent (got ${needsRows})`);
+  assert(/Refactor auth layer/.test(res.escalated.text), "an escalated run's row renders");
+  assert(
+    /Unclear which token store to use/.test(res.escalated.text),
+    "and its what-changed is the escalation's own detail - the reason it stopped"
+  );
+  assert(res.escalated.needs === true, "an escalation needs the captain");
+  assert(
+    /Dispatched/.test(res.escalated.text) && !/Dispatched/.test(res.commits.text),
+    "a dispatched run is labelled as such, and one the captain started himself is not"
+  );
 
-  // The done check icon shows on the clean run, the warning on needs-captain ones.
-  const doneIcons = await count("#dashReportSlot .dash-state-done");
-  const needsIcons = await count("#dashReportSlot .dash-state-needs");
-  assert(doneIcons === 1, `the clean-done run gets the calm check icon (got ${doneIcons})`);
-  assert(needsIcons === 3, `the three needs-captain runs get the warning icon (got ${needsIcons})`);
+  assert(/Upgrade the bundler/.test(res.errored.text), "an errored run's row renders");
+  assert(/npm build failed/.test(res.errored.text), "with the error as its what-changed line");
+  assert(res.errored.needs === true, "and it needs the captain");
 
-  // Clicking a report row navigates to the Goal page (full run detail).
-  const clicked = await app.eval(`(() => {
-    const rows = [...document.querySelectorAll('#dashReportSlot .dash-queue-row')];
-    const r = rows.find((x) => /Add the export button/.test(x.textContent));
-    if (r) { r.click(); return true; }
-    return false;
-  })()`);
-  assert(clicked, "found and clicked the done-with-commits report row");
-  await app.waitForSelector("#goalPage", 8000, { visible: true });
-  assert(!(await isHidden("goalPage")), "clicking a report row navigates to the Goal page");
+  assert(res.live.running === false, "a still-running run is not a finished result, so no report surface builds a row for it");
+  assert(
+    res.live.done === true && res.live.error === true && res.live.interrupted === true,
+    `and the three states that ARE results all count (done ${res.live.done}, error ${res.live.error}, interrupted ${res.live.interrupted}) - so the check above is not passing on a predicate that says no to everything`
+  );
+
+  assert(
+    res.slotGone,
+    "the separate Dashboard Report-back section stays removed - runs report under their dispatcher, which is what this file used to contradict"
+  );
 
   const errors = app.getConsoleErrors();
   assert(errors.length === 0, `no console errors (got ${errors.length})`);
-  for (const e of errors) {
-    log("  console error:", e.text);
+  for (const e of errors.slice(0, 5)) {
+    log("  console error:", e.text.slice(0, 160));
   }
-  log(exitCode === 0 ? "VERIFY OK: terminal runs report back compactly on the Dashboard." : "VERIFY FAILED.");
+
+  log(
+    exitCode === 0
+      ? "VERIFY OK: a finished run's report row says what changed, flags what needs the captain, and labels where it came from."
+      : "VERIFY FAILED."
+  );
 } catch (err) {
   exitCode = 1;
   log("ERROR:", err.message);
