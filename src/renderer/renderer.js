@@ -37,7 +37,6 @@ let viewNavIndex = -1;
 // the "visa på rutan" half of the retire/archive-spinner ask. Cleared when the
 // op's final re-render runs.
 let handoffBusyIds = new Set();
-let searchTerm = "";
 let archiveSearchTerm = ""; // filters the Archive page's two lists by title/folder
 // Goal page (Fas 3 Point 11) — all autonomous runs this session, keyed by
 // goalRunId. The backend (main.js liveGoalRuns + goal:event carrying
@@ -62,7 +61,6 @@ let unseenGoalAttention = new Set();
 let goalEscalateOnTrouble = false;
 let selectedSessionId = null;
 let focusedPaneIndex = 0;
-let dragSessionId = null;
 // The single source of truth for a drag-reorder: set on every dragover and
 // read verbatim by drop, so the drop lands exactly where the indicator was
 // shown (the old code recomputed position from a live rect at drop time,
@@ -81,8 +79,6 @@ let categoryDropTarget = null;
 // header. refresh() skips the sidebar rebuild while this is set. A timestamp
 // (not a bool) so a drag that somehow never ends self-heals after 30s rather
 // than freezing the sidebar forever — dragend clears it in every normal case.
-let categoryDragStartedAt = null;
-const CATEGORY_DRAG_STALE_MS = 30000;
 // First-mate refresh pipe (docs/orchestration-model.md phase 5): when a
 // first-mate session's context gauge crosses this %, nudge to hand off to a
 // fresh one (a first mate stays thin - continuity is in files, not a bloating
@@ -96,9 +92,6 @@ const FIRST_MATE_HANDOFF_PCT = 70;
 const FIRST_MATE_HOT_TURNS = 60;
 const firstMateHandoffNotified = new Set();
 
-function categoryDragInProgress() {
-  return categoryDragStartedAt !== null && Date.now() - categoryDragStartedAt < CATEGORY_DRAG_STALE_MS;
-}
 // launchId -> { index, pane, startedAt }. The ONE map every launch-scoped
 // event (session/tool_use/assistant/error/done/modelFit) is routed through,
 // always gated on `panes[index] === pane` before being applied. Storing the
@@ -2087,12 +2080,6 @@ function sortByAttention(list) {
   });
 }
 
-function matchesSearch(session) {
-  if (!searchTerm) {
-    return true;
-  }
-  return session.title.toLowerCase().includes(searchTerm);
-}
 
 function sessionById(id) {
   return state.sessions.find((s) => s.sessionId === id);
@@ -2206,11 +2193,11 @@ function sessionDisplayName(session) {
 // app's real session files (that would risk destroying real conversation
 // history). Purely hides it from the sidebar via config; restorable from
 // the Archive page.
-async function removeFromHelm(session) {
-  const hidden = [...(state.config.hiddenSessions || []), session.sessionId];
-  state.config = await window.helm.setConfig({ hiddenSessions: hidden });
-  refresh();
-}
+// "Remove from Helm" - the ACTION - is gone with the sidebar (Aidin: "remove from helm vet jag
+// inte ens vad är"). It was a second way to hide a session, distinct from archiving for reasons
+// that had stopped being true, and unexplainable is a fair verdict on it. isHiddenFromHelm below
+// stays, and so does restoreToHelm: anything already hidden must remain hidden, and remain
+// restorable from the Archive page.
 
 async function restoreToHelm(session) {
   const hidden = (state.config.hiddenSessions || []).filter((id) => id !== session.sessionId);
@@ -2240,8 +2227,12 @@ function refreshArchivePageIfVisible() {
   }
 }
 
-// Real archiving: flips isArchived in the desktop app's OWN local_*.json
-// file (unlike removeFromHelm, which only ever touches Helm's config).
+// Real archiving. This comment used to say it "flips isArchived in the desktop app's
+// OWN local_*.json file", and that has not been true since Helm took over its own
+// session index: applySessionArchive writes config.archivedSessions, in Helm's config,
+// and never touches Anthropic's session files. The stale version mattered - it is why
+// "Remove from Helm" looked like the only way to hide a Helm-CREATED session (those have
+// no desktop metadata at all), when archiving covers every session either way.
 // Always a direct response to an explicit click — either the manual context
 // menu action, or the user clicking a suggested-archive pill — never fired
 // on a timer or any other unattended trigger.
@@ -3228,38 +3219,9 @@ document.addEventListener("keydown", (e) => {
 // is now inline double-click editing everywhere, and delete is a two-step
 // context-menu confirm — no native synchronous dialogs anywhere.
 
-function nextCategoryLabel() {
-  const existing = new Set((state.config.groups || []).map((g) => g.label));
-  if (!existing.has("New category")) {
-    return "New category";
-  }
-  let n = 2;
-  while (existing.has(`New category ${n}`)) {
-    n++;
-  }
-  return `New category ${n}`;
-}
 
-async function createCategory() {
-  const groups = [...(state.config.groups || []), { label: nextCategoryLabel(), sessionIds: [], collapsed: false }];
-  state.config = await window.helm.setConfig({ groups });
-  renderSidebar();
-}
 
-async function renameCategoryTo(oldLabel, newLabel) {
-  if (!newLabel || !newLabel.trim() || newLabel === oldLabel) {
-    return;
-  }
-  const groups = (state.config.groups || []).map((g) => (g.label === oldLabel ? { ...g, label: newLabel.trim() } : g));
-  state.config = await window.helm.setConfig({ groups });
-  renderSidebar();
-}
 
-async function deleteCategory(label) {
-  const groups = (state.config.groups || []).filter((g) => g.label !== label);
-  state.config = await window.helm.setConfig({ groups });
-  renderSidebar();
-}
 
 // Display-only rename — never writes to the desktop app's own session files,
 // so it can't corrupt live state there; it just overrides what Helm shows.
@@ -3308,358 +3270,12 @@ function makeInlineEditable(labelEl, currentValue, onCommit) {
   input.addEventListener("dblclick", (e) => e.stopPropagation());
 }
 
-// ============================== Drag and drop (VS Code style) ==============================
-
-async function moveSessionToGroup(sessionId, targetLabel, insertBeforeId) {
-  const groups = (state.config.groups || []).map((g) => ({
-    ...g,
-    sessionIds: (g.sessionIds || []).filter((id) => id !== sessionId),
-  }));
-  if (targetLabel) {
-    const target = groups.find((g) => g.label === targetLabel);
-    if (target) {
-      const idx = insertBeforeId ? target.sessionIds.indexOf(insertBeforeId) : -1;
-      if (idx === -1) {
-        target.sessionIds.push(sessionId);
-      } else {
-        target.sessionIds.splice(idx, 0, sessionId);
-      }
-    }
-  }
-  state.config = await window.helm.setConfig({ groups });
-  renderSidebar();
-}
-
-// Clears the drop indicator everywhere so only one row is ever marked. The
-// indicator is a CSS class drawing an absolutely-positioned pseudo-element
-// line — NOT a real element in the list flow — so toggling it never shifts
-// layout and never moves the rects the position math depends on.
-function clearDropIndicators() {
-  document
-    .querySelectorAll(".row.drop-before, .row.drop-after")
-    .forEach((el) => el.classList.remove("drop-before", "drop-after"));
-}
-
-function clearCategoryDropIndicators() {
-  document
-    .querySelectorAll(".section.drop-before, .section.drop-after")
-    .forEach((el) => el.classList.remove("drop-before", "drop-after"));
-}
-
-// Reorders state.config.groups by moving draggedLabel to just before/after
-// targetLabel. Splice-based, same shape as moveSessionToGroup's reorder.
-async function reorderCategory(draggedLabel, targetLabel, before) {
-  const groups = [...(state.config.groups || [])];
-  const draggedIdx = groups.findIndex((g) => g.label === draggedLabel);
-  if (draggedIdx === -1) {
-    return;
-  }
-  const [dragged] = groups.splice(draggedIdx, 1);
-  const targetIdx = groups.findIndex((g) => g.label === targetLabel);
-  if (targetIdx === -1) {
-    groups.push(dragged);
-  } else {
-    groups.splice(before ? targetIdx : targetIdx + 1, 0, dragged);
-  }
-  state.config = await window.helm.setConfig({ groups });
-  renderSidebar();
-}
-
-// ============================== Row + section rendering ==============================
-
-function rowEl(session) {
-  const row = document.createElement("div");
-  row.className = "row" + (session.sessionId === selectedSessionId ? " selected" : "");
-  row.draggable = true;
-  row.dataset.sessionId = session.sessionId;
-  row.dataset.hasMenu = "1";
-
-  const titleLine = document.createElement("div");
-  titleLine.className = "row-title-line";
-  const dot = document.createElement("span");
-  dot.className = `status-dot ${session.status}`;
-  const title = document.createElement("span");
-  title.className = "row-title";
-  // Name a mate-bound session by its durable fleet name, consistent with the
-  // chat pane header and the needs-you queue - not the prompt-derived
-  // session.title (bug 5fda2a96: the chat header showed "Captain Hook" while the
-  // sidebar still showed "Jag vill jobba med beatdrop..." for the same session).
-  const rowLabel = sessionDisplayName(session);
-  title.textContent = rowLabel;
-  title.title = rowLabel;
-  titleLine.append(dot, title);
-  if (isOrchestratorSession(session)) {
-    const tag = document.createElement("span");
-    tag.className = "helm-tag";
-    tag.textContent = "◆";
-    tag.title = "Helm orchestrator work";
-    titleLine.append(tag);
-  }
-  row.append(titleLine);
-
-  const meta = document.createElement("div");
-  meta.className = "row-meta";
-  meta.append(spanEl(STATUS_LABEL[session.status] || session.status), spanEl(relTime(session.lastActivityAt)));
-  if (session.model) {
-    meta.append(spanEl(session.model.replace("claude-", "")));
-  }
-  row.append(meta);
-
-  if (session.jot) {
-    const j = document.createElement("div");
-    j.className = "row-jot" + (session.jot.review > 0 ? " review" : "");
-    const parts = [];
-    if (session.jot.review > 0) {
-      parts.push(`${session.jot.review} review`);
-    }
-    if (session.jot.inProgress > 0) {
-      parts.push(`${session.jot.inProgress} wip`);
-    }
-    if (session.jot.open > 0) {
-      parts.push(`${session.jot.open} open`);
-    }
-    j.textContent = parts.length ? `${session.jot.category} · ${parts.join(" · ")}` : session.jot.category;
-    row.append(j);
-
-    // Deadline chip — only when close enough to actually matter for sorting
-    // (within a week or overdue), matching the deadlineBoost tiers in
-    // sessions.js. Makes the deadline-aware ordering legible: it explains
-    // why a session with little other activity is sitting near the top.
-    const deadlineText = deadlineChipText(session.jot.nearestDeadline);
-    if (deadlineText) {
-      const d = document.createElement("div");
-      d.className = "row-deadline" + (session.jot.nearestDeadline < Date.now() ? " overdue" : "");
-      d.textContent = "⏰ " + deadlineText;
-      row.append(d);
-    }
-  }
-
-  // "Orchestrator proposes, you approve" — only ever a suggestion. Clicking
-  // this pill IS the approval step; nothing archives without it. Only shown
-  // for genuinely idle sessions with no open Jot work, and never for a
-  // Helm-building session (idle between long autonomous stretches doesn't
-  // mean done).
-  const hasOpenJotWork =
-    session.jot && (session.jot.review > 0 || session.jot.inProgress > 0 || session.jot.open > 0);
-  // Fas 3 orchestrator-helper tag — a periodic Haiku classifier's read of
-  // the actual conversation content (see main.js's runOrchestratorSweep,
-  // PLAN.md Phase 3). Shown whenever present so its judgment is auditable,
-  // not a black box (the full visualizer is deliberately deferred until
-  // there's real behavior to design around — this is the minimal version:
-  // just show what it concluded and why, right on the row it's about).
-  if (session.orchestratorTag) {
-    const tag = document.createElement("div");
-    tag.className = "row-orchestrator-tag";
-    tag.title = "Orchestrator helper's read of this session's content (a proposal, never acts on its own).";
-    tag.textContent = `◎ ${session.orchestratorTag.reason}`;
-    row.append(tag);
-  }
-  // Auto-compact note — the helper compacted this session automatically (per
-  // Aidin's choice of automatic-not-propose for compaction). Shown so a
-  // silent background compaction is at least visible after the fact, until
-  // the next real activity clears it (main.js gates that on transcript size).
-  if (session.autoCompacted) {
-    const c = document.createElement("div");
-    c.className = "row-orchestrator-tag";
-    c.title = "The orchestrator helper auto-compacted this session's context (the full history is still on disk).";
-    const pre = session.autoCompacted.preTokens;
-    const post = session.autoCompacted.postTokens;
-    const fmt = (n) => (typeof n === "number" ? `${Math.round(n / 1000)}k` : "?");
-    c.textContent = post !== null ? `⊟ Auto-compacted (${fmt(pre)} → ${fmt(post)} tokens)` : "⊟ Auto-compacted";
-    row.append(c);
-  }
-  // "Orchestrator proposes, you approve" — only ever a suggestion. Clicking
-  // this pill IS the approval step; nothing archives without it. Sessions
-  // still sitting in "waiting" (inside the attention window) but that the
-  // helper has actually READ and concluded are genuinely done skip the wait
-  // for the window to expire into "idle" — this is what "replaces the idle
-  // proxy with something that's actually read the content" (PLAN.md) means
-  // in practice. Ephemeral PROJECT sessions are the common suggest case, but a
-  // FIRST MATE (a session bound to an active mate) is NEVER suggested for
-  // archiving - a first mate is a persistent coordination role you RETIRE (with
-  // a handoff), not archive. It showed up here (with its prompt-derived name) as
-  // an "Archive?" proposal, which is wrong (Aidin 2026-07-11; supersedes the old
-  // "orchestrator sessions suggested like any other" note).
-  const classifierSaysDone = session.orchestratorTag?.statusTag === "done_not_archived";
-  if (
-    state.config.archiveSuggestions?.enabled === true &&
-    !isOrchestratorSession(session) &&
-    // lifecycleState, not raw status (Epic f3d096fa): a session promoted back to
-    // needs-you (lifecycleState "waiting") must NOT also be offered for archive
-    // (bug 4cd7d592). wrapped/idle are the parked states worth suggesting.
-    (session.lifecycleState === "idle" || session.lifecycleState === "wrapped") &&
-    !hasOpenJotWork &&
-    !isArchiveProposalDismissed(session)
-  ) {
-    const suggest = document.createElement("button");
-    suggest.type = "button";
-    suggest.className = "archive-suggest-pill";
-    suggest.textContent = "Archive?";
-    suggest.title = classifierSaysDone
-      ? "Suggested: the orchestrator helper read this conversation and concluded it's done. Click to archive."
-      : "Suggested: this session looks idle with no open Jot work. Click to archive.";
-    suggest.addEventListener("click", (e) => {
-      e.stopPropagation();
-      offerArchiveChoice(e.clientX, e.clientY, session, () => archiveSession(session));
-    });
-    row.append(suggest);
-  }
-
-  // Single click opens the session, but only after a short delay so a second
-  // click (making this a double-click) can cancel it in favor of renaming.
-  row.addEventListener("click", () => {
-    clearTimeout(row._openTimer);
-    row._openTimer = setTimeout(() => openSessionInPane(session, focusedPaneIndex), 250);
-  });
-  title.addEventListener("dblclick", (e) => {
-    e.stopPropagation();
-    clearTimeout(row._openTimer);
-    makeInlineEditable(title, session.title, (v) => renameSessionTo(session, v));
-  });
-
-  row.addEventListener("contextmenu", (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const x = e.clientX;
-    const y = e.clientY;
-    const groupLabels = (state.config.groups || []).map((g) => g.label);
-    showContextMenu(x, y, [
-      { label: "Open", onClick: () => openSessionInPane(session, 0) },
-      { label: "Rename chat (or double-click it)", onClick: () => makeInlineEditable(title, session.title, (v) => renameSessionTo(session, v)) },
-      {
-        label: "Summarize & carry over to new chat",
-        onClick: () => summarizeAndCarryOver(session),
-      },
-      { sep: true },
-      {
-        label: "Move to category",
-        submenu: [
-          ...groupLabels.map((label) => ({ label, onClick: () => moveSessionToGroup(session.sessionId, label) })),
-          { label: "Unsorted", onClick: () => moveSessionToGroup(session.sessionId, null) },
-        ],
-      },
-      { sep: true },
-      {
-        label: "Archive session",
-        danger: true,
-        onClick: () => {
-          // Re-opens with an explicit confirm step (no native window.confirm()
-          // — unreliable in this build) since this writes to the desktop
-          // app's OWN session file, not just Helm's local config. The handoff
-          // branch comes from the shared builder, so it is offered whether or
-          // not the session has a project folder.
-          showContextMenu(x, y, archiveMenuItems(session, { plainArchive: () => archiveSession(session), nameInLabel: true }));
-        },
-      },
-      {
-        label: "Remove from Helm",
-        danger: true,
-        onClick: () => removeFromHelm(session),
-      },
-    ]);
-  });
-
-  row.addEventListener("dragstart", (e) => {
-    dragSessionId = session.sessionId;
-    row.classList.add("dragging");
-    e.dataTransfer.setData("text/session-id", session.sessionId);
-    e.dataTransfer.effectAllowed = "move";
-  });
-  row.addEventListener("dragend", () => {
-    row.classList.remove("dragging");
-    clearDropIndicators();
-    dropTarget = null;
-  });
-
-  // VS Code-style: hovering the top/bottom half of a row marks that edge.
-  // The marker is a pure CSS class (absolutely-positioned pseudo-element,
-  // zero layout impact), and the exact {row, before} shown here is stashed
-  // in dropTarget so the drop handler acts on the SAME decision — no second,
-  // independently-recomputed measurement that could disagree with it.
-  row.addEventListener("dragover", (e) => {
-    e.preventDefault();
-    // A category being dragged (reordering the lists themselves) has no
-    // business showing a session-row drop indicator — this row would never
-    // actually receive that drop (its own drop handler below no-ops on a
-    // missing "text/session-id"), so without this guard it falsely promised
-    // a valid target. Found in review, alongside the same drag also being
-    // able to leave a stale .section indicator AND a stale .row indicator
-    // visible at once, since neither handler cleared the other's markers.
-    if (e.dataTransfer.types.includes("text/category-label")) {
-      return;
-    }
-    e.stopPropagation();
-    // No indicator on the row being dragged — dropping onto yourself is a
-    // no-op, and marking it would just be visual noise.
-    if (row.classList.contains("dragging")) {
-      clearDropIndicators();
-      dropTarget = null;
-      return;
-    }
-    const rect = row.getBoundingClientRect();
-    const before = e.clientY - rect.top < rect.height / 2;
-    if (dropTarget && dropTarget.row === row && dropTarget.before === before) {
-      return; // unchanged since last event — nothing to redraw
-    }
-    dropTarget = { row, before };
-    clearDropIndicators();
-    row.classList.add(before ? "drop-before" : "drop-after");
-  });
-  row.addEventListener("drop", (e) => {
-    e.preventDefault();
-    // Same reasoning as the dragover guard above — a category drop landing
-    // here isn't for this row at all.
-    if (e.dataTransfer.types.includes("text/category-label")) {
-      return;
-    }
-    e.stopPropagation();
-    // Dropping onto the row being dragged is a no-op (dragover cleared
-    // dropTarget for it) — bail before it degenerates into an append.
-    if (row.classList.contains("dragging")) {
-      clearDropIndicators();
-      dropTarget = null;
-      return;
-    }
-    const list = row.parentElement;
-    const groupLabel = list.dataset.groupLabel;
-    // Read the position from the indicator that was actually shown, not a
-    // fresh rect measurement — guarantees the drop lands where you saw it.
-    const insertBeforeId = groupLabel ? insertBeforeIdFromDropTarget() : null;
-    clearDropIndicators();
-    dropTarget = null;
-    const sid = e.dataTransfer.getData("text/session-id");
-    if (sid) {
-      moveSessionToGroup(sid, groupLabel || null, insertBeforeId);
-    }
-  });
-
-  return row;
-}
-
-// Translates the shown {row, before} indicator into the sessionId to insert
-// in front of (null = append to end). "After row X" means "before whatever
-// follows X" — and a following .dragging row is skipped so dropping just
-// below the item you're dragging isn't a confusing no-op-that-looks-like-move.
-function insertBeforeIdFromDropTarget() {
-  if (!dropTarget) {
-    return null;
-  }
-  const { row, before } = dropTarget;
-  if (before) {
-    return row.dataset.sessionId;
-  }
-  let next = row.nextElementSibling;
-  while (next && next.classList.contains("dragging")) {
-    next = next.nextElementSibling;
-  }
-  return next && next.dataset.sessionId ? next.dataset.sessionId : null;
-}
-
-function spanEl(text) {
-  const el = document.createElement("span");
-  el.textContent = text;
-  return el;
-}
+// The session row, and the drag-and-drop that only ever served it (dragging a session into a
+// category, reordering categories), were removed with the sidebar on 2026-08-04 - see the note
+// where the sidebar's own rendering used to be.
+//
+// renameSessionTo and makeInlineEditable, just above, are deliberately NOT part of this: the
+// Dashboard's Fleet row renames a session with exactly those two.
 
 // ============================== Fas 2: summarize & carry over ==============================
 // Lets a session be archived without losing the thread: resume it once with a
@@ -4118,7 +3734,6 @@ function openSessionInPane(session, paneIndex, _ignored) {
     };
   }
   renderSinglePane(paneIndex);
-  renderSidebar();
   loadTranscriptInto(paneIndex);
   if (panes[paneIndex]?.busy) {
     setPaneBusyUI(paneIndex, "Working…");
@@ -4269,301 +3884,17 @@ async function loadTranscriptInto(paneIndex) {
   renderPane(paneIndex);
 }
 
-// ============================== Sidebar sections ==============================
-
-function sectionEl({ label, sessions, collapsed, pinned, droppable, emptyHint, isCategory }) {
-  const wrap = document.createElement("div");
-  wrap.className = "section";
-
-  const hasActiveSession = sessions.some((s) => s.sessionId === selectedSessionId);
-  const head = document.createElement("div");
-  head.className =
-    "section-head" +
-    (pinned ? " attention-head" : "") +
-    (collapsed ? " collapsed" : "") +
-    (isCategory && hasActiveSession ? " active-category" : "");
-  const caret = document.createElement("span");
-  caret.className = "caret";
-  caret.textContent = "▾";
-  const name = document.createElement("span");
-  name.textContent = label;
-  const count = document.createElement("span");
-  count.className = "section-count";
-  count.textContent = sessions.length;
-  head.append(caret, name, count);
-
-  const list = document.createElement("div");
-  list.className = "section-list" + (collapsed ? " hidden" : "");
-  if (droppable && droppable !== "unsorted") {
-    list.dataset.groupLabel = label;
-  }
-
-  if (sessions.length === 0 && emptyHint) {
-    const hint = document.createElement("div");
-    hint.className = "empty-hint";
-    hint.textContent = emptyHint;
-    list.append(hint);
-  } else {
-    // Categories keep whatever order the user dragged them into (the actual
-    // bug: this used to always re-sort by attention, so a manual reorder
-    // changed the underlying data but the display silently overrode it every
-    // render). Only the computed spotlight/list views sort by attention.
-    const ordered = isCategory ? sessions : sortByAttention(sessions);
-    ordered.forEach((s) => list.append(rowEl(s)));
-  }
-
-  // Same click-then-dblclick-cancels debounce as session rows, so a double
-  // click on the label renames instead of just toggling collapse twice.
-  head.addEventListener("click", () => {
-    clearTimeout(head._toggleTimer);
-    head._toggleTimer = setTimeout(() => {
-      head.classList.toggle("collapsed");
-      list.classList.toggle("hidden");
-      if (isCategory) {
-        persistCollapsed(label, head.classList.contains("collapsed"));
-      }
-    }, 250);
-  });
-
-  if (isCategory) {
-    name.addEventListener("dblclick", (e) => {
-      e.stopPropagation();
-      clearTimeout(head._toggleTimer);
-      makeInlineEditable(name, label, (v) => renameCategoryTo(label, v));
-    });
-    head.dataset.hasMenu = "1";
-    head.addEventListener("contextmenu", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const x = e.clientX;
-      const y = e.clientY;
-      showContextMenu(x, y, [
-        { label: "Rename category (or double-click it)", onClick: () => makeInlineEditable(name, label, (v) => renameCategoryTo(label, v)) },
-        {
-          label: "Delete category",
-          danger: true,
-          onClick: () => {
-            // Re-opens the menu with an explicit confirm step instead of a
-            // native window.confirm() dialog (unreliable in this build).
-            showContextMenu(x, y, [
-              { label: `Confirm delete "${label}"`, danger: true, onClick: () => deleteCategory(label) },
-            ]);
-          },
-        },
-      ]);
-    });
-    // Reordering categories themselves — only sessions could be dragged
-    // before (found in review: category order had no drag handle at all).
-    // A distinct dataTransfer type ("text/category-label", never
-    // "text/session-id") keeps this from ever being confused with a
-    // session drag — the existing session handlers already guard on
-    // getData(...) being non-empty, so a category-type drag landing on a
-    // session row's handlers is a harmless no-op. Only the header itself is
-    // draggable, not the whole (often much taller, session-count-dependent)
-    // section — a small fixed-size handle is far easier to aim than
-    // splitting a tall section into "top half vs bottom half."
-    head.draggable = true;
-    head.addEventListener("dragstart", (e) => {
-      e.stopPropagation();
-      // dataTransfer is only writable synchronously inside dragstart, so
-      // these two MUST stay here.
-      e.dataTransfer.setData("text/category-label", label);
-      e.dataTransfer.effectAllowed = "move";
-      categoryDragStartedAt = Date.now();
-      // Collapse every session list to just its header for the duration of a
-      // category drag (Aidin's ask) — with sessions expanded, reordering
-      // categories means dragging past long lists and losing sight of the
-      // order; header-only makes the target position obvious.
-      //
-      // Deferred to the next tick, NOT done synchronously here: hiding the
-      // .section-list elements mid-dragstart reflows the drag SOURCE, which
-      // Chromium/Electron treats as grounds to cancel the drag outright —
-      // that's the "can't drag a list anymore" regression this feature
-      // introduced. Letting dragstart finish first, then collapsing, keeps
-      // the drag alive. requestAnimationFrame over setTimeout(0) so the
-      // collapse paints on the very next frame with no visible flicker.
-      requestAnimationFrame(() => {
-        // Guard: the drag may have already ended (a very fast click-release)
-        // by the time this fires — don't collapse if we're no longer dragging.
-        if (categoryDragStartedAt !== null) {
-          wrap.classList.add("dragging");
-          document.getElementById("sidebarBody").classList.add("dragging-category");
-        }
-      });
-    });
-    head.addEventListener("dragend", () => {
-      wrap.classList.remove("dragging");
-      document.getElementById("sidebarBody").classList.remove("dragging-category");
-      categoryDragStartedAt = null;
-      clearCategoryDropIndicators();
-      categoryDropTarget = null;
-    });
-
-    // Dropping a SESSION directly on the header appends it to the end of
-    // that category (existing behavior). Dropping a CATEGORY shows a
-    // before/after indicator on the whole section instead — same header,
-    // branched on drag type via dataTransfer.types (readable during
-    // dragover; getData itself is only reliably readable at drop in some
-    // browsers).
-    head.addEventListener("dragover", (e) => {
-      e.preventDefault();
-      if (e.dataTransfer.types.includes("text/category-label")) {
-        clearDropIndicators(); // no leftover session-row marker while reordering categories
-        dropTarget = null;
-        if (wrap.classList.contains("dragging")) {
-          clearCategoryDropIndicators();
-          categoryDropTarget = null;
-          return; // dropping a category onto itself is a no-op, mirroring the row pattern
-        }
-        const rect = head.getBoundingClientRect();
-        const before = e.clientY - rect.top < rect.height / 2;
-        if (categoryDropTarget && categoryDropTarget.wrap === wrap && categoryDropTarget.before === before) {
-          return;
-        }
-        categoryDropTarget = { wrap, label, before };
-        clearCategoryDropIndicators();
-        wrap.classList.add(before ? "drop-before" : "drop-after");
-        return;
-      }
-      head.classList.add("drag-over");
-      // Hovering the header means "append here", not "between two rows" —
-      // clear any row edge-marker left over from passing over rows.
-      clearDropIndicators();
-      dropTarget = null;
-    });
-    head.addEventListener("dragleave", () => head.classList.remove("drag-over"));
-    head.addEventListener("drop", (e) => {
-      e.preventDefault();
-      head.classList.remove("drag-over");
-      const draggedLabel = e.dataTransfer.getData("text/category-label");
-      if (draggedLabel) {
-        const target = categoryDropTarget;
-        clearCategoryDropIndicators();
-        categoryDropTarget = null;
-        if (draggedLabel !== label) {
-          reorderCategory(draggedLabel, label, target ? target.before : true);
-        }
-        return;
-      }
-      const sid = e.dataTransfer.getData("text/session-id");
-      if (sid) {
-        moveSessionToGroup(sid, label, null);
-      }
-    });
-  }
-
-  if (droppable) {
-    wireListDropZone(list, droppable === "unsorted" ? null : label);
-  }
-
-  wrap.append(head, list);
-  return wrap;
-}
-
-function wireListDropZone(el, targetLabel) {
-  el.addEventListener("dragover", (e) => {
-    e.preventDefault();
-    // Same reasoning as the row/header guards: a category-reorder drag has
-    // no business highlighting a session list's empty space as a drop
-    // target it will never actually use.
-    if (e.dataTransfer.types.includes("text/category-label")) {
-      return;
-    }
-    if (e.target === el) {
-      el.classList.add("drag-over");
-      // Over the list's own empty space (not a row) = append; drop any
-      // leftover row edge-marker so the two indicators don't both show.
-      clearDropIndicators();
-      dropTarget = null;
-    }
-  });
-  el.addEventListener("dragleave", (e) => {
-    if (e.target === el) {
-      el.classList.remove("drag-over");
-    }
-  });
-  el.addEventListener("drop", (e) => {
-    e.preventDefault();
-    el.classList.remove("drag-over");
-    if (e.target !== el) {
-      return; // a row's own drop handler already dealt with it
-    }
-    const sid = e.dataTransfer.getData("text/session-id");
-    if (sid) {
-      moveSessionToGroup(sid, targetLabel, null);
-    }
-  });
-}
-
-async function persistCollapsed(groupLabel, collapsed) {
-  const groups = (state.config.groups || []).map((g) => (g.label === groupLabel ? { ...g, collapsed } : g));
-  state.config = await window.helm.setConfig({ groups });
-}
-
-function renderSidebar() {
-  const body = document.getElementById("sidebarBody");
-  body.innerHTML = "";
-  // Defensive: the category-drag "collapse lists to headers" class lives on
-  // this persistent element, cleared on dragend. If dragend ever fails to
-  // fire (odd HTML5-drag cancel path), a full re-render must not leave every
-  // session list stuck hidden.
-  body.classList.remove("dragging-category");
-
-  const visible = state.sessions
-    .filter((s) => !s.isArchived)
-    .filter((s) => !isHiddenFromHelm(s))
-    .filter(matchesSearch);
-
-  // Flat "list" mode was removed (2026-07-07): it duplicated the Fleet's Direct
-  // column (every session, flat) with none of Fleet's status/crew info. The
-  // sidebar's distinct value is organizing + searching your own sessions.
-
-  // A Helm-building session (isOrchestratorSession) gets a "◆" marker inline
-  // (see rowEl) but otherwise flows into Needs-attention / its group / Unsorted
-  // like any other session - no privileged pinned card.
-  const attention = visible.filter((s) => s.needsAttention);
-  const attentionIds = new Set(attention.map((s) => s.sessionId));
-  if (attention.length > 0) {
-    body.append(
-      sectionEl({ label: "Needs your attention", sessions: attention, collapsed: false, pinned: true, droppable: false })
-    );
-  }
-
-  const groups = state.config.groups || [];
-  const grouped = new Set();
-  for (const group of groups) {
-    const members = (group.sessionIds || [])
-      .map(sessionById)
-      .filter(Boolean)
-      .filter((s) => !s.isArchived)
-      .filter((s) => !isHiddenFromHelm(s))
-      .filter(matchesSearch);
-    (group.sessionIds || []).forEach((id) => grouped.add(id));
-    body.append(
-      sectionEl({
-        label: group.label,
-        sessions: members,
-        collapsed: !!group.collapsed,
-        droppable: true,
-        isCategory: true,
-        emptyHint: "Drag or move sessions here",
-      })
-    );
-  }
-
-  // Exclude sessions already shown in the pinned "Needs your attention" section
-  // so a needs-attention, uncategorized session doesn't render twice (review).
-  const unsorted = visible.filter((s) => !grouped.has(s.sessionId) && !attentionIds.has(s.sessionId));
-  body.append(
-    sectionEl({
-      label: "Unsorted",
-      sessions: unsorted,
-      collapsed: false,
-      droppable: "unsorted",
-      emptyHint: "Nothing unsorted — every session is in a group or needs you.",
-    })
-  );
-}
+// The session sidebar lived here: the grouped list, its category drag-and-drop, its
+// per-session menu and its search. Removed on 2026-08-04 (task 22f85eda - "Vi borde ta bort
+// session vyn från chat"), leaving chat as the workspace alone.
+//
+// Nothing it carried was dropped silently. Rename and Archive already existed on a session's
+// row in the Fleet; "Summarize & carry over" was moved there in the same change, because it is
+// the session-renewal move the whole ephemeral-session model rests on. "Move to category" is
+// gone deliberately - Aidin: it "skulle förespråka långlivade sessioner, vilket vi inte vill
+// ha" - and so is "Remove from Helm", which was a second way to hide a session that nobody
+// could explain ("remove from helm vet jag inte ens vad är"); archiving covers it, and
+// anything already hidden stays restorable from the Archive page.
 
 // ============================== Workspace (panes) ==============================
 
@@ -5765,7 +5096,6 @@ function paneHeaderEl(index) {
         selectedSessionId = null;
       }
       renderSinglePane(index);
-      renderSidebar();
     });
     actions.append(resetBtn);
   }
@@ -7514,43 +6844,6 @@ async function renderDashOrchestration() {
   chip.append(btn);
 }
 
-// A cheap summary of exactly the fields renderSidebar()'s output depends on
-// (session identity/status/model/archived + the Jot badge fields it reads,
-// plus the config knobs that affect grouping/visibility). Comparing this
-// string is far cheaper than the full innerHTML="" + rebuild it guards —
-// found in a performance audit: the 30s poll below was rebuilding the whole
-// sidebar every tick even when nothing had changed (audit: "performance +
-// token usage granskning"). Deliberately NOT a full JSON.stringify of the
-// whole sessions/config payload — most fields on a session (turns, cwd,
-// etc.) don't affect the sidebar row at all, so including them would cause
-// false-positive "changed" on unrelated backend churn.
-function computeSidebarFingerprint(sessions, config) {
-  const sessionsPart = sessions
-    .map((s) =>
-      [
-        s.sessionId,
-        s.title,
-        s.status,
-        s.lastActivityAt,
-        s.model,
-        s.isArchived,
-        s.jot?.review,
-        s.jot?.inProgress,
-        s.jot?.open,
-        s.jot?.category,
-        s.jot?.nearestDeadline,
-        s.orchestratorTag?.statusTag,
-        s.orchestratorTag?.reason,
-        s.autoCompacted?.preTokens,
-        s.autoCompacted?.postTokens,
-      ].join(":")
-    )
-    .join("|");
-  const configPart = JSON.stringify(config.groups) + "|" + config.sidebarMode + "|" + config.archiveSuggestions?.enabled + "|" + config.hideArchived;
-  return sessionsPart + "##" + configPart;
-}
-let lastSidebarFingerprint = null;
-
 async function refresh() {
   const [data, matesResult, secondMatesResult] = await Promise.all([
     window.helm.getSessions(),
@@ -7615,23 +6908,6 @@ async function refresh() {
   updateAttentionTaskbarCount();
   applyViewMode();
   applyTheme(state.config?.theme);
-  // Don't rebuild the sidebar out from under an in-progress category drag —
-  // innerHTML="" would destroy the dragged header and the drag-collapse
-  // mid-gesture (jarring layout jump). State above is still refreshed; the
-  // sidebar re-renders on the next tick once the drag ends (dragend clears
-  // the flag; reorderCategory/openSessionInPane also re-render on their own).
-  //
-  // Also skip the rebuild entirely when nothing the sidebar actually
-  // displays has changed since the last poll — every OTHER call site that
-  // renders in response to a real user action (search, category CRUD,
-  // opening a session, ...) calls renderSidebar() directly and is
-  // unaffected by this cache; this only guards the unconditional 30s timer
-  // tick from redoing identical work.
-  const fingerprint = computeSidebarFingerprint(state.sessions, state.config);
-  if (!categoryDragInProgress() && fingerprint !== lastSidebarFingerprint) {
-    renderSidebar();
-    lastSidebarFingerprint = fingerprint;
-  }
   renderQuota(state.quota);
   pruneStaleLaunchHistory();
   pruneStaleBackgroundTasks();
@@ -7853,74 +7129,15 @@ function applyViewMode() {
   });
 }
 
-document.getElementById("search").addEventListener("input", (e) => {
-  searchTerm = e.target.value.trim().toLowerCase();
-  renderSidebar();
-});
-
-document.getElementById("newCategory").addEventListener("click", createCategory);
-
-// Collapsible sidebar (renderer-only pref, persisted in localStorage). Chat is
-// a supporting surface now that the Fleet is the primary triage view, so the
-// sidebar can fold to a slim rail and hand its width back to the workspace.
-// The collapse class lives on #chatPage (which carries .layout, the grid).
-const SIDEBAR_COLLAPSED_KEY = "helm.sidebar.collapsed";
-
-function isSidebarCollapsed() {
-  try {
-    return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function applySidebarCollapsed(collapsed) {
-  document.getElementById("chatPage").classList.toggle("sidebar-collapsed", collapsed);
-  const btn = document.getElementById("sidebarCollapse");
-  if (btn) {
-    btn.textContent = collapsed ? "›" : "‹"; // › expand / ‹ collapse
-    btn.title = collapsed ? "Expand sidebar" : "Collapse sidebar";
-    btn.setAttribute("aria-label", btn.title);
-  }
-}
-
-function toggleSidebarCollapsed() {
-  const next = !isSidebarCollapsed();
-  try {
-    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, next ? "1" : "0");
-  } catch {
-    // localStorage unavailable - the collapse just won't persist this run.
-  }
-  applySidebarCollapsed(next);
-}
-
-document.getElementById("sidebarCollapse").addEventListener("click", toggleSidebarCollapsed);
-applySidebarCollapsed(isSidebarCollapsed());
-
-// Collapse/expand ALL categories at once — the lightweight "list-sorting
-// view" Aidin asked for: collapse everything to headers to see the whole
-// category order at a glance (and reorder), then expand back. Toggles based
-// on current state: if every category is already collapsed, expand all;
-// otherwise collapse all. Persists via each group's `collapsed` flag, same
-// as the per-header toggle.
-document.getElementById("collapseAll").addEventListener("click", async () => {
-  const groups = state.config.groups || [];
-  if (groups.length === 0) {
-    return;
-  }
-  const allCollapsed = groups.every((g) => g.collapsed);
-  const next = groups.map((g) => ({ ...g, collapsed: !allCollapsed }));
-  state.config = await window.helm.setConfig({ groups: next });
-  renderSidebar();
-});
-
-document.getElementById("newChat").addEventListener("click", () => {
-  panes[focusedPaneIndex] = freshPane();
-  stopLiveStatsTicker(focusedPaneIndex);
-  selectedSessionId = null;
-  renderSinglePane(focusedPaneIndex);
-  renderSidebar();
-});
+// The session sidebar's controls lived here - a search field, a "new category" button, a
+// collapse rail and "+ New chat". All five elements are gone with the panel (task 22f85eda),
+// and so are their listeners: an addEventListener on a getElementById that now returns null
+// throws at module scope, which takes the whole renderer down before it draws anything. That is
+// the failure mode a deletion like this actually has, and `node --check` cannot see it - which
+// is why the removal is verified by booting the app and rendering every view.
+//
+// Starting a fresh chat now comes from the Dashboard's "New session" section or the command
+// palette; the palette's own entry no longer clicks a button that does not exist.
 
 // ============================== Focus page (Point 8) ==============================
 // A goal-to-tasks focus view, BACKED BY JOT — not a second task system. It
@@ -9365,6 +8582,27 @@ function fleetSecondMateEl(sm) {
       });
     });
     head.append(renameBtn);
+    // Summarize & carry over, from here (Aidin, 2026-08-04, on removing the chat sidebar:
+    // "summarize and carry over borde kunna göras från dashboarden - liknande archive"). It
+    // lived ONLY in the sidebar's session menu, and it is the session-renewal move the whole
+    // ephemeral-session model rests on - so it had to have a home here before that panel goes.
+    //
+    // A WORD, not a glyph, matching Archive beside it: the actions on this row that mattered
+    // were the ones he could read. Calling the same function the sidebar called, so there is
+    // one carry-over flow rather than a second one that drifts.
+    const carryBtn = document.createElement("button");
+    carryBtn.className = "fleet-btn";
+    carryBtn.textContent = "Carry over";
+    carryBtn.title = "Summarize this session and continue it in a fresh one";
+    carryBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      // It ends by opening a fresh DRAFT in a chat pane, and its progress shows on that
+      // pane's status line - both invisible from here, so go to chat first. Without this the
+      // click would look like nothing happened while a summarize call ran.
+      navigateToPage("chat");
+      await summarizeAndCarryOver(backingSession);
+    });
+    head.append(carryBtn);
     head.append(continueOnMobileBtn(backingSession, { title: sm.name }));
     const archiveBtn = document.createElement("button");
     archiveBtn.className = "fleet-btn fleet-archive-btn";

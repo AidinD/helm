@@ -638,102 +638,22 @@ body.dev-build header {
   color: var(--waiting);
 }
 
+/* Chat is the workspace alone since the session sidebar was removed (task 22f85eda).
+   This was `grid-template-columns: 300px 1fr` with the nav in the first column; with
+   the nav gone that first track would have stayed as 300px of empty space beside the
+   panes, so the grid goes with it. */
 .layout {
   flex: 1;
   display: grid;
-  grid-template-columns: 300px 1fr;
+  grid-template-columns: 1fr;
   min-height: 0;
 }
 
-/* --- Sidebar --- */
-.sidebar {
-  background: var(--bg-sidebar);
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
+/* The sidebar's own styling (.sidebar, its head row, its collapse rail and the
+   "+ New chat" button) went with the panel on 2026-08-04 - task 22f85eda. The
+   .search / .section / .row rules further down are dead with it too, and are left
+   for a separate cleanup pass rather than swept blind in the same change. */
 
-.sidebar-head-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 10px 10px 0;
-}
-
-.new-chat-btn {
-  flex: 1;
-  background: var(--accent);
-  border: none;
-  color: var(--on-accent);
-  font-weight: 600;
-  border-radius: 8px;
-  padding: 7px 10px;
-}
-
-.new-chat-btn:hover {
-  filter: brightness(1.08);
-}
-
-.new-chat-btn .nc-mini {
-  display: none;
-}
-
-/* Collapsible sidebar: Chat is a supporting surface now that the Fleet is the
-   primary triage view, so the 300px column can fold to a slim rail (just the
-   expand chevron + a new-chat affordance). State persists in localStorage
-   (renderer-only, no IPC). The class lives on #chatPage (which is .layout). */
-.layout.sidebar-collapsed {
-  grid-template-columns: 44px 1fr;
-}
-
-.sidebar-collapsed .sidebar-head-row {
-  flex-direction: column;
-  align-items: center;
-  margin: 10px 0 0;
-  gap: 6px;
-}
-
-.sidebar-collapsed .sidebar-toolbar,
-.sidebar-collapsed #sidebarBody {
-  display: none;
-}
-
-/* Collapsed rail: match the plain .icon-btn styling used by the chevron next
-   to it, instead of keeping the full-width accent pill shrunk down - a bright
-   orange oval floating above a small grey chevron read as broken, not rail-like. */
-.sidebar-collapsed .new-chat-btn {
-  flex: none;
-  width: 26px;
-  height: 26px;
-  padding: 0;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  color: var(--text-dim);
-  border-radius: 6px;
-  font-weight: 400;
-}
-
-.sidebar-collapsed .new-chat-btn:hover {
-  background: var(--bg-card-hover);
-  color: var(--text);
-  filter: none;
-}
-
-.sidebar-collapsed .new-chat-btn .nc-full {
-  display: none;
-}
-
-.sidebar-collapsed .new-chat-btn .nc-mini {
-  display: inline;
-  font-size: 15px;
-  line-height: 1;
-}
-
-.sidebar-toolbar {
-  display: flex;
-  gap: 6px;
-  padding: 10px 10px 4px;
-}
 
 /* Inline rename input — replaces a label in place, matches its surrounding
    text style so it doesn't look like a different control. */
