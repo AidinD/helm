@@ -2965,6 +2965,15 @@ function buildMenuItems(items) {
       hint.textContent = it.hint;
       el.append(hint);
     }
+    // A DESCRIPTION rather than a trailing token. `hint` is styled as a short
+    // right-floated monospace tail - right for "the command this script name runs", wrong
+    // for a sentence, which would wrap into the label. This wraps under it instead.
+    if (it.description) {
+      const desc = document.createElement("span");
+      desc.className = "item-desc";
+      desc.textContent = it.description;
+      el.append(desc);
+    }
     if (it.submenu) {
       const sub = document.createElement("div");
       sub.className = "submenu";
@@ -8370,6 +8379,24 @@ function personaLabel(key) {
   return p ? p.label : key;
 }
 
+// "Gå igenom personas och beskriv vad de gör" (the captain, task 1ffbe001). The descriptions
+// existed all along - every persona carries a blurb, and listPersonas already sends it
+// across - and the picker threw it away, offering five bare names. buildMenuItems has had a
+// `hint` slot for exactly this since it was written: "for a menu of NAMES that stand for
+// something else, the name alone makes the menu a guess."
+//
+// Coordinator is the odd one out: it is the ABSENCE of a persona, so there was no object to
+// carry a blurb, and it is also the one he sees most - the default every fresh mate starts
+// on and every respawn resets to. Describing it here rather than in personas.js keeps that
+// module's list to real personas, which is what its overlay lookups iterate.
+const COORDINATOR_BLURB = "No overlay - the plain first-mate manual: plans, dispatches to second mates, and hands off. The default, and what a respawn resets to.";
+function personaBlurb(key) {
+  if (!key) {
+    return COORDINATOR_BLURB;
+  }
+  return (personaCatalog || []).find((x) => x.key === key)?.blurb || "";
+}
+
 // Persona control on a first-mate card. Fresh mate (no session) -> set the
 // persona directly. Running mate -> switching means the overlay is already in
 // its context, so it routes through retire-with-handoff + respawn into the new
@@ -8391,15 +8418,20 @@ function fleetPersonaEl(mate) {
 
   const btn = document.createElement("button");
   btn.className = "fleet-persona-btn" + (cur ? " is-set" : "");
-  btn.title = running
-    ? "Switch persona (retires this mate with a handoff and hands off to a fresh one)"
-    : "Choose this mate's persona";
+  // The tooltip leads with what this mate IS, then what clicking does. Hovering the closed
+  // picker was the one place that could have answered "what is this mate doing" and it only
+  // described the button's mechanics.
+  btn.title =
+    `${personaLabel(cur)} - ${personaBlurb(cur)}\n\n` +
+    (running ? "Switching retires this mate with a handoff and respawns a fresh one." : "Click to choose this mate's persona.");
   btn.textContent = personaLabel(cur) + " ▾";
   btn.addEventListener("click", (e) => {
     e.stopPropagation();
     const options = [{ key: null, label: "Coordinator" }, ...(personaCatalog || [])];
     const items = options.map((p) => ({
       label: (p.key === cur ? "✓ " : "") + p.label,
+      // The blurb, not just the name - picking a temperament off five bare words was a guess.
+      description: personaBlurb(p.key),
       onClick: () => choosePersona(mate, p.key, running),
     }));
     showContextMenu(e.clientX, e.clientY, items);
