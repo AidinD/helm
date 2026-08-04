@@ -3058,6 +3058,7 @@ window.addEventListener("blur", releaseDashPointer);
 //
 //   Ctrl+Space        Dashboard   (the fast key the captain wanted, simpler than a digit)
 //   Ctrl+Shift+Space  Review      (same key, one more modifier - see below)
+//   Ctrl+Shift+X      Jot
 //   Ctrl+1..4         Jot, Plan, Analysis, Archive - the header's own left-to-right order
 //
 // Skipped while the command palette is open so it doesn't fight its keys.
@@ -3072,15 +3073,22 @@ document.addEventListener("keydown", (e) => {
   }
   const isSpace = e.code === "Space" || e.key === " ";
   if (e.shiftKey) {
-    if (!isSpace) {
-      return; // no other shifted combination is ours to take
+    // Shift+Space -> Review, Shift+X -> Jot. Nothing else shifted is ours to take.
+    //
+    // Ctrl+Shift+X rather than Ctrl+X, which is cut and would break cutting in every text
+    // field, and rather than Ctrl+J, which needs both hands ("ctrl+j är inte ergonomiskt,
+    // kräver 2 händer") and is already the palette's move-down. Adding Shift keeps it on
+    // the left hand and out of everyone else's way: no browser binds this chord.
+    const isJot = e.code === "KeyX" || e.key === "x" || e.key === "X";
+    if (!isSpace && !isJot) {
+      return;
     }
     const palette = document.getElementById("commandPalette");
     if (palette && !palette.classList.contains("hidden")) {
       return;
     }
     e.preventDefault();
-    navigateToPage("review");
+    navigateToPage(isSpace ? "review" : "jot");
     return;
   }
   // The digits follow the header's own tab order, left to right: Jot, Plan, Analysis,
@@ -3088,11 +3096,8 @@ document.addEventListener("keydown", (e) => {
   // he sees - the comment claimed they mirrored the tabs while Jot, the FIRST one, had no
   // digit at all (the captain: "ctrl+1 borde gå till jot eftersom det är den första tabben").
   //
-  // Deliberately NO letter key for Jot. Ctrl+J was tried and dropped: "ctrl+j är inte
-  // ergonomiskt, kräver 2 händer" - Ctrl is under the left pinky and J is under the right
-  // index. Ctrl+1 is already one-handed AND matches Jot's position as the first tab, so a
-  // second binding on an arbitrary left-hand letter would add a thing to remember without
-  // adding a thing you can do. Every left-hand letter is free in the app if that changes.
+  // Jot's letter key is Ctrl+SHIFT+X, handled in the shifted branch above. Unshifted Ctrl+X
+  // stays cut, and Ctrl+J was tried and rejected as two-handed.
   const page = isSpace ? "dashboard" : { 1: "jot", 2: "lavish", 3: "analysis", 4: "archive" }[e.key]; // lavish = the "Plan" tab
   if (!page) {
     return;
