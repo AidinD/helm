@@ -980,6 +980,10 @@ Decision: keep the sidebar (its categories, live search, and rich row-actions ha
 The collapse state persists in localStorage (renderer-only, no main-process IPC - matches the existing Lavish-recents pref pattern) and is applied on load, so it survives reloads.
 Rejected: cutting the sidebar entirely (would lose organizing/search/row-actions that the Fleet's Direct column doesn't offer) and a full flat "list" mode (already removed 2026-07-07 as a Fleet-Direct duplicate).
 
+**SUPERSEDED 2026-08-04** - the sidebar was cut entirely after all (task 22f85eda; see "The chat sidebar is removed" below).
+The reasoning above was not wrong about what the panel carried, only about where those things had to live: rename and archive had since grown onto a session's Fleet row, "Summarize & carry over" was moved there, and the captain's own verdict on categories was that they encourage exactly the long-lived sessions this app is built against.
+Left in place rather than rewritten, because the argument for keeping it is still the argument you have to answer before bringing anything like it back.
+
 ## 2026-07-07 - Cut split view (single pane is the model)
 
 Split view (two side-by-side panes with a draggable divider) is removed.
@@ -5930,3 +5934,39 @@ nobody.
 The same result shape also carries an `agentId:` footer AFTER the answer - stripping metadata
 from the joined text threw the real verdict away with it and made a working consult look
 broken, twice, which is why the E2E strips per item.
+
+## 2026-08-04 - The chat sidebar is removed, and the ship review found what the tests did not
+
+The captain: "Vi borde ta bort session vyn från chat", choosing "hela sidopanelen bort" - sessions are reached through Ctrl+K and the Dashboard's queue and Fleet, which is where he actually looks.
+Supersedes the 2026-07-08 decision to keep it (annotated above).
+
+**The five capabilities it carried were scoped BEFORE anything was deleted**, because his answer was about how to REACH a session and did not mention losing them.
+Each occurred in exactly one place in the codebase, the panel's own row menu: rename, "Summarize & carry over", move-to-category, archive, and "Remove from Helm".
+Rename and archive already existed on a session's Fleet row (verified by rendering, not by reading).
+Summarize & carry over was moved there in the same change - it is the session-renewal move the whole ephemeral-session model rests on.
+Move-to-category was dropped on his reasoning: it "skulle förespråka långlivade sessioner, vilket vi inte vill ha".
+"Remove from Helm" was dropped as a second, unexplainable way to hide a session ("vet jag inte ens vad är"); the predicate stays so anything already hidden is still hidden and still restorable.
+
+**A stale comment was the reason that last one looked necessary.**
+It claimed archiving wrote the desktop app's own session file, which stopped being true when Helm took over its own session index - so "Remove from Helm" read as the only way to hide a Helm-CREATED session, when archiving covers every session either way.
+
+**What the ship review changed, and this is the part worth remembering.**
+Three independent reviewers, one per risk area, none told what criticality or checks the author had in mind.
+They raised the level from `core` to `critical`, and between them found that:
+
+- Two existing app tests called into the deleted sidebar and died on it, stranding 27 assertions that guarded five unrelated fixed bugs - including hidden-session leakage into the Fleet and the needs-you queue. `npm test` would have caught it; `--fast` was 62/62 green throughout. One test was repointed at the surviving rule (`sessionDisplayName`) rather than deleted, so the guard survives the surface.
+- The new test that replaced them PASSED with a top-level declaration renamed away, because it regexed a call site out of a function's source. A definition reached only from a click is invisible to "every view still renders" - the fixture has no sessions, so no row builder, menu or handler ever runs. It now injects a session, renders the real Fleet row and clicks Archive; that mutation is killed.
+- The auto lane's own headline claim was false in a branch the commit did not touch: a card whose DISPATCH throws had already paid for its verdict and was retried every 60 seconds forever. The backoff now covers it.
+- Backed-off cards occupied the concurrency cap, so three failing cards could starve a healthy one for an hour while the widget said "3 auto runs already in flight" with zero running. They are excluded before planning now.
+- The triage rename left `config.autoCaptain.triaged` holding verdicts produced by the OLD question, so the loosening would never have reached the five cards that motivated it. The prompt carries a version; a bump forgets every remembered verdict.
+- The "tolerant parser" the rename's safety argument rested on was dead code - no production path called it - and three tests were guarding it. Deleted, and replaced by a parity check that asserts the prompt, the schema and the live reader all name the same field, which is what actually fails silently.
+- `sawResult` is true for ANY result event, including an error and a hit usage limit, so a scheduled prompt fired into a spent quota could still be recorded as delivered - the exact bug that recording exists to catch. The launcher now carries the error-ness out with the summary.
+- `pruneScheduledPrompts` dropped undismissed failures after seven days, contradicting the same commit's promise that the notice stays until dismissed.
+- Dragging the composer's edge clamped the TEXTAREA to 85% of the pane while the composer around it reached 99.5%, leaving the transcript a 24px sliver and the send button 15px below the window edge. The clamp now reserves room for the controls and the transcript, and the test measures those surfaces instead of comparing one constant with another.
+- A drag emits a click, so two drags in a row fired the double-click reset and threw the size away.
+- The code-block copy button was invisible but clickable, silently overwriting the clipboard when you tried to select text in that corner.
+- Nothing prevented a file dropped ANYWHERE but the textarea from navigating the window away from the app - and this change is what makes dropping files likely. A document-level guard now stops the default for file drops the composer did not claim.
+- Making the three review surfaces agree also made the subnav badge inherit the Review page's project chip, so picking one project quietly shrank a global attention signal with no reset until restart. The badge honours the repo filter (a standing decision about what belongs in review) and ignores the chip (a way of looking at it).
+
+**The pattern across all three reviews: the code was mostly right and the TESTS were the weak part** - source-text regexes standing in for behaviour, assertions that could not fail, and two claims in commit messages that were simply untrue (`.search` being dead; the tolerant parser protecting the rename).
+Every finding above was reachable with the method already at hand - build a fixture and run it - which is the argument for dispatching the review before writing the suite rather than after.

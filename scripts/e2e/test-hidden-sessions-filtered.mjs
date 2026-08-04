@@ -53,10 +53,12 @@ try {
       const directs = augmentSecondMatesWithSessions([]).filter((s) => s.firstMateId === "direct");
       const directIds = directs.map((s) => s.sessionId);
 
-      // 3) Sidebar DOM - rows carry data-session-id.
-      renderSidebar();
-      const sidebarHasVis = !!document.querySelector('#sidebarBody [data-session-id="VIS_1"]');
-      const sidebarHasHid = !!document.querySelector('#sidebarBody [data-session-id="HID_1"]');
+      // 3) The sidebar DOM check that used to sit here is gone with the sidebar itself
+      // (task 22f85eda, 2026-08-04). It was the LEAST valuable of the four - the primary bug
+      // was a hidden session leaking into the Fleet and the needs-you queue, which the sidebar
+      // had always filtered correctly. Removing the surface removed the check; leaving the call
+      // in threw and took assertions 1, 2 and 4 down with it, which is how the guard for the
+      // actual bug stopped running while the suite still looked the same.
 
       // 4) Dashboard attention spotlight / needs-you queue.
       const motionIds = dashboardInMotionRows()
@@ -66,14 +68,11 @@ try {
       return {
         predicate,
         directIds,
-        sidebarHasVis,
-        sidebarHasHid,
         motionIds,
       };
     } finally {
       state.sessions = savedSessions;
       state.config = savedConfig;
-      renderSidebar();
     }
   })()`);
 
@@ -83,10 +82,6 @@ try {
   // 2) Fleet Direct
   assert(result.directIds.includes("VIS_1"), "Fleet Direct lists the visible session");
   assert(!result.directIds.includes("HID_1"), "Fleet Direct does NOT list the hidden session (the primary fix)");
-
-  // 3) Sidebar
-  assert(result.sidebarHasVis === true, "sidebar shows the visible session row");
-  assert(result.sidebarHasHid === false, "sidebar omits the hidden session row");
 
   // 4) Attention spotlight / needs-you queue
   assert(result.motionIds.includes("VIS_1"), "dashboard needs-you queue includes the visible waiting session");
@@ -100,7 +95,7 @@ try {
 
   log(
     exitCode === 0
-      ? "VERIFY OK: 'removed from Helm' sessions are filtered from sidebar, Fleet Direct, and the attention queue alike."
+      ? "VERIFY OK: 'removed from Helm' sessions are filtered from the shared predicate, Fleet Direct, and the attention queue alike."
       : "VERIFY FAILED."
   );
 } catch (err) {

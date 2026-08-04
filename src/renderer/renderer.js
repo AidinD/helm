@@ -63,22 +63,6 @@ let selectedSessionId = null;
 let focusedPaneIndex = 0;
 // The single source of truth for a drag-reorder: set on every dragover and
 // read verbatim by drop, so the drop lands exactly where the indicator was
-// shown (the old code recomputed position from a live rect at drop time,
-// which disagreed with the shown indicator once layout had shifted).
-// { row: HTMLElement, before: boolean } | null.
-let dropTarget = null;
-// Same pattern, separate state — reordering CATEGORIES (dragging a section's
-// header) is a distinct drag payload type ("text/category-label", never
-// "text/session-id") from reordering sessions, so it needs its own drop
-// target rather than sharing/overloading `dropTarget` above.
-// { wrap: HTMLElement, label: string, before: boolean } | null.
-let categoryDropTarget = null;
-// Timestamp a category drag started (null when not dragging). The 30s
-// refresh() timer — or any session event — otherwise rebuilds the sidebar
-// mid-drag, visibly undoing the drag-collapse and destroying the dragged
-// header. refresh() skips the sidebar rebuild while this is set. A timestamp
-// (not a bool) so a drag that somehow never ends self-heals after 30s rather
-// than freezing the sidebar forever — dragend clears it in every normal case.
 // First-mate refresh pipe (docs/orchestration-model.md phase 5): when a
 // first-mate session's context gauge crosses this %, nudge to hand off to a
 // fresh one (a first mate stays thin - continuity is in files, not a bloating
@@ -1239,10 +1223,9 @@ const bandOf = (r) => r.band || r.verdict;
  * miscounted; there were simply two counts of two different things, which is the same defect
  * class as the amber frame and the double-reported runs.
  */
-function visibleReviewRows(allRows) {
-  return (allRows || []).filter(
-    (r) => (!reviewOnlyRepoRooted || r.repoPath) && (!reviewProjectFilter || r.category === reviewProjectFilter)
-  );
+function visibleReviewRows(allRows, { ignoreProjectFilter = false } = {}) {
+  const project = ignoreProjectFilter ? null : reviewProjectFilter;
+  return (allRows || []).filter((r) => (!reviewOnlyRepoRooted || r.repoPath) && (!project || r.category === project));
 }
 
 function reviewTallyFromRows(rows) {
@@ -1560,7 +1543,12 @@ async function renderReviewPage() {
 
   // Badge on the subnav: the count that actually needs him, not the total - a
   // total would nag about work that is already settled.
-  paintReviewBadge(tally);
+  //
+  // Computed WITHOUT the project chip, unlike the page's own tally above. The badge is a global
+  // signal; if it followed the chip, selecting one project here would quietly shrink it and keep
+  // it shrunk (see paintReviewBadge). The repo filter is still applied - that is a decision about
+  // what belongs in review, not a way of looking at it.
+  paintReviewBadge(reviewTallyFromRows(visibleReviewRows(allRows, { ignoreProjectFilter: true })));
 }
 
 // How many review rows actually need him: the count that raises the subnav badge.
@@ -1602,7 +1590,15 @@ async function paintReviewBadge(tally = null) {
       // which counts the whole queue. The page passes its own filtered tally in, so a badge
       // that fetched its own unfiltered one changed value depending on which surface had
       // painted it last (task daa4245f).
-      t = res?.rows ? reviewTallyFromRows(visibleReviewRows(res.rows)) : res?.tally || null;
+      //
+      // But NOT through the project chip. Making the surfaces agree also made the subnav badge
+      // inherit a filter set on another page: clicking one project on the Review page left the
+      // badge counting only that project, with nothing on screen to say so and no reset until
+      // the app restarted. Under-flagging an attention signal is the failure the captain has
+      // explicitly rejected, and a global badge is the wrong place to honour a local view
+      // choice. The repo filter IS honoured - that one is a standing decision about what
+      // belongs in review at all, not a way of looking at it. Raised by review, 2026-08-04.
+      t = res?.rows ? reviewTallyFromRows(visibleReviewRows(res.rows, { ignoreProjectFilter: true })) : res?.tally || null;
     } catch {
       return; // leave whatever is there rather than clearing a real count on a hiccup
     }
@@ -2211,16 +2207,19 @@ async function restoreToHelm(session) {
 // Every user-facing / attention derivation that reads state.sessions must honor
 // it, or a removed session leaks back into some view (the sidebar filtered it,
 // but Fleet Direct, the dashboard queues, and the taskbar badge did not - they
-// drifted). Keyed on sessionId, matching what removeFromHelm writes. This is
-// the single predicate; do not re-inline the membership check.
+// drifted). Keyed on sessionId, matching what was written into config.hiddenSessions while the
+// "Remove from Helm" action existed (removed 2026-08-04 - the entries it wrote are still honoured
+// here and still restorable from the Archive page). This is the single predicate; do not re-inline
+// the membership check.
 function isHiddenFromHelm(session) {
   return (state.config.hiddenSessions || []).includes(session.sessionId);
 }
 
-// refresh() only ever re-renders the sidebar — Analysis/Settings/Archive are
-// pull-based (re-rendered on tab switch), which would otherwise leave a
-// just-restored/unarchived row stale on screen if you're currently ON the
-// Archive page when you click its own action button.
+// Analysis/Settings/Archive are pull-based - re-rendered on tab switch - so a row restored or
+// unarchived while you are ON the Archive page would otherwise sit there stale until you left and
+// came back. (This comment used to open with "refresh() only ever re-renders the sidebar", which
+// stopped being true when the sidebar was removed; the function is still needed, its old reason
+// was not.)
 function refreshArchivePageIfVisible() {
   if (!document.getElementById("archivePage").classList.contains("hidden")) {
     renderArchivePage();
@@ -5263,6 +5262,12 @@ const COMPOSER_MIN_PX = 34;
 // want to see. Only the hard ceiling is absolute, so the transcript never vanishes.
 const COMPOSER_MAX_SHARE = 0.45;
 const COMPOSER_DRAG_MAX_SHARE = 0.85;
+// How much transcript a dragged composer must leave visible. The share above is applied to the
+// TEXTAREA, but what has to fit in the pane is the composer around it (the controls row, the
+// status line, the attachment chips) - so without reserving this, dragging to the top left the
+// transcript a 24px sliver and pushed the send button off the bottom of the window (measured by
+// review, 2026-08-04). Enough to read the last reply, not so much that the drag feels capped.
+const COMPOSER_TRANSCRIPT_FLOOR_PX = 120;
 
 /**
  * What a newline should do when the caret sits on a list item.
@@ -5541,16 +5546,35 @@ function paneComposerEl(index) {
 
   // Pointer events with capture, so the drag keeps tracking when the cursor leaves the strip -
   // which it does immediately, since dragging up moves away from a 6px-tall element.
+  let lastDragMovedAt = 0;
   grip.addEventListener("pointerdown", (e) => {
     e.preventDefault();
     const startY = e.clientY;
     const startH = promptEl.getBoundingClientRect().height;
     const paneEl = grip.closest(".pane");
     const basis = paneEl?.getBoundingClientRect().height || 600;
-    const hardMax = Math.round(basis * COMPOSER_DRAG_MAX_SHARE);
-    grip.setPointerCapture(e.pointerId);
+    // The ceiling has to leave room for the CONTROLS ROW and for some transcript, because the
+    // number being clamped is the textarea's height while what must fit inside the pane is the
+    // whole composer around it. Measured by review: 85% of the pane on the textarea put the
+    // composer at 99.5% of it, the transcript at a 24px sliver, and the send button 15px BELOW
+    // the window's bottom edge - the exact opposite of what the clamp was for.
+    const composerEl = grip.closest(".pane-composer");
+    const chromeAround = Math.max(0, (composerEl?.getBoundingClientRect().height || startH) - startH);
+    const hardMax = Math.max(COMPOSER_MIN_PX, Math.round(basis * COMPOSER_DRAG_MAX_SHARE) - chromeAround - COMPOSER_TRANSCRIPT_FLOOR_PX);
+    try {
+      grip.setPointerCapture(e.pointerId);
+    } catch {
+      // A pointer that is no longer active cannot be captured; the drag still works through the
+      // listeners below, and throwing here would have made the whole gesture a silent no-op.
+    }
     grip.classList.add("dragging");
+    // A drag also produces a `click`, so two drags in a row arrive as a dblclick and the reset
+    // below threw the size away - which is exactly the fine-tuning gesture (drag, not quite
+    // right, drag again). Found by review with real injected input. Tracked here so the reset
+    // can tell "clicked twice" from "dragged twice".
+    let moved = 0;
     const onMove = (ev) => {
+      moved = Math.max(moved, Math.abs(ev.clientY - startY));
       // Up is bigger: the box grows towards the transcript, the way its edge moves.
       const next = Math.min(Math.max(startH + (startY - ev.clientY), COMPOSER_MIN_PX), hardMax);
       pane.composerHeight = Math.round(next);
@@ -5560,17 +5584,27 @@ function paneComposerEl(index) {
     };
     const onUp = () => {
       grip.classList.remove("dragging");
+      lastDragMovedAt = moved > 3 ? Date.now() : 0;
       grip.removeEventListener("pointermove", onMove);
       grip.removeEventListener("pointerup", onUp);
       grip.removeEventListener("pointercancel", onUp);
+      grip.removeEventListener("lostpointercapture", onUp);
     };
     grip.addEventListener("pointermove", onMove);
     grip.addEventListener("pointerup", onUp);
     grip.addEventListener("pointercancel", onUp);
+    // A lost capture (window focus change, an input device disappearing) otherwise left the
+    // drag armed: the grip stayed lit and later moves still resized the box.
+    grip.addEventListener("lostpointercapture", onUp);
   });
   // Give the size back to the text. Without this a dragged floor is permanent for the pane's
   // life, and the only way back to a small composer would be to drag it down again by eye.
   grip.addEventListener("dblclick", () => {
+    // Not after a drag - see `moved` above. A real double-click has no movement between its
+    // two presses, so anything that moved is a resize being fine-tuned, not a reset.
+    if (Date.now() - lastDragMovedAt < 700) {
+      return;
+    }
     pane.composerHeight = 0;
     autoSizeComposer(promptEl);
   });
@@ -12659,6 +12693,29 @@ renderScheduledPromptBar();
 // while nothing else happens.
 setInterval(renderScheduledPromptBar, 60 * 1000);
 
+// A file dropped ANYWHERE but the composer must not navigate the window.
+//
+// Chromium's default for a file dropped on a page is to open it, which replaces the whole app
+// with the file - and the only guard was on the textarea itself, which at rest is a ~48px strip
+// with a 7px resize handle now sitting on top of it. Dropping a file onto the transcript, the
+// controls row, or slightly high, therefore threw the app away. Raised by review, which also
+// made the point that letting files be dropped at all is exactly what makes this likely.
+//
+// Deliberately at the document, capture phase, and NOT preventing anything else: the composer's
+// own handlers still run and still attach what was dropped on them. This only stops the default
+// for everything they did not claim.
+for (const type of ["dragover", "drop"]) {
+  document.addEventListener(
+    type,
+    (e) => {
+      if (e.dataTransfer?.types?.includes("Files")) {
+        e.preventDefault();
+      }
+    },
+    false
+  );
+}
+
 // The review badge, on the same footing: painted at startup and kept current on a
 // slow tick, so the number exists BEFORE you visit the page it points at. It used to
 // be written only by renderReviewPage, which meant the nudge appeared after you had
@@ -15226,17 +15283,20 @@ function cmdkBuildCommands() {
   }
 
   // ACTIONS - only when the underlying affordance exists in the DOM.
-  const newChatBtn = document.getElementById("newChat");
-  if (newChatBtn) {
-    cmds.push({
-      label: "New chat",
-      tag: "Action",
-      run: () => {
-        navigateToPage("chat");
-        newChatBtn.click();
-      },
-    });
-  }
+  //
+  // "New chat" used to CLICK the sidebar's own button, so removing that panel (task 22f85eda)
+  // silently deleted this entry too: the guard below it was `if (newChatBtn)`, and there was no
+  // button left to find. Caught by review, which also caught the comment I left behind claiming
+  // the palette still offered it. It now opens a fresh draft directly, the same call the pane's
+  // own "+" makes - so the entry exists whatever the chat page happens to contain.
+  cmds.push({
+    label: "New chat",
+    tag: "Action",
+    run: () => {
+      navigateToPage("chat");
+      openFreshDraftInPane("", "");
+    },
+  });
   const bgBtn = document.getElementById("backgroundTasksBtn");
   if (bgBtn) {
     cmds.push({ label: "Background tasks", tag: "Action", run: () => bgBtn.click() });

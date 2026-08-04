@@ -650,9 +650,16 @@ body.dev-build header {
 }
 
 /* The sidebar's own styling (.sidebar, its head row, its collapse rail and the
-   "+ New chat" button) went with the panel on 2026-08-04 - task 22f85eda. The
-   .search / .section / .row rules further down are dead with it too, and are left
-   for a separate cleanup pass rather than swept blind in the same change. */
+   "+ New chat" button) went with the panel on 2026-08-04 - task 22f85eda.
+
+   CORRECTED after review: the note here first said ".search / .section / .row" were all
+   dead. .search is NOT - renderer.js gives the Archive page's search box that exact class,
+   and .archive-search .search only adds flex, so every visual property it has comes from
+   the .search rule below. Deleting it on the strength of that note would have left that
+   field an unstyled native input, with no test to notice.
+
+   Actually dead and left for a separate pass: .section*, .row*, #sidebarBody (including
+   its .dragging-category rule), and .empty-hint. */
 
 
 /* Inline rename input — replaces a label in place, matches its surrounding
@@ -1734,6 +1741,11 @@ body.advanced .row-jot {
   padding: 3px 5px;
   cursor: pointer;
   opacity: 0;
+  /* Invisible AND unclickable at rest. Without this it stayed a 24x20 hit target over the
+     top-right corner of every code block: starting a text selection there selected nothing,
+     and a click silently overwrote the clipboard with the tick appearing out of nowhere
+     (measured by review, 2026-08-04 - elementFromPoint returned the button). */
+  pointer-events: none;
   transition: opacity 0.1s ease;
 }
 
@@ -1744,6 +1756,7 @@ body.advanced .row-jot {
 .turn-bubble .md-code-wrap:hover .code-copy-btn,
 .code-copy-btn:focus-visible {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .code-copy-btn:hover {

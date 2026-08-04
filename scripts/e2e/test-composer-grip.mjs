@@ -69,11 +69,31 @@ try {
     send("pointerup", y1 + 4000);
 
     // Up beyond the pane's own height must be capped, or the composer eats the transcript.
+    //
+    // Measured on the SURFACES, not on the constant. The first version of this asserted the
+    // textarea's height against a fraction of the pane - a constant compared with a constant -
+    // and was green while the composer around that textarea reached 99.5% of the pane, the
+    // transcript shrank to a 24px sliver and the send button sat 15px BELOW the window edge.
+    // Found by review. What matters is that the transcript is still readable and every control
+    // is still inside the pane, so that is what is checked.
     const box3 = grip.getBoundingClientRect();
     const y2 = box3.y + box3.height / 2;
     send("pointerdown", y2);
     send("pointermove", y2 - 4000);
     const cappedH = promptEl.getBoundingClientRect().height;
+    const composerEl = paneEl.querySelector(".pane-composer");
+    const scrollEl = paneEl.querySelector(".pane-scroll");
+    const capped = {
+      transcriptH: scrollEl ? scrollEl.getBoundingClientRect().height : 0,
+      composerBottom: composerEl ? composerEl.getBoundingClientRect().bottom : 0,
+      paneBottom: paneEl.getBoundingClientRect().bottom,
+      windowH: window.innerHeight,
+      // The send button specifically: it is the one control that must never be unreachable.
+      sendBottom: (() => {
+        const b = paneEl.querySelector(".pane-composer .send-btn, .pane-composer button:last-of-type");
+        return b ? b.getBoundingClientRect().bottom : 0;
+      })(),
+    };
     send("pointerup", y2 - 4000);
     const paneH = paneEl.getBoundingClientRect().height;
 
@@ -92,7 +112,7 @@ try {
       height: document.querySelector('.pane[data-pane="0"] .pane-composer textarea').getBoundingClientRect().height,
     };
 
-    return { startH, grownH, grownField, draggingClass, releasedClass, flooredH, cappedH, paneH, afterRender, afterReset, cursor, resizeProp };
+    return { startH, grownH, grownField, draggingClass, releasedClass, flooredH, cappedH, capped, paneH, afterRender, afterReset, cursor, resizeProp };
   })()`);
 
   ok(!res.missing, "the composer has a resize handle on its top edge");
@@ -102,7 +122,19 @@ try {
   ok(res.grownField === Math.round(res.grownH), `and the size is recorded on the pane as it happens, not inferred afterwards (${res.grownField})`);
   ok(res.draggingClass === true && res.releasedClass === false, "the handle shows it is being dragged, and stops when released");
   ok(res.flooredH < res.grownH && res.flooredH >= 30, `dragging DOWN shrinks it but not below a usable floor (${Math.round(res.flooredH)}px)`);
-  ok(res.cappedH <= res.paneH * 0.9, `dragging far up is capped so the composer cannot swallow the transcript (${Math.round(res.cappedH)}px of ${Math.round(res.paneH)}px)`);
+  ok(
+    res.capped.transcriptH >= 100,
+    `dragged to the top, the transcript is still readable rather than a sliver (${Math.round(res.capped.transcriptH)}px)`
+  );
+  ok(
+    res.capped.composerBottom <= res.capped.paneBottom + 1,
+    `and the whole composer stays inside the pane (bottom ${Math.round(res.capped.composerBottom)} vs pane ${Math.round(res.capped.paneBottom)})`
+  );
+  ok(
+    res.capped.sendBottom > 0 && res.capped.sendBottom <= res.capped.windowH,
+    `with the send control still on screen (bottom ${Math.round(res.capped.sendBottom)} in a ${res.capped.windowH}px window)`
+  );
+  ok(res.cappedH < res.paneH * 0.7, `the textarea itself is well under the pane height (${Math.round(res.cappedH)}px of ${Math.round(res.paneH)}px)`);
   ok(Math.abs(res.afterRender - 220) <= 2, `the size survives the composer being rebuilt by a render (${Math.round(res.afterRender)}px)`);
   ok(res.afterReset.field === 0 && res.afterReset.height < 220, `double-click hands the size back to the text (${Math.round(res.afterReset.height)}px)`);
 

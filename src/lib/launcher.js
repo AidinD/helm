@@ -138,6 +138,10 @@ export function startSession({ cwd, prompt, model, effort, permissionMode, resum
   let buffer = "";
   let sessionId = null;
   let sawResult = false;
+  // Whether that result was an ERROR result (see the "result" branch below). Carried out with
+  // the summary so a caller can tell "the model answered" from "the run ended".
+  let resultWasError = false;
+  let resultErrorText = null;
   let lastQuota = null;
   // Accumulated for the "closed" summary, NOT emitted live per-chunk — a
   // failed run's real error (e.g. "No conversation found with session ID")
@@ -194,8 +198,8 @@ export function startSession({ cwd, prompt, model, effort, permissionMode, resum
 
   const done = new Promise((resolve) => {
     child.on("close", (code) => {
-      emit({ kind: "closed", code, sessionId, sawResult });
-      resolve({ code, sessionId, sawResult, quota: lastQuota, stderrText });
+      emit({ kind: "closed", code, sessionId, sawResult, resultWasError, resultErrorText });
+      resolve({ code, sessionId, sawResult, resultWasError, resultErrorText, quota: lastQuota, stderrText });
     });
     child.on("error", (err) => {
       emit({ kind: "error", message: err.message });
@@ -301,6 +305,16 @@ export function startSession({ cwd, prompt, model, effort, permissionMode, resum
       }
     } else if (type === "result") {
       sawResult = true;
+      // ...but a result event is not always an ANSWER. The CLI also ends with one for
+      // `error_during_execution`, `error_max_turns`, and a run that hit the usage limit. Every
+      // caller treating sawResult as "the model replied" was therefore wrong about those, and one
+      // caller now WRITES PERSISTED STATE from it: a scheduled prompt fired into a spent quota
+      // was recorded as delivered, which is the exact bug that recording exists to catch (found
+      // by review, 2026-08-04). So the error-ness travels with it rather than being flattened.
+      if (evt.is_error === true || (typeof evt.subtype === "string" && evt.subtype.startsWith("error"))) {
+        resultWasError = true;
+        resultErrorText = String(evt.subtype || evt.error || "the run ended in an error").slice(0, 400);
+      }
       // The CLI reports each model's real context-window size here, keyed by
       // model name (evt.modelUsage["claude-…"].contextWindow). This is the
       // authoritative source Helm uses to learn model→window (far better
