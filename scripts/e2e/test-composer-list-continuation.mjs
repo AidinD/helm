@@ -123,10 +123,12 @@ try {
       plainLine: at("just prose|"),
       plainOutdent: at("just prose|", { outdent: true }),
       caretKept: (() => {
-        // The caret must stay on the word being written, not jump to the line start.
+        // The step REPLACES the line's prefix (indent + marker) rather than only
+        // inserting spaces, because moving level has to renumber the marker too. The
+        // caret is kept on the word being written by the caller, from the length delta.
         const v = "1. one";
         const step = listIndentStep(v, 6, 6, {});
-        return step.from === 0 && step.text === "  ";
+        return step.from === 0 && step.to === 2 && step.text === "  1.";
       })(),
     };
   })()`);
@@ -197,6 +199,73 @@ try {
   ok(auto.midSentence === "a - ", `a dash mid-sentence is not a list and is left alone (${JSON.stringify(auto.midSentence)})`);
   ok(auto.alreadyIndented === "  - ", `an already-indented marker does not gain another level (${JSON.stringify(auto.alreadyIndented)})`);
   ok(auto.pasted === "- ", `a paste ending in a marker is NOT reformatted (${JSON.stringify(auto.pasted)})`);
+
+  // --- a sublist numbers itself, and the parent level resumes ---------------
+  // Aidin's own example, typed key for key. He wrote out what he expected and what Helm
+  // did instead: "helm gör inte skillnad på parent - child bullets" - the first sub-item
+  // came out as 2 and its sibling as 3, because the count walked straight down the lines
+  // instead of looking for the previous SIBLING at the same level.
+  const levels = await app.eval(`(async () => {
+    const ta = document.querySelector("#chatPage .composer-shell textarea");
+    ta.focus();
+    ta.value = "";
+    ta.setSelectionRange(0, 0);
+    const typeReal = (s) => { ta.focus(); document.execCommand("insertText", false, s); };
+    const key = (k, shift) => ta.dispatchEvent(new KeyboardEvent("keydown", { key: k, shiftKey: !!shift, bubbles: true, cancelable: true }));
+    const markers = [];
+    const marker = () => {
+      const start = ta.value.lastIndexOf("\\n", ta.selectionStart - 1) + 1;
+      return ta.value.slice(start, ta.selectionStart);
+    };
+    typeReal("1"); typeReal("."); typeReal(" ");
+    markers.push(marker());
+    typeReal("den här är första");
+    key("Enter", true);
+    key("Tab");
+    markers.push(marker());
+    typeReal("nu börjar den om på ett");
+    key("Enter", true);
+    markers.push(marker());
+    typeReal("det här är andra subbulleten");
+    key("Enter", true);
+    key("Tab", true);
+    markers.push(marker());
+    typeReal("här är nästa riktiga bullet");
+    const out = ta.value;
+    ta.value = "";
+    return { out, markers };
+  })()`);
+
+  const expected = ["  1. ", "    1. ", "    2. ", "  2. "];
+  ok(
+    JSON.stringify(levels.markers) === JSON.stringify(expected),
+    `the markers are ${JSON.stringify(expected)} - a sublist starts over at one and the parent level resumes (got ${JSON.stringify(levels.markers)})`
+  );
+  ok(
+    levels.out ===
+      "  1. den här är första\n    1. nu börjar den om på ett\n    2. det här är andra subbulleten\n  2. här är nästa riktiga bullet",
+    `and the whole block reads as he wrote it out (${JSON.stringify(levels.out)})`
+  );
+
+  // The rule underneath, so a third level and a resumed count are covered too rather
+  // than just the one shape in his example.
+  const siblings = await app.eval(`(() => {
+    const v = "1. one\\n  1. sub\\n    1. deep\\n    2. deeper\\n  2. sub two\\n";
+    const at = (needle) => v.indexOf(needle);
+    return {
+      thirdLevelFresh: previousSiblingNumber(v, at("    1. deep"), 4),
+      thirdLevelSecond: previousSiblingNumber(v, at("    2. deeper"), 4),
+      secondLevelResumes: previousSiblingNumber(v, at("  2. sub two"), 2),
+      topLevelNothingAbove: previousSiblingNumber(v, 0, 0),
+      widths: [indentWidth(""), indentWidth("  "), indentWidth("\\t"), indentWidth("    ")],
+    };
+  })()`);
+
+  ok(siblings.thirdLevelFresh === null, `the first item at a new depth has no sibling, so it starts at one (${siblings.thirdLevelFresh})`);
+  ok(siblings.thirdLevelSecond === 1, `its sibling counts from it (${siblings.thirdLevelSecond})`);
+  ok(siblings.secondLevelResumes === 1, `coming back out resumes the level's own count, skipping the sublist between (${siblings.secondLevelResumes})`);
+  ok(siblings.topLevelNothingAbove === null, "nothing above means nothing to continue from");
+  ok(JSON.stringify(siblings.widths) === JSON.stringify([0, 2, 2, 4]), `a tab counts as one level, same as two spaces (${JSON.stringify(siblings.widths)})`);
 
   // --- the surface: the real textarea, real Shift+Enter ---------------------
   const typed = await app.eval(`(async () => {

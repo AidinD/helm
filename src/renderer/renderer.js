@@ -5721,27 +5721,86 @@ function listAutoIndentStep(value, caret) {
   return { from: lineStart, to: lineStart, text: LIST_INDENT };
 }
 
+/** Indent width in columns, so a tab and two spaces count as the same level. */
+function indentWidth(indent) {
+  return String(indent || "").replace(/\t/g, LIST_INDENT).length;
+}
+
+/**
+ * What number an item at this indent level should carry.
+ *
+ * A numbered list restarts inside a sublist and RESUMES when it comes back out:
+ *
+ *   1. first
+ *      1. a sub-item, starting over at one
+ *      2. and its sibling
+ *   2. back out, carrying on from the parent level
+ *
+ * Helm numbered straight down the lines instead, so the first sub-item came out as 2 and
+ * its sibling as 3 (Aidin, 2026-08-04: "helm gör inte skillnad på parent - child
+ * bullets"). The count therefore has to look for the previous SIBLING - the nearest line
+ * above at the same indent - and not merely at the line above.
+ *
+ * Walking up: a deeper line is part of a sublist and skipped; a shallower line means this
+ * level has not started yet, so the answer is 1; anything that is not a list item ends
+ * the list entirely, which also means 1.
+ */
+function previousSiblingNumber(value, lineStart, targetWidth) {
+  let at = lineStart;
+  while (at > 0) {
+    const prevEnd = at - 1;
+    const prevStart = value.lastIndexOf("\n", prevEnd - 1) + 1;
+    const line = value.slice(prevStart, prevEnd);
+    const m = LIST_ITEM_RE.exec(line);
+    if (!m) {
+      return null; // not a list line - nothing above to continue from
+    }
+    const width = indentWidth(m[1]);
+    if (width === targetWidth) {
+      const num = /^(\d+)([.)])$/.exec(m[2]);
+      return num ? Number(num[1]) : null;
+    }
+    if (width < targetWidth) {
+      return null; // the parent - so this level is starting fresh
+    }
+    at = prevStart; // deeper: part of a sublist, keep looking
+  }
+  return null;
+}
+
 function listIndentStep(value, caret, caretEnd = caret, { outdent = false } = {}) {
   if (typeof value !== "string" || typeof caret !== "number") {
     return null;
   }
   const lineStart = value.lastIndexOf("\n", Math.min(caret, caretEnd) - 1) + 1;
   const lineEnd = value.indexOf("\n", lineStart) === -1 ? value.length : value.indexOf("\n", lineStart);
-  const line = value.slice(lineStart, lineEnd);
-  if (!LIST_ITEM_RE.test(line)) {
+  const m = LIST_ITEM_RE.exec(value.slice(lineStart, lineEnd));
+  if (!m) {
     return null;
   }
-  const indent = /^[ \t]*/.exec(line)[0];
-  if (!outdent) {
-    return { from: lineStart, to: lineStart, text: LIST_INDENT };
-  }
-  if (indent.length === 0) {
-    // Already at the left margin. Report a no-op rather than null: the caller still has
-    // to swallow the key, or Shift+Tab would jump focus out of the composer mid-list.
+  const [, indent, marker] = m;
+  if (outdent && indent.length === 0) {
+    // Already at the left margin. A no-op rather than null: the caller still has to
+    // swallow the key, or Shift+Tab would jump focus out of the composer mid-list.
     return { from: lineStart, to: lineStart, text: "", noop: true };
   }
-  const drop = indent.startsWith(LIST_INDENT) ? LIST_INDENT.length : indent[0] === "\t" ? 1 : indent.length;
-  return { from: lineStart, to: lineStart + drop, text: "" };
+  let nextIndent;
+  if (outdent) {
+    const drop = indent.startsWith(LIST_INDENT) ? LIST_INDENT.length : indent[0] === "\t" ? 1 : indent.length;
+    nextIndent = indent.slice(drop);
+  } else {
+    nextIndent = indent + LIST_INDENT;
+  }
+  // Changing level changes which siblings this item has, so a numbered marker has to be
+  // recomputed for the level it is moving to. Keeping the old number is what produced
+  // "1. / 2. / 3." down a nested list that should have read "1. / 1. / 2.".
+  let nextMarker = marker;
+  const num = /^(\d+)([.)])$/.exec(marker);
+  if (num) {
+    const prev = previousSiblingNumber(value, lineStart, indentWidth(nextIndent));
+    nextMarker = `${(prev || 0) + 1}${num[2]}`;
+  }
+  return { from: lineStart, to: lineStart + indent.length + marker.length, text: nextIndent + nextMarker };
 }
 
 function autoSizeComposer(promptEl) {
