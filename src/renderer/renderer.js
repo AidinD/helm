@@ -39,7 +39,6 @@ let viewNavIndex = -1;
 let handoffBusyIds = new Set();
 let searchTerm = "";
 let archiveSearchTerm = ""; // filters the Archive page's two lists by title/folder
-let selectedGoalId = null; // Focus page: which goal's breakdown is expanded
 // Goal page (Fas 3 Point 11) — all autonomous runs this session, keyed by
 // goalRunId. The backend (main.js liveGoalRuns + goal:event carrying
 // goalRunId) already supports several concurrent runs, each in its own
@@ -7741,12 +7740,11 @@ const SUBTASK_STATUS_LABEL = {
 // auto-loads.
 //
 // Real data used here: state.sessions (attention queue) and jot:goals (Goals
-// - the same IPC renderFocusPage uses). Anything without existing plumbing
+// - the same IPC the goal surfaces used). Anything without existing plumbing
 // (background worktree telemetry, a real work/private domain tag on Jot
 // goals, actual session-start-from-dashboard) is rendered as a clearly
 // labeled placeholder rather than invented data - see the individual section
 // comments below.
-let dashboardFocusMode = "all"; // "all" | "work" | "private" - local UI state (the Focus filter), resets on reload. "all" = no filtering/dimming.
 let dashboardSelectedChip = null; // which "New session" project chip is selected (a cwd string)
 
 function isDashboardVisible() {
@@ -7789,17 +7787,13 @@ function dashboardQueueFingerprint(inMotion) {
   const proposals = dashboardProposalSessions()
     .map((s) => `${s.sessionId}:${s.lastActivityAt}`)
     .join(",");
-  return [rows, proposals, dashboardArchiveGroupExpanded, dashboardFocusMode, state.config.archiveSuggestions?.enabled].join("##");
+  return [rows, proposals, dashboardArchiveGroupExpanded, state.config.archiveSuggestions?.enabled].join("##");
 }
 
-function dashboardGoalsFingerprint(goalsResult) {
-  const goalsPart = goalsResult?.ok ? JSON.stringify(goalsResult.goals) : "err";
-  return goalsPart + "##" + dashboardFocusMode;
-}
 
 function dashboardNewSessionFingerprint() {
   const cwds = [...new Set(state.sessions.filter((s) => s.cwd).map((s) => s.cwd))].sort().join("|");
-  return [cwds, dashboardSelectedChip, dashboardFocusMode].join("##");
+  return [cwds, dashboardSelectedChip].join("##");
 }
 
 // What the widget dashboard is a picture OF. Deliberately cheap and synchronous:
@@ -7824,7 +7818,7 @@ function widgetDashboardFingerprint() {
   // widgeten"). Any future toggle that repaints belongs here too - the bug is
   // silent, because a button that does nothing looks identical to a button whose
   // work you cannot see.
-  const view = `arch:${dashboardArchiveGroupExpanded ? 1 : 0}|focus:${dashboardFocusMode}`;
+  const view = `arch:${dashboardArchiveGroupExpanded ? 1 : 0}`;
   // Quota, for the same reason. A fresh reading arrives on its own event and only
   // repainted the top-bar chip, so the Quota widget's numbers sat frozen until
   // something unrelated changed - which is what "den verkar inte uppdateras så
@@ -9686,12 +9680,6 @@ async function fillDashboardSections({ force = false } = {}) {
   if (bailIfPressed()) {
     return;
   }
-  const goalsFp = dashboardGoalsFingerprint(goalsResult);
-  if (force || goalsFp !== dashSectionFingerprints.goals) {
-    dashSectionFingerprints.goals = goalsFp;
-    writeDashSlot("dashGoalsSlot", await dashboardGoalsSection(goalsResult));
-  }
-
   if (bailIfPressed()) {
     return;
   }
@@ -9907,7 +9895,7 @@ function driftFootEl(text, parkedCount = 0) {
 // Widget catalogue. `perMate` types are instantiated once per first mate and
 // carry a mateId; everything else is a singleton.
 // Widget bodies EMBED the existing dashboard renderers (fleetMateCardEl,
-// fleetDirectCardEl, dashboardQueueSection, dashboardGoalsSection) rather than
+// fleetDirectCardEl, dashboardQueueSection) rather than
 // re-summarising their data. The first pass rebuilt simplified bodies and lost
 // everything that makes those modules useful - a first mate's persona picker,
 // context gauge, and its second mates with their badges/jump-in/Archive (Aidin:
@@ -9919,7 +9907,6 @@ const WIDGET_CATALOG = {
   captain: { label: "Captain", span: 4, accent: "mate", singleton: true },
   auto: { label: "Auto", span: 4, accent: "mate", singleton: true },
   firstMate: { label: "First mate", span: 4, accent: "mate", perMate: true },
-  goals: { label: "Goals", span: 6, accent: "blue", singleton: true },
   docsDrift: { label: "Docs drift", span: 4, accent: "acc", singleton: true },
   review: { label: "Review", span: 4, accent: "acc", singleton: true },
   // Layout-only entries, so a row can be left deliberately short instead of the
@@ -10371,12 +10358,6 @@ function autoCaptainControlsEl() {
   return row;
 }
 
-async function widgetBodyGoals(data) {
-  // The real Goals module (this is what the mock called "Autopilot" - Aidin
-  // asked what it was, so it now carries the name the rest of the app uses).
-  return widgetSectionBody(await dashboardGoalsSection(data.goalsResult));
-}
-
 // The ACTIVE half of the docs-drift signal (task 0831417b). The pane-header pill
 // only tells you once you've already opened the project - backwards for drift on a
 // project you've stopped thinking about. This lists the projects whose
@@ -10651,7 +10632,6 @@ const WIDGET_BODIES = {
   captain: widgetBodyCaptain,
   auto: widgetBodyAuto,
   firstMate: widgetBodyFirstMate,
-  goals: widgetBodyGoals,
   docsDrift: widgetBodyDocsDrift,
   review: widgetBodyReview,
 };
@@ -10986,7 +10966,7 @@ async function renderWidgetDashboard(page) {
   classic.textContent = "Classic layout";
   classic.title = "Switch back to the section dashboard (nothing is lost - your widget layout is kept).";
   classic.addEventListener("click", () => setWidgetDashboardEnabled(false));
-  actions.append(classic, focusModeToggleEl());
+  actions.append(classic);
   topbar.append(heading, actions);
 
   const grid = document.createElement("div");
@@ -11074,7 +11054,7 @@ async function renderDashboardPage() {
   widgetToggle.textContent = "Widget layout";
   widgetToggle.title = "Switch the dashboard to a drag-and-drop widget grid. Reversible - this layout stays as it is.";
   widgetToggle.addEventListener("click", () => setWidgetDashboardEnabled(true));
-  topbarActions.append(quotaChip, orchChip, widgetToggle, focusModeToggleEl());
+  topbarActions.append(quotaChip, orchChip, widgetToggle);
   topbar.append(heading, topbarActions);
   page.append(topbar);
   renderDashQuota();
@@ -11094,7 +11074,6 @@ async function renderDashboardPage() {
     mkSlot("dashOnboardingSlot"),
     mkSlot("dashQueueSlot"),
     mkSlot("dashFleetSlot"),
-    mkSlot("dashGoalsSlot"),
     mkSlot("dashDriftSlot"),
     mkSlot("dashNewSessionSlot")
   );
@@ -11131,83 +11110,6 @@ function dashboardOnboardingBlock() {
 
   return section;
 }
-
-// --- Focus work/private toggle -----------------------------------------
-// Real, functional UI logic: flips dashboardFocusMode and dims goal cards
-// whose domain doesn't match. The domain itself comes straight from Jot's
-// Category.domain field (set via Jot's own W/P chip, 1.5.14+) and is threaded
-// through loadGoals in src/lib/jot.js onto each goal - no heuristic here.
-// A goal whose category has no domain set (null) belongs to "All" only: it does
-// NOT match a specific Work/Private focus (so it's dimmed on the dashboard /
-// narrowed out on the Focus page), rather than appearing in both. Classify the
-// list via Jot's W/P chip to surface it in a focused view.
-function domainForGoal(goal) {
-  return goal.domain === "work" || goal.domain === "private" ? goal.domain : null;
-}
-
-// Shared Focus-filter toggle (All / Work / Private) used by BOTH the dashboard
-// (dims non-matching goal cards; "All" = no dimming) and the Focus page
-// (filters the list; "All" = show everything). `rerender` is the page's own
-// re-render fn so the toggle refreshes the right view.
-function focusModeToggleEl(rerender = renderDashboardPage) {
-  const wrap = document.createElement("div");
-  wrap.className = "dash-focus-toggle";
-
-  const label = document.createElement("span");
-  label.className = "dash-focus-label";
-  label.textContent = "Focus";
-  wrap.append(label);
-
-  const seg = document.createElement("div");
-  seg.className = "view-toggle";
-  const LABELS = { all: "All", work: "Work", private: "Private" };
-  for (const mode of ["all", "work", "private"]) {
-    const btn = document.createElement("button");
-    btn.textContent = LABELS[mode];
-    btn.classList.toggle("active", dashboardFocusMode === mode);
-    btn.addEventListener("click", () => {
-      dashboardFocusMode = mode;
-      rerender();
-    });
-    seg.append(btn);
-  }
-  wrap.append(seg);
-  return wrap;
-}
-
-
-// --- Needs you & in motion (merged attention queue) ------------------------
-// Variant A's key structural change: ONE prioritized list instead of two
-// separate sections. Two row kinds share the list:
-//   - "proposal" rows: archive suggestions, reusing the exact same
-//     archive-suggestion + orchestratorTag signals the sidebar already
-//     surfaces (see rowEl in this file and runOrchestratorSweep in main.js).
-//     Approve/Dismiss call the same archiveSession path used elsewhere -
-//     nothing here acts without a click.
-//   - "session" rows: real state.sessions in "waiting" (needs your input) or
-//     "active" (currently working) status - the same status field the
-//     sidebar's status-dot already reads.
-// Ordering is by urgency, not chronology or section: proposals and waiting
-// sessions (both need a click) sort above active sessions (no action needed,
-// just visibility), and attentionScore breaks ties within each group so the
-// most pressing item within a tier still floats up.
-//
-// Archive-proposal grouping: with archiveSuggestions on, a long-idle inbox
-// can produce dozens of individual "Archive finished session" rows that bury
-// genuine needs-you items (observed: ~38 rows on a real board). All archive
-// proposals collapse into ONE row ("N sessions ready to archive") with
-// "Archive all" / "Review" - individual running/waiting SESSIONS never
-// collapse, only the archive-cleanup proposal kind. "Review" expands the
-// group inline into its normal per-session Archive/Dismiss rows (same
-// dashProposeRowEl used before this change) rather than hiding that control
-// behind a second page.
-// NOT wired up: the mock's per-row context-budget bar and worktree path
-// (PLAN.md's worker/isolated-worktree model isn't built yet - Helm today
-// runs sessions directly, not via dispatched worktree workers) - labeled as a
-// placeholder rather than faked. Proposal KINDS beyond archive suggestions
-// (stale Jot task, "merge this worker branch") have no backing signal yet in
-// Helm and are NOT fabricated here.
-let dashboardArchiveGroupExpanded = false; // local UI state, resets on reload
 
 // Shared between dashboardProposalSessions() below and the sidebar's
 // per-row "Archive?" pill (see renderSessionRow / row-orchestrator-tag
@@ -11913,115 +11815,12 @@ function dashReportRowEl(run) {
   return row;
 }
 
-// --- Goals -----------------------------------------------------------------
-// Real data: the same jot:goals IPC / loadGoals() as the Focus page. Cards
-// dim when their domain doesn't match the Focus toggle's mode, per
-// domainForGoal (see comment above the toggle). An unclassified goal (no domain
-// on its Jot category) belongs to "All" only - dimmed under Work/Private.
-async function dashboardGoalsSection(preloadedResult) {
-  const result = preloadedResult ?? (await window.helm.getJotGoals());
-
-  const section = document.createElement("section");
-  section.className = "dash-board";
-  section.append(dashBoardHead("Goals", result.ok ? result.goals.length : 0, "Work organized by goal, not a flat session list"));
-
-  const body = document.createElement("div");
-  body.className = "dash-board-body";
-  if (!result.ok) {
-    body.append(dashEmpty("Jot data unavailable - check Settings."));
-  } else if (result.goals.length === 0) {
-    body.append(dashEmpty("No active goals in Jot right now."));
-  } else {
-    const grid = document.createElement("div");
-    grid.className = "dash-goals-grid";
-    // When a Work/Private focus is active, only goals matching THAT domain stay
-    // bright and float up; everything else (opposite domain AND unclassified)
-    // dims and sinks below. Unclassified lists belong to "All" only - they used
-    // to show bright in BOTH Work and Private, which read as "on both lists,
-    // unsorted" (Aidin, p0 fix). Stable sort keeps each group's original order.
-    const isDimmed = (g) => dashboardFocusMode !== "all" && domainForGoal(g) !== dashboardFocusMode;
-    const ordered =
-      dashboardFocusMode === "all"
-        ? result.goals
-        : [...result.goals].sort((a, b) => (isDimmed(a) ? 1 : 0) - (isDimmed(b) ? 1 : 0));
-    ordered.forEach((goal) => grid.append(dashGoalCardEl(goal)));
-    body.append(grid);
-  }
-  section.append(body);
-  return section;
-}
-
-function dashGoalCardEl(goal) {
-  const domain = domainForGoal(goal);
-  const card = document.createElement("div");
-  card.className =
-    "dash-goal-card" + (dashboardFocusMode !== "all" && domain !== dashboardFocusMode ? " dash-dimmed" : "");
-
-  const head = document.createElement("div");
-  head.className = "dash-goal-head";
-  const name = document.createElement("span");
-  name.className = "dash-goal-name";
-  name.textContent = goal.text || "(untitled goal)";
-  head.append(name);
-  if (domain !== null) {
-    const badge = document.createElement("span");
-    badge.className = "dash-domain-badge dash-domain-" + domain;
-    badge.textContent = domain === "work" ? "Work" : "Private";
-    head.append(badge);
-  }
-  card.append(head);
-
-  const meta = document.createElement("div");
-  meta.className = "dash-goal-meta";
-  const bits = [];
-  if (goal.category) {
-    bits.push(goal.category);
-  }
-  if (goal.subtaskTotal > 0) {
-    bits.push(`${goal.subtaskDone}/${goal.subtaskTotal} subtasks`);
-  }
-  const dl = goalDeadlineText(goal.deadline);
-  if (dl) {
-    bits.push(dl);
-  }
-  meta.textContent = bits.join(" · ") || "no subtasks yet";
-  card.append(meta);
-
-  if (goal.subtaskTotal > 0) {
-    const bar = document.createElement("div");
-    bar.className = "dash-goal-progress-bar";
-    const fill = document.createElement("div");
-    fill.style.width = `${Math.round((goal.subtaskDone / goal.subtaskTotal) * 100)}%`;
-    bar.append(fill);
-    card.append(bar);
-  }
-
-  card.addEventListener("click", () => {
-    navigateToPage("focus");
-    selectedGoalId = goal.id;
-  });
-
-  return card;
-}
-
-// --- New session -------------------------------------------------------
-// Project chips come from two sources:
-//   - repo projects: derived from actual repo cwd's seen among state.sessions
-//     (so the chip list reflects real projects Helm has touched).
-//   - domain projects: PLAN.md's non-repo "life-domain" project type (gym,
-//     diabetes, kombucha, ...) — a small persisted registry (domains.js),
-//     surfaced here with a distinct icon per the approved dashboard mock
-//     (repo chips get a folder icon, domain chips get their own icon).
-// Both chip kinds behave identically once selected: a session rooted in
-// either folder auto-loads its CLAUDE.md + memory the moment it starts (see
-// dashAutoContextStripEl) — there is no separate "domain session" mode.
-// Variant A change: the old manual "load context" checklist (checkboxes for
-// CLAUDE.md/PLAN.md/DECISIONS.md/memory) is gone. There was never anything to
-// decide there - a session rooted in a project already auto-loads that
-// project's CLAUDE.md + memory the moment it starts, so the checklist only
-// implied a choice that doesn't exist. It's replaced by a passive one-line
-// strip stating what already happens.
+// Repo chips get a folder icon; a registered life-domain project gets its own. The icon is
+// also how dashAutoContextStripEl tells the two kinds apart.
 const REPO_CHIP_ICON = "\u{1F4C1}"; // folder
+
+// Local UI state for the archive-suggestion group, reset on reload.
+let dashboardArchiveGroupExpanded = false;
 
 async function dashboardNewSessionSection() {
   const section = document.createElement("section");
@@ -12288,295 +12087,6 @@ function dashEmpty(text) {
   empty.textContent = text;
   return empty;
 }
-
-async function renderFocusPage() {
-  const page = document.getElementById("focusPage");
-  page.innerHTML = "";
-
-  const header = document.createElement("h2");
-  header.textContent = "Focus";
-  page.append(header);
-
-  const result = await window.helm.getJotGoals();
-
-  if (!result.ok) {
-    const empty = document.createElement("div");
-    empty.className = "pane-empty";
-    empty.textContent = "Jot data unavailable - check that Jot is enabled and its file exists (Settings).";
-    page.append(empty);
-    return;
-  }
-
-  // Focus filter (All / Work / Private). Unlike the dashboard toggle (which
-  // dims non-matching cards), on the Focus page it actually NARROWS the list so
-  // you don't see everything. Only the matching domain shows; unclassified lists
-  // belong to "All" only (they used to show in both Work and Private - the p0
-  // fix). Classify a list (Jot's W/P chip) to have it appear in a focused view.
-  page.append(focusModeToggleEl(renderFocusPage));
-  const goals =
-    dashboardFocusMode === "all" ? result.goals : result.goals.filter((g) => domainForGoal(g) === dashboardFocusMode);
-
-  const intro = document.createElement("div");
-  intro.className = "analysis-totals";
-  const filterNote = dashboardFocusMode === "all" ? "" : ` (${dashboardFocusMode})`;
-  intro.textContent =
-    `${goals.length} active goal${goals.length === 1 ? "" : "s"}${filterNote} (open or in progress), ranked by what deserves your focus now. Backed by Jot.`;
-  page.append(intro);
-
-  if (goals.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "pane-empty";
-    empty.textContent =
-      dashboardFocusMode === "all"
-        ? "No active goals in Jot right now."
-        : `No ${dashboardFocusMode} goals active right now.`;
-    page.append(empty);
-    return;
-  }
-
-  // The top few are the actual "work on this now" recommendation; the rest are
-  // shown below a divider so the ranking's point (focus) isn't lost in a long
-  // list. Keeping all of them visible (read-only) still lets the breakdown be
-  // opened for any goal.
-  const list = document.createElement("div");
-  list.className = "focus-list";
-  const TOP_N = 3;
-  goals.forEach((goal, i) => {
-    if (i === TOP_N && goals.length > TOP_N) {
-      const divider = document.createElement("div");
-      divider.className = "focus-divider";
-      divider.textContent = "Also active";
-      list.append(divider);
-    }
-    list.append(focusGoalCard(goal, i < TOP_N));
-  });
-  page.append(list);
-}
-
-// Resolve a goal to a known project folder by matching its Jot category to a
-// repo basename (the jot-task-tracking convention is category == repo/folder
-// name). Returns a cwd or null. Used by "Work on this" to pre-root the session.
-function resolveProjectForGoal(goal) {
-  const cat = (goal.category || "").trim().toLowerCase();
-  if (!cat) {
-    return null;
-  }
-  const repos = [...new Set(state.sessions.filter((s) => s.cwd).map((s) => s.cwd))];
-  return (
-    repos.find((cwd) => (cwd.split(/[\\/]/).filter(Boolean).pop() || "").toLowerCase() === cat) || null
-  );
-}
-
-// "Work on this": start acting on a goal in one click. Opens a fresh session
-// rooted at the goal's project (resolved from its category, else you pick the
-// folder) with the goal text seeded into the composer - drawing the goal ->
-// project -> session link the Goals surface was missing (flow review P1).
-async function workOnGoal(goal) {
-  let cwd = resolveProjectForGoal(goal);
-  if (!cwd) {
-    cwd = await window.helm.pickFolder();
-    if (!cwd) {
-      return;
-    }
-  }
-  navigateToPage("chat");
-  openFreshDraftInPane(cwd, goal.text || "", { forceIndex: 0 });
-}
-
-function focusGoalCard(goal, isTop) {
-  const card = document.createElement("div");
-  card.className = "focus-card" + (isTop ? " focus-card-top" : "");
-
-  const head = document.createElement("div");
-  head.className = "focus-card-head";
-  head.addEventListener("click", () => {
-    selectedGoalId = selectedGoalId === goal.id ? null : goal.id;
-    renderFocusPage();
-  });
-
-  const caret = document.createElement("span");
-  caret.className = "focus-caret";
-  caret.textContent = selectedGoalId === goal.id ? "▾" : "▸";
-  head.append(caret);
-
-  const titleWrap = document.createElement("div");
-  titleWrap.className = "focus-title-wrap";
-  const title = document.createElement("div");
-  title.className = "focus-title";
-  title.textContent = goal.text || "(untitled goal)";
-  titleWrap.append(title);
-
-  const meta = document.createElement("div");
-  meta.className = "focus-meta";
-  if (goal.category) {
-    const catChip = document.createElement("span");
-    catChip.className = "focus-chip focus-chip-cat";
-    if (goal.color) {
-      catChip.style.borderColor = goal.color;
-    }
-    catChip.textContent = goal.category;
-    meta.append(catChip);
-  }
-  const statusChip = document.createElement("span");
-  statusChip.className = "focus-chip";
-  statusChip.textContent = goal.status === "in-progress" ? "in progress" : goal.status;
-  meta.append(statusChip);
-  if (typeof goal.priority === "number") {
-    const prChip = document.createElement("span");
-    prChip.className = "focus-chip";
-    prChip.title = "Jot priority (lower = more urgent)";
-    prChip.textContent = `p${goal.priority}`;
-    meta.append(prChip);
-  }
-  const dl = goalDeadlineText(goal.deadline);
-  if (dl) {
-    const dlChip = document.createElement("span");
-    dlChip.className = "focus-chip focus-chip-deadline" + (dl === "overdue" ? " focus-chip-overdue" : "");
-    dlChip.textContent = dl;
-    meta.append(dlChip);
-  }
-  if (goal.subtaskTotal > 0) {
-    const progChip = document.createElement("span");
-    progChip.className = "focus-chip";
-    progChip.textContent = `${goal.subtaskDone}/${goal.subtaskTotal} subtasks`;
-    meta.append(progChip);
-  }
-  if (goal.subtaskReview > 0) {
-    const revChip = document.createElement("span");
-    revChip.className = "focus-chip focus-chip-review";
-    revChip.title = "Subtasks awaiting your review";
-    revChip.textContent = `${goal.subtaskReview} to review`;
-    meta.append(revChip);
-  }
-  titleWrap.append(meta);
-  head.append(titleWrap);
-
-  const score = document.createElement("span");
-  score.className = "focus-score";
-  score.title = "Attention score - higher means it deserves your focus sooner";
-  score.textContent = String(goal.attentionScore);
-  head.append(score);
-
-  card.append(head);
-
-  if (selectedGoalId === goal.id) {
-    card.append(focusGoalBreakdown(goal));
-  }
-  return card;
-}
-
-function focusGoalBreakdown(goal) {
-  const body = document.createElement("div");
-  body.className = "focus-breakdown";
-
-  if (goal.description) {
-    const desc = document.createElement("div");
-    desc.className = "focus-desc";
-    desc.textContent = goal.description;
-    body.append(desc);
-  }
-
-  // "Work on this" - the goal -> session launch the Goals surface was missing.
-  const actions = document.createElement("div");
-  actions.className = "focus-actions";
-  const workBtn = document.createElement("button");
-  workBtn.className = "focus-work-btn";
-  workBtn.textContent = "Work on this";
-  const resolved = resolveProjectForGoal(goal);
-  workBtn.title = resolved
-    ? `Start a fresh session in ${resolved.split(/[\\/]/).filter(Boolean).pop()} with this goal seeded`
-    : "Start a fresh session on this goal (you pick the project)";
-  workBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    workOnGoal(goal);
-  });
-  actions.append(workBtn);
-  body.append(actions);
-
-  const subHead = document.createElement("div");
-  subHead.className = "focus-sub-head";
-  subHead.textContent = goal.subtaskTotal > 0 ? "Subtasks" : "No subtasks yet - break this goal down below.";
-  body.append(subHead);
-
-  if (goal.subtaskTotal > 0) {
-    const ul = document.createElement("ul");
-    ul.className = "focus-subtasks";
-    goal.subtasks.forEach((s) => {
-      const li = document.createElement("li");
-      li.className = "focus-subtask focus-subtask-" + (s.status || "open");
-      const st = document.createElement("span");
-      st.className = "focus-subtask-status";
-      st.textContent = SUBTASK_STATUS_LABEL[s.status] || s.status || "open";
-      const txt = document.createElement("span");
-      txt.className = "focus-subtask-text";
-      txt.textContent = s.text;
-      li.append(st, txt);
-      ul.append(li);
-    });
-    body.append(ul);
-  }
-
-  // Add-a-subtask row: the "break it down further" write. A single click to
-  // add (Enter or the button) — the actual atomic write to todos.json happens
-  // in jot.js. On success the page re-renders from the freshly-read file, so
-  // what shows always reflects the real Jot state, never an optimistic guess.
-  const addRow = document.createElement("div");
-  addRow.className = "focus-add-row";
-  const input = document.createElement("input");
-  input.type = "text";
-  input.className = "focus-add-input";
-  input.placeholder = "Add a subtask to break this goal down…";
-  const btn = document.createElement("button");
-  btn.className = "focus-add-btn";
-  btn.textContent = "Add";
-  const err = document.createElement("div");
-  err.className = "focus-add-err";
-  err.style.display = "none";
-
-  async function submit() {
-    const text = input.value.trim();
-    if (!text) {
-      return;
-    }
-    btn.disabled = true;
-    input.disabled = true;
-    const res = await window.helm.addJotSubtask(goal.id, text);
-    if (res.ok) {
-      // Keep this goal expanded so the new subtask is visible after re-render.
-      selectedGoalId = goal.id;
-      renderFocusPage();
-    } else {
-      err.textContent = res.error || "Failed to add subtask.";
-      err.style.display = "";
-      btn.disabled = false;
-      input.disabled = false;
-      input.focus();
-    }
-  }
-  input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      submit();
-    }
-  });
-  btn.addEventListener("click", submit);
-  addRow.append(input, btn);
-  body.append(addRow, err);
-
-  return body;
-}
-
-// ============================== Goal page (Fas 3 Point 11) ==============================
-// A MINIMAL first-pass UI to trigger and watch an autonomous goal run against
-// the already-built src/lib/goalOrchestrator.js. This is explicitly a draft
-// for Aidin to react to, not a finalized interface — the point is to make the
-// orchestrator testable, not to design its permanent UX.
-//
-// GUARDRAIL: starting a run spawns REAL autonomous claude subprocesses that
-// make real commits in an isolated worktree. It is USER-TRIGGERED ONLY (the
-// Start button below) — nothing here runs on a timer or any automatic event.
-// The orchestrator never pushes/merges, and there is deliberately no push
-// affordance in this pass.
 
 /**
  * One line on the Autopilot page saying what the last housekeeping sweep did,
@@ -14587,7 +14097,7 @@ document.getElementById("settingsGear").innerHTML = GEAR_ICON;
 // counts toward the group so the primary tab stays lit while viewing it. Skills
 // (analysis) and Archive are reached from their own #headerUtilityNav, not
 // the Settings/gear group.
-const DASHBOARD_FACET_PAGES = ["dashboard", "goal", "routines", "focus", "review"];
+const DASHBOARD_FACET_PAGES = ["dashboard", "goal", "routines", "review"];
 
 // Single source of truth for page navigation. Everything (the primary bar,
 // the gear, the sub-nav, and every programmatic jump) routes through here, so
@@ -14676,7 +14186,6 @@ function navigateToPage(page, opts = {}) {
   document.getElementById("chatPage").classList.toggle("hidden", page !== "chat");
   document.getElementById("dashboardPage").classList.toggle("hidden", page !== "dashboard");
   document.getElementById("jotPage").classList.toggle("hidden", page !== "jot");
-  document.getElementById("focusPage").classList.toggle("hidden", page !== "focus");
   document.getElementById("goalPage").classList.toggle("hidden", page !== "goal");
   document.getElementById("lavishPage").classList.toggle("hidden", page !== "lavish");
   document.getElementById("routinesPage").classList.toggle("hidden", page !== "routines");
@@ -14725,9 +14234,7 @@ function navigateToPage(page, opts = {}) {
     renderDashboardPage();
   } else if (page === "jot") {
     renderJotPage();
-  } else if (page === "focus") {
-    renderFocusPage();
-  } else if (page === "goal") {
+    } else if (page === "goal") {
     renderGoalPage();
   } else if (page === "lavish") {
     renderLavishPage();
