@@ -131,6 +131,22 @@ export function reviewRecordProblems(rec) {
       }
     }
   }
+  // A declared check needs somewhere to RUN. reviews:runChecks resolves it as
+  // `check.cwd || rec.projectPath` and refuses to guess when both are missing - which
+  // is right, because a check run in the wrong place fails for the wrong reason. But
+  // nothing stopped a record being WRITTEN without either, so the refusal only ever
+  // surfaced later, as a review row whose checks failed for a reason that looked like
+  // the code (Aidin, 2026-08-04: "End to end test failar på denna i review" - it was
+  // my record, not his app). The condition below is deliberately the same expression
+  // the runner uses, so the two cannot disagree about whether a check is runnable.
+  if (Array.isArray(rec.checks) && rec.checks.length > 0) {
+    const homeless = rec.checks.filter((c) => !String(c?.cwd || "").trim());
+    if (homeless.length > 0 && !String(rec.projectPath || "").trim()) {
+      problems.push(
+        `${homeless.length} check(s) have nowhere to run - set projectPath on the record, or cwd on each check. Without it the check fails for a missing directory, not for a real result.`
+      );
+    }
+  }
   problems.push(...criticalityProblems(rec));
   problems.push(...acceptanceRecordProblems(rec));
   return problems;

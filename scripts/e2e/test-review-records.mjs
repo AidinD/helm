@@ -56,6 +56,11 @@ const complete = (over = {}) => ({
   criticality: "cosmetic",
   // Required since 2026-07-27: the tier that needs no evidence has to be argued for.
   whyNotCritical: "a caret in the composer - a bug here is visible and reversible",
+  // Required since 2026-08-04 whenever the record declares checks: a check needs a
+  // directory to run in. On the base fixture because a real record has one - the
+  // records that lacked it are exactly how a check came to fail for a missing
+  // directory rather than for a result.
+  projectPath: "D:\\Repo\\Tools\\helm",
   ...over,
 });
 
@@ -128,6 +133,37 @@ try {
 
   const leftovers = fs.readdirSync(reviewsDir(metaHome)).filter((f) => f.includes(".tmp"));
   ok(leftovers.length === 0, "atomic write leaves no .tmp files");
+  // --- a declared check must have somewhere to RUN (2026-08-04) --------------
+  // reviews:runChecks resolves the directory as `check.cwd || rec.projectPath` and
+  // refuses to guess when both are missing. Nothing stopped a record being WRITTEN
+  // without either, so the refusal surfaced later as a review row whose checks failed
+  // for a reason that looked like the code. It was my record, not his app (Aidin:
+  // "End to end test failar på denna i review"). The condition asserted here is the
+  // same expression the runner uses, so the two cannot drift apart.
+  const withCheck = (over = {}, checkOver = {}) =>
+    complete({ criticality: "core", checks: [{ label: "suite", cmd: "node scripts/e2e/x.mjs", ...checkOver }], ...over });
+  const homeless = reviewRecordProblems(withCheck({ projectPath: undefined }));
+  ok(homeless.some((p) => /nowhere to run/.test(p)), `a check with no projectPath and no cwd is refused (${homeless.join(" | ") || "accepted"})`);
+  ok(
+    reviewRecordProblems(withCheck({ projectPath: "  " })).some((p) => /nowhere to run/.test(p)),
+    "whitespace is not a path"
+  );
+  ok(reviewRecordProblems(withCheck({ projectPath: "D:\\Repo\\Tools\\helm" })).length === 0, "a record-level projectPath satisfies it");
+  ok(
+    reviewRecordProblems(withCheck({ projectPath: undefined }, { cwd: "D:\\Repo\\Tools\\helm" })).length === 0,
+    "so does a cwd on the check itself - the same either/or the runner applies"
+  );
+  // The requirement must NOT spread to records that declare no checks: a cosmetic item
+  // legitimately has none, and demanding a path from it would make the rule noise.
+  ok(
+    reviewRecordProblems(complete({ criticality: "cosmetic", checks: [], projectPath: undefined })).length === 0,
+    "a record with no checks needs no path"
+  );
+  ok(
+    reviewRecordProblems(complete({ criticality: "cosmetic", projectPath: undefined })).length === 0,
+    "nor does one that omits checks entirely"
+  );
+
   // --- the criticality gradient (Aidin 2026-07-27) ---------------------------
   // "störst effort borde ligga på systemkritiska moment. security issues borde
   // t.ex aldrig slinka igenom, medans en front end bugg är mer acceptabelt."
@@ -243,6 +279,7 @@ try {
     verdict: "stamp",
     summary: "Two declared checks.",
     criticality: "core",
+    projectPath: "D:\Repo\Tools\helm",
     evidence: [],
     notVerified: [],
     testSteps: [{ step: "Run it", expect: "It works" }],
@@ -351,6 +388,7 @@ try {
   writeReviewRecord(metaHome, complete({
     taskId: HEADID,
     criticality: "core",
+    projectPath: "D:\Repo\Tools\helm",
     checks: [{ label: "suite", cmd: "node -e 0" }],
     projectPath: repo,
   }));
@@ -554,6 +592,7 @@ try {
   writeReviewRecord(metaHome, complete({
     taskId: BIND,
     criticality: "core",
+    projectPath: "D:\Repo\Tools\helm",
     checks: [{ label: "e2e suite", cmd: "node scripts/e2e/test-real-thing.mjs" }],
   }));
   // A stamp for a label the record doesn't declare is refused outright.
