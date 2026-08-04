@@ -5833,3 +5833,38 @@ usage in a window only goes up.
 Rejected: estimating the weekly percentage from Helm's own usage log - it knows what IT spent,
 but not the subscription's weekly allowance, so it has a numerator and no denominator.
 That is why the Fleet-spend fallback shows tracked dollars and refuses to render a percentage.
+
+## 2026-08-04 - Focus is removed, goal RUNS stay
+
+**Decision: delete the Focus page, the Goals widget and the Work/Private toggle. Keep every
+part of the goal-run machinery.**
+
+The captain: "Jag använder inte goals widgeten, i nuvarande form tycker jag inte att den är
+användbar. Vi behöver diskutera hela focus spåret om det ska bort eller anpassas."
+
+The reason to remove rather than reshape is not that the widget was badly built.
+It is that Focus was a SECOND place to write down what he wants to achieve, competing with the
+Jot board he already works from every day - and two sources for one thing always lose to the
+one nearer his hand.
+That is the same defect class that produced the stuck amber frame and the double-reported
+runs, only at the level of a whole feature: the losing copy does not announce itself, it just
+quietly goes stale.
+Reshaping it would have meant guessing at what question it should answer; if a "what am I
+working towards" surface is missed later, the right answer is probably a widget over Jot's own
+epics, not a parallel list.
+
+**What stayed, deliberately: goal runs.**
+Those are execution, not planning - the autopilot, the run history, and the `projectPath` the
+review filter's repo mapping now depends on.
+They already live under their project's second mate in the Fleet, which is where he looks.
+A deletion that quietly took them with it would have been far worse than the widget he was
+ignoring, so most of the test is about what must SURVIVE rather than what must be gone.
+
+**The removal script ate three declarations that had nothing to do with Focus**, because a
+function's block was taken as everything up to the next `function`, and top-level `let`s sat
+between them.
+`node --check` passed on all three - a missing declaration is valid syntax - and the app only
+broke when a page that referenced one was actually drawn.
+Booting the app and rendering every remaining view is what caught it, which is the argument
+for that test existing at all: for a deletion, "it still parses" and "it still works" are
+completely different claims.
