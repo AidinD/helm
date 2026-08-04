@@ -4662,6 +4662,38 @@ button.primary {
   max-width: 360px;
   width: calc(100% - 48px);
 }
+
+/* The text-entry variant (customPrompt). Wider than a yes/no box because what goes
+   in it is a sentence or two of feedback that lands on a Jot card, and a reason
+   written in a cramped box gets written short. */
+.confirm-box.prompt-box {
+  max-width: 480px;
+}
+
+.prompt-field {
+  width: 100%;
+  margin: 12px 0 4px;
+  padding: 8px 10px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font: inherit;
+  font-size: 13.5px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.prompt-field:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* Submitting empty says so instead of closing - the dialog exists because a button
+   that fails in silence reads as the app ignoring you. */
+.prompt-field-empty {
+  border-color: var(--danger);
+}
 .confirm-msg {
   color: var(--text);
   font-size: 13.5px;
