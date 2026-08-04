@@ -5426,6 +5426,51 @@ const COMPOSER_MIN_PX = 34;
 const COMPOSER_MAX_SHARE = 0.45;
 const COMPOSER_DRAG_MAX_SHARE = 0.85;
 
+/**
+ * What a newline should do when the caret sits on a list item.
+ *
+ * Returns { from, to, text } - the range to replace and what to put there - or
+ * null when the line is not a list item, in which case the browser's own newline
+ * is exactly right and nothing should be intercepted.
+ *
+ * Three behaviours, all of them what the desktop app and every editor do:
+ *  - continue the list, carrying the indentation so a nested list stays nested;
+ *  - INCREMENT a numbered marker rather than repeating it (the part Aidin named);
+ *  - on an item with nothing typed in it yet, remove the marker instead of adding
+ *    another one - otherwise leaving a list means deleting by hand, and pressing
+ *    Enter twice would leave a stray bullet behind.
+ *
+ * A checkbox item continues UNCHECKED even from a checked one: the next thing you
+ * write is a new task, not a done one.
+ */
+const LIST_ITEM_RE = /^([ \t]*)([-*+]|\d+[.)])([ \t]+)(\[[ xX]\][ \t]+)?(.*)$/;
+function listContinuation(value, caret, caretEnd = caret) {
+  if (typeof value !== "string" || typeof caret !== "number" || caret !== caretEnd) {
+    return null; // a selection is a replace, not a list continuation
+  }
+  const lineStart = value.lastIndexOf("\n", caret - 1) + 1;
+  const m = LIST_ITEM_RE.exec(value.slice(lineStart, caret));
+  if (!m) {
+    return null;
+  }
+  const [, indent, marker, gap, checkbox, content] = m;
+  if (!content.trim()) {
+    // Empty item: drop the marker. The blank line stays, so the caret ends up
+    // where a plain newline would have put it.
+    return { from: lineStart, to: caret, text: "\n" };
+  }
+  let nextMarker = marker;
+  const num = /^(\d+)([.)])$/.exec(marker);
+  if (num) {
+    nextMarker = `${Number(num[1]) + 1}${num[2]}`;
+  }
+  return {
+    from: caret,
+    to: caret,
+    text: `\n${indent}${nextMarker}${gap}${checkbox ? "[ ] " : ""}`,
+  };
+}
+
 function autoSizeComposer(promptEl) {
   if (!promptEl) {
     return;
@@ -6172,6 +6217,32 @@ function paneComposerEl(index) {
         ? `→ Auto-picking ${modelLabel} · ${suggestion.effort} — ${suggestion.reason}`
         : `Heuristic guess: ${modelLabel} · ${suggestion.effort} — ${suggestion.reason} (using your manual pick instead)`;
     }, 300);
+  });
+
+  // A new line inside a list continues the list (task bd0900eb: "i prompten på
+  // claude desktop appen kan man göra ordentliga bulletlists som då automatiskt
+  // incrementerar"). Shift+Enter is the newline key here - Enter sends - so this
+  // hangs off Shift+Enter and cannot affect sending.
+  promptEl.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" || !e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) {
+      return;
+    }
+    const step = listContinuation(promptEl.value, promptEl.selectionStart, promptEl.selectionEnd);
+    if (!step) {
+      return; // not in a list - let the browser insert its own newline
+    }
+    e.preventDefault();
+    promptEl.setSelectionRange(step.from, step.to);
+    // insertText, not a direct value assignment: assigning to .value wipes the
+    // textarea's native undo stack, so one Ctrl+Z would throw away everything
+    // typed rather than the marker just inserted.
+    if (!document.execCommand("insertText", false, step.text)) {
+      const before = promptEl.value.slice(0, step.from);
+      const after = promptEl.value.slice(step.to);
+      promptEl.value = before + step.text + after;
+      promptEl.setSelectionRange(step.from + step.text.length, step.from + step.text.length);
+    }
+    autoSizeComposer(promptEl);
   });
 
   // Enter sends; Shift+Enter inserts a newline (matches the desktop app).

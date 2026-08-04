@@ -1,0 +1,161 @@
+// A new line inside a list continues the list, and a numbered one counts up.
+//
+// Task bd0900eb: "i prompten på claude desktop appen kan man göra ordentliga
+// bulletlists som då automatiskt incrementerar etc. Jag vill ha stöd för det här
+// också."
+//
+// Driven in the real app, twice over: the rule is checked over the real function,
+// and then the real textarea is typed into with real Shift+Enter events - because
+// the thing that must work is the box he types in, not a helper that returns the
+// right object. Enter SENDS in Helm and Shift+Enter is the newline key, so the test
+// also pins that plain Enter is left completely alone.
+//
+// Run:  node scripts/e2e/test-composer-list-continuation.mjs
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+let exit = 0;
+let app = null;
+const ok = (c, m) => {
+  console.log(`${c ? "OK  " : "FAIL"} - ${m}`);
+  if (!c) {
+    exit = 1;
+  }
+};
+
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "helm-list-"));
+process.env.HELM_CONFIG_PATH = path.join(tmp, "config.json");
+process.env.HELM_META_HOME_OVERRIDE = path.join(tmp, "meta-home");
+process.env.HELM_E2E_PORT = process.env.HELM_E2E_PORT || "9489";
+const { launch } = await import("./harness.mjs");
+
+try {
+  app = await launch();
+  await app.waitForSelector("#pageToggle", 30000, { visible: true });
+  await app.eval(`(() => { navigateToPage("chat"); return true; })()`);
+  await app.waitForSelector("#chatPage .composer-shell textarea", 10000);
+
+  // --- the rule, over the real function ------------------------------------
+  const rule = await app.eval(`(() => {
+    // "|" marks the caret in each case below.
+    const at = (s) => {
+      const caret = s.indexOf("|");
+      return listContinuation(s.replace("|", ""), caret);
+    };
+    const applied = (s) => {
+      const caret = s.indexOf("|");
+      const v = s.replace("|", "");
+      const step = listContinuation(v, caret);
+      if (!step) {
+        return null;
+      }
+      return JSON.stringify(v.slice(0, step.from) + step.text + v.slice(step.to));
+    };
+    return {
+      dash: applied("- milk|"),
+      star: applied("* milk|"),
+      plus: applied("+ milk|"),
+      numbered: applied("1. first|"),
+      numberedNine: applied("9. ninth|"),
+      paren: applied("3) third|"),
+      nested: applied("    - deep|"),
+      tabbed: applied("\\t- tabbed|"),
+      checkbox: applied("- [ ] todo|"),
+      checked: applied("- [x] done|"),
+      emptyItem: applied("- |"),
+      emptyNumbered: applied("1. |"),
+      emptyNested: applied("  - |"),
+      plain: at("just a sentence|"),
+      dashInProse: at("a - b|"),
+      selection: (() => {
+        const v = "- milk";
+        return listContinuation(v, 2, 5);
+      })(),
+      midLine: applied("- mi|lk"),
+      afterBlank: applied("- milk\\n\\nnot a list|"),
+    };
+  })()`);
+
+  ok(rule.dash === JSON.stringify("- milk\n- "), `a dash list continues (${rule.dash})`);
+  ok(rule.star === JSON.stringify("* milk\n* ") && rule.plus === JSON.stringify("+ milk\n+ "), `so do * and + (${rule.star}, ${rule.plus})`);
+  ok(rule.numbered === JSON.stringify("1. first\n2. "), `a numbered list COUNTS UP - the part he named (${rule.numbered})`);
+  ok(rule.numberedNine === JSON.stringify("9. ninth\n10. "), `including across a digit (${rule.numberedNine})`);
+  ok(rule.paren === JSON.stringify("3) third\n4) "), `and keeps the delimiter it was written with (${rule.paren})`);
+  ok(rule.nested === JSON.stringify("    - deep\n    - "), `indentation is carried, so a nested list stays nested (${rule.nested})`);
+  ok(rule.tabbed === JSON.stringify("\t- tabbed\n\t- "), `tabs count as indentation too (${rule.tabbed})`);
+  ok(rule.checkbox === JSON.stringify("- [ ] todo\n- [ ] "), `a checklist continues as a checklist (${rule.checkbox})`);
+  ok(rule.checked === JSON.stringify("- [x] done\n- [ ] "), `and the next box is UNCHECKED - the next thing you write is a new task (${rule.checked})`);
+
+  ok(rule.emptyItem === JSON.stringify("\n"), `an empty item drops its marker instead of adding another (${rule.emptyItem})`);
+  ok(rule.emptyNumbered === JSON.stringify("\n"), `same for a numbered one (${rule.emptyNumbered})`);
+  ok(rule.emptyNested === JSON.stringify("\n"), `and a nested one (${rule.emptyNested})`);
+
+  ok(rule.plain === null, "an ordinary line is not touched - the browser's own newline is right there");
+  ok(rule.dashInProse === null, `a dash mid-sentence is not a list (${JSON.stringify(rule.dashInProse)})`);
+  ok(rule.selection === null, "a selection is a replace, not a continuation");
+  ok(rule.midLine === JSON.stringify("- mi\n- lk"), `splitting an item mid-word still continues (${rule.midLine})`);
+  ok(rule.afterBlank === null, "only the caret's OWN line decides - an earlier list does not make prose a list");
+
+  // --- the surface: the real textarea, real Shift+Enter ---------------------
+  const typed = await app.eval(`(async () => {
+    const ta = document.querySelector("#chatPage .composer-shell textarea");
+    ta.focus();
+    ta.value = "";
+    const shiftEnter = () => ta.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true, cancelable: true }));
+    const type = (s) => {
+      const at = ta.selectionStart;
+      ta.value = ta.value.slice(0, at) + s + ta.value.slice(ta.selectionEnd);
+      ta.setSelectionRange(at + s.length, at + s.length);
+    };
+    type("- milk");
+    shiftEnter();
+    type("bread");
+    shiftEnter();
+    const afterTwo = ta.value;
+    shiftEnter(); // empty item -> leave the list
+    const afterExit = ta.value;
+    type("1. one");
+    shiftEnter();
+    type("two");
+    shiftEnter();
+    const numbered = ta.value;
+
+    // Plain Enter must still SEND, not make a list. If this ever stops being true
+    // the whole feature is a regression, so it is asserted here rather than assumed.
+    ta.value = "- milk";
+    ta.setSelectionRange(6, 6);
+    const plain = new KeyboardEvent("keydown", { key: "Enter", shiftKey: false, bubbles: true, cancelable: true });
+    ta.dispatchEvent(plain);
+    return { afterTwo, afterExit, numbered, plainAddedNothing: ta.value === "- milk" || ta.value === "", plainPrevented: plain.defaultPrevented };
+  })()`);
+
+  ok(typed.afterTwo === "- milk\n- bread\n- ", `typing it for real produces the list (${JSON.stringify(typed.afterTwo)})`);
+  ok(typed.afterExit === "- milk\n- bread\n\n", `and one more newline leaves the list cleanly (${JSON.stringify(typed.afterExit)})`);
+  ok(/1\. one\n2\. two\n3\. $/.test(typed.numbered), `numbering counts up as typed (${JSON.stringify(typed.numbered.slice(-24))})`);
+  ok(typed.plainPrevented, "plain Enter is still handled by the send path");
+  ok(typed.plainAddedNothing, "and never inserts a list marker");
+
+  const errors = app.getConsoleErrors();
+  ok(errors.length === 0, `no console errors (${errors.length})`);
+  for (const e of errors) {
+    console.log("   ", e.text.slice(0, 160));
+  }
+} catch (e) {
+  exit = 1;
+  console.error("ERR", e.stack || e.message);
+} finally {
+  try {
+    await app?.close();
+  } catch {}
+  try {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  } catch {}
+}
+
+console.log(
+  exit === 0
+    ? "VERIFY OK: Shift+Enter continues a list, numbering counts up, indentation and checkboxes carry, an empty item leaves the list, and plain Enter still sends."
+    : "VERIFY FAILED."
+);
+process.exit(exit);
