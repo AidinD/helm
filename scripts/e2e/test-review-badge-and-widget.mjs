@@ -81,6 +81,51 @@ ok(/navigateToPage\("review"\)/.test(widget), "it navigates to the review page -
 ok(/reviewAttentionCount\(tally\)/.test(widget), "and uses the SAME count as the badge, so the two cannot disagree");
 ok(/if \(n === 0\) \{\s*continue;/.test(widget), "zero-value bands are skipped - a row of zeroes is noise");
 
+// --- one count, not three (task daa4245f) -----------------------------------
+// "är 12 hårdkodat i review widgeten? något säger 12 men det är bara 1" - nothing was
+// hardcoded and nothing was miscounted. The page recomputes its numbers from the rows it
+// SHOWS (its repo filter holds back everything with no code to review), while the widget and
+// the badge printed the backend's tally of the WHOLE queue. Two counts of two different
+// things, presented as the same number.
+const filterFns = new Function(
+  `let reviewOnlyRepoRooted = true, reviewProjectFilter = null;
+   const bandOf = (r) => r.band || r.verdict;
+   ${grab("visibleReviewRows")}
+   ${grab("reviewTallyFromRows")}
+   return { visibleReviewRows, reviewTallyFromRows, setFilter: (repo, proj) => { reviewOnlyRepoRooted = repo; reviewProjectFilter = proj; } };`
+)();
+
+// His actual board: one row in a repo, eleven that are not.
+const board = [
+  { repoPath: "D:\\Repo\\Tools\\helm", category: "Helm", band: "judgment" },
+  ...Array.from({ length: 11 }, (_, i) => ({ repoPath: null, category: `life-${i}`, band: "unrecorded" })),
+];
+const shown = filterFns.visibleReviewRows(board);
+ok(shown.length === 1, `the repo filter leaves exactly the row the page shows (${shown.length})`);
+ok(filterFns.reviewTallyFromRows(shown).total === 1, "and the tally over those rows is 1, not 12");
+ok(
+  filterFns.reviewTallyFromRows(shown).judgment === 1 && filterFns.reviewTallyFromRows(shown).unrecorded === 0,
+  "the bands follow the same rows, so no band can be counted from a set the page is not showing"
+);
+filterFns.setFilter(false, null);
+ok(filterFns.visibleReviewRows(board).length === 12, "turning the filter off shows all twelve - the held-back rows are real work, not discarded");
+filterFns.setFilter(true, "Helm");
+ok(filterFns.visibleReviewRows(board).length === 1, "a project filter narrows it the same way for every surface");
+ok(filterFns.reviewTallyFromRows([]).total === 0, "an empty set tallies to zero rather than NaN");
+
+// All three surfaces must go through those two functions, or they drift apart again.
+ok(/const rows = visibleReviewRows\(allRows\);/.test(rSrc), "the page filters through the shared function");
+ok(/const tally = reviewTallyFromRows\(rows\);/.test(rSrc), "and tallies through the shared one");
+ok(
+  /res\?\.rows/.test(widget) && /visibleReviewRows\(/.test(widget) && /reviewTallyFromRows\(/.test(widget),
+  "the widget counts the rows the page would show, not the whole queue"
+);
+ok(/reviewTallyFromRows\(visibleReviewRows\(res\.rows\)\)/.test(paint), "and so does the badge when it fetches its own");
+ok(!/const tally = res\?\.tally \|\| \{\};/.test(widget), "the widget's old unfiltered tally is gone, not just bypassed");
+// What the filter holds back has to be SAID. A number that quietly shrank from 12 to 1 is
+// how the two surfaces came to disagree in the first place.
+ok(/held back by your filter/.test(widget), "and the widget states how many rows the filter is holding back");
+
 for (const cls of [".wd-review", ".wd-review-head", ".wd-review-sub", ".wd-review-line", ".wd-review-val"]) {
   ok(css.includes(cls), `${cls} is styled`);
 }

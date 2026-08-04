@@ -1236,6 +1236,32 @@ let reviewProjectFilter = null; // a category name, or null for every project
 const bandOf = (r) => r.band || r.verdict;
 
 /**
+ * The rows the Review page would actually SHOW, and the tally of them.
+ *
+ * Both at module scope, and both used by the page AND the dashboard widget, because the two
+ * disagreed: the page recomputes its numbers from the rows it displays (deliberately - a
+ * summary describing a set the page is not showing is worse than none), while the widget was
+ * printing the backend's unfiltered tally. So the widget said "12 need you" over a page with
+ * one row on it (the captain, task daa4245f: "något säger 12 men det är bara 1"). Nothing was
+ * miscounted; there were simply two counts of two different things, which is the same defect
+ * class as the amber frame and the double-reported runs.
+ */
+function visibleReviewRows(allRows) {
+  return (allRows || []).filter(
+    (r) => (!reviewOnlyRepoRooted || r.repoPath) && (!reviewProjectFilter || r.category === reviewProjectFilter)
+  );
+}
+
+function reviewTallyFromRows(rows) {
+  const tally = { total: rows.length, judgment: 0, stamp: 0, unrecorded: 0, incomplete: 0, unconfirmed: 0 };
+  for (const r of rows) {
+    const b = bandOf(r);
+    tally[b] = (tally[b] || 0) + 1;
+  }
+  return tally;
+}
+
+/**
  * Project chips plus the repo toggle.
  *
  * Built from the WHOLE queue, not the filtered view, so selecting a project never
@@ -1317,17 +1343,12 @@ async function renderReviewPage() {
   const res = await window.helm.listReviews();
   const allRows = res?.rows || [];
   const nonRepoCount = allRows.filter((r) => !r.repoPath).length;
-  const rows = allRows.filter(
-    (r) => (!reviewOnlyRepoRooted || r.repoPath) && (!reviewProjectFilter || r.category === reviewProjectFilter)
-  );
+  const rows = visibleReviewRows(allRows);
   // Counted from the rows actually SHOWN, not from the whole queue: a summary line that
   // described a set the page is not displaying is worse than no summary, because it is
-  // the line a skimming reader trusts.
-  const tally = { total: rows.length, judgment: 0, stamp: 0, unrecorded: 0, incomplete: 0, unconfirmed: 0 };
-  for (const r of rows) {
-    const b = bandOf(r);
-    tally[b] = (tally[b] || 0) + 1;
-  }
+  // the line a skimming reader trusts. The dashboard widget calls the same two functions,
+  // so it cannot describe this board differently.
+  const tally = reviewTallyFromRows(rows);
 
   const frag = document.createDocumentFragment();
   const topbar = document.createElement("div");
@@ -1584,7 +1605,11 @@ async function paintReviewBadge(tally = null) {
       // A COUNT can be a few seconds old; recomputing costs a git spawn per project in
       // the main process (up to 2 seconds, measured) and this runs on a 60s tick.
       const res = await window.helm.listReviews({ maxAgeMs: 20_000 });
-      t = res?.tally || null;
+      // From the rows the page would SHOW, like the page and the widget - not res.tally,
+      // which counts the whole queue. The page passes its own filtered tally in, so a badge
+      // that fetched its own unfiltered one changed value depending on which surface had
+      // painted it last (task daa4245f).
+      t = res?.rows ? reviewTallyFromRows(visibleReviewRows(res.rows)) : res?.tally || null;
     } catch {
       return; // leave whatever is there rather than clearing a real count on a hiccup
     }
@@ -4091,6 +4116,19 @@ function openSessionInPane(session, paneIndex, _ignored) {
  * When in doubt a pending turn is kept, which can in principle show something twice - the
  * right way round to be wrong, since a duplicate is visible and self-corrects on the next
  * reload while a deleted prompt does neither.
+ *
+ * WHY THIS IS NOT GENERALISED TO "keep any trailing turn the file lacks" (2026-08-04, while
+ * chasing task bee52369 - "ibland försvinner det senaste jag och claude outputat"):
+ *
+ * That rule looks stronger and is wrong. A rewind legitimately SHORTENS the transcript, and a
+ * pane whose file came back short cannot tell "the file is behind" from "these turns were cut
+ * on purpose" by shape alone - so the generalisation resurrects deliberately removed turns,
+ * which the rewind case in test-reload-keeps-sent-prompt.mjs catches immediately.
+ *
+ * The premise behind wanting it was also wrong: once the file HAS caught up, pane.turns holds
+ * the file's own objects and there is nothing local left to lose, so a later short reload is a
+ * deliberate act (a rewind, a compaction) rather than a race. The pending flag covers exactly
+ * the window where the app holds something the file does not, which is the whole exposure.
  */
 const RELOAD_MATCH_WINDOW = 60;
 const PENDING_PER_SESSION_CAP = 20;
@@ -10646,7 +10684,13 @@ async function paintReviewWidget(el = document.getElementById("widgetReviewBody"
   } catch {
     return; // leave what is there; never blank a count on a hiccup
   }
-  const tally = res?.tally || {};
+  // The same rows, filter and tally the Review page uses - not res.tally, which counts the
+  // WHOLE queue including everything the page's repo filter holds back. That is how this
+  // widget came to say "12 need you" above a page showing one row (task daa4245f).
+  const allRows = res?.rows || [];
+  const rows = visibleReviewRows(allRows);
+  const tally = reviewTallyFromRows(rows);
+  const hidden = allRows.length - rows.length;
   const needs = reviewAttentionCount(tally);
   el.textContent = "";
 
@@ -10659,9 +10703,21 @@ async function paintReviewWidget(el = document.getElementById("widgetReviewBody"
   // the same board differently.
   sub.textContent =
     (tally.total || 0) === 0
-      ? "Move something to review on the Jot board and it lands here."
+      ? hidden > 0
+        ? `Nothing in a repo is waiting. ${hidden} held back by your filter.`
+        : "Move something to review on the Jot board and it lands here."
       : `${tally.stamp || 0} ready to stamp · ${tally.total || 0} in review`;
   el.append(head, sub);
+
+  // What the filter holds back is stated rather than silently missing: the number is real
+  // work, and a count that just quietly shrank is the reason the two surfaces disagreed in
+  // the first place. Clicking through goes to the page where the toggle lives.
+  if (hidden > 0 && (tally.total || 0) > 0) {
+    const held = document.createElement("div");
+    held.className = "wd-review-sub";
+    held.textContent = `${hidden} more held back by your filter`;
+    el.append(held);
+  }
 
   // The breakdown, only for the bands that are non-zero - a row of zeroes is noise.
   const BANDS = [
