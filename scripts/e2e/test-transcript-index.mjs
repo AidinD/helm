@@ -6,7 +6,7 @@
 // Electron main process. Callers loop over sessions (session:liveSubAgents, the status
 // classifier, the context-size estimate), so the cost multiplies.
 //
-// It also explains "mycket segare an tidigare" with no code having changed: the cost is
+// It also explains "mycket segare än tidigare" with no code having changed: the cost is
 // proportional to the NUMBER OF PROJECT DIRECTORIES, and that grows every day. 419 MB
 // across 1155 files in 292 directories here.
 //
