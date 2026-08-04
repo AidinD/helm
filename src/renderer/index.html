@@ -59,20 +59,23 @@
       <button data-page="review">Review<span class="attention-badge hidden" id="reviewBadge"></span></button>
     </div>
 
-    <div class="layout hidden" id="chatPage">
-      <nav class="sidebar" id="sidebar">
-        <div class="sidebar-head-row">
-          <button id="newChat" class="new-chat-btn"><span class="nc-full">+ New chat</span><span class="nc-mini">+</span></button>
-          <button id="sidebarCollapse" class="icon-btn" title="Collapse sidebar" aria-label="Collapse sidebar">‹</button>
-        </div>
-        <div class="sidebar-toolbar">
-          <input type="text" id="search" class="search" placeholder="Search sessions…" />
-          <button id="collapseAll" class="icon-btn" title="Collapse / expand all categories">⊟</button>
-          <button id="newCategory" class="icon-btn" title="New category">+</button>
-        </div>
-        <div id="sidebarBody"></div>
-      </nav>
+    <!--
+      Chat is the workspace alone. The session sidebar - the list, its search, its
+      categories and the "+ New chat" button - was removed on 2026-08-04 (task
+      22f85eda, the captain: "Vi borde ta bort session vyn från chat", choosing "hela
+      sidopanelen bort"). Sessions are reached through Ctrl+K and the Dashboard's
+      own queue and Fleet, which is where he actually looks; a fresh chat starts
+      from the Dashboard's "New session" section or the palette.
 
+      What the panel carried has NOT been dropped with it: rename and archive
+      already existed on a session's Fleet row, "Summarize & carry over" was moved
+      there in the same change, "Move to category" is gone on purpose (it only
+      encouraged long-lived sessions, which this app is built against), and
+      "Remove from Helm" is gone as a second, unexplainable way to hide a session -
+      archiving covers it, and anything already hidden is still restorable from the
+      Archive page.
+    -->
+    <div class="layout hidden" id="chatPage">
       <div class="workspace" id="workspace"></div>
     </div>
 
