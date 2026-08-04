@@ -2129,12 +2129,46 @@ body.advanced .row-jot {
   /* Input, raised with the output above - 12.5px was the smallest text in the app,
      and the one thing he types into. */
   font-size: 14px;
-  /* Draggable, and sized by autoSizeComposer. `resize: none` was why a long
-     prompt could only be read two lines at a time. Vertical only - horizontal
-     would break out of the shell. */
-  resize: vertical;
+  /* Sized by autoSizeComposer, and resized by dragging the shell's top edge
+     (.composer-grip). The native `resize: vertical` corner grip is deliberately
+     gone: it was a small target in the wrong corner, and it left no signal, so
+     the size had to be inferred from a mouseup afterwards (task dce9946c). */
+  resize: none;
   min-height: 34px;
   padding: 2px 2px 4px;
+}
+
+/* The resize handle: the composer's whole top edge. Sits inside the shell's
+   rounded top so it reads as part of the box rather than a bar above it, and only
+   shows its line on hover - a permanently visible grabber across the width would
+   be the loudest thing in a quiet composer. */
+.composer-grip {
+  height: 7px;
+  margin: -4px -6px 2px;
+  cursor: ns-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none; /* or a drag scrolls the transcript on a touch screen */
+}
+
+.composer-grip::after {
+  content: "";
+  width: 34px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--border);
+  opacity: 0;
+  transition: opacity 0.1s ease;
+}
+
+.composer-grip:hover::after,
+.composer-grip.dragging::after {
+  opacity: 1;
+}
+
+.composer-grip.dragging::after {
+  background: var(--accent);
 }
 
 .composer-shell textarea:focus {
