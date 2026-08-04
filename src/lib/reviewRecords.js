@@ -654,6 +654,12 @@ export function gauntletStatus(rec, metaHome = null, { head = undefined, codeCha
     const run = runs.find((r) => r.label === label) || null;
     const forced = passForcingReason(c?.cmd);
     let state;
+    // WHY it is stale, not just that it is. Four quite different situations collapsed into
+    // one "stale", and the card printed a single explanation for all of them - so a run that
+    // went green on an UNCOMMITTED tree was reported as "ran before the last change", which
+    // is simply not what happened (Aidin, task d6b33767). A reason the reader cannot act on
+    // is worse than no reason, because it sends them looking in the wrong place.
+    let staleReason = null;
     if (seenLabels.has(label)) {
       // Duplicate labels cannot be scored apart: runs are keyed by label, so the
       // second stamp overwrites the first and a failure disappears.
@@ -683,23 +689,27 @@ export function gauntletStatus(rec, metaHome = null, { head = undefined, codeCha
       state = "unverified";
     } else if (run.ranAt < updatedAt) {
       state = "stale";
+      staleReason = "ran before the record was last changed";
     } else if (run.headDirty === true) {
       // The pass was earned on an uncommitted tree, so the recorded sha does not
       // describe what actually ran and nothing can tell whether the code has moved
       // since. This was recorded and then never read: "fix it, don't commit, re-run
       // nothing" kept an old green.
       state = "stale";
+      staleReason = "ran on uncommitted changes";
     } else if (head !== undefined && head !== null && run.head && run.head !== head && codeChanged(run.head, head)) {
       // Ran against a different commit. The code moved after the pass, which is the
       // ordinary second-lap case: sent back, fixed, returned to review, old green
       // still on the card.
       state = "stale";
+      staleReason = "the code changed after it ran";
     } else if (head !== undefined && head !== null && !run.head) {
       // The current commit is known but the run recorded none, so it cannot be
       // compared. A record could otherwise DECLINE pinning (put cwd on the check and
       // omit projectPath) and thereby never go stale - the same hole the pin closes,
       // reached from the other side.
       state = "stale";
+      staleReason = "no commit was recorded for the run";
     } else if (run.exitCode === 0) {
       // Derived from the exit code, never from run.ok - a boolean in a file the
       // author writes is worth nothing, and it was trusted for exactly that reason.
@@ -714,6 +724,7 @@ export function gauntletStatus(rec, metaHome = null, { head = undefined, codeCha
       // A command that cannot fail is not a check, however green it goes.
       passForced: forced,
       state,
+      staleReason,
       exitCode: run && typeof run.exitCode === "number" ? run.exitCode : null,
       ranAt: run && typeof run.ranAt === "number" ? run.ranAt : null,
       tail: run?.tail || null,

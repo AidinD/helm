@@ -38,7 +38,7 @@ import {
   pruneScheduledPrompts,
   quotaResetFireAt,
 } from "./lib/scheduledPrompts.js";
-import { buildReviewQueue, listReviewRecords, reviewQueueTally, readReviewRecord, recordCheckRun } from "./lib/reviewRecords.js";
+import { buildReviewQueue, listReviewRecords, reviewQueueTally, readReviewRecord, recordCheckRun, gauntletStatus, currentHead, codeChangedBetween } from "./lib/reviewRecords.js";
 import { listHandoffCategories, writeHandoff, readHandoff, planHandoffFiling, handoffPath } from "./lib/handoffStore.js";
 import { classifySessionStatus, classifyHandoffCategory, expectsUserInputHeuristic, estimateSessionContextTokens, compactSession, getTranscriptSize, triageAutoTask } from "./lib/orchestratorHelper.js";
 import { savePastedImage, prunePastedImages } from "./lib/images.js";
@@ -5468,6 +5468,26 @@ ipcMain.handle("reviews:runChecks", async (_event, { taskId } = {}) => {
     // results that were never written.
     stored: unstored.length === 0,
     storeError: unstored.length > 0 ? unstored[0].storeError : null,
+    // The card's OWN verdict on the run that was just stored, recomputed here.
+    //
+    // Exit codes and admissibility are different questions, and the app answered them
+    // separately: the toast said "All checks passed" from the exit codes while the card
+    // refused to count the run and still read "Checks not confirmed (0/1 - 1 stale)"
+    // (Aidin, task d6b33767: "Sager all checks passed men visar inte det pa kortet").
+    // Both were right and they contradicted each other, which is worse than either being
+    // wrong. Returning the gauntlet lets the toast say what the card is about to say.
+    gauntlet: (() => {
+      const after = readReviewRecord(metaHome, taskId);
+      if (!after) {
+        return null;
+      }
+      const projectPath = after.projectPath || null;
+      const head = projectPath ? currentHead(projectPath)?.sha || null : null;
+      return gauntletStatus(after, metaHome, {
+        head,
+        codeChanged: (from, to) => (projectPath ? codeChangedBetween(projectPath, from, to) : true),
+      });
+    })(),
   };
 });
 
