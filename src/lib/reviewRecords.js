@@ -139,6 +139,26 @@ export function reviewRecordProblems(rec) {
   // the code (Aidin, 2026-08-04: "End to end test failar på denna i review" - it was
   // my record, not his app). The condition below is deliberately the same expression
   // the runner uses, so the two cannot disagree about whether a check is runnable.
+  // A check runs through `spawn(cmd, { shell: true })`, which on Windows is
+  // cmd.exe. `VAR=1 node foo.mjs` is Unix shell syntax; cmd.exe reads the whole
+  // `VAR=1` as the name of a program to run and fails with "not recognized as an
+  // internal or external command". The check then shows up red for a reason that
+  // has nothing to do with the work it was supposed to vouch for.
+  //
+  // Refused at WRITE time rather than left to fail at run time, for the same
+  // reason as the missing-cwd rule above: Aidin met this as "ett test failar" on a
+  // card whose code was fine, and the only way to find out why was to read the
+  // tail of a shell error. Pass the flag the script itself supports, or set the
+  // variable inside the command (`cmd /c "set VAR=1 && node ..."`).
+  if (Array.isArray(rec.checks)) {
+    const unixEnvPrefix = rec.checks.filter((c) => /^\s*[A-Za-z_][A-Za-z0-9_]*=[^\s]*\s+\S/.test(String(c?.cmd || "")));
+    if (unixEnvPrefix.length > 0) {
+      const first = String(unixEnvPrefix[0].cmd).trim().split(/\s+/)[0];
+      problems.push(
+        `check "${unixEnvPrefix[0].label}" starts with the Unix env-var prefix \`${first}\` - checks run through cmd.exe on Windows, which reads that as a program name and fails before your test starts. Use a flag the script accepts, or set the variable inside the command.`
+      );
+    }
+  }
   if (Array.isArray(rec.checks) && rec.checks.length > 0) {
     const homeless = rec.checks.filter((c) => !String(c?.cwd || "").trim());
     if (homeless.length > 0 && !String(rec.projectPath || "").trim()) {

@@ -164,6 +164,31 @@ try {
     "nor does one that omits checks entirely"
   );
 
+  // --- a check must be runnable in the shell that runs it (2026-08-04) --------
+  // Same failure mode as the missing directory above, one layer down: checks are
+  // spawned with `shell: true`, which on Windows is cmd.exe, and `VAR=1 node x.mjs`
+  // is Unix syntax. cmd.exe reads `VAR=1` as a program name and fails before the
+  // test starts. Aidin met this as "ett test failar" on a card whose code was fine -
+  // my own record had declared exactly that command.
+  const envPrefixed = reviewRecordProblems(withCheck({}, { cmd: "HELM_LIVE_CLI_TESTS=1 node scripts/e2e/x.mjs" }));
+  ok(
+    envPrefixed.some((p) => /Unix env-var prefix/.test(p)),
+    `a check with a Unix env-var prefix is refused at write time (${envPrefixed.join(" | ") || "accepted"})`
+  );
+  ok(
+    envPrefixed.some((p) => /HELM_LIVE_CLI_TESTS=1/.test(p)),
+    "and the message quotes the offending prefix, so the fix is obvious without reading a shell error"
+  );
+  ok(
+    reviewRecordProblems(withCheck({}, { cmd: "node scripts/e2e/x.mjs --live" })).length === 0,
+    "the flag form of the same intent is accepted"
+  );
+  // A command that merely CONTAINS an "=" is fine - the rule is about a leading
+  // assignment, not about the character, or it would refuse most real commands.
+  for (const cmd of ['node -e "a=1"', "node scripts/run-tests.mjs --fast persona", "npm test -- --grep=review"]) {
+    ok(reviewRecordProblems(withCheck({}, { cmd })).length === 0, `not tripped by an ordinary command containing "=" (${cmd})`);
+  }
+
   // --- the criticality gradient (Aidin 2026-07-27) ---------------------------
   // "störst effort borde ligga på systemkritiska moment. security issues borde
   // t.ex aldrig slinka igenom, medans en front end bugg är mer acceptabelt."
