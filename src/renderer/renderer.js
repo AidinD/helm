@@ -1201,14 +1201,116 @@ function reviewActionsEl(row) {
   return actions;
 }
 
+// Review page filters. Module state, not DOM state, so they survive the full re-render
+// that follows every action on the page.
+//
+// The repo filter defaults ON: "endast visa saker i review som faktiskt är rootade till
+// ett repo - potentiella kodändringar är de enda som behöver reviewas" (the captain,
+// 2026-08-04). His private board and his life-domain boards were filling the queue with
+// rows that have no code to review. What is held back is always COUNTED and one click
+// away - a queue that quietly omits work would defeat the surface's whole purpose.
+let reviewOnlyRepoRooted = true;
+let reviewProjectFilter = null; // a category name, or null for every project
+
+// Which band a row belongs to. The queue's own module decides this and sends it as
+// row.band; the fallback is for a row from an older payload. At module scope so the page,
+// the grouping and the tests all ask the SAME function - a second copy of this rule is how
+// the page and the queue came to group by different definitions once already.
+const bandOf = (r) => r.band || r.verdict;
+
+/**
+ * Project chips plus the repo toggle.
+ *
+ * Built from the WHOLE queue, not the filtered view, so selecting a project never
+ * removes the chip you would use to get back - a filter bar that erases its own
+ * options is a trap. The counts on each chip are what the repo filter would leave, so
+ * the numbers agree with what clicking actually shows.
+ */
+function reviewFilterBarEl(allRows, nonRepoCount) {
+  const bar = document.createElement("div");
+  bar.className = "rev-filters";
+  const eligible = allRows.filter((r) => !reviewOnlyRepoRooted || r.repoPath);
+  const counts = new Map();
+  for (const r of eligible) {
+    const key = r.category || "(no project)";
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+
+  const chip = (label, active, onClick, title = "") => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "rev-filter-chip" + (active ? " is-active" : "");
+    b.textContent = label;
+    if (title) {
+      b.title = title;
+    }
+    b.addEventListener("click", () => {
+      onClick();
+      renderReviewPage();
+    });
+    return b;
+  };
+
+  bar.append(
+    chip(`All projects (${eligible.length})`, !reviewProjectFilter, () => {
+      reviewProjectFilter = null;
+    })
+  );
+  for (const [name, n] of [...counts.entries()].sort((a, b) => b[1] - a[1])) {
+    bar.append(
+      chip(`${name} (${n})`, reviewProjectFilter === name, () => {
+        reviewProjectFilter = reviewProjectFilter === name ? null : name;
+      })
+    );
+  }
+
+  // The held-back count, always visible even at zero-width: the point of stating it is
+  // that he can tell the difference between "nothing else is waiting" and "something
+  // else is waiting but filtered out".
+  const spacer = document.createElement("span");
+  spacer.className = "rev-filters-spacer";
+  bar.append(spacer);
+  bar.append(
+    chip(
+      reviewOnlyRepoRooted
+        ? nonRepoCount > 0
+          ? `Code only · ${nonRepoCount} hidden`
+          : "Code only"
+        : "Showing everything",
+      reviewOnlyRepoRooted,
+      () => {
+        reviewOnlyRepoRooted = !reviewOnlyRepoRooted;
+        // A project that only exists outside the code boards would otherwise leave the
+        // page filtered to nothing with no obvious way back.
+        reviewProjectFilter = null;
+      },
+      reviewOnlyRepoRooted
+        ? `Only work on a board that maps to a git repo. ${nonRepoCount} row(s) are held back - click to include them.`
+        : "Showing every board, including ones with no code to review. Click to go back to code only."
+    )
+  );
+  return bar;
+}
+
 async function renderReviewPage() {
   const page = document.getElementById("reviewPage");
   if (!page) {
     return;
   }
   const res = await window.helm.listReviews();
-  const rows = res?.rows || [];
-  const tally = res?.tally || { total: 0, judgment: 0, stamp: 0, unrecorded: 0, incomplete: 0 };
+  const allRows = res?.rows || [];
+  const nonRepoCount = allRows.filter((r) => !r.repoPath).length;
+  const rows = allRows.filter(
+    (r) => (!reviewOnlyRepoRooted || r.repoPath) && (!reviewProjectFilter || r.category === reviewProjectFilter)
+  );
+  // Counted from the rows actually SHOWN, not from the whole queue: a summary line that
+  // described a set the page is not displaying is worse than no summary, because it is
+  // the line a skimming reader trusts.
+  const tally = { total: rows.length, judgment: 0, stamp: 0, unrecorded: 0, incomplete: 0, unconfirmed: 0 };
+  for (const r of rows) {
+    const b = bandOf(r);
+    tally[b] = (tally[b] || 0) + 1;
+  }
 
   const frag = document.createDocumentFragment();
   const topbar = document.createElement("div");
@@ -1254,6 +1356,7 @@ async function renderReviewPage() {
     topbar.append(runAll);
   }
   frag.append(topbar);
+  frag.append(reviewFilterBarEl(allRows, nonRepoCount));
 
   if (!res?.ok && res?.error) {
     const err = document.createElement("div");
@@ -1284,7 +1387,7 @@ async function renderReviewPage() {
     incomplete: { label: "Below the bar", hint: "a record exists, but it does not meet the bar for its criticality - read it, do not trust it" },
     unrecorded: { label: "No review record", hint: "in review, but nothing was written down to check" },
   };
-  const bandOf = (r) => r.band || r.verdict;
+
 
   // Render in the order the QUEUE decided, emitting a heading whenever the band
   // changes - instead of re-filtering rows into a fixed heading sequence.
@@ -1299,8 +1402,33 @@ async function renderReviewPage() {
   // and then, on the page, only COUNTED elements - never their order. That is the
   // count-the-buttons failure again, in the test written to stop it. The e2e now
   // asserts rendered DOM order.
+  // Subtasks are drawn UNDER their epic when both are in the same band ("vi borde lägga
+  // subtasks under huvudtasken om det går i review så man vet vilka som hör ihop" -
+  // the captain, 2026-08-04, on an epic's subtasks arriving as N unrelated rows).
+  //
+  // Same band only, and that limit is deliberate rather than lazy: the band order is
+  // load-bearing (a critical item claiming to be reviewed sits above every stamp, so
+  // burying it under a parent would hide the alarm the ordering exists to raise). A
+  // subtask whose parent sits in a different band stays where its own band puts it, and
+  // its row already names the parent, so nothing loses its context.
+  const bandOfRow = new Map(rows.map((r) => [r.taskId, bandOf(r)]));
+  const childrenOf = new Map();
+  for (const row of rows) {
+    if (!row.parentId || bandOfRow.get(row.parentId) !== bandOf(row)) {
+      continue; // no parent here, or the parent is in another band
+    }
+    if (!childrenOf.has(row.parentId)) {
+      childrenOf.set(row.parentId, []);
+    }
+    childrenOf.get(row.parentId).push(row);
+  }
+  const nested = new Set([...childrenOf.values()].flat().map((r) => r.taskId));
+
   let lastBand = null;
   for (const row of rows) {
+    if (nested.has(row.taskId)) {
+      continue; // drawn under its parent, below
+    }
     const band = bandOf(row);
     if (band !== lastBand) {
       lastBand = band;
@@ -1314,7 +1442,25 @@ async function renderReviewPage() {
       h.append(hint);
       frag.append(h);
     }
-    frag.append(reviewRowEl(row, band));
+    const kids = childrenOf.get(row.taskId) || [];
+    if (kids.length === 0) {
+      frag.append(reviewRowEl(row, band));
+      continue;
+    }
+    const group = document.createElement("div");
+    group.className = "rev-epic";
+    group.append(reviewRowEl(row, band));
+    const kidWrap = document.createElement("div");
+    kidWrap.className = "rev-epic-children";
+    const label = document.createElement("div");
+    label.className = "rev-epic-label";
+    label.textContent = `${kids.length} subtask${kids.length === 1 ? "" : "s"} of this epic`;
+    kidWrap.append(label);
+    for (const kid of kids) {
+      kidWrap.append(reviewRowEl(kid, bandOf(kid)));
+    }
+    group.append(kidWrap);
+    frag.append(group);
   }
 
   // The audit: work that reached done without ever being recorded. A direct board
