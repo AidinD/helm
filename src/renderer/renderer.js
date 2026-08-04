@@ -6517,6 +6517,29 @@ function paneComposerEl(index) {
     }
   };
 
+  // A NON-image file dropped on the composer (task c24f18b8 - "dra filer till prompten ska
+  // också fungera (nu fungerar bara bilder)"). Nothing needs saving: the file is already on
+  // disk, so this attaches its path exactly like the paperclip does, and the send path already
+  // renders a non-image attachment as `[Attached file: <path>]`.
+  //
+  // A dropped file does not always HAVE a path - dragged out of a browser, out of an archive,
+  // or synthesised - and attaching an empty one would produce a mention pointing nowhere, which
+  // reads as the app losing the file. So that case is named instead.
+  const attachDroppedFiles = async (files) => {
+    for (const file of files) {
+      const filePath = window.helm.pathForFile ? window.helm.pathForFile(file) : "";
+      if (!filePath) {
+        showToast(`"${file.name || "That file"}" has no path on disk - save it somewhere first, then drop it.`);
+        continue;
+      }
+      if (panes[index] !== pane) {
+        return; // the pane was reused while this ran
+      }
+      pane.pendingAttachments.push({ path: filePath, name: file.name || filePath.split(/[\\/]/).pop(), isImage: false });
+      renderAttachments();
+    }
+  };
+
   const isImageDrag = (e) => Array.from(e.dataTransfer?.items || []).some((it) => it.kind === "file");
   promptEl.addEventListener("dragover", (e) => {
     if (!isImageDrag(e)) {
@@ -6528,19 +6551,24 @@ function paneComposerEl(index) {
   });
   promptEl.addEventListener("dragleave", () => promptEl.classList.remove("drop-target"));
   promptEl.addEventListener("drop", async (e) => {
-    const files = Array.from(e.dataTransfer?.files || []).filter((f) => f.type && f.type.startsWith("image/"));
+    const all = Array.from(e.dataTransfer?.files || []);
     promptEl.classList.remove("drop-target");
-    if (files.length === 0) {
-      // Still swallow a file drop that is not an image, or Chromium navigates the
-      // window to it and the app disappears.
-      if (Array.from(e.dataTransfer?.files || []).length > 0) {
-        e.preventDefault();
-        showToast("Only images can be dropped into the prompt.");
-      }
+    if (all.length === 0) {
       return;
     }
+    // Always prevented, whatever the file is: Chromium's default for a file dropped on a page
+    // is to NAVIGATE to it, which replaces the app window with the file.
     e.preventDefault();
-    await attachImageFiles(files);
+    // An image is read and saved so it survives being moved or deleted; anything else is
+    // referenced where it already lives. Both end up as an attachment chip either way.
+    const images = all.filter((f) => f.type && f.type.startsWith("image/"));
+    const others = all.filter((f) => !(f.type && f.type.startsWith("image/")));
+    if (images.length > 0) {
+      await attachImageFiles(images);
+    }
+    if (others.length > 0) {
+      await attachDroppedFiles(others);
+    }
   });
 
   const controls = document.createElement("div");

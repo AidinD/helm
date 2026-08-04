@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require("electron");
+const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
 // Minimal, explicit API surface exposed to the renderer. No Node access leaks.
 contextBridge.exposeInMainWorld("helm", {
@@ -140,6 +140,20 @@ contextBridge.exposeInMainWorld("helm", {
   runAutoCaptainNow: (opts) => ipcRenderer.invoke("autoCaptain:runNow", opts || {}),
   pickFolder: () => ipcRenderer.invoke("dialog:pickFolder"),
   pickFiles: () => ipcRenderer.invoke("dialog:pickFiles"),
+  // The absolute path of a DROPPED file, so dragging one onto the composer can attach it
+  // the same way the paperclip does (task c24f18b8 - dropping worked for images only).
+  // File.path is deprecated in Electron and gone in later majors; webUtils.getPathForFile
+  // is the supported way and has to be called HERE, in the preload, because the renderer
+  // has no access to it. Returns "" for a file that has no path on disk (dragged out of a
+  // browser, an archive, or synthesised in a test) - the caller must say so rather than
+  // attaching an empty path.
+  pathForFile: (file) => {
+    try {
+      return webUtils?.getPathForFile ? webUtils.getPathForFile(file) || "" : file?.path || "";
+    } catch {
+      return "";
+    }
+  },
   // Non-repo "life-domain" projects (PLAN.md) — plain folders (gym, diabetes,
   // kombucha, etc) registered as first-class projects alongside git repos.
   listDomains: () => ipcRenderer.invoke("domains:list"),
