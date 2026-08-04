@@ -5688,6 +5688,39 @@ function applyComposerEdit(promptEl, step, { keepCaretOffset = false } = {}) {
 }
 
 const LIST_INDENT = "  ";
+
+/**
+ * Starting a list indents it, without pressing anything.
+ *
+ * "jag menar att jag trodde den skulle autoindentera bulletlist vid skapandet" (Aidin,
+ * 2026-08-04). Typing "- " or "1. " at the start of a line now insets the item, the way
+ * the desktop app's list does, instead of leaving it flush against the margin until Tab
+ * is pressed.
+ *
+ * Two spaces is chosen, not three or four: CommonMark allows up to three spaces before a
+ * marker and still reads it as a top-level item, while four would turn it into an
+ * indented code block. So this changes how the line LOOKS without changing what it MEANS
+ * to whatever reads the prompt - which is the only reason it is safe to do to text the
+ * model will see.
+ *
+ * Returns a step only for the exact moment a marker is completed at a line's start with
+ * no indent of its own. Continuation carries the previous line's indent already, so the
+ * rest of the list follows the first item without this firing again.
+ */
+const BARE_MARKER_RE = /^([-*+]|\d+[.)]) $/;
+function listAutoIndentStep(value, caret) {
+  if (typeof value !== "string" || typeof caret !== "number") {
+    return null;
+  }
+  const lineStart = value.lastIndexOf("\n", caret - 1) + 1;
+  // Only the marker and the space it just got - anything else on the line means the user
+  // is editing, not starting a list.
+  if (!BARE_MARKER_RE.test(value.slice(lineStart, caret))) {
+    return null;
+  }
+  return { from: lineStart, to: lineStart, text: LIST_INDENT };
+}
+
 function listIndentStep(value, caret, caretEnd = caret, { outdent = false } = {}) {
   if (typeof value !== "string" || typeof caret !== "number") {
     return null;
@@ -5775,6 +5808,19 @@ function paneComposerEl(index) {
   // avoids the usual trap where manual and automatic sizing fight each other and
   // the app needs a mode - and it means there is nothing to switch back off.
   promptEl.addEventListener("input", () => autoSizeComposer(promptEl));
+  // Starting a list indents it, with nothing pressed. Gated on a TYPED space
+  // (inputType + data), not merely on the text looking right: a paste that happens to end
+  // in "- " must not be reformatted, and neither must an undo that lands on the same
+  // characters. Both would be the app editing text the user did not just write.
+  promptEl.addEventListener("input", (e) => {
+    if (e.inputType !== "insertText" || e.data !== " ") {
+      return;
+    }
+    const step = listAutoIndentStep(promptEl.value, promptEl.selectionStart);
+    if (step) {
+      applyComposerEdit(promptEl, step, { keepCaretOffset: true });
+    }
+  });
   promptEl.addEventListener("mouseup", () => {
     // A drag-resize ends with a mouseup on the textarea. If the height no longer
     // matches what autoSizeComposer set, the user moved it themselves.
