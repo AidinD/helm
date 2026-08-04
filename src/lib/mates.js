@@ -429,7 +429,7 @@ export function renameMate(mateId, name) {
  * active mate. No-op-safe: if the id is unknown or already retired, still
  * guarantees the slot is filled.
  */
-export function retireAndRespawn(mateId, pendingHandoff = null, persona = null) {
+export function retireAndRespawn(mateId, pendingHandoff = null, persona = null, { keepPersona = false } = {}) {
   const state = readState();
   const outgoing = state.mates.find((m) => m.mateId === mateId);
   const slot = outgoing && typeof outgoing.slot === "number" ? outgoing.slot : null;
@@ -449,11 +449,23 @@ export function retireAndRespawn(mateId, pendingHandoff = null, persona = null) 
     name: pickName(takenNames, state.mates.length, namePoolForTheme(currentTheme())),
     root: root ? path.resolve(root) : null,
     status: "active",
-    // Persona for the fresh mate. A respawn normally resets to the plain
-    // coordinator (null); a deliberate persona SWITCH passes the new key here
-    // (the running-mate change path retires with a handoff, then respawns into
-    // the chosen persona - a system prompt can't change mid-session).
-    persona: isValidPersonaKey(persona) ? persona || null : null,
+    // Persona for the fresh mate.
+    //
+    // keepPersona = an ordinary refresh: KEEP what the outgoing mate was. Refreshing a
+    // mate's context is not a decision to change its character, and resetting to the plain
+    // coordinator silently threw away a choice the captain had made - so a mate you set to
+    // Red team came back as a coordinator without saying so, and any reason to set a
+    // persona evaporated on the next refresh (the captain, 2026-08-04).
+    //
+    // Otherwise the passed key wins: that is a deliberate SWITCH, which has to go through
+    // retire+respawn because a system prompt cannot change mid-session. Choosing
+    // Coordinator explicitly passes null and therefore clears it, which keepPersona must
+    // not override.
+    persona: keepPersona
+      ? (isValidPersonaKey(outgoing?.persona) ? outgoing?.persona || null : null)
+      : isValidPersonaKey(persona)
+        ? persona || null
+        : null,
     createdAt: Date.now(),
     retiredAt: null,
     // Handoff from the retiring mate: the fresh mate's first jump-in seeds its

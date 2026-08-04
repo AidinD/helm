@@ -3838,7 +3838,9 @@ async function summarizeAndCarryOver(session) {
 // into it. Omitted = an ordinary retire (fresh mate resets to plain
 // coordinator). Either way the outgoing session's handoff is saved first so the
 // thread survives the transfer.
-async function retireMateWithCarryOver(mate, persona = null) {
+// persona === undefined means an ordinary refresh, which KEEPS whatever the mate was; a key
+// (or an explicit null for Coordinator) is a deliberate switch.
+async function retireMateWithCarryOver(mate, persona = undefined) {
   let handoff = null;
   // A persistent spinner toast for the WHOLE retire - the summarize, the
   // per-mate handoffs, and the archiving are all multi-second and usually
@@ -3863,7 +3865,7 @@ async function retireMateWithCarryOver(mate, persona = null) {
   }
   await saveSecondMateHandoffsFor(mate, busy);
   busy.update(`Retiring ${mate.name} - archiving…`);
-  const retireRes = await window.helm.retireMate(mate.mateId, handoff, persona || null);
+  const retireRes = await window.helm.retireMate(mate.mateId, handoff, persona || null, persona === undefined);
   reflectTornDownSessions(retireRes);
   await archiveOutgoingMateSession(mate);
   busy.done();
@@ -3877,7 +3879,7 @@ async function retireMateWithCarryOver(mate, persona = null) {
 // thread (the common case). The outgoing session is still archived, and if it
 // wrote a HANDOFF.md that file stays on disk - "start fresh" only drops the
 // prompt carry-over, it doesn't destroy the durable handoff.
-async function retireMateClean(mate, persona = null) {
+async function retireMateClean(mate, persona = undefined) {
   // Same spinner as the carry-over path: this tears down + archives the mates and
   // hands them off too, all multi-second, and previously ran with NO indicator at
   // all (task 88b7afe3).
@@ -3886,7 +3888,7 @@ async function retireMateClean(mate, persona = null) {
   fillDashboardSections({ force: true });
   await saveSecondMateHandoffsFor(mate, busy);
   busy.update(`Retiring ${mate.name} - archiving…`);
-  const retireRes = await window.helm.retireMate(mate.mateId, null, persona || null);
+  const retireRes = await window.helm.retireMate(mate.mateId, null, persona || null, persona === undefined);
   reflectTornDownSessions(retireRes);
   await archiveOutgoingMateSession(mate);
   busy.done();
