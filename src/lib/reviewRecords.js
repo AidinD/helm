@@ -934,6 +934,11 @@ export function buildReviewQueue(reviewTasks, records, metaHome = null) {
       priority: typeof t.priority === "number" ? t.priority : null,
       // Subtasks are in the queue now, so a row needs to say what it belongs to.
       parentTitle: t.parentTitle || null,
+      // Carried through so the page can group an epic's subtasks under it and offer a
+      // project filter. Both are ids, not names: two epics can share a title and two
+      // boards can share a category name.
+      parentId: t.parentId || null,
+      categoryId: t.categoryId || null,
       record: rec,
       incomplete: problems.length > 0,
       problems,

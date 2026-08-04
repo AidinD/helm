@@ -4663,6 +4663,61 @@ button.primary {
   width: calc(100% - 48px);
 }
 
+/* Review page filters: project chips plus the code-only toggle. Reuses the chip shape
+   the dashboard already uses so it reads as the same system, rather than inventing a
+   third control style on one page. */
+.rev-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 14px;
+}
+
+.rev-filters-spacer {
+  flex: 1;
+  min-width: 8px;
+}
+
+.rev-filter-chip {
+  background: var(--bg-card);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 11px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.rev-filter-chip:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+/* Colour marks only the ACTIVE state, the same rule the rest of the app follows. */
+.rev-filter-chip.is-active {
+  color: var(--text);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+/* An epic and the subtasks belonging to it. The rail is what carries the grouping -
+   indentation alone reads as an accident at this row height. */
+.rev-epic-children {
+  margin: 6px 0 0 18px;
+  padding-left: 12px;
+  border-left: 2px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rev-epic-label {
+  font-size: 11.5px;
+  color: var(--text-faint);
+  margin-bottom: 2px;
+}
+
 /* The text-entry variant (customPrompt). Wider than a yes/no box because what goes
    in it is a sentence or two of feedback that lands on a Jot card, and a reason
    written in a cramped box gets written short. */

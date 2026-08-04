@@ -566,6 +566,14 @@ export function reviewTasks(jotConfig = {}) {
       // edited after the work must be surfaced, not silently ignored.
       description: t.description || "",
       parentTitle: t.parentId ? byId.get(t.parentId)?.text || "(unknown parent)" : null,
+      // The id, not just the title: the page groups subtasks under their parent so a
+      // worked epic reads as one block instead of N loose rows (Aidin, 2026-08-04:
+      // "subtasks i epics hamnar som egna rader"). A title cannot group reliably -
+      // two epics can share one.
+      parentId: t.parentId || null,
+      // Which board column this came from, so the page can offer a project filter and
+      // decide what is even reviewable. The NAME alone collides across boards.
+      categoryId: t.categoryId || null,
     }));
   return { ok: true, path: jotPath, tasks };
 }

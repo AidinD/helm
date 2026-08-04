@@ -5237,6 +5237,73 @@ ipcMain.handle("reviews:list", (_e, opts = {}) => {
   return payload;
 });
 
+/**
+ * Which Jot categories correspond to an actual code repo, and where it lives.
+ *
+ * "endast visa saker i review som faktiskt är rootade till ett repo - potentiella
+ * kodändringar är de enda som behöver reviewas" (Aidin, 2026-08-04). His private
+ * board and his life-domain boards were filling the queue with rows that have no
+ * code to review.
+ *
+ * Candidates are the cwds Helm has actually seen among its sessions - the same source
+ * the dashboard's project chips use - narrowed to the ones that really are git
+ * checkouts. The match is loose in ONE direction on purpose: a board named "Crewline"
+ * belongs to the repo folder `tgs-crewline`, so a containment test is used rather than
+ * equality. Being too generous here shows an extra row; being too strict HIDES work
+ * that needed reviewing, and that is the expensive mistake.
+ */
+function repoRootedCategories(records = []) {
+  const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const repos = new Map(); // normalized folder name -> absolute path
+
+  // THREE sources, because session cwds alone are not enough and getting this wrong is
+  // the expensive direction. Measured against his real board: the "Helm" category came
+  // back NOT A REPO, which would have hidden his own Helm work behind the code-only
+  // filter by default - because he runs Helm's sessions from the meta-home, so
+  // D:\Repo\Tools\helm never appears as a session cwd at all.
+  //
+  //   1. review records' projectPath - authoritative: a record names its own repo, and
+  //      that field is now required whenever the record declares checks.
+  //   2. goal-run history projectPaths - every project an autonomous run has touched.
+  //   3. session cwds - projects opened by hand.
+  const candidates = [
+    ...records.map((r) => r.projectPath),
+    ...loadGoalRunHistory().map((r) => r.projectPath),
+    ...(readAllSessions()?.sessions || []).map((s) => s.cwd),
+  ];
+  for (const cwd of new Set(candidates.filter(Boolean))) {
+    try {
+      if (!fs.existsSync(path.join(cwd, ".git"))) {
+        continue;
+      }
+    } catch {
+      continue;
+    }
+    const name = norm(path.basename(cwd));
+    if (name && !repos.has(name)) {
+      repos.set(name, cwd);
+    }
+  }
+  return {
+    /** The repo a category belongs to, or null when it is not code work at all. */
+    repoFor(category) {
+      const c = norm(category);
+      if (!c) {
+        return null;
+      }
+      if (repos.has(c)) {
+        return repos.get(c);
+      }
+      for (const [name, cwd] of repos) {
+        if (name.includes(c) || c.includes(name)) {
+          return cwd;
+        }
+      }
+      return null;
+    },
+  };
+}
+
 function buildReviewsPayload() {
   const config = loadConfig();
   const board = reviewTasks(config.jot || {});
@@ -5245,6 +5312,14 @@ function buildReviewsPayload() {
   // by the app rather than written into the record by hand.
   const records = listReviewRecords(metaHome);
   const rows = buildReviewQueue(board.tasks, records, metaHome);
+  // Annotate rather than filter here: the page decides what to show, and it says how
+  // many it is holding back. Dropping them in the main process would make the count
+  // unknowable, and a queue that silently omits work is the failure this whole surface
+  // exists to prevent.
+  const roots = repoRootedCategories(records);
+  for (const row of rows) {
+    row.repoPath = roots.repoFor(row.category);
+  }
   // The audit half: work that reached done without ever being recorded. A direct
   // board write cannot be prevented from here, only detected - and it has to surface
   // on the page he actually reads.
