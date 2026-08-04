@@ -41,10 +41,20 @@ function listSkillDir(dir) {
   }
   const names = [];
   for (const entry of entries) {
-    if (!entry.isDirectory()) {
+    const entryPath = path.join(dir, entry.name);
+    // entry.isDirectory() reflects the raw OS dirent type and does NOT follow
+    // symlinks/junctions on Windows (a junction reports as a reparse point) —
+    // stat the resolved target instead so junction'd skill folders are found.
+    let isDir;
+    try {
+      isDir = fs.statSync(entryPath).isDirectory();
+    } catch {
       continue;
     }
-    if (fs.existsSync(path.join(dir, entry.name, "SKILL.md"))) {
+    if (!isDir) {
+      continue;
+    }
+    if (fs.existsSync(path.join(entryPath, "SKILL.md"))) {
       names.push(entry.name);
     }
   }

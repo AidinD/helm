@@ -1908,16 +1908,17 @@ ipcMain.handle("mates:rename", (_event, { mateId, name }) => {
     return { ok: false, error: err?.message || String(err) };
   }
 });
-ipcMain.handle("mates:retire", (_event, { mateId, handoff, persona }) => {
+ipcMain.handle("mates:retire", (_event, { mateId, handoff, persona, keepPersona }) => {
   try {
     // Tear down the retiring mate's second-mate subtree FIRST, while its mateId
     // is still the parent the second mates reference (task 58e9a433). Archives
     // their sessions + drops their bindings so they don't linger as hidden
     // orphans or stale proposals under a dead parent.
     const torndown = tearDownSecondMatesFor(mateId);
-    // `persona` set = a deliberate persona switch: respawn into it. Absent =
-    // an ordinary retire, which resets the fresh mate to the plain coordinator.
-    const mate = retireAndRespawn(mateId, handoff || null, persona || null);
+    // `persona` set = a deliberate persona switch: respawn into it. keepPersona = an
+    // ordinary refresh, which now CARRIES the outgoing mate's persona rather than resetting
+    // it - refreshing context is not a decision to change the mate's character.
+    const mate = retireAndRespawn(mateId, handoff || null, persona || null, { keepPersona: !!keepPersona });
     return { ok: true, mate, tornDownSessionIds: torndown.sessionIds };
   } catch (err) {
     return { ok: false, error: err?.message || String(err) };

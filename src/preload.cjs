@@ -168,7 +168,7 @@ contextBridge.exposeInMainWorld("helm", {
   removeMate: (mateId) => ipcRenderer.invoke("mates:remove", { mateId }),
   renameMate: (mateId, name) => ipcRenderer.invoke("mates:rename", { mateId, name }),
   rethemeMates: (fromTheme, toTheme) => ipcRenderer.invoke("mates:retheme", { fromTheme, toTheme }),
-  retireMate: (mateId, handoff, persona) => ipcRenderer.invoke("mates:retire", { mateId, handoff, persona }),
+  retireMate: (mateId, handoff, persona, keepPersona) => ipcRenderer.invoke("mates:retire", { mateId, handoff, persona, keepPersona }),
   setMatePersona: (mateId, persona) => ipcRenderer.invoke("mates:setPersona", { mateId, persona }),
   listPersonas: () => ipcRenderer.invoke("personas:list"),
   consumeMateHandoff: (mateId) => ipcRenderer.invoke("mates:consumeHandoff", { mateId }),
