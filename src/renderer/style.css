@@ -1793,6 +1793,49 @@ body.advanced .row-jot {
   white-space: pre;
 }
 
+/* A code block carries its own copy button (task 0a8afe16), positioned against
+   this wrapper rather than the <pre>: the pre scrolls horizontally, and a button
+   inside a scrolling box slides away with the content. The wrapper does not
+   scroll, so the button stays pinned to the visible corner. */
+.turn-bubble .md-code-wrap {
+  position: relative;
+}
+
+.code-copy-btn {
+  position: absolute;
+  top: 8px;
+  right: 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-faint);
+  font-size: 12px;
+  line-height: 1;
+  padding: 3px 5px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.1s ease;
+}
+
+/* Same restraint as the reply-level copy button: a control on every block, always
+   visible, reads as noise. Shown on hover of the block, and on keyboard focus so
+   it is reachable without a mouse. Unlike that button it has a background and a
+   border, because it sits ON the code rather than beside the bubble. */
+.turn-bubble .md-code-wrap:hover .code-copy-btn,
+.code-copy-btn:focus-visible {
+  opacity: 1;
+}
+
+.code-copy-btn:hover {
+  color: var(--text);
+  border-color: var(--text-faint);
+}
+
+.code-copy-btn.copied {
+  color: var(--accent);
+  opacity: 1;
+}
+
 /* Space before a list starts (after a heading/paragraph) and space BETWEEN
    its own items are different things — confirmed by a side-by-side vs the
    desktop app: the gap after a heading was right, but consecutive bullets

@@ -4526,14 +4526,50 @@ function renderMarkdownInto(container, text) {
   const segments = text.split(/```([\s\S]*?)```/);
   segments.forEach((segment, i) => {
     if (i % 2 === 1) {
-      const pre = document.createElement("pre");
-      pre.className = "md-code-block";
-      pre.textContent = segment.replace(/^[ \t]*\S*\n/, "");
-      container.append(pre);
+      container.append(codeBlockEl(segment.replace(/^[ \t]*\S*\n/, "")));
     } else if (segment) {
       renderTextBlock(container, segment);
     }
   });
+}
+
+/**
+ * A fenced code block with its own copy button (task 0a8afe16).
+ *
+ * The reply already has a copy button, but it copies the WHOLE reply - and the case that
+ * prompted this is the one where the code block IS the deliverable: a long block of markdown
+ * to paste somewhere else, wrapped in a sentence of chat that must not come with it. Selecting
+ * it by hand means dragging through a scrolling box.
+ *
+ * Same icon, states and timing as the reply-level button, and hidden until the block is
+ * hovered for the same reason that one is: a control on every block, always visible, reads as
+ * noise (which is why the reply's button stopped being a text label).
+ */
+function codeBlockEl(code) {
+  const wrap = document.createElement("div");
+  wrap.className = "md-code-wrap";
+  const pre = document.createElement("pre");
+  pre.className = "md-code-block";
+  pre.textContent = code;
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "code-copy-btn";
+  btn.title = "Copy this block";
+  btn.textContent = "⧉";
+  btn.addEventListener("click", (e) => {
+    // The block sits inside a bubble that has its own click handlers (and, for a user turn,
+    // an edit affordance) - copying must not also trigger those.
+    e.stopPropagation();
+    window.helm.copyToClipboard(pre.textContent);
+    btn.textContent = "✓";
+    btn.classList.add("copied");
+    setTimeout(() => {
+      btn.textContent = "⧉";
+      btn.classList.remove("copied");
+    }, 1200);
+  });
+  wrap.append(pre, btn);
+  return wrap;
 }
 
 const TABLE_ROW = /^\s*\|.*\|\s*$/;
