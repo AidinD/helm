@@ -93,6 +93,8 @@ contextBridge.exposeInMainWorld("helm", {
   listScheduledPrompts: () => ipcRenderer.invoke("scheduledPrompts:list"),
   addScheduledPrompt: (spec) => ipcRenderer.invoke("scheduledPrompts:add", spec),
   cancelScheduledPrompt: (id) => ipcRenderer.invoke("scheduledPrompts:cancel", { id }),
+  // Dismiss the notice about a scheduled prompt that failed to reach the model.
+  acknowledgeScheduledPrompt: (id) => ipcRenderer.invoke("scheduledPrompts:acknowledge", { id }),
   onScheduledPromptsChanged: (cb) => {
     const handler = () => cb();
     ipcRenderer.on("scheduledPrompts:changed", handler);

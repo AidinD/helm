@@ -96,6 +96,51 @@ try {
   ok(s.cancelScheduledPrompt("sp_nope") === false, "cancelling an unknown id is a no-op");
   ok(s.dueScheduledPrompts(T0 + 20 * MIN).length === 0, "a cancelled entry never becomes due");
 
+  // --- what the fired run actually DID (task a797eb69) ----------------------
+  // "scheduled meddelande on token reset skickades aldrig, de bara försvann". The entry was
+  // marked "fired" the instant the process spawned - a terminal status - so it left the queue
+  // looking sent whatever happened next, and the run's own events went to a launchId no pane
+  // listens for. A prompt fired into a still-spent quota, or resumed against a session the CLI
+  // could not find, therefore ended as a silent success.
+  // Counted as a DELTA: an earlier section of this file already left a failed entry behind, so
+  // an absolute count here would be asserting the sum of two unrelated things.
+  const failedBefore = s.failedScheduledPrompts().length;
+  const launched = s.scheduledPromptAdd({ prompt: "fortsätt", cwd: "D:\\Repo\\Tools\\helm", fireAt: T0 + MIN, now: T0 });
+  s.markScheduledPromptFired(launched.id, { ok: true, now: T0 + MIN });
+  ok(s.listScheduledPrompts().find((p) => p.id === launched.id).status === "fired", "spawning the process records 'fired', which is all that is known then");
+  ok(s.failedScheduledPrompts().length === failedBefore, "and it is not reported as failed yet");
+
+  s.markScheduledPromptOutcome(launched.id, { sawResult: false, code: 1, error: "No conversation found with session ID", now: T0 + 2 * MIN });
+  const afterOutcome = s.listScheduledPrompts().find((p) => p.id === launched.id);
+  ok(afterOutcome.status === "failed", `a run that produced no reply ends as FAILED, not fired (${afterOutcome.status})`);
+  ok(/No conversation found/.test(afterOutcome.error), `and keeps the reason (${JSON.stringify(afterOutcome.error)})`);
+  ok(s.failedScheduledPrompts().length === failedBefore + 1, "so it is surfaced instead of vanishing from the queue");
+
+  // sawResult is the signal, not the exit code: a run can exit 0 having replied with nothing.
+  const zeroExit = s.scheduledPromptAdd({ prompt: "and again", cwd: "D:\\x", fireAt: T0 + MIN, now: T0 });
+  s.markScheduledPromptFired(zeroExit.id, { ok: true, now: T0 + MIN });
+  s.markScheduledPromptOutcome(zeroExit.id, { sawResult: false, code: 0, now: T0 + 2 * MIN });
+  ok(s.listScheduledPrompts().find((p) => p.id === zeroExit.id).status === "failed", "exit code 0 with no reply is still a failure");
+  ok(/without producing a reply/.test(s.listScheduledPrompts().find((p) => p.id === zeroExit.id).error), "with a reason that does not blame an exit code it cannot explain");
+
+  // A run that DID reply stays fired and reports nothing.
+  const good = s.scheduledPromptAdd({ prompt: "worked", cwd: "D:\\x", fireAt: T0 + MIN, now: T0 });
+  s.markScheduledPromptFired(good.id, { ok: true, now: T0 + MIN });
+  s.markScheduledPromptOutcome(good.id, { sawResult: true, code: 0, now: T0 + 2 * MIN });
+  ok(s.listScheduledPrompts().find((p) => p.id === good.id).status === "fired", "a run that replied stays fired");
+  ok(s.failedScheduledPrompts().length === failedBefore + 2, `and is not reported - only the two real failures were added (${s.failedScheduledPrompts().length} total)`);
+
+  // The notice stays until dismissed: one that aged out would be missed exactly when he was
+  // away, which is the reason to schedule a prompt in the first place.
+  ok(s.acknowledgeScheduledPrompt(launched.id) === true, "a failure can be dismissed");
+  ok(s.failedScheduledPrompts().length === failedBefore + 1, "and then stops being shown");
+  ok(s.acknowledgeScheduledPrompt("sp_nope") === false, "dismissing an unknown id is a no-op");
+  // An outcome must not resurrect something the user cancelled.
+  const killed = s.scheduledPromptAdd({ prompt: "cancelled", cwd: "D:\\x", fireAt: T0 + MIN, now: T0 });
+  s.cancelScheduledPrompt(killed.id);
+  s.markScheduledPromptOutcome(killed.id, { sawResult: false, error: "should not apply" });
+  ok(s.listScheduledPrompts().find((p) => p.id === killed.id).status === "cancelled", "a cancelled entry is left alone by an outcome arriving late");
+
   // --- prune ---
   const removed = s.pruneScheduledPrompts(atReset + 40 * 24 * 60 * MIN);
   ok(removed >= 2, `prune drops old terminal entries (removed ${removed})`);

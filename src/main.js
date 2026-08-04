@@ -35,6 +35,9 @@ import {
   dueScheduledPrompts,
   pushScheduledPrompt,
   markScheduledPromptFired,
+  markScheduledPromptOutcome,
+  failedScheduledPrompts,
+  acknowledgeScheduledPrompt,
   pruneScheduledPrompts,
   quotaResetFireAt,
 } from "./lib/scheduledPrompts.js";
@@ -5231,18 +5234,36 @@ function fireScheduledPrompt(entry) {
         }
       },
     });
+    // Launched, which is all that is known here.
     markScheduledPromptFired(entry.id, { ok: true });
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send("scheduledPrompts:changed");
     }
     done
-      .then(() => {
+      .then((summary) => {
+        // What it actually DID. Without this the entry stayed a confident "fired" however the
+        // run ended, which is how a prompt that never reached the model read as sent and then
+        // vanished from the queue (task a797eb69). The events it emitted went to a launchId no
+        // pane listens for, so nothing else in the app would have said otherwise.
+        const stderr = (summary?.stderrText || "")
+          .split("\n")
+          .filter((l) => l.trim() && !l.startsWith("Warning: no stdin data received"))
+          .join(" ")
+          .trim();
+        markScheduledPromptOutcome(entry.id, {
+          sawResult: !!summary?.sawResult,
+          code: summary?.code ?? null,
+          error: summary?.error || stderr || null,
+        });
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send("scheduledPrompts:changed");
         }
       })
-      .catch(() => {
-        // the turn's own failure is surfaced through session:event, not here
+      .catch((err) => {
+        markScheduledPromptOutcome(entry.id, { sawResult: false, error: err?.message || String(err) });
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send("scheduledPrompts:changed");
+        }
       });
   } catch (err) {
     markScheduledPromptFired(entry.id, { ok: false, error: err?.message || String(err) });
@@ -5558,7 +5579,18 @@ ipcMain.handle("reviews:runChecks", async (_event, { taskId } = {}) => {
 });
 
 ipcMain.handle("scheduledPrompts:list", () => {
-  return { ok: true, pending: pendingScheduledPrompts(Date.now()), quotaLimited: isQuotaCurrentlyLimited() };
+  return {
+    ok: true,
+    pending: pendingScheduledPrompts(Date.now()),
+    // A prompt that was fired and never reached the model used to leave no trace anywhere in
+    // the UI (task a797eb69). It is returned alongside the queue so the same bar can say so.
+    failed: failedScheduledPrompts(),
+    quotaLimited: isQuotaCurrentlyLimited(),
+  };
+});
+
+ipcMain.handle("scheduledPrompts:acknowledge", (_event, { id } = {}) => {
+  return { ok: acknowledgeScheduledPrompt(id) };
 });
 
 // "when" is either a number (absolute ms) or the string "quota-reset".
