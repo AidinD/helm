@@ -16,9 +16,16 @@
 // the thing under test. test-persona-advisory-seats.mjs covers the source side.
 //
 // It spawns the real `claude` binary and costs tokens, so it is OPT-IN:
-//   HELM_LIVE_CLI_TESTS=1 node scripts/e2e/test-persona-agent-containment.mjs
+//   node scripts/e2e/test-persona-agent-containment.mjs --live
 // Without the flag it SKIPS LOUDLY rather than passing quietly - a containment
 // check that silently reports OK without running is worse than no check.
+//
+// The flag, and not only the env var: `HELM_LIVE_CLI_TESTS=1 node ...` is Unix
+// shell syntax, and Helm's own review checks run through cmd.exe on Windows,
+// where that prefix is read as the name of a program to execute. This check was
+// declared that way on its own review record and failed for exactly that reason -
+// a check that cannot run reads as a feature that is broken. The env var still
+// works for callers that have a shell which supports it.
 import { spawn, execSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -34,9 +41,10 @@ const ok = (c, m) => {
   }
 };
 
-if (process.env.HELM_LIVE_CLI_TESTS !== "1") {
+const live = process.argv.includes("--live") || process.env.HELM_LIVE_CLI_TESTS === "1";
+if (!live) {
   console.log("SKIPPED - this check spawns the real claude CLI and spends tokens.");
-  console.log("          Run it deliberately:  HELM_LIVE_CLI_TESTS=1 node scripts/e2e/test-persona-agent-containment.mjs");
+  console.log("          Run it deliberately:  node scripts/e2e/test-persona-agent-containment.mjs --live");
   console.log(`          It is the only check that measures the ceiling (${ADVISORY_TOOLS.join("/")}) instead of reading it.`);
   process.exit(0);
 }
