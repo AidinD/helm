@@ -5759,6 +5759,20 @@ button.primary {
   border-top: 1px solid var(--border);
   background: var(--bg-card);
 }
+/* The same queue, in the pane it belongs to (task c2aae246): rows sit just above the
+   composer they will be typed into. Reuses .sched-row so the two places cannot drift into
+   looking like different features - only the container differs. */
+.pane-sched-queue {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 6px;
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
 .sched-row {
   display: flex;
   align-items: center;

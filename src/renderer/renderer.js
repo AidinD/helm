@@ -1631,41 +1631,93 @@ function scheduleSendMenu(anchor, pane, promptText, sendControls) {
 }
 
 // A thin bar listing what's queued, so a scheduled prompt is never invisible.
+/** Which session a queued prompt will resume, in the id the panes use. */
+function scheduledPromptSession(p) {
+  return p?.resumeSessionId || null;
+}
+
+/** One queued-prompt row: the clock, what it is waiting for, the prompt, and Cancel. */
+function scheduledPromptRowEl(p, quotaLimited, onChanged) {
+  const row = document.createElement("div");
+  row.className = "sched-row";
+  const clock = document.createElement("span");
+  clock.className = "sched-clock";
+  clock.textContent = "⏱";
+  const label = document.createElement("span");
+  label.className = "sched-label";
+  // Overdue + waiting on quota is a real state, not a bug: it is parked until
+  // the window actually lifts (the queue re-checks rather than burning it).
+  const state = p.overdue && p.waitForQuota && quotaLimited ? "waiting for quota" : p.overdue ? "sending…" : p.label;
+  label.textContent = `${state} · ${p.prompt.length > 60 ? p.prompt.slice(0, 60) + "…" : p.prompt}`;
+  label.title = p.prompt;
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.className = "text-btn";
+  cancel.textContent = "Cancel";
+  cancel.addEventListener("click", async () => {
+    await window.helm.cancelScheduledPrompt(p.id);
+    onChanged();
+  });
+  row.append(clock, label, cancel);
+  return row;
+}
+
+/**
+ * The queued prompts, shown WHERE THEY WILL FIRE.
+ *
+ * "Scheduled meddelanden borde synas i en kö här ... Istället för globalt längst ner"
+ * (Aidin, task c2aae246, arrow pointing just above a session's prompt box). A queue parked
+ * at the bottom of the window told him something was scheduled but not which conversation
+ * it belonged to - and with several sessions open that is the only thing worth knowing.
+ *
+ * So each pane shows the prompts queued for ITS session, right above the composer they will
+ * be typed into. The global bar keeps exactly the ones no open pane is showing - prompts for
+ * a session that is not on screen. Nothing is hidden by the move; it is only filed where it
+ * means something.
+ */
+function paneScheduledQueue(pane, pending) {
+  const sid = pane?.cliSessionId || pane?.sessionId;
+  if (!sid) {
+    return [];
+  }
+  return (pending || []).filter((p) => {
+    const target = scheduledPromptSession(p);
+    return target && (target === sid || target === pane.sessionId || target === pane.cliSessionId);
+  });
+}
+
 async function renderScheduledPromptBar() {
   const host = document.getElementById("scheduledPromptBar");
+  const res = await window.helm.listScheduledPrompts();
+  const pending = res?.ok ? res.pending || [] : [];
+  const quotaLimited = !!res?.quotaLimited;
+
+  // Per-pane queues first, so the global bar knows what is already accounted for.
+  const shownInPane = new Set();
+  panes.forEach((pane, index) => {
+    const mine = paneScheduledQueue(pane, pending);
+    mine.forEach((p) => shownInPane.add(p.id));
+    const box = document.querySelector(`.pane[data-pane="${index}"] .pane-sched-queue`);
+    if (!box) {
+      return;
+    }
+    box.replaceChildren();
+    box.classList.toggle("hidden", mine.length === 0);
+    for (const p of mine) {
+      box.append(scheduledPromptRowEl(p, quotaLimited, () => renderScheduledPromptBar()));
+    }
+  });
+
   if (!host) {
     return;
   }
-  const res = await window.helm.listScheduledPrompts();
-  const pending = res?.ok ? res.pending || [] : [];
+  // What is left: queued for a session no open pane is showing. Keeping these is the
+  // difference between moving the queue and losing half of it.
+  const orphans = pending.filter((p) => !shownInPane.has(p.id));
   host.replaceChildren();
-  host.classList.toggle("hidden", pending.length === 0);
-  if (pending.length === 0) {
-    return;
-  }
-  for (const p of pending) {
-    const row = document.createElement("div");
-    row.className = "sched-row";
-    const clock = document.createElement("span");
-    clock.className = "sched-clock";
-    clock.textContent = "⏱";
-    const label = document.createElement("span");
-    label.className = "sched-label";
-    // Overdue + waiting on quota is a real state, not a bug: it is parked until
-    // the window actually lifts (the queue re-checks rather than burning it).
-    const state = p.overdue && p.waitForQuota && res.quotaLimited ? "waiting for quota" : p.overdue ? "sending…" : p.label;
-    label.textContent = `${state} · ${p.prompt.length > 60 ? p.prompt.slice(0, 60) + "…" : p.prompt}`;
-    label.title = p.prompt;
-    const cancel = document.createElement("button");
-    cancel.type = "button";
-    cancel.className = "text-btn";
-    cancel.textContent = "Cancel";
-    cancel.addEventListener("click", async () => {
-      await window.helm.cancelScheduledPrompt(p.id);
-      renderScheduledPromptBar();
-    });
-    row.append(clock, label, cancel);
-    host.append(row);
+  host.classList.toggle("hidden", orphans.length === 0);
+  for (const p of orphans) {
+    host.append(scheduledPromptRowEl(p, quotaLimited, () => renderScheduledPromptBar()));
   }
 }
 
@@ -5948,6 +6000,13 @@ function paneComposerEl(index) {
   const mockupBanner = document.createElement("div");
   mockupBanner.className = "pane-mockup-banner hidden";
   wrap.append(mockupBanner);
+
+  // Prompts queued for THIS session, directly above the box they will be typed into
+  // (task c2aae246). Filled by renderScheduledPromptBar, which owns the one fetch and
+  // distributes it across the panes.
+  const schedQueue = document.createElement("div");
+  schedQueue.className = "pane-sched-queue hidden";
+  wrap.append(schedQueue);
   renderMockupBanner(index, mockupBanner, pane);
 
   // Status lives right above the composer (was in the header, easy to miss
