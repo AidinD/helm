@@ -3243,6 +3243,35 @@ let autoTickInFlight = false;
 const autoRuns = new Map();
 let autoLastTick = { at: 0, acted: 0, held: 0, error: null };
 
+// Backoff for a card whose triage call FAILED (not "judged unclear" - see the
+// !verdict branch below, which deliberately leaves such a card untouched so it can be
+// retried rather than blamed for our own failure).
+//
+// Retried on every 60-second pass, that correct decision became an unbounded cost: one
+// real model call per minute, forever, for a card that keeps failing - and silently,
+// since a failure is not an error the captain is shown as spending. Aidin asked the
+// right question about the wrong thing (task 1f8cca7b: "auto kollar kön för ofta (tar
+// det tokens?)"): the PASS is a board file read and costs nothing, but this path did.
+//
+// So a failure doubles the wait before the next attempt, capped at an hour. In memory
+// only, like autoRuns: a restart is a fair reason to try again immediately.
+const AUTO_TRIAGE_RETRY_BASE_MS = 2 * 60_000;
+const AUTO_TRIAGE_RETRY_MAX_MS = 60 * 60_000;
+const triageRetry = new Map(); // taskId -> { attempts, nextAt }
+
+/** How long to wait before the Nth retry of a failed triage. */
+function triageBackoffMs(attempts) {
+  return Math.min(AUTO_TRIAGE_RETRY_BASE_MS * 2 ** Math.max(0, attempts - 1), AUTO_TRIAGE_RETRY_MAX_MS);
+}
+
+function noteTriageFailure(taskId, now = Date.now()) {
+  const prev = triageRetry.get(taskId);
+  const attempts = (prev?.attempts || 0) + 1;
+  const waitMs = triageBackoffMs(attempts);
+  triageRetry.set(taskId, { attempts, nextAt: now + waitMs });
+  return { attempts, waitMs };
+}
+
 function autoCaptainConfig() {
   const cfg = loadConfig();
   return { enabled: cfg.autoCaptain?.enabled === true, triaged: cfg.autoCaptain?.triaged || {}, jot: cfg.jot || {} };
@@ -3469,6 +3498,19 @@ async function autoCaptainTick({ force = false } = {}) {
       handledIds: new Set(autoRuns.keys()),
     });
     for (const todo of act) {
+      // A card whose triage failed recently is waiting out its backoff. Checked BEFORE the
+      // folder lookup and the model call, because skipping after paying for them would make
+      // the backoff decorative.
+      const waiting = triageRetry.get(todo.id);
+      if (waiting && Date.now() < waiting.nextAt) {
+        const mins = Math.max(1, Math.round((waiting.nextAt - Date.now()) / 60_000));
+        triageFailures.push({
+          id: todo.id,
+          title: todo.text,
+          reason: `Triage failed ${waiting.attempts} time${waiting.attempts === 1 ? "" : "s"} - waiting ${mins} more minute${mins === 1 ? "" : "s"} before trying again.`,
+        });
+        continue;
+      }
       // WHERE. A list with no folder binding cannot be acted on, and saying that
       // plainly is more useful than a triage verdict about the wording.
       const where = resolveTaskProject(todo, state.categories);
@@ -3496,10 +3538,21 @@ async function autoCaptainTick({ force = false } = {}) {
       // So: leave the card completely alone and let the next pass retry it. The
       // failure is reported as a failure, in the widget, where it belongs.
       if (!verdict) {
-        triageFailures.push({ id: todo.id, title: todo.text, reason: "The triage call could not be completed - will try again next pass." });
-        console.error(`[helm] auto-captain: triage failed for "${todo.text}" - leaving the card untouched`);
+        // Backed off rather than retried every pass: the retry is right, one model call a
+        // minute forever is not (see triageRetry).
+        const { attempts, waitMs } = noteTriageFailure(todo.id);
+        const mins = Math.round(waitMs / 60_000);
+        triageFailures.push({
+          id: todo.id,
+          title: todo.text,
+          reason: `The triage call could not be completed (${attempts} attempt${attempts === 1 ? "" : "s"}) - trying again in ${mins} minute${mins === 1 ? "" : "s"}.`,
+        });
+        console.error(`[helm] auto-captain: triage failed for "${todo.text}" - untouched, next attempt in ${mins}m`);
         continue;
       }
+      // A card that answered is no longer failing, so it must not carry an old wait into
+      // some later failure and start from a long delay.
+      triageRetry.delete(todo.id);
       if (!verdict.dispatchable) {
         holdBack(jot, todo, verdict.reason || "The triage judged this not specific enough to hand to an agent.");
         held += 1;
