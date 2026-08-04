@@ -47,7 +47,7 @@ export function resolveClaudeBinary() {
  * Returns { child, done } where `done` resolves with a summary once the process
  * exits. Emits normalized events: { kind, ...fields }.
  */
-export function startSession({ cwd, prompt, model, effort, permissionMode, resumeSessionId, onEvent, mcpConfig, allowedTools, disallowedTools, appendSystemPrompt, strictMcpConfig }) {
+export function startSession({ cwd, prompt, model, effort, permissionMode, resumeSessionId, onEvent, mcpConfig, allowedTools, disallowedTools, appendSystemPrompt, strictMcpConfig, agents }) {
   const args = [
     "-p",
     prompt,
@@ -103,6 +103,15 @@ export function startSession({ cwd, prompt, model, effort, permissionMode, resum
   // allow, so this holds even under a permissive permission-mode.
   if (disallowedTools && disallowedTools.length) {
     args.push("--disallowedTools", ...disallowedTools);
+  }
+  // Advisory seats (personas.js): sub-agent definitions this session may consult
+  // by name, injected per launch as ONE json argv value rather than written into
+  // the machine's global agents directory. Each definition carries its own tool
+  // list, and a sub-agent's tool list is an ALLOW list - which is why the seats
+  // are genuinely read-only where a --disallowedTools spelling of the same intent
+  // is not (measured; see the ADVISORY_TOOLS comment in personas.js).
+  if (agents && Object.keys(agents).length) {
+    args.push("--agents", JSON.stringify(agents));
   }
   // User-confirmed default is "auto" (matches what Aidin already runs daily
   // in the desktop app); UI exposes the full mode list from the composer.
