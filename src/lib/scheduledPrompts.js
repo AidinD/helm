@@ -70,6 +70,33 @@ export function pendingScheduledPrompts(now = Date.now()) {
 }
 
 /**
+ * Entries that FAILED and have not been acknowledged, newest first.
+ *
+ * A prompt he queued and that never reached the model is the one state worth interrupting
+ * him about, and it was the one state nothing showed: "fired" is terminal, so the row simply
+ * left the queue (task a797eb69 - "skickades aldrig, de bara försvann"). These stay visible
+ * until dismissed rather than expiring, because a signal that ages out is a signal he will
+ * miss exactly when he was away - which is the whole reason to schedule a prompt.
+ */
+export function failedScheduledPrompts() {
+  return readAll()
+    .filter((p) => p.status === "failed" && !p.acknowledgedAt)
+    .sort((a, b) => (b.firedAt || 0) - (a.firedAt || 0));
+}
+
+/** Acknowledge a failed entry, so it stops being shown. */
+export function acknowledgeScheduledPrompt(id, { now = Date.now() } = {}) {
+  const all = readAll();
+  const entry = all.find((p) => p.id === id);
+  if (!entry) {
+    return false;
+  }
+  entry.acknowledgedAt = now;
+  writeAll(all);
+  return true;
+}
+
+/**
  * Resolve the fireAt for a "when the quota window resets" schedule from the
  * persisted quota readings. Returns null when no window has a usable future
  * reset, so the caller can fall back to a plain delay rather than guessing.
@@ -187,6 +214,45 @@ export function markScheduledPromptFired(id, { ok = true, error = null, now = Da
   entry.status = ok ? "fired" : "failed";
   entry.firedAt = now;
   entry.error = ok ? null : error || "unknown error";
+  writeAll(all);
+  return entry;
+}
+
+/**
+ * Record what the fired run actually DID, once it has finished.
+ *
+ * "scheduled meddelande on token reset skickades aldrig, de bara försvann" (the captain, task
+ * a797eb69). markScheduledPromptFired above is called the moment the process is spawned, which
+ * is all that is known at that point - but it writes the terminal status "fired", so the entry
+ * left the queue looking sent whatever happened next. A prompt fired into a quota that was
+ * still spent, or resumed against a session the CLI could not find, therefore ended as a
+ * confident "fired" with nothing to show: never sent, and gone from the list.
+ *
+ * `sawResult` is the launcher's own answer to "did the CLI produce a real reply", which is the
+ * only trustworthy signal - a non-zero exit is not required for a run to have produced nothing.
+ */
+export function markScheduledPromptOutcome(id, { sawResult = false, code = null, error = null, now = Date.now() } = {}) {
+  const all = readAll();
+  const entry = all.find((p) => p.id === id);
+  if (!entry) {
+    return null;
+  }
+  // Only an entry we launched has an outcome to record; leave anything else alone.
+  if (entry.status !== "fired" && entry.status !== "failed") {
+    return entry;
+  }
+  entry.finishedAt = now;
+  if (sawResult) {
+    entry.status = "fired";
+    entry.error = null;
+  } else {
+    entry.status = "failed";
+    entry.error =
+      error ||
+      (typeof code === "number" && code !== 0
+        ? `the run exited with code ${code} without replying`
+        : "the run ended without producing a reply");
+  }
   writeAll(all);
   return entry;
 }

@@ -5849,6 +5849,14 @@ button.primary {
   flex: 1;
 }
 
+/* A scheduled prompt that never reached the model (task a797eb69). Same row shape as a
+   queued one - it sits in the same place, beside the session it was meant for - but in the
+   warning colour, because this one already went wrong rather than still being on its way. */
+.sched-row.sched-failed .sched-clock,
+.sched-row.sched-failed .sched-label {
+  color: var(--danger);
+}
+
 /* Review queue (task ce2d19ab): judgment items first, each with evidence, the
    honest gaps, and numbered steps to check it. */
 .rev-group {

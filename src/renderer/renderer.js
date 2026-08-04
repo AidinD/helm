@@ -1705,6 +1705,39 @@ function scheduledPromptRowEl(p, quotaLimited, onChanged) {
 }
 
 /**
+ * A scheduled prompt that FAILED to reach the model, shown where its queue row used to be.
+ *
+ * "scheduled meddelande on token reset skickades aldrig, de bara försvann" (the captain, task
+ * a797eb69). The row left the queue the instant the process was spawned, and the run's own
+ * events went to a launchId no pane listens for - so a prompt fired into a still-spent quota,
+ * or resumed against a session the CLI could not find, ended as a silent success. This is the
+ * row that says otherwise, and it stays until dismissed: a notice that ages out would be
+ * missed exactly when he was away, which is the whole reason to schedule a prompt.
+ */
+function failedScheduledPromptRowEl(p, onChanged) {
+  const row = document.createElement("div");
+  row.className = "sched-row sched-failed";
+  const icon = document.createElement("span");
+  icon.className = "sched-clock";
+  icon.textContent = "⚠";
+  const label = document.createElement("span");
+  label.className = "sched-label";
+  const what = p.prompt.length > 45 ? p.prompt.slice(0, 45) + "…" : p.prompt;
+  label.textContent = `never sent · ${what} — ${p.error || "the run produced no reply"}`;
+  label.title = `${p.prompt}\n\n${p.error || ""}`;
+  const dismiss = document.createElement("button");
+  dismiss.type = "button";
+  dismiss.className = "text-btn";
+  dismiss.textContent = "Dismiss";
+  dismiss.addEventListener("click", async () => {
+    await window.helm.acknowledgeScheduledPrompt(p.id);
+    onChanged();
+  });
+  row.append(icon, label, dismiss);
+  return row;
+}
+
+/**
  * The queued prompts, shown WHERE THEY WILL FIRE.
  *
  * "Scheduled meddelanden borde synas i en kö här ... Istället för globalt längst ner"
@@ -1732,19 +1765,28 @@ async function renderScheduledPromptBar() {
   const host = document.getElementById("scheduledPromptBar");
   const res = await window.helm.listScheduledPrompts();
   const pending = res?.ok ? res.pending || [] : [];
+  // A failure is filed exactly like a queue row - beside the session it was meant for - so it
+  // appears where the row he queued used to be rather than in some separate notifications list.
+  const failed = res?.ok ? res.failed || [] : [];
   const quotaLimited = !!res?.quotaLimited;
 
   // Per-pane queues first, so the global bar knows what is already accounted for.
   const shownInPane = new Set();
   panes.forEach((pane, index) => {
     const mine = paneScheduledQueue(pane, pending);
+    const mineFailed = paneScheduledQueue(pane, failed);
     mine.forEach((p) => shownInPane.add(p.id));
+    mineFailed.forEach((p) => shownInPane.add(p.id));
     const box = document.querySelector(`.pane[data-pane="${index}"] .pane-sched-queue`);
     if (!box) {
       return;
     }
     box.replaceChildren();
-    box.classList.toggle("hidden", mine.length === 0);
+    box.classList.toggle("hidden", mine.length === 0 && mineFailed.length === 0);
+    // Failures first: one is a thing that already went wrong, the others are still waiting.
+    for (const p of mineFailed) {
+      box.append(failedScheduledPromptRowEl(p, () => renderScheduledPromptBar()));
+    }
     for (const p of mine) {
       box.append(scheduledPromptRowEl(p, quotaLimited, () => renderScheduledPromptBar()));
     }
@@ -1756,8 +1798,14 @@ async function renderScheduledPromptBar() {
   // What is left: queued for a session no open pane is showing. Keeping these is the
   // difference between moving the queue and losing half of it.
   const orphans = pending.filter((p) => !shownInPane.has(p.id));
+  const orphanFailures = failed.filter((p) => !shownInPane.has(p.id));
   host.replaceChildren();
-  host.classList.toggle("hidden", orphans.length === 0);
+  host.classList.toggle("hidden", orphans.length === 0 && orphanFailures.length === 0);
+  // A failure for a session that is not open still has to be seen - that is the case where he
+  // was away, which is when a scheduled prompt matters most.
+  for (const p of orphanFailures) {
+    host.append(failedScheduledPromptRowEl(p, () => renderScheduledPromptBar()));
+  }
   for (const p of orphans) {
     host.append(scheduledPromptRowEl(p, quotaLimited, () => renderScheduledPromptBar()));
   }
