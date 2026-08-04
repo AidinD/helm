@@ -3054,11 +3054,13 @@ document.addEventListener("pointercancel", releaseDashPointer);
 // deferring refreshes in the meantime.
 window.addEventListener("blur", releaseDashPointer);
 
-// Quick keyboard nav to the primary views. Ctrl+Space = Dashboard (the fast
-// key Aidin wanted, simpler than a digit); Ctrl+Shift+Space = Review; Ctrl+1/2/3 =
-// Plan/Analysis/Archive, mirroring the header tab order (Dashboard is on Space, so the
-// digits start at Plan). Skipped while the command palette is open so it doesn't fight
-// its keys.
+// Quick keyboard nav to the primary views:
+//
+//   Ctrl+Space        Dashboard   (the fast key Aidin wanted, simpler than a digit)
+//   Ctrl+Shift+Space  Review      (same key, one more modifier - see below)
+//   Ctrl+1..4         Jot, Plan, Analysis, Archive - the header's own left-to-right order
+//
+// Skipped while the command palette is open so it doesn't fight its keys.
 //
 // Review sits on the SAME key as the dashboard with one more modifier, which is the whole
 // reason for the choice (Aidin: Ctrl+4 is "för långt mellan fingrarna", and Ctrl+R is
@@ -3081,7 +3083,17 @@ document.addEventListener("keydown", (e) => {
     navigateToPage("review");
     return;
   }
-  const page = isSpace ? "dashboard" : { 1: "lavish", 2: "analysis", 3: "archive" }[e.key]; // lavish = the "Plan" tab
+  // The digits follow the header's own tab order, left to right: Jot, Plan, Analysis,
+  // Archive. They used to start at Plan and were therefore one step out of step with what
+  // he sees - the comment claimed they mirrored the tabs while Jot, the FIRST one, had no
+  // digit at all (Aidin: "ctrl+1 borde gå till jot eftersom det är den första tabben").
+  //
+  // Deliberately NO letter key for Jot. Ctrl+J was tried and dropped: "ctrl+j är inte
+  // ergonomiskt, kräver 2 händer" - Ctrl is under the left pinky and J is under the right
+  // index. Ctrl+1 is already one-handed AND matches Jot's position as the first tab, so a
+  // second binding on an arbitrary left-hand letter would add a thing to remember without
+  // adding a thing you can do. Every left-hand letter is free in the app if that changes.
+  const page = isSpace ? "dashboard" : { 1: "jot", 2: "lavish", 3: "analysis", 4: "archive" }[e.key]; // lavish = the "Plan" tab
   if (!page) {
     return;
   }

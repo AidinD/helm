@@ -41,7 +41,7 @@ try {
     // Pages are plain ids toggled with a "hidden" class - there is no ".page" class, and
     // the first version of this probe looked for one and reported every assertion as a
     // failure while the shortcut worked fine.
-    const IDS = ["chatPage", "dashboardPage", "focusPage", "goalPage", "lavishPage", "routinesPage", "reviewPage", "analysisPage", "archivePage", "settingsPage"];
+    const IDS = ["chatPage", "dashboardPage", "jotPage", "goalPage", "lavishPage", "routinesPage", "reviewPage", "analysisPage", "archivePage", "settingsPage"];
     const visible = () => IDS.filter((id) => { const el = document.getElementById(id); return el && !el.classList.contains("hidden"); });
     const go = async (opts) => {
       const prevented = press(opts);
@@ -62,8 +62,26 @@ try {
     // The unshifted one still reaches the dashboard.
     out.dashboard = await go({ key: " ", code: "Space", ctrlKey: true });
 
-    // And the digits are untouched by the new shifted branch.
-    out.plan = await go({ key: "1", ctrlKey: true });
+    // The digits follow the header's own left-to-right order: Jot, Plan, Analysis, Archive.
+    // They used to start at Plan, so every one of them was a step out of step with what he
+    // sees - and Jot, the FIRST tab, had no digit at all.
+    out.one = await go({ key: "1", ctrlKey: true });
+    out.two = await go({ key: "2", ctrlKey: true });
+    out.three = await go({ key: "3", ctrlKey: true });
+    out.four = await go({ key: "4", ctrlKey: true });
+
+    // No LETTER key for Jot. Ctrl+J was tried and dropped as two-handed, and Ctrl+J still
+    // has a job inside the command palette (move selection down) - so it must reach the
+    // palette untouched rather than being half-claimed here.
+    navigateToPage("chat");
+    await new Promise((r) => setTimeout(r, 200));
+    out.jotLetter = await go({ key: "j", ctrlKey: true });
+
+    // Ctrl+X must be LEFT ALONE. It is cut, and taking it would break cut in every text
+    // field in the app - which is why it was not used for Jot despite being asked for.
+    navigateToPage("chat");
+    await new Promise((r) => setTimeout(r, 200));
+    out.cut = await go({ key: "x", ctrlKey: true });
 
     // A shifted combination that is NOT space must be left alone, or the branch would
     // start swallowing keys other features rely on.
@@ -85,7 +103,16 @@ try {
   ok(res.fromChat.prevented, "and the key is claimed, so nothing else acts on it as well");
   ok(res.fromDashboard.pages.includes("reviewPage"), `and from the dashboard, where the unshifted twin lives (${res.fromDashboard.pages.join(", ")})`);
   ok(res.dashboard.pages.includes("dashboardPage"), `Ctrl+Space still goes to the dashboard (${res.dashboard.pages.join(", ")})`);
-  ok(res.plan.pages.some((p) => /lavish|plan/i.test(p)), `Ctrl+1 still goes to Plan (${res.plan.pages.join(", ")})`);
+  ok(res.one.pages.includes("jotPage"), `Ctrl+1 goes to Jot - the FIRST tab in the header (${res.one.pages.join(", ")})`);
+  ok(res.two.pages.includes("lavishPage"), `Ctrl+2 goes to Plan (${res.two.pages.join(", ")})`);
+  ok(res.three.pages.includes("analysisPage"), `Ctrl+3 goes to Analysis (${res.three.pages.join(", ")})`);
+  ok(res.four.pages.includes("archivePage"), `Ctrl+4 goes to Archive (${res.four.pages.join(", ")})`);
+  ok(
+    !res.jotLetter.prevented && !res.jotLetter.pages.includes("jotPage"),
+    "Ctrl+J is NOT a navigation key - it was dropped as two-handed, and the command palette still needs it"
+  );
+  ok(!res.cut.prevented, "Ctrl+X is NOT taken - it is cut, and taking it would break cut in every text field");
+  ok(!res.cut.pages.includes("jotPage"), "and it navigates nowhere");
   ok(!res.shiftOne.prevented, "Ctrl+Shift+1 is left alone - only Space is ours to take");
   ok(!res.shiftOne.pages.includes("reviewPage"), "and it does not navigate anywhere");
   ok(!res.withPalette.prevented, "with the command palette open the shortcut yields to it");
@@ -118,7 +145,7 @@ try {
 
 console.log(
   exit === 0
-    ? "VERIFY OK: Ctrl+Shift+Space opens Review, Ctrl+Space and Ctrl+1 are unchanged, other shifted combinations are left alone, and the command palette still wins."
+    ? "VERIFY OK: Ctrl+Space is Dashboard, Ctrl+Shift+Space is Review, Ctrl+1..4 follow the header's own tab order, Ctrl+X stays cut, and the command palette still wins."
     : "VERIFY FAILED."
 );
 process.exit(exit);
