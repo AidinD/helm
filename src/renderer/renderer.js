@@ -4488,11 +4488,130 @@ function renderMarkdownInto(container, text) {
   const segments = text.split(/```([\s\S]*?)```/);
   segments.forEach((segment, i) => {
     if (i % 2 === 1) {
-      container.append(codeBlockEl(segment.replace(/^[ \t]*\S*\n/, "")));
+      // The fence's info string is the LANGUAGE, and it used to be thrown away by the
+      // same replace that stripped it (task c6094e4f). Captured now and handed to the
+      // colouriser, which is the whole reason a code block can look like code.
+      const lang = (segment.match(/^[ \t]*([A-Za-z0-9_+#.-]*)\n/) || [])[1] || "";
+      container.append(codeBlockEl(segment.replace(/^[ \t]*\S*\n/, ""), lang));
     } else if (segment) {
       renderTextBlock(container, segment);
     }
   });
+}
+
+// ---- Syntax colouring, local and dependency-free ---------------------------
+//
+// A small tokeniser rather than highlight.js, for one reason that decided it: the
+// requirement is "färgaren genererar egna, kontrollerade element" and no innerHTML of
+// model text. highlight.js hands back an HTML STRING, which means either innerHTML or
+// parsing its output back into nodes - and a highlighter is not worth relaxing that rule
+// for. This produces (text, class) pairs which the caller turns into spans.
+//
+// Honest limits, stated because the alternative is a false impression of completeness:
+// it knows the families below, colours comments/strings/numbers/keywords/call names, and
+// anything it does not know renders as plain monospace text (which is what happens today
+// for everything). It is not a parser: a keyword inside a word is not matched, but a
+// pathological construct can still be mis-tinted. Being wrong here costs a colour.
+const CODE_LANG_ALIASES = {
+  js: "clike", javascript: "clike", jsx: "clike", mjs: "clike", cjs: "clike",
+  ts: "clike", typescript: "clike", tsx: "clike",
+  c: "clike", cpp: "clike", "c++": "clike", cs: "clike", csharp: "clike", java: "clike", go: "clike", rust: "clike", swift: "clike", kotlin: "clike", php: "clike",
+  json: "json", jsonc: "json",
+  py: "python", python: "python",
+  lua: "lua", luau: "lua",
+  sh: "shell", bash: "shell", zsh: "shell", shell: "shell", console: "shell",
+  ps1: "powershell", powershell: "powershell", pwsh: "powershell",
+  css: "css", scss: "css", less: "css",
+  html: "markup", xml: "markup", svg: "markup", vue: "markup",
+  sql: "sql",
+  diff: "diff", patch: "diff",
+  yml: "yaml", yaml: "yaml",
+};
+
+const CODE_KEYWORDS = {
+  clike:
+    "abstract async await base break case catch class const constructor continue debugger default delete do else enum export extends false finally for from function get if implements import in instanceof interface let new null of override private protected public readonly return set static super switch this throw true try type typeof undefined var void while yield struct func defer go impl fn mut pub use where match namespace using",
+  python: "and as assert async await break class continue def del elif else except False finally for from global if import in is lambda None nonlocal not or pass raise return True try while with yield self",
+  lua: "and break do else elseif end false for function goto if in local nil not or repeat return then true until while self",
+  shell: "if then else elif fi for while do done case esac function return export local readonly set unset echo cd exit source",
+  powershell: "if else elseif foreach function param process begin end return try catch finally throw switch while do until break continue filter class",
+  sql: "select from where group by having order limit offset insert into values update set delete create table alter drop index join left right inner outer on as distinct union all and or not null",
+  json: "true false null",
+  yaml: "true false null",
+};
+
+/**
+ * @returns {Array<{ text: string, cls: string }>} cls is "" for uncoloured text.
+ */
+function highlightCode(code, lang) {
+  const family = CODE_LANG_ALIASES[String(lang || "").toLowerCase()] || null;
+  const src = String(code == null ? "" : code);
+  if (!family) {
+    return [{ text: src, cls: "" }];
+  }
+  if (family === "diff") {
+    // A diff is coloured by line, not by token - the leading character IS the meaning.
+    return src.split(/(?<=\n)/).map((line) => ({
+      text: line,
+      cls: /^\+\+\+|^---/.test(line) ? "tok-file" : /^@@/.test(line) ? "tok-hunk" : /^\+/.test(line) ? "tok-add" : /^-/.test(line) ? "tok-del" : "",
+    }));
+  }
+  const lineComment = family === "python" || family === "shell" || family === "powershell" || family === "yaml" ? "#" : family === "lua" ? "--" : family === "sql" ? "--" : "//";
+  const kw = new Set((CODE_KEYWORDS[family] || "").split(/\s+/).filter(Boolean));
+  const out = [];
+  const push = (text, cls) => {
+    if (!text) {
+      return;
+    }
+    const last = out[out.length - 1];
+    if (last && last.cls === cls) {
+      last.text += text;
+    } else {
+      out.push({ text, cls });
+    }
+  };
+
+  // One pass, longest-match-first: comments and strings before anything else, so a
+  // keyword inside a string is not tinted as code.
+  const rules = [
+    { cls: "tok-com", re: family === "markup" ? /<!--[\s\S]*?-->/ : /\/\*[\s\S]*?\*\//, when: family === "clike" || family === "css" || family === "markup" },
+    { cls: "tok-com", re: family === "lua" ? /--\[\[[\s\S]*?\]\]/ : null, when: family === "lua" },
+    { cls: "tok-com", re: new RegExp(`${lineComment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[^\\n]*`), when: family !== "markup" && family !== "json" },
+    { cls: "tok-str", re: /"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`/, when: true },
+    { cls: "tok-num", re: /\b(?:0x[0-9a-fA-F]+|\d+(?:\.\d+)?(?:e[+-]?\d+)?)\b/, when: true },
+    { cls: "tok-tag", re: /<\/?[A-Za-z][A-Za-z0-9-]*/, when: family === "markup" },
+    { cls: "tok-word", re: /[A-Za-z_$@][\w$]*/, when: true },
+  ].filter((r) => r.when && r.re);
+
+  let rest = src;
+  let guard = 0;
+  while (rest.length > 0 && guard++ < 200000) {
+    let best = null;
+    for (const rule of rules) {
+      const m = rule.re.exec(rest);
+      if (m && (best === null || m.index < best.index)) {
+        best = { index: m.index, text: m[0], cls: rule.cls };
+      }
+      if (best && best.index === 0) {
+        break;
+      }
+    }
+    if (!best) {
+      push(rest, "");
+      break;
+    }
+    push(rest.slice(0, best.index), "");
+    if (best.cls === "tok-word") {
+      const after = rest.slice(best.index + best.text.length);
+      const isCall = /^\s*\(/.test(after);
+      const isProp = best.index > 0 && rest[best.index - 1] === ".";
+      push(best.text, kw.has(best.text) ? "tok-kw" : isCall ? "tok-fn" : isProp ? "tok-prop" : "");
+    } else {
+      push(best.text, best.cls);
+    }
+    rest = rest.slice(best.index + best.text.length);
+  }
+  return out;
 }
 
 /**
@@ -4507,12 +4626,44 @@ function renderMarkdownInto(container, text) {
  * hovered for the same reason that one is: a control on every block, always visible, reads as
  * noise (which is why the reply's button stopped being a text label).
  */
-function codeBlockEl(code) {
+function codeBlockEl(code, lang = "") {
   const wrap = document.createElement("div");
   wrap.className = "md-code-wrap";
   const pre = document.createElement("pre");
   pre.className = "md-code-block";
-  pre.textContent = code;
+  // Coloured into spans this code creates - never innerHTML. An unknown language yields
+  // one uncoloured span, i.e. exactly what every block looked like before.
+  const tokens = highlightCode(code, lang);
+  if (tokens.length === 1 && !tokens[0].cls) {
+    pre.textContent = code;
+  } else {
+    for (const t of tokens) {
+      if (!t.cls) {
+        pre.append(document.createTextNode(t.text));
+        continue;
+      }
+      const span = document.createElement("span");
+      span.className = t.cls;
+      span.textContent = t.text;
+      pre.append(span);
+    }
+  }
+  // The language, said out loud: it is what tells you whether the colours mean anything,
+  // and an unlabelled block gave no way to tell a Lua block from an unrecognised one.
+  //
+  // In a header ROW above the code, not floated over it. The first version pinned it to the
+  // block's top-right corner, where it sat on top of the first line of code - visible in a
+  // screenshot immediately, invisible to every assertion I had written.
+  if (lang) {
+    const head = document.createElement("div");
+    head.className = "md-code-head";
+    const tag = document.createElement("span");
+    tag.className = "md-code-lang";
+    tag.textContent = lang;
+    head.append(tag);
+    wrap.append(head);
+    wrap.classList.add("has-lang");
+  }
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "code-copy-btn";
@@ -4626,7 +4777,22 @@ function tableEl(headerLine, bodyLines) {
   return table;
 }
 
+// The block constructs the renderer used to drop on the floor (task c6094e4f). Each is a
+// line-level shape, matched here once so both the "is this a block?" test and the renderer
+// agree - they disagreed in the first version and a heading got a <br> after it.
+const HEADING = /^(#{1,6})\s+(.*)$/;
+const ORDERED = /^\s*(\d{1,3})[.)]\s+(.*)$/;
+const QUOTE = /^\s*>\s?(.*)$/;
+const RULE = /^\s*(?:---+|\*\*\*+|___+)\s*$/;
 const isListLine = (line) => /^\s*[-*]\s+/.test(line);
+/**
+ * A line that renders as its own block element.
+ *
+ * Everything here is display:block and self-breaks, so a <br> next to one is a doubled
+ * gap - the exact bug the bullet handling already carried a comment about.
+ */
+const isBlockLine = (line) =>
+  isListLine(line) || HEADING.test(line) || ORDERED.test(line) || QUOTE.test(line) || RULE.test(line);
 
 // Walks from idx in the given direction (-1 back, +1 forward), skipping
 // blank separator lines, and returns the nearest actual content line (or ""
@@ -4645,6 +4811,28 @@ function nearestContentLine(lines, idx, direction) {
   return "";
 }
 
+/**
+ * One list item: a marker beside a body that wraps under itself.
+ *
+ * The content goes in its OWN span, which is what lets the row be a flex row - the first
+ * attempt used a negative text-indent to hang the marker, and at the bubble's padding that
+ * pulled every marker outside the bubble and clipped it (seen in a screenshot, not
+ * reasoned about). With a flex row the marker cannot leave the box, and a wrapped line
+ * lines up under the text rather than under the bullet.
+ */
+function listItemEl(markerText, content, extraClass) {
+  const li = document.createElement("div");
+  li.className = "md-li" + (extraClass ? ` ${extraClass}` : "");
+  const marker = document.createElement("span");
+  marker.className = "md-marker";
+  marker.textContent = markerText;
+  const body = document.createElement("span");
+  body.className = "md-li-body";
+  body.append(...inlineFormat(content));
+  li.append(marker, body);
+  return li;
+}
+
 function renderInlineLines(container, text) {
   const lines = text.split("\n");
   lines.forEach((line, idx) => {
@@ -4661,16 +4849,44 @@ function renderInlineLines(container, text) {
     // away — two or more consecutive blank lines between a list and the
     // next paragraph would otherwise leave every blank past the first to
     // render as an ordinary empty line, reintroducing the doubled gap.
-    if (isBlank && (isListLine(nearestContentLine(lines, idx, -1)) || isListLine(nearestContentLine(lines, idx, 1)))) {
+    // Widened from lists to every BLOCK line for the same reason: a blank line between
+    // two bullets, two numbered items, two quote lines or a heading and its paragraph is
+    // separator syntax, not content, and rendering it doubles the gap the block's own
+    // margin already provides.
+    if (isBlank && (isBlockLine(nearestContentLine(lines, idx, -1)) || isBlockLine(nearestContentLine(lines, idx, 1)))) {
       return;
     }
 
-    if (isList) {
+    const heading = HEADING.exec(line);
+    const ordered = ORDERED.exec(line);
+    const quote = QUOTE.exec(line);
+
+    if (heading) {
+      // Levels 1-3 get their own size; deeper ones share the smallest. A chat bubble is
+      // not a document, so h1 maps to the bubble's largest heading rather than a page
+      // title, and the hierarchy is what matters - it is the anchor the eye comes back to.
+      const level = Math.min(heading[1].length, 3);
+      const h = document.createElement("div");
+      h.className = `md-h md-h${level}`;
+      h.append(...inlineFormat(heading[2]));
+      container.append(h);
+    } else if (RULE.test(line)) {
+      const hr = document.createElement("div");
+      hr.className = "md-hr";
+      container.append(hr);
+    } else if (quote) {
+      // Consecutive quote lines each render as a row; the CSS joins them into one rail so
+      // a multi-line quote does not look like several.
+      const q = document.createElement("div");
+      q.className = "md-quote";
+      q.append(...inlineFormat(quote[1]));
+      container.append(q);
+    } else if (ordered) {
+      // The author's own number, not a re-count: a reply that starts at 3 means 3.
+      container.append(listItemEl(ordered[1] + ".", ordered[2], "md-oli"));
+    } else if (isList) {
       const listMatch = /^\s*[-*]\s+(.*)$/.exec(line);
-      const li = document.createElement("div");
-      li.className = "md-li";
-      li.append(document.createTextNode("• "), ...inlineFormat(listMatch[1]));
-      container.append(li);
+      container.append(listItemEl("•", listMatch[1], null));
     } else {
       const lineSpan = document.createElement("span");
       // The transition INTO a list gets a deliberate gap (.md-li's own
@@ -4679,7 +4895,7 @@ function renderInlineLines(container, text) {
       // sat flush against it with only incidental line-height between them,
       // reading as "tight"/inconsistent next to every other spaced
       // transition. This class gives it the matching gap.
-      if (isListLine(nearestContentLine(lines, idx, -1))) {
+      if (isBlockLine(nearestContentLine(lines, idx, -1))) {
         lineSpan.className = "md-after-list";
       }
       lineSpan.append(...inlineFormat(line));
@@ -4689,15 +4905,29 @@ function renderInlineLines(container, text) {
     // A list item is already display:block and self-breaks onto its own
     // line — a <br> touching one on either side is exactly what broke
     // .md-li adjacency above. Only insert one between two plain lines.
-    if (idx < lines.length - 1 && !isList && !isListLine(nextLine || "")) {
+    // Widened to every block line: a heading, a numbered item, a quote row and a rule all
+    // self-break too, so a <br> beside any of them is a doubled gap.
+    if (idx < lines.length - 1 && !isBlockLine(line) && !isBlockLine(nextLine || "")) {
       container.append(document.createElement("br"));
     }
   });
 }
 
+/**
+ * Inline markdown: bold, inline code, italic, and links.
+ *
+ * Bold and code were all it did (task c6094e4f) - so an italic word rendered with its
+ * asterisks and a link rendered as its own source, both of which are worse than plain
+ * text because they look like a mistake.
+ *
+ * Order in the alternation matters: `**` before `*` (otherwise bold is read as two
+ * italics), and code before both so markdown characters inside a code span stay literal.
+ * A link's href is not trusted blindly - only http(s) becomes a real link, so a
+ * javascript: or file: URL in a reply cannot become a clickable one.
+ */
 function inlineFormat(text) {
   const nodes = [];
-  const regex = /(\*\*[^*]+\*\*|`[^`]+`)/g;
+  const regex = /(`[^`]+`|\*\*[^*]+\*\*|__[^_]+__|\[[^\]\n]+\]\([^)\s]+\)|(?<![\w*])\*[^*\n]+\*(?![\w*])|(?<![\w_])_[^_\n]+_(?![\w_]))/g;
   let lastIndex = 0;
   let m;
   while ((m = regex.exec(text))) {
@@ -4705,14 +4935,39 @@ function inlineFormat(text) {
       nodes.push(document.createTextNode(text.slice(lastIndex, m.index)));
     }
     const token = m[0];
-    if (token.startsWith("**")) {
-      const b = document.createElement("strong");
-      b.textContent = token.slice(2, -2);
-      nodes.push(b);
-    } else {
+    const link = /^\[([^\]]+)\]\(([^)\s]+)\)$/.exec(token);
+    if (token.startsWith("`")) {
       const c = document.createElement("code");
       c.textContent = token.slice(1, -1);
       nodes.push(c);
+    } else if (token.startsWith("**") || token.startsWith("__")) {
+      const b = document.createElement("strong");
+      b.textContent = token.slice(2, -2);
+      nodes.push(b);
+    } else if (link) {
+      const [, label, href] = link;
+      if (/^https?:\/\//i.test(href)) {
+        const a = document.createElement("a");
+        a.className = "md-link";
+        a.href = href;
+        a.target = "_blank";
+        a.rel = "noreferrer noopener";
+        a.textContent = label;
+        a.title = href;
+        nodes.push(a);
+      } else {
+        // A relative path (scripts/e2e/foo.mjs) or anything not http: shown as the label
+        // with the target beside it - readable, and not a clickable unknown scheme.
+        const span = document.createElement("span");
+        span.className = "md-link-plain";
+        span.textContent = label;
+        span.title = href;
+        nodes.push(span);
+      }
+    } else {
+      const em = document.createElement("em");
+      em.textContent = token.slice(1, -1);
+      nodes.push(em);
     }
     lastIndex = regex.lastIndex;
   }

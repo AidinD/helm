@@ -1688,6 +1688,84 @@ body.advanced .row-jot {
 .turn.assistant .turn-bubble {
   background: var(--bg-card);
   border: 1px solid var(--border);
+  /* THE MEASURE (task c6094e4f). The bubble was 88% of the pane, so on a wide window a
+     reply ran 150+ characters per line - the exact thing Aidin pointed at in Claude
+     Desktop's Code view, which holds a narrow column. 76ch at this size is ~640px: long
+     enough for a path or a command to sit on one line, short enough that the eye finds
+     the next line without hunting. The 88% still applies on a narrow pane. */
+  max-width: min(100%, 76ch);
+  /* Slightly lighter than the pane's own text, which is what makes Desktop's column calm
+     on a dark background. The size and line-height above already came from that
+     comparison (task 8cbe65da); this is the weight half of it. */
+  font-weight: 420;
+}
+
+/* ---- Structure the renderer used to drop on the floor (task c6094e4f) ----
+   Headings, numbered lists, quotes and rules. A chat bubble is not a document, so the
+   hierarchy is compressed - but it IS a hierarchy, which is what the eye comes back to. */
+.turn-bubble .md-h {
+  font-weight: 640;
+  letter-spacing: -0.012em;
+  line-height: 1.35;
+  text-wrap: balance;
+  margin: 1.15em 0 0.35em;
+}
+.turn-bubble .md-h:first-child {
+  margin-top: 0;
+}
+.turn-bubble .md-h1 {
+  font-size: 1.24em;
+}
+.turn-bubble .md-h2 {
+  font-size: 1.1em;
+}
+/* The third level stops competing on size and becomes a label instead - at this scale a
+   fourth size would be indistinguishable from bold body text. */
+.turn-bubble .md-h3 {
+  font-size: 0.82em;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--accent);
+  font-weight: 650;
+}
+.turn-bubble .md-marker {
+  display: inline-block;
+  min-width: 1.4em;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.turn-bubble .md-oli > .md-marker {
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 0.9em;
+}
+.turn-bubble .md-quote {
+  display: block;
+  padding: 0.1em 0 0.1em 0.9em;
+  border-left: 2px solid color-mix(in srgb, var(--accent) 50%, transparent);
+  color: var(--text-dim);
+  font-style: italic;
+}
+/* Consecutive quote lines are separate rows in the source; the negative margin joins
+   them so a multi-line quote reads as ONE quote rather than several. */
+.turn-bubble .md-quote + .md-quote {
+  margin-top: -0.1em;
+}
+.turn-bubble .md-hr {
+  border-top: 1px solid var(--border);
+  margin: 1.1em 0;
+  height: 0;
+}
+.turn-bubble .md-link {
+  color: var(--active);
+  text-decoration-color: color-mix(in srgb, var(--active) 45%, transparent);
+}
+/* A non-http target is not clickable, and says so by being underlined-but-quiet rather
+   than looking like a link that does nothing. */
+.turn-bubble .md-link-plain {
+  color: var(--text);
+  border-bottom: 1px dotted var(--text-faint);
+  cursor: help;
 }
 
 .turn-bubble.editable {
@@ -1793,14 +1871,65 @@ body.advanced .row-jot {
 .turn-bubble .md-code-block {
   background: var(--bg-inset);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 6px 8px;
-  margin: 4px 0;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 0.7em 0;
   font-family: "Cascadia Code", "Consolas", monospace;
-  font-size: 11.5px;
+  /* Was 11.5px, which is small enough to strain against 15px body text beside it. */
+  font-size: 12.5px;
+  line-height: 1.55;
+  font-weight: 400;
   overflow-x: auto;
   white-space: pre;
 }
+
+/* The fence's language, which used to be thrown away. In a header row ABOVE the code, not
+   floated over it: pinned to the corner it sat on top of the first line (caught in a
+   screenshot). The wrapper carries the frame so the header and the code read as one block. */
+.turn-bubble .md-code-wrap.has-lang {
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin: 0.7em 0;
+  overflow: hidden;
+}
+.turn-bubble .md-code-wrap.has-lang .md-code-block {
+  border: 0;
+  border-radius: 0;
+  margin: 0;
+  background: transparent;
+}
+.turn-bubble .md-code-head {
+  display: flex;
+  align-items: center;
+  /* Room for the copy button, which is pinned to the wrapper's top-right. */
+  padding: 4px 44px 4px 12px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-card) 70%, transparent);
+}
+.turn-bubble .md-code-lang {
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--text-faint);
+}
+
+/* Token colours. Derived from the theme rather than hardcoded to one editor's palette, so
+   they hold on the light themes too: strings and comments lean on the theme's own good/
+   waiting hues, keywords on the accent. */
+.turn-bubble .md-code-block .tok-kw { color: color-mix(in srgb, var(--accent) 78%, #ffffff); }
+.turn-bubble .md-code-block .tok-str { color: var(--good-bright); }
+.turn-bubble .md-code-block .tok-com { color: var(--text-faint); font-style: italic; }
+.turn-bubble .md-code-block .tok-num { color: var(--waiting); }
+.turn-bubble .md-code-block .tok-fn { color: var(--active); }
+.turn-bubble .md-code-block .tok-prop { color: color-mix(in srgb, var(--active) 65%, var(--text)); }
+.turn-bubble .md-code-block .tok-tag { color: color-mix(in srgb, var(--accent) 70%, var(--text)); }
+/* A diff inside a code fence is coloured by line, like the review page's diff. */
+.turn-bubble .md-code-block .tok-add { color: var(--good-bright); }
+.turn-bubble .md-code-block .tok-del { color: var(--danger-hover); }
+.turn-bubble .md-code-block .tok-hunk { color: var(--active); }
+.turn-bubble .md-code-block .tok-file { color: var(--text); font-weight: 600; }
 
 /* A code block carries its own copy button (task 0a8afe16), positioned against
    this wrapper rather than the <pre>: the pre scrolls horizontally, and a button
@@ -1858,9 +1987,17 @@ body.advanced .row-jot {
    sibling div (no <ul> wrapper), so ".md-li + .md-li" is what "the item
    right after another item" actually means here. */
 .turn-bubble .md-li {
-  display: block;
-  padding-left: 2px;
+  /* A flex row, so the marker sits beside the text and a wrapped line lines up under the
+     TEXT rather than under the bullet. The first attempt used a negative text-indent,
+     which at the bubble's padding pulled every marker outside the bubble and clipped it. */
+  display: flex;
+  gap: 0.4em;
+  padding-left: 0.1em;
   margin-top: 10px;
+}
+.turn-bubble .md-li-body {
+  flex: 1;
+  min-width: 0;
 }
 
 .turn-bubble .md-li + .md-li {
