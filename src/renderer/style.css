@@ -6241,3 +6241,53 @@ button.primary {
 .diff-hunk { color: var(--active); }
 .diff-file { color: var(--text); font-weight: 600; }
 .diff-commit-head { color: var(--accent); font-weight: 600; margin-top: 6px; }
+
+/* The reviewer dispatch dialog: a recommendation you can refuse (task c3dfbb42). */
+.reviewer-pick {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin: 12px 0 4px;
+  text-align: left;
+}
+.reviewer-why {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text);
+  padding: 9px 11px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+}
+.reviewer-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.reviewer-field select {
+  background: var(--bg-inset);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font: inherit;
+  min-width: 190px;
+}
+
+/* The reviewer's verdict, on the row that asked for it. */
+.rev-list-independent {
+  border-left-color: color-mix(in srgb, var(--active) 60%, transparent);
+}
+.rev-list-independent .rev-list-label {
+  color: var(--active);
+}
+.rev-independent-note {
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  color: var(--text);
+}

@@ -803,16 +803,119 @@ function openDiffViewer(row, res) {
 }
 
 /**
- * Prepare an independent review of this item in a fresh session, and let HIM send it.
+ * Send an independent reviewer at this item.
  *
- * Deliberately a prepared draft rather than a dispatched agent: it starts a real session
- * with a real model, so the moment it costs something should be a keystroke he makes.
- * The brief is built from the record - the claims, the gaps, and the declared checks -
- * because an independent pass that is not told what is being claimed just re-reads the
- * code and agrees with it.
+ * It DISPATCHES - the session starts and the brief is sent (the captain, 2026-08-05: "jag vill
+ * att den skickar iväg direkt, men sessionen ska fortfarande skapas så jag kan få
+ * feedback"). So there is one confirm, and it names what it is about to spend: the model
+ * is RECOMMENDED from the change's own complexity and can be overridden in the dialog,
+ * because a recommendation you cannot refuse is just someone else's decision.
+ *
+ * The reviewer is also told to write its verdict to a file, which the review row reads
+ * back - so the answer arrives where the question was asked, not only in a chat pane.
  */
-function openIndependentReview(row) {
+async function openIndependentReview(row) {
   const rec = row.record || {};
+  const cwdCheck = rec.projectPath || "";
+  if (!cwdCheck) {
+    showNotice(`"${row.title}" has no project folder on its record, so there is nowhere to root a reviewer. Add projectPath to the record.`);
+    return;
+  }
+  const plan = await window.helm.getReviewerPlan(row.taskId);
+  if (!plan?.ok) {
+    showNotice(`Could not work out what to send at "${row.title}": ${plan?.error || "unknown reason"}`);
+    return;
+  }
+  const rc = plan.recommendation;
+
+  // The picker. The recommendation is preselected and labelled as such; the reason is on
+  // screen so it can be disagreed with rather than just obeyed.
+  const extra = document.createElement("div");
+  extra.className = "reviewer-pick";
+  const why = document.createElement("div");
+  why.className = "reviewer-why";
+  why.textContent = rc.why;
+  extra.append(why);
+  const facts = document.createElement("div");
+  facts.className = "suggest-hint";
+  facts.textContent =
+    plan.commits > 0
+      ? `${plan.commits} commit(s), ${plan.stats.files} file(s), +${plan.stats.added}/-${plan.stats.removed} lines${plan.commitSource === "log" ? " (commits found by searching the log)" : ""}`
+      : "No commits are tied to this task, so the reviewer will have the record and the working tree to go on - and the recommendation had less to work from.";
+  extra.append(facts);
+
+  const modelRow = document.createElement("label");
+  modelRow.className = "reviewer-field";
+  modelRow.append(document.createTextNode("Model"));
+  const modelSel = document.createElement("select");
+  for (const m of plan.models) {
+    const opt = document.createElement("option");
+    opt.value = m.value;
+    opt.textContent = m.value === rc.model ? `${m.label} (recommended)` : m.label;
+    modelSel.append(opt);
+  }
+  modelSel.value = rc.model;
+  modelRow.append(modelSel);
+
+  const effortRow = document.createElement("label");
+  effortRow.className = "reviewer-field";
+  effortRow.append(document.createTextNode("Effort"));
+  const effortSel = document.createElement("select");
+  for (const e of ["low", "medium", "high"]) {
+    const opt = document.createElement("option");
+    opt.value = e;
+    opt.textContent = e === rc.effort ? `${e} (recommended)` : e;
+    effortSel.append(opt);
+  }
+  effortSel.value = rc.effort;
+  effortRow.append(effortSel);
+  extra.append(modelRow, effortRow);
+
+  customConfirm(
+    `Send an independent reviewer at "${row.title}"?\n\nIt starts a real session and sends the brief immediately, so this spends tokens.`,
+    "Send it",
+    async () => {
+      const model = modelSel.value;
+      const effort = effortSel.value;
+      const res = await window.helm.startSession({
+        cwd: rec.projectPath,
+        prompt: independentReviewBrief(row, rec, plan.notePath),
+        model,
+        effort,
+      });
+      if (!res?.ok) {
+        showNotice(`The reviewer did not start: ${res?.error || "unknown error"}`);
+        return;
+      }
+      // A notice, not a toast: it is now running somewhere else, and the row will grow
+      // its verdict when it writes one.
+      showNotice(
+        `An independent reviewer is running on ${reviewerModelLabelInRenderer(model)} (${effort} effort) for "${row.title}". It writes its verdict to the record's folder; reopen this row to read it.`,
+        { actions: [{ label: "Watch it", onClick: () => navigateToPage("chat") }] }
+      );
+    },
+    { extraEl: extra }
+  );
+}
+
+/** Label for a model id, mirroring src/lib/reviewerModel.js for the renderer's own use. */
+function reviewerModelLabelInRenderer(value) {
+  return (
+    {
+      "claude-opus-5": "Opus 5",
+      "claude-opus-4-8": "Opus 4.8",
+      "claude-sonnet-5": "Sonnet 5",
+      "claude-haiku-4-5-20251001": "Haiku 4.5",
+    }[value] || value
+  );
+}
+
+/**
+ * The brief. Built FROM the record - the claims, the gaps, the declared checks - because
+ * an independent pass that is not told what is being claimed just re-reads the code and
+ * agrees with it.
+ */
+function independentReviewBrief(row, rec, notePath) {
   const short = row.taskId.slice(0, 8);
   const lines = [
     `You are an INDEPENDENT reviewer. You did not write this work, and your job is not to agree with it.`,
@@ -839,16 +942,18 @@ function openIndependentReview(row) {
     `3. Try to BREAK one guard on purpose and check that a test notices. A guard whose removal leaves the suite green is not a guard.`,
     `4. Report: what is wrong, what is unproven, and what you ran to find out. Cite file:line.`,
     ``,
-    `Do not change anything. This is a review.`,
+    `WRITE YOUR VERDICT TO A FILE, as your last action, so it reaches the review page and not`,
+    `only this chat:`,
+    ``,
+    `  ${notePath}`,
+    ``,
+    `Plain text or light markdown. Start with one line that is either CONFIRMED or NOT`,
+    `CONFIRMED and why, then the findings, then what you ran. Overwrite the file if it`,
+    `exists - the newest verdict is the one that counts.`,
+    ``,
+    `Do not change anything else. This is a review.`,
   ];
-  const cwd = rec.projectPath || "";
-  if (!cwd) {
-    showNotice(`"${row.title}" has no project folder on its record, so there is nowhere to root a reviewer. Add projectPath to the record.`);
-    return;
-  }
-  navigateToPage("chat");
-  openFreshDraftInPane(cwd, lines.join("\n"));
-  showToast("A review brief is waiting in a fresh session - read it and press Enter to send it.");
+  return lines.join("\n");
 }
 
 /**
@@ -1002,6 +1107,35 @@ function reviewRowEl(row, band = null) {
   summary.className = "rev-summary";
   summary.textContent = rec.summary;
   body.append(summary);
+
+  // The independent reviewer's own verdict, if one has been written, ON THIS ROW - the
+  // answer arriving where the question was asked (the captain, 2026-08-05: "alternativt att
+  // feedback kommer direkt på review vyn"). Fetched per row and appended when it lands,
+  // so a row with no reviewer note renders exactly as before and nothing waits on IPC.
+  const indBox = document.createElement("div");
+  body.append(indBox);
+  window.helm
+    .getIndependentNote(row.taskId)
+    .then((res) => {
+      if (!res?.ok || !res.present) {
+        return;
+      }
+      indBox.className = "rev-list rev-list-independent";
+      const lab = document.createElement("div");
+      lab.className = "rev-list-label";
+      const when = new Date(res.writtenAt);
+      lab.textContent = `Independent reviewer · written ${when.toLocaleString()}`;
+      lab.title = res.path;
+      const text = document.createElement("div");
+      text.className = "rev-independent-note";
+      // Plain text, not markdown: this file is written by an agent, and the doc viewer's
+      // renderer is for files we control. It reads fine as text and cannot inject markup.
+      text.textContent = res.text.trim();
+      indBox.append(lab, text);
+    })
+    .catch(() => {
+      // A row that cannot read its reviewer note still renders the record.
+    });
 
   // What this record is resting on, when what it rests on is an ABSENCE. A cosmetic
   // record with no checks and no criteria is fully valid and used to render NOTHING
@@ -7902,7 +8036,10 @@ function mateCrewWait(mate) {
  * dismiss; the point is only that the destructive answer is never the one your hands
  * are already on.
  */
-function customConfirm(message, confirmLabel, onConfirm, { deliberate = false, onCancel = null } = {}) {
+// `extraEl` is an element placed between the message and the buttons, for a confirm that
+// needs a CHOICE rather than only a yes - the reviewer dispatch needs a model picker, and
+// a second dialog implementation would be a second set of escape/backdrop/settle bugs.
+function customConfirm(message, confirmLabel, onConfirm, { deliberate = false, onCancel = null, extraEl = null } = {}) {
   const overlay = document.createElement("div");
   overlay.className = "confirm-overlay";
   const box = document.createElement("div");
@@ -7959,7 +8096,11 @@ function customConfirm(message, confirmLabel, onConfirm, { deliberate = false, o
   });
   document.addEventListener("keydown", onKey);
   row.append(cancel, ok);
-  box.append(msg, row);
+  box.append(msg);
+  if (extraEl) {
+    box.append(extraEl);
+  }
+  box.append(row);
   overlay.append(box);
   document.body.append(overlay);
   // See the deliberate flag: for a destructive confirm the focus goes to Cancel, so
