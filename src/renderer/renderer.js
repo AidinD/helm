@@ -14556,6 +14556,17 @@ function skillListEl(title, source, origin, cwd, opts = {}) {
     section.append(empty);
     return section;
   }
+  // Where the groups come from, when they do not come from this folder's own
+  // subfolders. The captain's skills root is FLAT and its entries link into
+  // skills-catalog, so eleven labelled groups off a flat folder would otherwise be
+  // unexplainable from anything on screen.
+  if (source.groupedBy) {
+    const note = document.createElement("div");
+    note.className = "suggest-hint";
+    note.textContent = `Grouped by ${source.groupedBy.split(/[\\/]/).filter(Boolean).pop()}`;
+    note.title = `The folder above is flat; these skills point into ${source.groupedBy}, and the groups are that tree's own categories.`;
+    section.append(note);
+  }
   for (const group of source.groups || []) {
     if (group.category) {
       const label = document.createElement("div");

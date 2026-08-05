@@ -16,10 +16,26 @@ import os from "node:os";
  *              (rbx-core ships 61 of them) and that Analysis showed none of -
  *              a "what is in the room" view that omits most of the room.
  *
- * Each source returns CATEGORIES: one level of subfolders is read as a group,
- * so `skills/git/rebase/SKILL.md` shows under "git" as "rebase". A folder with
- * its own SKILL.md is a skill, never a category, so nesting cannot swallow one.
+ * Each source returns CATEGORIES, from either of the two ways they exist here:
  *
+ *   1. Subfolders of the skills root, up to MAX_CATEGORY_DEPTH levels, joined
+ *      with " / ". A folder with its own SKILL.md is a skill, never a category,
+ *      so nesting cannot swallow one.
+ *   2. WHERE THE SKILL REALLY LIVES. ~/.claude/skills is flat here, but its 33
+ *      entries are links into `<meta-home>/skills-catalog`, which is the real
+ *      tree and is organised (copied-external, personal-tools, portfolio/
+ *      dev-workflow, private/finance, vendor-reference/cloudflare, ...). That
+ *      catalog is the categorisation the captain meant (task 3d0fe057, "jag tänkte på
+ *      hur de är strukturerade i skills-catalog"), so a flat root whose entries
+ *      point into it is grouped by the path they point at. Nothing new is read
+ *      as a SOURCE: the skills listed are still the ones a session loads, only
+ *      grouped by where they come from.
+ *
+ * @param {string} cwd focused pane's project folder, for its project skills.
+ * @param {object} [opts]
+ * @param {string} [opts.catalogDir] the organised tree the global skills link
+ *   into. main passes <meta-home>/skills-catalog; omitted means no such
+ *   grouping and every skill stays in the ungrouped run.
  * @returns {{
  *   global: SkillSource,
  *   project: SkillSource,
@@ -27,12 +43,55 @@ import os from "node:os";
  * }}
  * where SkillSource = { dir: string|null, groups: Array<{ category: string|null, skills: Array<{ ref: string, label: string }> }>, count: number }
  */
-export function listSkills(cwd) {
+export function listSkills(cwd, { catalogDir } = {}) {
+  const catalog = catalogCategories(catalogDir);
   return {
-    global: listSkillSource(globalSkillsDir()),
-    project: listSkillSource(cwd ? path.join(cwd, ".claude", "skills") : null),
+    global: listSkillSource(globalSkillsDir(), catalog, catalogDir),
+    project: listSkillSource(cwd ? path.join(cwd, ".claude", "skills") : null, catalog, catalogDir),
     plugins: listPluginSkillSources(),
   };
+}
+
+/** How many levels of subfolder are read as a category before it is just depth. */
+const MAX_CATEGORY_DEPTH = 3;
+
+/**
+ * Where a real skill directory sits inside the organised catalog: a map from the
+ * skill's real path to its category label ("portfolio / dev-workflow").
+ *
+ * Keyed by real path rather than by name, so it cannot mis-attribute two skills
+ * that happen to share a name, and lowercased because Windows paths are
+ * case-insensitive while string keys are not.
+ */
+function catalogCategories(catalogDir) {
+  if (!catalogDir || !fs.existsSync(catalogDir)) {
+    return null;
+  }
+  const map = new Map();
+  const walk = (dir, trail) => {
+    for (const name of subdirs(dir)) {
+      const full = path.join(dir, name);
+      if (isSkillDir(full)) {
+        // The skill's own folder is not part of its category - the trail above it is.
+        map.set(realPathKey(full), trail.join(" / ") || null);
+        continue;
+      }
+      if (trail.length < MAX_CATEGORY_DEPTH) {
+        walk(full, [...trail, name]);
+      }
+    }
+  };
+  walk(catalogDir, []);
+  return map.size > 0 ? map : null;
+}
+
+/** A comparable key for a path, following links, or null if it cannot be resolved. */
+function realPathKey(p) {
+  try {
+    return fs.realpathSync(p).toLowerCase();
+  } catch {
+    return String(p).toLowerCase();
+  }
 }
 
 /** ~/.claude, with a test seam so a suite never reads the real one. */
@@ -80,7 +139,10 @@ function safeSkillRef(ref) {
   const parts = String(ref || "")
     .split(/[\\/]/)
     .filter((s) => s.length > 0);
-  if (parts.length === 0 || parts.length > 2) {
+  // At most one segment per category level plus the skill's own folder. Bounded
+  // rather than open-ended: a ref is a reference to something this module listed,
+  // and nothing it lists is deeper than that.
+  if (parts.length === 0 || parts.length > MAX_CATEGORY_DEPTH + 1) {
     return null;
   }
   if (parts.some((p) => p === "." || p === ".." || /[:*?"<>|]/.test(p))) {
@@ -90,41 +152,94 @@ function safeSkillRef(ref) {
 }
 
 /** One skills root, read as categories. */
-function listSkillSource(dir) {
-  const groups = listSkillTree(dir);
-  return { dir: dir || null, groups, count: groups.reduce((n, g) => n + g.skills.length, 0) };
+function listSkillSource(dir, catalog = null, catalogDir = null) {
+  const groups = listSkillTree(dir, catalog);
+  return {
+    dir: dir || null,
+    groups,
+    count: groups.reduce((n, g) => n + g.skills.length, 0),
+    // Where the grouping came from, when it did not come from this root's own
+    // subfolders. The page says so out loud: a flat folder rendering as eleven
+    // labelled groups is otherwise unexplainable from what is on screen.
+    groupedBy: groups.some((g) => g.fromCatalog) && catalogDir ? catalogDir : null,
+  };
 }
 
+/** A skill's category comes from its own subfolder trail, or from the catalog. */
+const UNCATEGORISED = "uncategorised";
+
 /**
- * Reads a skills root into groups. Top-level skills come first under a null
- * category (the flat case, which is what every source on this machine looks like
- * today); each subfolder that holds skills becomes its own named group.
+ * Reads a skills root into groups.
+ *
+ * Two sources of a category, and a root can use both:
+ *  - the skill's own trail of subfolders under the root ("git / worktrees");
+ *  - for a skill sitting DIRECTLY in the root, where it really lives, if that is
+ *    inside the organised catalog. ~/.claude/skills is flat but every entry is a
+ *    link into skills-catalog, so this is what puts the 33 into their real
+ *    categories without reading the catalog as a second source of skills.
+ *
+ * When some skills in a root map to a catalog category and others do not, the
+ * leftovers become an explicit "uncategorised" group rather than an unlabelled
+ * run - beside labelled groups, an unlabelled one reads like a rendering bug.
  */
-function listSkillTree(dir) {
+function listSkillTree(dir, catalog = null) {
   if (!dir || !fs.existsSync(dir)) {
     return [];
   }
-  const top = [];
-  const categories = [];
-  for (const name of subdirs(dir)) {
-    if (isSkillDir(path.join(dir, name))) {
-      top.push({ ref: name, label: name });
-      continue;
+  // Collected flat first, WITH whether the catalog knew each one, because those are
+  // two different states that both end up with no category: a skill sitting at the
+  // catalog's own top level (known, deliberately uncategorised there) and a skill the
+  // catalog has never heard of. Bucketing during the walk collapsed them.
+  const found = [];
+  let anyFromCatalog = false;
+  const walk = (current, trail) => {
+    for (const name of subdirs(current)) {
+      const full = path.join(current, name);
+      const ref = [...trail, name].join("/");
+      if (isSkillDir(full)) {
+        // A skill nested under the root is categorised by that nesting. A skill
+        // directly in the root can still have a category - where it points.
+        const nested = trail.join(" / ") || null;
+        let category = nested;
+        let mapped = false;
+        if (!nested && catalog) {
+          const fromCatalog = catalog.get(realPathKey(full));
+          if (fromCatalog !== undefined) {
+            mapped = true;
+            anyFromCatalog = true;
+            category = fromCatalog;
+          }
+        }
+        found.push({ ref, label: name, category, known: mapped || !!nested, fromCatalog: mapped });
+        continue;
+      }
+      if (trail.length < MAX_CATEGORY_DEPTH) {
+        walk(full, [...trail, name]);
+      }
     }
-    // Not a skill itself - a category, if it holds any skills one level down.
-    const inner = subdirs(path.join(dir, name))
-      .filter((child) => isSkillDir(path.join(dir, name, child)))
-      .map((child) => ({ ref: `${name}/${child}`, label: child }));
-    if (inner.length) {
-      categories.push({ category: name, skills: inner });
+  };
+  walk(dir, []);
+
+  const byCategory = new Map();
+  for (const s of found) {
+    // Only a skill NOTHING placed becomes the remainder, and only in a root where
+    // something else was placed - otherwise an ordinary flat folder would grow a
+    // label that says nothing.
+    const category = s.category === null && anyFromCatalog && !s.known ? UNCATEGORISED : s.category;
+    const key = category === null ? "" : category;
+    if (!byCategory.has(key)) {
+      byCategory.set(key, { category, skills: [], fromCatalog: s.fromCatalog === true });
     }
+    byCategory.get(key).skills.push({ ref: s.ref, label: s.label });
   }
-  const groups = [];
-  if (top.length) {
-    groups.push({ category: null, skills: top });
-  }
-  groups.push(...categories.sort((a, b) => a.category.localeCompare(b.category)));
-  return groups;
+  const groups = [...byCategory.values()];
+  // Ungrouped first (the plain flat case), then categories alphabetically, with
+  // "uncategorised" last since it is a remainder rather than a category.
+  return groups.sort((a, b) => {
+    const rank = (c) => (c === null ? 0 : c === UNCATEGORISED ? 2 : 1);
+    const d = rank(a.category) - rank(b.category);
+    return d !== 0 ? d : String(a.category).localeCompare(String(b.category));
+  });
 }
 
 function isSkillDir(dir) {
