@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="sv">
+  <head>
+    <meta charset="utf-8" />
+    <title>Helm chat formatting - now vs proposed</title>
+    <style>
+      /* Helm's own dark tokens, copied so this page looks like the app rather than
+         like a mock of some other product. */
+      :root {
+        --bg: #1c1c1a;
+        --bg-card: #262624;
+        --bg-inset: #141414;
+        --border: rgba(255, 255, 255, 0.08);
+        --text: #e8e6e0;
+        --text-dim: #9c9a92;
+        --text-faint: #6b695f;
+        --accent: #d97757;
+        --waiting: #e0b341;
+        --active: #4ea1d9;
+        --good: #4a9d5b;
+        --good-bright: #6fc07f;
+        --danger: #c0392b;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: "Segoe UI", system-ui, sans-serif;
+      }
+      header {
+        padding: 20px 24px 8px;
+        border-bottom: 1px solid var(--border);
+      }
+      h1 { font-size: 17px; margin: 0 0 4px; letter-spacing: -0.01em; }
+      header p { margin: 0; color: var(--text-dim); font-size: 13px; max-width: 90ch; line-height: 1.55; }
+      .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0; align-items: start; }
+      @media (max-width: 1200px) { .cols { grid-template-columns: 1fr; } }
+      .col { padding: 16px 22px 60px; }
+      .col + .col { border-left: 1px solid var(--border); }
+      .col > h2 {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.09em;
+        color: var(--text-faint);
+        margin: 0 0 14px;
+        font-weight: 650;
+      }
+      .col.after > h2 { color: var(--accent); }
+      .note {
+        font-size: 12px;
+        color: var(--text-faint);
+        margin: 0 0 18px;
+        line-height: 1.5;
+      }
+
+      /* ============================ NOW ============================
+         What the renderer does today: bold, inline code, bullets, tables, and an
+         uncoloured code block. Headings, italics, numbered lists, quotes, links and
+         rules all fall through as plain text, and the text runs edge to edge. */
+      .now-body {
+        font-family: "Segoe UI", system-ui, sans-serif;
+        font-size: 13px;
+        line-height: 1.45;
+        color: var(--text);
+      }
+      .now-body p { margin: 0 0 7px; }
+      .now-body ul { margin: 0 0 7px; padding-left: 20px; }
+      .now-body code {
+        font-family: Consolas, ui-monospace, monospace;
+        font-size: 12px;
+        background: var(--bg-inset);
+        padding: 1px 4px;
+        border-radius: 3px;
+      }
+      .now-body pre {
+        background: var(--bg-inset);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 9px 11px;
+        font-family: Consolas, ui-monospace, monospace;
+        font-size: 12px;
+        color: var(--text);
+        overflow-x: auto;
+        margin: 0 0 8px;
+      }
+      .now-body table { border-collapse: collapse; font-size: 12px; margin: 0 0 8px; }
+      .now-body th, .now-body td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; }
+
+      /* ========================== PROPOSED ==========================
+         Same markdown, rendered. Everything here is client-side presentation of the
+         markdown the model already sends - it costs no extra tokens. */
+      .after-body {
+        /* (1) the biggest win: a measure, not the window's width */
+        max-width: 68ch;
+        /* (2) a reading face and weight, separate from the monospace one */
+        font-family: "Iowan Old Style", Georgia, "Segoe UI", system-ui, serif;
+        font-size: 15px;
+        line-height: 1.68;
+        color: #e6e3dc;
+      }
+      .after-body > * + * { margin-top: 0.9em; }
+      .after-body h2 {
+        font-family: "Segoe UI", system-ui, sans-serif;
+        font-size: 19px;
+        line-height: 1.3;
+        margin: 1.7em 0 0;
+        letter-spacing: -0.015em;
+        text-wrap: balance;
+        color: #f2efe8;
+      }
+      .after-body h3 {
+        font-family: "Segoe UI", system-ui, sans-serif;
+        font-size: 13.5px;
+        text-transform: uppercase;
+        letter-spacing: 0.07em;
+        color: var(--accent);
+        margin: 1.5em 0 0;
+      }
+      .after-body h2:first-child, .after-body h3:first-child { margin-top: 0; }
+      .after-body ul, .after-body ol { padding-left: 1.35em; }
+      .after-body li + li { margin-top: 0.35em; }
+      .after-body li::marker { color: var(--text-faint); }
+      .after-body ol { counter-reset: step; list-style: none; padding-left: 1.9em; }
+      .after-body ol > li { counter-increment: step; position: relative; }
+      .after-body ol > li::before {
+        content: counter(step);
+        position: absolute;
+        left: -1.9em;
+        top: 0.15em;
+        width: 1.35em;
+        text-align: right;
+        font-family: "Segoe UI", system-ui, sans-serif;
+        font-size: 12px;
+        font-weight: 650;
+        color: var(--accent);
+      }
+      .after-body blockquote {
+        margin: 0;
+        padding: 0.1em 0 0.1em 1em;
+        border-left: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+        color: var(--text-dim);
+        font-style: italic;
+      }
+      .after-body a { color: var(--active); text-decoration-color: color-mix(in srgb, var(--active) 45%, transparent); }
+      .after-body hr { border: 0; border-top: 1px solid var(--border); margin: 1.8em 0; }
+      .after-body code {
+        font-family: Consolas, ui-monospace, monospace;
+        font-size: 0.84em;
+        background: var(--bg-inset);
+        border: 1px solid var(--border);
+        padding: 0.5px 5px;
+        border-radius: 4px;
+        color: #e8d9c8;
+      }
+      /* A callout for note/warning/tip - the shape a "watch out" paragraph deserves. */
+      .callout {
+        display: flex;
+        gap: 10px;
+        padding: 10px 13px;
+        border: 1px solid var(--border);
+        border-left-width: 3px;
+        border-radius: 8px;
+        background: var(--bg-card);
+        font-family: "Segoe UI", system-ui, sans-serif;
+        font-size: 13.5px;
+        line-height: 1.55;
+      }
+      .callout .ic { flex: none; font-family: "Segoe UI", system-ui, sans-serif; }
+      .callout.warn { border-left-color: var(--waiting); }
+      .callout.warn .ic { color: var(--waiting); }
+      .callout.tip { border-left-color: var(--good); }
+      .callout.tip .ic { color: var(--good-bright); }
+
+      /* A code block with an IDE's colours and a language label. */
+      .code {
+        border: 1px solid var(--border);
+        border-radius: 9px;
+        overflow: hidden;
+        background: var(--bg-inset);
+        font-family: Consolas, ui-monospace, monospace;
+      }
+      .code-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 5px 11px;
+        background: color-mix(in srgb, var(--bg-card) 80%, transparent);
+        border-bottom: 1px solid var(--border);
+        font-family: "Segoe UI", system-ui, sans-serif;
+        font-size: 10.5px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--text-faint);
+      }
+      .code-head button {
+        background: none;
+        border: 1px solid var(--border);
+        border-radius: 5px;
+        color: var(--text-dim);
+        font: inherit;
+        text-transform: none;
+        letter-spacing: 0;
+        padding: 2px 8px;
+        cursor: pointer;
+      }
+      .code pre { margin: 0; padding: 11px 13px; font-size: 12.5px; line-height: 1.6; overflow-x: auto; }
+      .kw { color: #c586c0; }
+      .fn { color: #dcdcaa; }
+      .str { color: #ce9178; }
+      .num { color: #b5cea8; }
+      .com { color: #6a9955; font-style: italic; }
+      .var { color: #9cdcfe; }
+      .typ { color: #4ec9b0; }
+
+      table.after-table { border-collapse: collapse; font-family: "Segoe UI", system-ui, sans-serif; font-size: 13px; width: 100%; }
+      table.after-table th {
+        text-align: left;
+        font-size: 10.5px;
+        text-transform: uppercase;
+        letter-spacing: 0.07em;
+        color: var(--text-faint);
+        border-bottom: 1px solid var(--border);
+        padding: 4px 10px 6px;
+      }
+      table.after-table td { padding: 6px 10px; border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent); }
+      table.after-table tr:last-child td { border-bottom: 0; }
+
+      .legend {
+        margin: 26px 22px 40px;
+        padding: 14px 16px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--bg-card);
+        max-width: 100ch;
+      }
+      .legend h3 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-faint); }
+      .legend ol { margin: 0; padding-left: 20px; font-size: 13.5px; line-height: 1.6; color: var(--text); }
+      .legend li + li { margin-top: 5px; }
+      .legend b { color: var(--accent); font-weight: 650; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Helm-chatten: nu vs föreslaget</h1>
+      <p>
+        Samma svar från modellen, samma markdown, två renderingar. Allt till höger är
+        <b>visning på klientsidan</b> - modellen skickar redan den här strukturen, så det kostar noll extra tokens.
+        Mock för kort c6094e4f; ingenting i appen är ändrat än.
+      </p>
+    </header>
+
+    <div class="cols">
+      <!-- ============================== NOW ============================== -->
+      <section class="col">
+        <h2>Nu - renderMarkdownInto</h2>
+        <p class="note">
+          Fetstil, inline-kod, punktlistor och tabeller fungerar. Rubriker, kursiv, numrerade listor, citat,
+          länkar och avdelare faller igenom som platt text. Kodblocket är ofärgat och språktaggen kastas.
+          Texten går kant till kant.
+        </p>
+        <div class="now-body">
+          <p>## Vad jag ändrade</p>
+          <p>
+            Kontextfilernas knappar frågade efter fel <em>sorts</em> post, så en ämnesöverlämning bad om ett
+            projektdokument och fick <code>Invalid project doc</code> tillbaka. Kontrollen hade rätt; anroparen ljög.
+          </p>
+          <p>### Tre saker</p>
+          <p>1. Knappen frågar efter den sort den *är*.</p>
+          <p>2. Ämnesöverlämningarna fick en egen rad med rubrik.</p>
+          <p>3. `HANDOFF.md (none)` är borta vid meta-home-roten.</p>
+          <p>&gt; Vid den roten *är* ämnesfilerna överlämningarna, så appen motsade sig själv två rader isär.</p>
+          <p>Så här ser resolvern ut nu:</p>
+          <pre>
+const docs = projectDocs.filter((d) =&gt; d.kind !== "handoffTopic");
+const ref = { cwd, kind: d.kind || "projectDoc", name: d.name };
+// utan d.kind hamnade allt i allow-listan för de tre namnen
+chip.addEventListener("click", () =&gt; openDocViewer({ label: d.name, read }));</pre>
+          <p><b>Varning:</b> testet klickar varje chip och läser vad visaren visar - inte att chippet finns.</p>
+          <p>---</p>
+          <table>
+            <tr><th>Yta</th><th>Före</th><th>Efter</th></tr>
+            <tr><td>Ämnesöverlämning</td><td>Invalid project doc</td><td>filens innehåll</td></tr>
+            <tr><td>HANDOFF.md</td><td>(none)</td><td>visas inte</td></tr>
+          </table>
+          <p>Se [testet](scripts/e2e/test-context-chip-kinds.mjs) för hela listan.</p>
+        </div>
+      </section>
+
+      <!-- ============================ PROPOSED ============================ -->
+      <section class="col after">
+        <h2>Föreslaget</h2>
+        <p class="note">
+          Samma markdown, renderad: rubrikhierarki, riktiga listor med egna markörer, citat, länkar, avdelare,
+          callout-ruta, syntaxfärgad kod med språketikett - och en radlängd på ~68 tecken i ett läsbart brödsnitt
+          i stället för hela fönsterbredden.
+        </p>
+        <div class="after-body">
+          <h2>Vad jag ändrade</h2>
+          <p>
+            Kontextfilernas knappar frågade efter fel <em>sorts</em> post, så en ämnesöverlämning bad om ett
+            projektdokument och fick <code>Invalid project doc</code> tillbaka. Kontrollen hade rätt; anroparen ljög.
+          </p>
+          <h3>Tre saker</h3>
+          <ol>
+            <li>Knappen frågar efter den sort den <em>är</em>.</li>
+            <li>Ämnesöverlämningarna fick en egen rad med rubrik.</li>
+            <li><code>HANDOFF.md (none)</code> är borta vid meta-home-roten.</li>
+          </ol>
+          <blockquote>
+            Vid den roten <em>är</em> ämnesfilerna överlämningarna, så appen motsade sig själv två rader isär.
+          </blockquote>
+          <p>Så här ser resolvern ut nu:</p>
+          <div class="code">
+            <div class="code-head"><span>javascript</span><button type="button">Kopiera</button></div>
+            <pre><span class="kw">const</span> <span class="var">docs</span> = <span class="var">projectDocs</span>.<span class="fn">filter</span>((<span class="var">d</span>) <span class="kw">=&gt;</span> <span class="var">d</span>.<span class="var">kind</span> !== <span class="str">"handoffTopic"</span>);
+<span class="kw">const</span> <span class="var">ref</span> = { <span class="var">cwd</span>, <span class="var">kind</span>: <span class="var">d</span>.<span class="var">kind</span> || <span class="str">"projectDoc"</span>, <span class="var">name</span>: <span class="var">d</span>.<span class="var">name</span> };
+<span class="com">// utan d.kind hamnade allt i allow-listan för de tre namnen</span>
+<span class="var">chip</span>.<span class="fn">addEventListener</span>(<span class="str">"click"</span>, () <span class="kw">=&gt;</span> <span class="fn">openDocViewer</span>({ <span class="var">label</span>: <span class="var">d</span>.<span class="var">name</span>, <span class="var">read</span> }));</pre>
+          </div>
+          <div class="callout warn">
+            <span class="ic">▲</span>
+            <span>Testet klickar <b>varje</b> chip och läser vad visaren visar - inte att chippet finns.</span>
+          </div>
+          <hr />
+          <table class="after-table">
+            <thead><tr><th>Yta</th><th>Före</th><th>Efter</th></tr></thead>
+            <tbody>
+              <tr><td>Ämnesöverlämning</td><td>Invalid project doc</td><td>filens innehåll</td></tr>
+              <tr><td>HANDOFF.md</td><td>(none)</td><td>visas inte</td></tr>
+            </tbody>
+          </table>
+          <p>Se <a href="#">testet</a> för hela listan.</p>
+          <div class="callout tip">
+            <span class="ic">●</span>
+            <span>Kodfärgerna följer temat: en färgläggare som kör lokalt, ingen nättrafik, ingen innerHTML av modelltext.</span>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div class="legend">
+      <h3>Vad som ger mest, i ordning</h3>
+      <ol>
+        <li><b>Radlängd + luftig typografi.</b> ~68 tecken i stället för fönsterbredd, 1.68 radavstånd, brödsnitt skilt från monospace. Det är skillnaden du pekade på i Claude Desktops Code-vy.</li>
+        <li><b>Riktiga rubriker och listor som ankare.</b> Två rubriknivåer med tydlig storleksskillnad, numrerade listor med egen markör, citat och avdelare - så ögat hittar tillbaka.</li>
+        <li><b>Syntaxfärgad kod</b> med språketikett och kopiera-knapp, färger ur temat.</li>
+        <li><b>Callout-rutor</b> för varning/tips, så ett "se upp" inte ser ut som vilket stycke som helst.</li>
+      </ol>
+    </div>
+  </body>
+</html>
