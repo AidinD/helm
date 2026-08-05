@@ -1581,6 +1581,26 @@ body.advanced .row-jot {
   gap: 10px;
 }
 
+/* THE CHAT COLUMN (Aidin, 2026-08-05: "ja, jag vill testa. men det ska fortfarande vara
+   vänster/höger ställt bara att chattfönstrets bredd minskar").
+ *
+ * So the COLUMN narrows and centres; the turns inside it keep their sides. Done by capping
+ * the scroll's children rather than the scroll itself, for one reason: capping .pane-scroll
+ * would pull the scrollbar and the sticky scroll-to-bottom button inward off the pane's
+ * edge, which is not what a narrower column should mean.
+ *
+ * Each child becomes a full-width-but-capped block centred by auto margins, and each turn
+ * is already a flex column that puts its own bubble left (assistant) or right (user) - so
+ * the left/right reading of the conversation is untouched, it just happens inside a
+ * narrower band. The assistant bubble's own 68ch measure still applies inside this, which
+ * is why the column is wider than the measure: the reply keeps its line length and the
+ * user's own turns still have somewhere to sit right. */
+.pane-scroll > *:not(.scroll-to-bottom-wrap) {
+  width: 100%;
+  max-width: var(--chat-column, 860px);
+  margin-inline: auto;
+}
+
 /* Sticky + zero-height so it pins to the bottom of the SCROLLED viewport
    (tracks the user as they scroll) without consuming layout space or adding
    to the column's gap — the actual button is positioned inside this
@@ -1683,6 +1703,10 @@ body.advanced .row-jot {
 .turn.user .turn-bubble {
   background: var(--accent);
   color: var(--on-accent);
+  /* The turn itself now spans the chat column (see .pane-scroll's children rule), so the
+     BUBBLE is what needs the cap - otherwise a one-line question would stretch the whole
+     column and stop reading as a message. Assistant bubbles get their own cap (68ch). */
+  max-width: 85%;
 }
 
 .turn.assistant .turn-bubble {
