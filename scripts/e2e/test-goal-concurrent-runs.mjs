@@ -52,12 +52,11 @@ try {
     "run blocks are labelled 'Run N: <goal>' so concurrent runs are tellable apart"
   );
 
-  // (c) The Agents page lists both in-motion goal runs.
-  await app.eval(`(() => { navigateToPage("agents"); return true; })()`);
-  await app.waitForSelector("#agentsPage", 8000, { visible: true });
-  const agentNodes = await count("#agentsPage .tree-wrap > *");
-  log(`agents tree top-level nodes: ${agentNodes}`);
-  assert(agentNodes >= 2, "Agents page shows both concurrent goal runs (>= 2 nodes)");
+  // (c) The Agents page listed both in-motion goal runs.
+  // This used to cross-check the same two runs on the Agents page. That page was removed when
+  // Autopilot became the single autonomous-runs surface, and the claim it carried - that both
+  // concurrent runs are visible - is already asserted above on the Autopilot page itself
+  // (runBlocks === 2), which is now the only place it could be true.
 
   const errors = app.getConsoleErrors();
   assert(errors.length === 0, `no console errors (got ${errors.length})`);
