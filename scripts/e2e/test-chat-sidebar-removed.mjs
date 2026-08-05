@@ -102,9 +102,15 @@ try {
   const carried = await app.eval(`(() => {
     const rowSrc = String(fleetSecondMateEl);
     return {
-      carryOverOnFleetRow: /Carry over/.test(rowSrc),
-      carryOverCallsTheSharedFlow: /summarizeAndCarryOver\\(/.test(rowSrc),
-      carryOverGoesToChatFirst: /navigateToPage\\("chat"\\)/.test(rowSrc),
+      // No Carry over button any more (the captain, 2026-08-05: "carry over är överflödigt"). The move
+      // itself is not gone - Archive's menu offers "Save handoff to HANDOFF.md + archive", which is
+      // the file-based continuity the app is built on, and a filling-up first mate grows its own
+      // "hand off to a fresh one" nudge. So what is asserted is that the button is absent AND that
+      // the handoff path is still on this row.
+      // (No source-regex for the ABSENCE of the button: the comment explaining why it was removed
+      // contains the words "Carry over", so such a check fails on the comment - which is finding 2
+      // from the ship review, live. The RENDERED row below is the honest check.)
+      handoffStillOffered: /archiveMenuItems\\(/.test(rowSrc),
       renameOnFleetRow: /renameSessionTo\\(/.test(rowSrc),
       archiveOnFleetRow: /archiveMenuItems\\(/.test(rowSrc),
       renameStillExists: typeof renameSessionTo === "function" && typeof makeInlineEditable === "function",
@@ -115,11 +121,9 @@ try {
   ok(carried.renameStillExists, "renaming a session survives - the Dashboard's Fleet row uses it");
   ok(carried.renameOnFleetRow && carried.archiveOnFleetRow, "rename and archive are on that row, which is where he was told to find them");
   ok(carried.summarizeStillExists, "summarize & carry over still exists");
-  ok(carried.carryOverOnFleetRow, "and now has a button on the Fleet row - it had lived ONLY in the deleted panel's menu");
-  ok(carried.carryOverCallsTheSharedFlow, "calling the same function the panel called, so there is one carry-over flow rather than two");
   ok(
-    carried.carryOverGoesToChatFirst,
-    "and it navigates to chat first - it ends by opening a draft in a chat pane, which would be invisible from the Dashboard"
+    carried.handoffStillOffered,
+    "but the handoff path is still there: Archive's own menu summarises to HANDOFF.md, which is what a fresh session reads first"
   );
   ok(
     carried.hidePredicateStillExists,
@@ -153,6 +157,7 @@ try {
     const labels = [...row.querySelectorAll("button")].map((b) => b.textContent.trim());
     const archiveBtn = [...row.querySelectorAll("button")].find((b) => b.textContent.trim() === "Archive");
     const carryBtn = [...row.querySelectorAll("button")].find((b) => b.textContent.trim() === "Carry over");
+    // Expected to be ABSENT now - see above.
     let archiveThrew = null;
     let menuItems = [];
     try {
@@ -176,8 +181,10 @@ try {
   })()`);
 
   ok(clicked.rendered, "a real Fleet row renders for an injected session - the click paths are actually reachable in this fixture");
-  ok(clicked.hasCarry, `and it has a rendered Carry over button, not just the text in a source file (${JSON.stringify(clicked.labels)})`);
-  ok(clicked.carryTargetIsLive, "whose handler calls a function that still exists");
+  ok(!clicked.hasCarry, `and no Carry over button is rendered on it (${JSON.stringify(clicked.labels)})`);
+  // The flow itself must still EXIST, because the archive handoff and the first-mate nudge both use
+  // it - removing the button must not have taken the capability with it.
+  ok(clicked.carryTargetIsLive, "while the carry-over flow itself still exists, for the two entry points that kept it");
   ok(clicked.archiveThrew === null, `clicking Archive does not throw (${clicked.archiveThrew || "no error"})`);
   ok(
     clicked.menuItems.length > 0,
