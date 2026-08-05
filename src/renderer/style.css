@@ -1064,11 +1064,24 @@ body.advanced .row-jot {
   line-height: 1;
 }
 
-.toast {
+/* The stack toasts live in. They used to be individually fixed to this spot, which
+   put a second toast exactly on top of the first (task 709e4b90) - the host owns the
+   position now and column-reverse keeps the newest nearest the bottom edge, where the
+   old single toast always appeared. */
+.toast-host {
   position: fixed;
   bottom: 20px;
   left: 50%;
   transform: translateX(-50%);
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: center;
+  gap: 8px;
+  z-index: 1000;
+  pointer-events: none; /* the gaps must not eat clicks meant for the app */
+}
+
+.toast {
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -1076,7 +1089,75 @@ body.advanced .row-jot {
   font-size: 12px;
   color: var(--text);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-  z-index: 1000;
+  max-width: min(520px, 90vw);
+  pointer-events: auto; /* ...but the toast itself is click-to-dismiss */
+  cursor: pointer;
+}
+
+/* Notices: the second kind he asked for - a side card that waits to be dismissed,
+   for events (a run failed, a setting did not save) rather than feedback on a click. */
+.notice-host {
+  position: fixed;
+  top: 52px;
+  right: 16px;
+  width: min(340px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 1001; /* above a toast: this one is the one that must not be missed */
+}
+
+.notice {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+}
+.notice-info {
+  border-left-color: var(--active);
+}
+.notice-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.notice-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.notice-close {
+  flex: none;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 2px;
+  cursor: pointer;
+}
+.notice-close:hover {
+  color: var(--text);
+}
+.notice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+}
+.notice-queued,
+.notice-clear {
+  align-self: flex-end;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.notice-clear {
+  cursor: pointer;
 }
 
 /* Persistent busy toast (a long op like a handoff summarize) - a spinner so a
@@ -1085,6 +1166,7 @@ body.advanced .row-jot {
   display: flex;
   align-items: center;
   gap: 9px;
+  cursor: default; /* not click-to-dismiss: it clears when the operation finishes */
 }
 .toast-spin {
   width: 13px;

@@ -1017,7 +1017,9 @@ function reviewRowEl(row, band = null) {
       // "never run" after a reload, so saying "all checks passed" here would be the
       // page lying about its own evidence.
       if (res.stored === false) {
-        showToast(`Checks ran, but the outcome could NOT be stored: ${res.storeError}`);
+        // Sticky: the checks really ran, and their outcome is GONE. A message that
+        // fades leaves the card reading "never run" with no explanation for why.
+        showNotice(`Checks ran, but the outcome could NOT be stored: ${res.storeError}`);
       } else if (failed.length > 0) {
         showToast(`${failed.length} check(s) failed: ${failed.map((f) => f.label).join(", ")}`);
       } else {
@@ -2392,7 +2394,10 @@ async function archiveWithHandoff(session) {
       const cap = await saveHandoffResolvingTopic(session, res.text.trim());
       saved = !!(cap && cap.ok);
       if (!saved) {
-        showToast(`Handoff save failed: ${cap?.error || "unknown"} - archiving anyway.`);
+        // Sticky, like the other two handoff failures below: the session is archived
+        // either way, so its continuity is gone and cannot be recovered by trying
+        // again. That is not something to learn about from a message that fades.
+        showNotice(`Handoff save failed for "${session.title}": ${cap?.error || "unknown"}. It was archived anyway, so nothing was written for the next session to read.`);
       } else if (cap.topicKeyed) {
         // Name the topic it was filed under - the category is chosen for you, so
         // it must never be invisible (task 663ab4b6).
@@ -2400,10 +2405,10 @@ async function archiveWithHandoff(session) {
         savedTopicIsNew = !!cap.isNew;
       }
     } else if (res && res.error) {
-      showToast(`Couldn't summarize handoff: ${res.error} - archiving anyway.`);
+      showNotice(`Couldn't summarize a handoff for "${session.title}": ${res.error}. It was archived anyway, with nothing written for the next session.`);
     }
   } catch (err) {
-    showToast(`Handoff failed: ${err.message} - archiving anyway.`);
+    showNotice(`Handoff failed for "${session.title}": ${err.message}. It was archived anyway, with nothing written for the next session.`);
   }
   setPaneBusyUIRaw(focusedPaneIndex, "");
   busy.done();
@@ -2521,14 +2526,205 @@ async function unarchiveSession(session) {
   refreshArchivePageIfVisible();
 }
 
-// Small transient message for failures with no natural home (e.g. no pane to
-// write into) — not for routine feedback, just so a failure is never silent.
-function showToast(text) {
+// ---- Transient toasts and persistent notices -------------------------------
+//
+// the captain, task 709e4b90: "toasten vid händelser är för snabb och syns inte tillräckligt
+// väl - kanske lägga till en andra typ av toast också som kommer fram som en sidoruta
+// eller något och som man måste klicka bort, med en kö".
+//
+// Three separate problems were behind that:
+//   1. Every toast was positioned at the same fixed spot, so two at once sat exactly on
+//      top of each other and the one underneath was never read at all. They stack now.
+//   2. Four seconds is not long enough for a sentence naming a file and a reason, and
+//      the timer ran even while he was reading. Longer, and the countdown pauses while
+//      the pointer is on it.
+//   3. Some of these are not feedback on something he just did - they are EVENTS (a run
+//      failed, a setting did not save, a handoff could not be written). A message that
+//      disappears on its own is the wrong shape for those, so they get a notice: a card
+//      that waits to be dismissed. Under-flagging is the worse failure here.
+const TOAST_MS = 7000;
+const NOTICE_VISIBLE_MAX = 4;
+/** Notices beyond NOTICE_VISIBLE_MAX wait here, newest last, and take a freed slot. */
+const noticeQueue = [];
+
+/** The stack toasts live in, so a second one goes BESIDE the first, not over it. */
+function toastHost() {
+  let host = document.getElementById("toastHost");
+  if (!host) {
+    host = document.createElement("div");
+    host.id = "toastHost";
+    host.className = "toast-host";
+    document.body.append(host);
+  }
+  return host;
+}
+
+/** The side column notices live in. */
+function noticeHost() {
+  let host = document.getElementById("noticeHost");
+  if (!host) {
+    host = document.createElement("div");
+    host.id = "noticeHost";
+    host.className = "notice-host";
+    document.body.append(host);
+  }
+  return host;
+}
+
+/**
+ * A transient message for feedback with no natural home (no pane to write into).
+ * Click it to dismiss early; hovering holds it while you read.
+ *
+ * `showToast(text, { sticky: true })` routes to showNotice instead - the call sites that
+ * report an EVENT rather than the result of a click use that, and the flag keeps them
+ * one readable word different from the rest.
+ */
+function showToast(text, opts = {}) {
+  if (opts.sticky) {
+    return showNotice(text, opts);
+  }
   const el = document.createElement("div");
   el.className = "toast";
   el.textContent = text;
-  document.body.append(el);
-  setTimeout(() => el.remove(), 4000);
+  el.title = "Click to dismiss";
+  toastHost().append(el);
+  let timer = null;
+  const remove = () => {
+    clearTimeout(timer);
+    el.remove();
+  };
+  const arm = () => {
+    timer = setTimeout(remove, opts.ms || TOAST_MS);
+  };
+  el.addEventListener("click", remove);
+  el.addEventListener("pointerenter", () => clearTimeout(timer));
+  el.addEventListener("pointerleave", arm);
+  arm();
+  return { dismiss: remove };
+}
+
+/**
+ * A persistent notice in the side column: it stays until dismissed, and several stack
+ * rather than replacing one another. Past NOTICE_VISIBLE_MAX the rest queue and move up
+ * as slots free, so a burst of failures cannot bury the app behind its own warnings.
+ *
+ * @param {string} text
+ * @param {object} [opts]
+ * @param {"warn"|"info"} [opts.tone] warn (default) draws the accent stripe.
+ * @param {Array<{label: string, onClick: Function}>} [opts.actions] buttons on the card.
+ *   An action dismisses the notice after running, since it has been dealt with.
+ */
+function showNotice(text, opts = {}) {
+  const entry = { text, opts };
+  if (noticeHost().querySelectorAll(".notice").length >= NOTICE_VISIBLE_MAX) {
+    noticeQueue.push(entry);
+    paintNoticeQueueCount();
+    return { dismiss: () => {
+      const i = noticeQueue.indexOf(entry);
+      if (i >= 0) {
+        noticeQueue.splice(i, 1);
+        paintNoticeQueueCount();
+      }
+    } };
+  }
+  return mountNotice(entry);
+}
+
+function mountNotice({ text, opts }) {
+  const host = noticeHost();
+  const el = document.createElement("div");
+  el.className = `notice notice-${opts.tone === "info" ? "info" : "warn"}`;
+
+  const body = document.createElement("div");
+  body.className = "notice-text";
+  body.textContent = text;
+
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "notice-close";
+  close.textContent = "×";
+  close.title = "Dismiss";
+
+  const dismiss = () => {
+    el.remove();
+    // Free slot: take the oldest waiting notice, so the queue drains in order.
+    const next = noticeQueue.shift();
+    paintNoticeQueueCount();
+    if (next) {
+      mountNotice(next);
+    }
+    paintNoticeDismissAll();
+  };
+  close.addEventListener("click", dismiss);
+
+  const head = document.createElement("div");
+  head.className = "notice-head";
+  head.append(body, close);
+  el.append(head);
+
+  if (opts.actions?.length) {
+    const row = document.createElement("div");
+    row.className = "notice-actions";
+    for (const action of opts.actions) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "text-btn";
+      btn.textContent = action.label;
+      btn.addEventListener("click", async () => {
+        try {
+          await action.onClick?.();
+        } finally {
+          dismiss();
+        }
+      });
+      row.append(btn);
+    }
+    el.append(row);
+  }
+  // Newest on top: an event that just happened is the one being looked for.
+  host.prepend(el);
+  paintNoticeDismissAll();
+  return { dismiss };
+}
+
+/** "+N waiting" under the stack, so a queued notice is never silently held back. */
+function paintNoticeQueueCount() {
+  const host = noticeHost();
+  let el = host.querySelector(".notice-queued");
+  if (noticeQueue.length === 0) {
+    el?.remove();
+    return;
+  }
+  if (!el) {
+    el = document.createElement("div");
+    el.className = "notice-queued";
+    host.append(el);
+  }
+  el.textContent = `+${noticeQueue.length} more waiting`;
+}
+
+/** One button to clear a pile, added only once there IS a pile. */
+function paintNoticeDismissAll() {
+  const host = noticeHost();
+  const shown = host.querySelectorAll(".notice").length;
+  let el = host.querySelector(".notice-clear");
+  if (shown < 2) {
+    el?.remove();
+    return;
+  }
+  if (!el) {
+    el = document.createElement("button");
+    el.type = "button";
+    el.className = "notice-clear text-btn";
+    el.textContent = "Dismiss all";
+    el.addEventListener("click", () => {
+      noticeQueue.length = 0;
+      host.querySelectorAll(".notice").forEach((n) => n.remove());
+      paintNoticeQueueCount();
+      paintNoticeDismissAll();
+    });
+  }
+  host.append(el); // keep it last, below the stack
 }
 
 // A PERSISTENT toast with a spinner, for a multi-second op (a handoff
@@ -2543,7 +2739,9 @@ function showBusyToast(text) {
   const label = document.createElement("span");
   label.textContent = text;
   el.append(spin, label);
-  document.body.append(el);
+  // In the same stack as the transient ones: a busy toast used to be pinned to the same
+  // fixed spot, so an ordinary toast arriving mid-operation covered it completely.
+  toastHost().append(el);
   let removed = false;
   return {
     update: (t) => {
@@ -12851,7 +13049,11 @@ window.helm.onGoalEvent((evt) => {
     // a run erroring while the user is on Chat/Plan would otherwise sit
     // silently until they happen to check the Goal page.
     unseenGoalAttention.add(run.goalRunId);
-    showToast(`Autopilot run "${run.goal}" failed: ${run.error} - open Autopilot to see its worktree.`);
+    // A notice, not a toast: this is an event, it can arrive while he is on another page,
+    // and a run that failed leaves a worktree behind that someone has to look at.
+    showNotice(`Autopilot run "${run.goal}" failed: ${run.error}`, {
+      actions: [{ label: "Open Autopilot", onClick: () => navigateToPage("goal") }],
+    });
     updateGoalAttentionBadge();
     window.helm.notifyAttention({ title: "Helm - a goal run failed", body: run.goal });
   } else if (evt.kind === "escalation") {
@@ -12861,7 +13063,9 @@ window.helm.onGoalEvent((evt) => {
     // promise to resolve and send "done" with the same info.
     run.escalation = evt.escalation;
     unseenGoalAttention.add(run.goalRunId);
-    showToast(`Autopilot run "${run.goal}" paused - needs you (Resume it from Autopilot)`);
+    showNotice(`Autopilot run "${run.goal}" paused - it needs you before it can go on.`, {
+      actions: [{ label: "Open Autopilot", onClick: () => navigateToPage("goal") }],
+    });
     updateGoalAttentionBadge();
     window.helm.notifyAttention({ title: "Helm - a run needs you", body: run.goal });
   }
@@ -15658,5 +15862,8 @@ window.helm.onBuildStaleUpdate(applyBuildStatus);
 // no room to report a failure - without this the setting would appear to apply and
 // then quietly be gone after a restart.
 window.helm.onConfigWriteFailed(({ message } = {}) => {
-  showToast(`That setting didn't save: ${message || "unknown reason"}`);
+  // Sticky: the setting LOOKS applied and will be gone after a restart. This is the
+  // exact case a four-second message was worst at - it arrives from the main process
+  // while the eye is on the control that just moved.
+  showNotice(`That setting didn't save: ${message || "unknown reason"}. It will be back to its old value after a restart.`);
 });
