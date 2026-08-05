@@ -724,6 +724,19 @@ function reviewChip(text, kind) {
   return el;
 }
 
+/**
+ * Which review rows are open. Empty by default: every row starts COLLAPSED.
+ *
+ * Aidin, task 10ac9c23: "review sectionen är lite jobbig att läsa - texten är liten och
+ * allt är ganska kompakt. Kanske ha alla kollapsade så expanderar man den man vill titta
+ * på med mycket bättre formatering." Eight fully-expanded records is a wall, and the
+ * page's job is to let him pick which one to read.
+ *
+ * In memory, not config: which row is open is a way of looking at the page, not a
+ * setting - and a row that stayed open across restarts would fight the empty default.
+ */
+const reviewExpanded = new Set();
+
 /** One review item: what changed, the evidence, the gaps, and how to check it. */
 function reviewRowEl(row, band = null) {
   const el = document.createElement("section");
@@ -735,6 +748,13 @@ function reviewRowEl(row, band = null) {
 
   const head = document.createElement("div");
   head.className = "rev-head";
+  // The whole head is the toggle, so there is no small target to hit.
+  head.tabIndex = 0;
+  head.setAttribute("role", "button");
+  const chev = document.createElement("span");
+  chev.className = "rev-chev";
+  chev.textContent = "▸";
+  head.append(chev);
   const title = document.createElement("span");
   title.className = "rev-title";
   title.textContent = row.title;
@@ -774,7 +794,44 @@ function reviewRowEl(row, band = null) {
           : "Visual/front-end only. A bug here is recoverable.";
     head.append(chip);
   }
+  // The gauntlet's state belongs in the COLLAPSED head: "have its checks passed" is the
+  // one thing worth knowing before deciding whether to open it.
+  const gaunt = row.gauntlet || { declared: 0, state: "none" };
+  if (gaunt.declared > 0) {
+    const tone = gaunt.state === "passing" ? "ok" : gaunt.state === "failing" ? "crit" : "gap";
+    const chip = reviewChip(
+      gaunt.state === "passing" ? `checks ${gaunt.passed}/${gaunt.declared}` : gaunt.state === "failing" ? `checks failing` : `checks unconfirmed`,
+      tone
+    );
+    head.append(chip);
+  }
   el.append(head);
+
+  // Everything below the head lives in one collapsible body, so a row is a HEADLINE
+  // until it is opened (task 10ac9c23). `body` is what the rest of this function
+  // appends to; `el` only ever holds the head and the body.
+  const body = document.createElement("div");
+  body.className = "rev-body";
+  const expanded = reviewExpanded.has(row.taskId);
+  el.classList.toggle("rev-open", expanded);
+  body.hidden = !expanded;
+  const toggle = () => {
+    const open = reviewExpanded.has(row.taskId);
+    if (open) {
+      reviewExpanded.delete(row.taskId);
+    } else {
+      reviewExpanded.add(row.taskId);
+    }
+    body.hidden = open;
+    el.classList.toggle("rev-open", !open);
+  };
+  head.addEventListener("click", toggle);
+  head.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      toggle();
+    }
+  });
 
   // An item with no record is the honest failure case: it is IN review but nobody
   // wrote down what to check. Say so instead of rendering a confident empty card.
@@ -782,13 +839,14 @@ function reviewRowEl(row, band = null) {
     const warn = document.createElement("div");
     warn.className = "rev-warn";
     warn.textContent = `No review record: ${row.problems.join("; ")}. Nothing here has been verified for you - treat it as unreviewed.`;
-    el.append(warn);
+    body.append(warn);
     // The actions come along even here. They used to be built AFTER this return, so
     // this band had no controls at all and could never be cleared (f2ab6a5a). Marking
     // one done still costs a deliberate confirm - a row with no record has, by
     // definition, had nothing checked - and Send back is the honest move when it
     // should have had a record in the first place.
-    el.append(reviewActionsEl(row));
+    body.append(reviewActionsEl(row));
+    el.append(body);
     return el;
   }
 
@@ -800,7 +858,7 @@ function reviewRowEl(row, band = null) {
     const warn = document.createElement("div");
     warn.className = "rev-warn";
     warn.textContent = `This record does not meet the bar for a ${row.criticality || "?"} item: ${row.problems.join("; ")}. Read it, but do not treat it as verified.`;
-    el.append(warn);
+    body.append(warn);
   }
 
   // The acceptance criteria moved after the record was written. Neither side can be
@@ -809,14 +867,14 @@ function reviewRowEl(row, band = null) {
     const warn = document.createElement("div");
     warn.className = "rev-warn";
     warn.textContent = `The task's acceptance criteria changed after this record was written (${row.drift.snapshot.length} then, ${row.drift.live.length} now) - the evidence may be answering the old question.`;
-    el.append(warn);
+    body.append(warn);
   }
 
   const rec = row.record;
   const summary = document.createElement("p");
   summary.className = "rev-summary";
   summary.textContent = rec.summary;
-  el.append(summary);
+  body.append(summary);
 
   // What this record is resting on, when what it rests on is an ABSENCE. A cosmetic
   // record with no checks and no criteria is fully valid and used to render NOTHING
@@ -836,7 +894,7 @@ function reviewRowEl(row, band = null) {
       list.append(li);
     }
     box.append(list);
-    el.append(box);
+    body.append(box);
   }
 
   // The argument for calling it cosmetic - the tier that requires no evidence. Shown
@@ -846,7 +904,7 @@ function reviewRowEl(row, band = null) {
     const why = document.createElement("div");
     why.className = "rev-whynot";
     why.textContent = `Why not critical: ${row.whyNotCritical}`;
-    el.append(why);
+    body.append(why);
   }
 
   // The certificate that gates the critical tier, SHOWN. It was rendered nowhere -
@@ -873,7 +931,7 @@ function reviewRowEl(row, band = null) {
     body.className = "rev-independent-body";
     body.textContent = ind.summary || "(no summary given)";
     box.append(label, body);
-    el.append(box);
+    body.append(box);
   }
 
   if (rec.verdict === "judgment" && rec.ask) {
@@ -882,19 +940,46 @@ function reviewRowEl(row, band = null) {
     const label = document.createElement("b");
     label.textContent = "Needs you: ";
     ask.append(label, document.createTextNode(rec.ask));
-    el.append(ask);
+    body.append(ask);
   }
+
+  // Evidence and gaps are SENTENCES, so they render as sentences.
+  //
+  // They used to be pills - one chip per item, 11px monospace, wrapped across the width -
+  // which is most of why this page was "jobbig att läsa" (task 10ac9c23). A chip is right
+  // for a token like a commit sha or a release number and wrong for "Not exercised
+  // against a real failing triage - the failure path was reasoned about from the code".
+  // Two labelled lists instead; the chip row keeps only what is actually chip-shaped.
+  const listBlock = (label, items, className, hint = null) => {
+    if (!items || items.length === 0) {
+      return;
+    }
+    const box = document.createElement("div");
+    box.className = `rev-list ${className}`;
+    const lab = document.createElement("div");
+    lab.className = "rev-list-label";
+    lab.textContent = `${label} · ${items.length}`;
+    if (hint) {
+      lab.title = hint;
+    }
+    box.append(lab);
+    const ul = document.createElement("ul");
+    for (const item of items) {
+      const li = document.createElement("li");
+      li.textContent =
+        typeof item === "string" ? item : `${item.claim || ""}${item.claim && item.detail ? " - " : ""}${item.detail || ""}`;
+      ul.append(li);
+    }
+    box.append(ul);
+    body.append(box);
+  };
+  listBlock("Evidence", rec.evidence, "rev-list-evidence", "What the author says was checked, and how.");
+  // The gaps are the useful half - a feature once shipped whose tests all passed while
+  // the feature was broken, because they exercised the wrong layer.
+  listBlock("Not verified", rec.notVerified, "rev-list-gaps", "What was NOT checked. A record listing only what passed is a sales pitch.");
 
   const chips = document.createElement("div");
   chips.className = "rev-chips";
-  for (const e of rec.evidence || []) {
-    chips.append(reviewChip(e.claim || String(e), "ok"));
-  }
-  // The gaps are the useful half - today a feature shipped whose tests all passed
-  // while the feature was broken, because they exercised the wrong layer.
-  for (const gap of rec.notVerified || []) {
-    chips.append(reviewChip(gap, "gap"));
-  }
   if (rec.release) {
     chips.append(reviewChip(`in ${rec.release}`, "rel"));
   }
@@ -902,7 +987,7 @@ function reviewRowEl(row, band = null) {
     chips.append(reviewChip(c, "commit"));
   }
   if (chips.children.length > 0) {
-    el.append(chips);
+    body.append(chips);
   }
 
   // What was agreed BEFORE the work, shown above the steps that claim to satisfy it.
@@ -922,7 +1007,7 @@ function reviewRowEl(row, band = null) {
       list.append(li);
     }
     box.append(list);
-    el.append(box);
+    body.append(box);
   }
 
   if (Array.isArray(rec.testSteps) && rec.testSteps.length > 0) {
@@ -948,7 +1033,7 @@ function reviewRowEl(row, band = null) {
       }
       steps.append(li);
     }
-    el.append(steps);
+    body.append(steps);
   }
 
   // The gauntlet: declared checks and what actually happened when they ran. Shown
@@ -1105,11 +1190,12 @@ function reviewRowEl(row, band = null) {
       line.append(dot, name, cmd, state);
       box.append(line);
     });
-    el.append(box);
+    body.append(box);
   }
 
   // Sign-off, so review doesn't mean leaving Helm for Jot.
-  el.append(reviewActionsEl(row));
+  body.append(reviewActionsEl(row));
+  el.append(body);
   return el;
 }
 
