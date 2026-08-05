@@ -45,10 +45,9 @@ try {
   assert(!/Open SKILL\.md/.test(routines), "Routines no longer mislabels the copy button as 'Open SKILL.md'");
 
   // 4. Agents legend no longer lists the never-rendered "idle / background".
-  await goto("agents");
-  await app.waitForSelector("#agentsPage", 8000, { visible: true });
-  const agents = await bodyText("agentsPage");
-  assert(!/idle \/ background/.test(agents), "Agents legend drops the 'idle / background' entry");
+  // The Agents page check that sat here went with the page: the Agents facet was removed when
+  // Autopilot became the single autonomous-runs surface, so there is no legend left to inspect.
+  // Everything else this file asserts is about pages that still exist.
 
   // 5. Settings: no "(Fas 3)" Swedish/dev phase tags in user-facing labels.
   await goto("settings");
