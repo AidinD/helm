@@ -9479,6 +9479,66 @@ function widgetLayout(mates) {
 }
 
 /**
+ * Which first mate each first-mate widget shows.
+ *
+ * A first-mate widget used to be welded to one mateId, so retiring that mate left a
+ * dead widget on the board and the only way forward was to remove it and add another
+ * (the captain, task acb34a24: "när man retirerar en first mate måste man byta ut widgeten,
+ * det är ganska störigt"). A first mate is short-lived by design - that made the
+ * widget's binding the most fragile thing about the board.
+ *
+ * The binding is now a PREFERENCE, resolved against who is actually on watch:
+ *  - a widget whose mate is still there keeps it, so nothing you arranged moves;
+ *  - a widget whose mate is gone adopts, in board order, a mate no other widget has
+ *    claimed - which is exactly the replacement he was doing by hand;
+ *  - a widget with nobody left to adopt keeps its slot and says so, rather than
+ *    stealing a mate that another widget already shows.
+ *
+ * Pure, and separate from the render, so the decision can be tested without a
+ * dashboard: the "which widget shows whom" bugs in this app have all been assignment
+ * bugs, not drawing bugs.
+ */
+function resolveFirstMateWidgetMates(layout, mates) {
+  const order = (mates || []).map((m) => m.mateId);
+  const live = new Set(order);
+  const widgets = (layout || []).filter((w) => w.type === "firstMate");
+  const claimed = new Set(widgets.map((w) => w.mateId).filter((id) => live.has(id)));
+  const unclaimed = order.filter((id) => !claimed.has(id));
+  const out = new Map();
+  let next = 0;
+  for (const w of widgets) {
+    if (live.has(w.mateId)) {
+      out.set(w.id, w.mateId);
+      continue;
+    }
+    out.set(w.id, next < unclaimed.length ? unclaimed[next++] : null);
+  }
+  return out;
+}
+
+/**
+ * The same layout with every first-mate widget pointed at the mate it will show.
+ * `changed` says whether anything was adopted, so the caller can persist it once
+ * instead of re-deciding on every repaint.
+ */
+function rebindFirstMateWidgets(layout, mates) {
+  const resolved = resolveFirstMateWidgetMates(layout, mates);
+  let changed = false;
+  const next = (layout || []).map((w) => {
+    if (w.type !== "firstMate") {
+      return w;
+    }
+    const mateId = resolved.get(w.id);
+    if (!mateId || mateId === w.mateId) {
+      return w;
+    }
+    changed = true;
+    return { ...w, mateId };
+  });
+  return { layout: next, changed };
+}
+
+/**
  * Seeds a NEW widget type onto an already-saved layout, exactly once (task
  * 0831417b). A widget added to the default layout is invisible to anyone who has
  * already arranged their board - and an attention signal you have to go find in
@@ -9686,7 +9746,10 @@ function widgetBodyNeedsYou(data, widget) {
 function widgetBodyFirstMate(data, widget) {
   const mate = (data.mates || []).find((m) => m.mateId === widget.mateId);
   if (!mate) {
-    return widgetEmpty("This first mate is no longer on watch. Remove this widget, or add one for a current mate.");
+    // Only reachable when there is no unclaimed mate left to adopt (see
+    // resolveFirstMateWidgetMates) - so this is an empty SLOT, not a stale binding, and
+    // it fills itself the moment a first mate joins the fleet.
+    return widgetEmpty("No first mate for this slot yet - it takes the next one that joins the fleet. Add one from \"+ Add widget\", or remove the slot.");
   }
   // The REAL first-mate card: persona picker, context gauge, retire nudge, and
   // its second mates with their own badges / jump-in / Archive.
@@ -10369,13 +10432,17 @@ function widgetAddTile(data) {
   tile.textContent = "+ Add widget";
   tile.addEventListener("click", (e) => {
     e.stopPropagation();
-    const layout = widgetLayout(data.mates);
+    const layout = rebindFirstMateWidgets(widgetLayout(data.mates), data.mates).layout;
     const items = [];
+    // Which mates a widget already shows, by BINDING rather than by widget id: after a
+    // widget adopts a mate its id still carries the retired mate's, so an id check would
+    // offer the adopted mate again and put a second widget on the board for it.
+    const shown = new Set(layout.filter((w) => w.type === "firstMate").map((w) => w.mateId));
     for (const [type, spec] of Object.entries(WIDGET_CATALOG)) {
       if (spec.perMate) {
         for (const mate of data.mates || []) {
           const id = `w-mate-${mate.mateId}`;
-          if (layout.some((w) => w.id === id)) {
+          if (shown.has(mate.mateId) || layout.some((w) => w.id === id)) {
             continue;
           }
           items.push({
@@ -10513,7 +10580,19 @@ async function renderWidgetDashboard(page) {
 
   const grid = document.createElement("div");
   grid.className = "wd-grid";
-  const layout = widgetLayout(mates);
+  // A first-mate widget adopts a mate on watch when the one it was bound to is gone
+  // (task acb34a24). Persisted when it actually happens, so the adoption is stable and
+  // the Add-widget menu offers the same answer this render just drew.
+  const rebound = rebindFirstMateWidgets(widgetLayout(mates), mates);
+  const layout = rebound.layout;
+  if (rebound.changed) {
+    try {
+      await saveWidgetLayout(layout);
+    } catch {
+      // A failed write must not stop the board from drawing - the widgets below are
+      // already pointed at the right mates for this render either way.
+    }
+  }
   for (const widget of layout) {
     grid.append(await widgetEl(widget, data));
   }
