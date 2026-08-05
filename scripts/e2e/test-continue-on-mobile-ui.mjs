@@ -34,10 +34,15 @@ try {
     const mate = { mateId: "mX", name: "Grace OMalley", sessionId: "cli_x", persona: null, slot: 0 };
     const card = fleetMateCardEl(mate, [], {});
     const btn = card.querySelector(".fleet-mobile-btn");
-    return { hasBtn: !!btn, text: btn?.textContent || "", title: btn?.title || "" };
+    return { hasBtn: !!btn, text: btn?.textContent || "", title: btn?.title || "", svg: !!btn?.querySelector("svg") };
   })()`);
   assert(withSession.hasBtn === true, "first-mate card with a bound session shows the 📱 button");
-  assert(withSession.text === "📱", "the button is the phone glyph");
+  // The glyph became an inline WIFI svg (bug ca32567c: the phone/arrow glyphs were unreadable at
+  // this size - "go with a wifi symbol"), which also follows the icons-over-emoji rule for
+  // interactive controls. So the check is that it carries an icon and no emoji text, not which
+  // emoji it is.
+  assert(withSession.svg === true, "the button carries an inline icon rather than an emoji glyph");
+  assert(withSession.text.trim() === "", `and no text content beside it (${JSON.stringify(withSession.text)})`);
   assert(/phone|Remote Control/i.test(withSession.title), "the button has a descriptive tooltip");
 
   // A first mate WITHOUT a bound session -> no button.

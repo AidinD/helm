@@ -35,24 +35,27 @@ try {
   await app.waitForSelector("#dashQueueSlot", 8000);
   await wait(900); // let the initial force-fill (incl. goals fetch) complete
 
-  assert(await has("#dashGoalsSlot"), "the goals slot exists (shell built into stable slots)");
+  // Was #dashGoalsSlot. The Goals section went with the goals surface, so the neighbour used
+  // to prove scoping is the Fleet slot - the rule being tested is that repainting ONE section
+  // leaves the others alone, and any real neighbour demonstrates it.
+  assert(await has("#dashFleetSlot"), "a neighbour slot exists (shell built into stable slots)");
 
   // Tag both slots, then force ONLY the queue's fingerprint to change.
   await tag("dashQueueSlot", "queue");
-  await tag("dashGoalsSlot", "goals");
+  await tag("dashFleetSlot", "neighbour");
   await app.eval(`dashSectionFingerprints.queue = "e2e-bogus"`);
   await app.eval(`fillDashboardSections()`);
   await wait(900);
 
   assert(!(await has(`#dashQueueSlot [data-e2e-sentinel="queue"]`)), "a queue change re-renders the queue slot (its sentinel is gone)");
-  assert(await has(`#dashGoalsSlot [data-e2e-sentinel="goals"]`), "the goals slot is NOT touched by a queue-only change (its sentinel survives)");
+  assert(await has(`#dashFleetSlot [data-e2e-sentinel="neighbour"]`), "the neighbour slot is NOT touched by a queue-only change (its sentinel survives)");
 
   // Idle tick: nothing changed since the last fill, so no section repaints.
   await tag("dashQueueSlot", "queue2");
   await app.eval(`fillDashboardSections()`);
   await wait(900);
   assert(await has(`#dashQueueSlot [data-e2e-sentinel="queue2"]`), "an unchanged tick repaints nothing (queue sentinel survives)");
-  assert(await has(`#dashGoalsSlot [data-e2e-sentinel="goals"]`), "an unchanged tick leaves goals in place too");
+  assert(await has(`#dashFleetSlot [data-e2e-sentinel="neighbour"]`), "an unchanged tick leaves the neighbour in place too");
 
   const errors = app.getConsoleErrors();
   assert(errors.length === 0, `no console errors (got ${errors.length})`);
