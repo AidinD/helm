@@ -8616,27 +8616,16 @@ function fleetSecondMateEl(sm) {
       });
     });
     head.append(renameBtn);
-    // Summarize & carry over, from here (Aidin, 2026-08-04, on removing the chat sidebar:
-    // "summarize and carry over borde kunna göras från dashboarden - liknande archive"). It
-    // lived ONLY in the sidebar's session menu, and it is the session-renewal move the whole
-    // ephemeral-session model rests on - so it had to have a home here before that panel goes.
+    // A "Carry over" button sat here for a day, added when the chat sidebar was removed because
+    // that panel's menu had been its only home. Aidin, 2026-08-05: "carry over är överflödigt tror
+    // jag, vi kan ta bort det" - and he is right, for a reason worth keeping written down.
     //
-    // A WORD, not a glyph, matching Archive beside it: the actions on this row that mattered
-    // were the ones he could read. Calling the same function the sidebar called, so there is
-    // one carry-over flow rather than a second one that drifts.
-    const carryBtn = document.createElement("button");
-    carryBtn.className = "fleet-btn";
-    carryBtn.textContent = "Carry over";
-    carryBtn.title = "Summarize this session and continue it in a fresh one";
-    carryBtn.addEventListener("click", async (e) => {
-      e.stopPropagation();
-      // It ends by opening a fresh DRAFT in a chat pane, and its progress shows on that
-      // pane's status line - both invisible from here, so go to chat first. Without this the
-      // click would look like nothing happened while a summarize call ran.
-      navigateToPage("chat");
-      await summarizeAndCarryOver(backingSession);
-    });
-    head.append(carryBtn);
+    // The move already has two better entry points. Archive's own menu offers "Save handoff to
+    // HANDOFF.md + archive", which summarises to a FILE a fresh session reads first - the
+    // file-based continuity this whole app is built on. And a first mate that is filling up grows
+    // its own "hand off to a fresh one" nudge, at the moment it actually matters. A third door,
+    // always visible on every row, only made the row busier: pasting a summary into a composer is
+    // a weaker copy of what the file already does.
     head.append(continueOnMobileBtn(backingSession, { title: sm.name }));
     const archiveBtn = document.createElement("button");
     archiveBtn.className = "fleet-btn fleet-archive-btn";
