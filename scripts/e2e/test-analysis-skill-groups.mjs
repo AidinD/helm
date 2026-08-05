@@ -129,7 +129,12 @@ try {
   // every project block must have. Which projects, and that only ones with skills are
   // listed, is pinned by test-skill-sources against a fixture.
   const projectBlocks = view.blocks.filter((b) => b.head.startsWith("Project skills"));
-  ok(projectBlocks.length >= 1, `at least one project skills block renders (${JSON.stringify(view.blocks.map((b) => b.head))})`);
+  // ONE block, whatever the number of projects: a block per project grew out of hand
+  // immediately (the captain, 2026-08-05 - three projects, and the row was already too much).
+  ok(
+    projectBlocks.length === 1,
+    `exactly one project-skills block, however many projects have skills (${projectBlocks.length})`
+  );
   for (const b of projectBlocks) {
     if (b.head === "Project skills") {
       // The nothing-found case: it must say how many folders were looked at, not just 0.
@@ -145,7 +150,61 @@ try {
       b.hints.some((h) => /[\\/]/.test(h)),
       `with its full path on screen, since a folder name is ambiguous (${JSON.stringify(b.hints)})`
     );
-    ok(b.chips.length > 0, `and only projects that HAVE skills get a block (${b.head} has ${b.chips.length})`);
+    ok(b.chips.length > 0, `and only projects that HAVE skills are offered (${b.head} has ${b.chips.length})`);
+  }
+
+  // The picker: one pill per project with skills, exactly one selected, and clicking
+  // another one actually swaps the block's skills - a picker that repaints nothing is a
+  // control that visibly does nothing, which this app has shipped before.
+  const picker = await app.eval(`(() => {
+    const el = document.querySelector(".analysis-project-picker");
+    if (!el) {
+      return { present: false };
+    }
+    const pills = [...el.querySelectorAll(".dash-chip")];
+    return {
+      present: true,
+      labels: pills.map((p) => p.textContent.trim()),
+      titles: pills.map((p) => p.title),
+      selected: pills.filter((p) => p.classList.contains("dash-chip-selected")).map((p) => p.textContent.trim()),
+      head: el.closest(".analysis-block").querySelector("h3").textContent,
+    };
+  })()`);
+  ok(picker.present, "a project picker renders inside the block");
+  ok(picker.selected.length === 1, `with exactly one project selected (${JSON.stringify(picker.selected)})`);
+  ok(
+    picker.labels.every((l) => /· \d+$/.test(l)),
+    `each pill carries its project's skill count, so picking is informed (${JSON.stringify(picker.labels)})`
+  );
+  ok(
+    picker.titles.every((t) => /[\\/]/.test(t)),
+    "and its full path on hover, since two repos can share a basename"
+  );
+  if (picker.labels.length > 1) {
+    const swapped = await app.eval(`(async () => {
+      const el = document.querySelector(".analysis-project-picker");
+      const before = { head: el.closest(".analysis-block").querySelector("h3").textContent, chips: [...el.closest(".analysis-block").querySelectorAll(".skill-chip")].map((c) => c.textContent.trim()) };
+      const other = [...el.querySelectorAll(".dash-chip")].find((p) => !p.classList.contains("dash-chip-selected"));
+      other.click();
+      await new Promise((r) => setTimeout(r, 150));
+      const el2 = document.querySelector(".analysis-project-picker");
+      const block2 = el2.closest(".analysis-block");
+      return {
+        before,
+        after: { head: block2.querySelector("h3").textContent, chips: [...block2.querySelectorAll(".skill-chip")].map((c) => c.textContent.trim()) },
+        blocks: document.querySelectorAll(".analysis-project-picker").length,
+        selected: [...el2.querySelectorAll(".dash-chip-selected")].map((p) => p.textContent.trim()),
+      };
+    })()`);
+    ok(swapped.after.head !== swapped.before.head, `picking another project retitles the block (${swapped.before.head} -> ${swapped.after.head})`);
+    ok(
+      JSON.stringify(swapped.after.chips) !== JSON.stringify(swapped.before.chips),
+      "and swaps the skills shown, rather than leaving the previous project's list in place"
+    );
+    ok(swapped.blocks === 1, `still one block afterwards - the repaint replaces it, it does not add another (${swapped.blocks})`);
+    ok(swapped.selected.length === 1, `and one pill is selected afterwards (${JSON.stringify(swapped.selected)})`);
+  } else {
+    console.log("   (only one project has skills on this machine - the swap half of the picker was not exercised)");
   }
 
   const pluginBlock = view.blocks.find((b) => b.head.startsWith("Plugin skills"));

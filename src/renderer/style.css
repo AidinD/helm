@@ -5273,6 +5273,16 @@ button.primary {
   gap: 8px;
 }
 
+/* The same chips as a project picker inside an Analysis block: a little tighter, and
+   spaced off the skills they switch between. */
+.analysis-project-picker {
+  margin: 8px 0 10px;
+}
+.analysis-project-picker .dash-chip {
+  padding: 4px 10px;
+  font-size: 11px;
+}
+
 .dash-chip {
   display: flex;
   align-items: center;
