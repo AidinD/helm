@@ -5970,3 +5970,47 @@ They raised the level from `core` to `critical`, and between them found that:
 
 **The pattern across all three reviews: the code was mostly right and the TESTS were the weak part** - source-text regexes standing in for behaviour, assertions that could not fail, and two claims in commit messages that were simply untrue (`.search` being dead; the tolerant parser protecting the rename).
 Every finding above was reachable with the method already at hand - build a fixture and run it - which is the argument for dispatching the review before writing the suite rather than after.
+
+## 2026-08-05 - Analysis shows every skill source, a widget follows the fleet, and an event gets a notice rather than a toast
+
+Five cards off the board in one pass, and three of them turned on the same question: what does a surface do when the thing it points at is gone or was never there?
+
+**A section that mixes two KINDS of entry has to ask for the kind it is.**
+Analysis' "Context files" row was fed one array holding both the durable project docs (HANDOFF/DECISIONS/PLAN) and, for a session with no repo of its own, the topic handoffs from Helm's own store.
+The renderer hardcoded `kind: "projectDoc"` for every chip, so a topic-handoff chip asked main for a project doc by a name the resolver refuses by design and got "Invalid project doc" back.
+The resolver was right; the caller was lying about what it was asking for.
+The topic handoffs now render as their own labelled row, because reading them as files in the project is what made the section confusing before anything failed.
+At a meta-home root, HANDOFF.md is no longer listed as missing: at that root the topic files ARE the handoffs, so "HANDOFF.md (none)" was the app contradicting itself two rows apart.
+
+**Plugins are the third source of skills, and the one that was invisible.**
+The card asked for the skills' subfolder categorisation to be mirrored in the presentation.
+Read from disk: the global folder is FLAT - 33 skill folders, whose only subfolders are a skill's own `references`/`scripts`/`templates`.
+So there was nothing to mirror there, and saying so is part of the answer.
+What does exist is an enabled plugin (`rbx-core@rbx`) shipping 61 skills through `<plugin>/skills/<skill>/SKILL.md` - reachable by every session, and shown nowhere in a view whose entire job is "what is in the room".
+One level of subfolder is now read as a category for every source, so the moment the global folder is organised the presentation follows; a folder with its own SKILL.md stays a skill and is never also read as a category.
+Deliberately NOT concluded: whether Claude Code itself registers a skill nested one level down. Helm can present that layout; nobody has tested that the CLI discovers it, so reorganising the folder is not recommended on this work's word.
+
+**An empty state that cannot say what it is for is the bug.**
+"This pane's project skills - None found." prompted "vad är tänkt att visas här?", which is the honest response to a panel naming neither what it looks for nor where it looked.
+The heading carries the folder, and the empty line says what would fill it and that the pane still reaches every global skill - so 0 does not read as "no skills available".
+
+**A binding to a short-lived thing should be a preference, not a weld.**
+Retiring a first mate respawns a fresh one with a NEW id, so a widget bound to a mateId pointed at nobody and had to be replaced by hand ("det är ganska störigt").
+Resolution now happens against who is actually on watch: a live binding is untouched, a dead one adopts a mate no other widget claims, and a widget with nobody left to adopt says it takes the next one that joins.
+Persisted once, when it happens, so the adoption survives a restart instead of being re-decided every repaint.
+The Add-widget menu had to change with it - it deduped by widget ID, and an adopted widget's id still carries the retired mate's, so it would have offered the adopted mate again and put a second widget on the board for the same mate.
+The assignment is a pure function because every bug of this kind in this app has been an assignment bug, not a drawing bug.
+
+**"Too fast to see" was three problems, and the first one was measurable.**
+Every toast was individually fixed to the same coordinates, so two at once were exactly superimposed and the one underneath was never read.
+They share a stack now; the duration went from 4s to 7s; the countdown pauses while the pointer is on it; a click dismisses it.
+The second kind he asked for is a notice: a side-column card that stays until dismissed, four deep, the rest queued in order behind "+N more waiting", with one "Dismiss all" that clears the queue too (otherwise the pile refills and the button reads as inert).
+The SPLIT is the judgement, and it is stated on the card for him to disagree with: an event that arrives while he is elsewhere and whose loss costs something gets a notice (a run that failed or paused needing him, a setting that did not save, a handoff that could not be written while the session was archived anyway, checks whose outcome could not be stored); the result of a click on a page that repaints with the answer stays transient.
+Erring towards flagging, per the standing rule that under-flagging an attention signal is the worse failure.
+
+**Two bugs neither card asked about, both found by writing the test rather than by reading the code.**
+Two overlapping renders of the Analysis page both appended their grid - it clears the page, awaits four IPC calls, and only appends at the end - so every block appeared twice.
+Last render wins now, the same fix the dashboard's own refresh race needed.
+And `test-goal-attention-queue` was red for stale reasons, not for the toast work: verified by shelving the change, re-running, getting the same three failures, and restoring.
+Its wording assertion predated "Autopilot run" and the em-dash purge, and it counted expanded attention blocks when a TERMINAL run now renders collapsed - so the errored run was marked in the shape it actually has (`goal-run-summary-needs`) while the test looked for the other one.
+It asserts both shapes now, plus that a run which finished fine is NOT marked, because an attention mark on everything marks nothing.
