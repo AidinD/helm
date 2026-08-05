@@ -1188,10 +1188,18 @@ function reviewRowEl(row, band = null) {
       // no reviewer was ever run.
       label.title = "Zero findings is the easiest thing to claim without doing. Check that a reviewer actually ran.";
     }
-    const body = document.createElement("div");
-    body.className = "rev-independent-body";
-    body.textContent = ind.summary || "(no summary given)";
-    box.append(label, body);
+    // NOT named `body`. It was, and that shadowed the row's collapsible body: the line
+    // below then appended the BOX into its own child, which throws DOMException ("the new
+    // child element contains the parent") and killed the whole review page render - the
+    // page rendered nothing at all, and only for a record that HAS an independentReview,
+    // which is why no test saw it. The cause was a scripted line-number replacement moving
+    // `el.append` to `body.append` and landing inside this block, where `body` meant
+    // something else. This codebase already carries a comment about a scripted replace
+    // hitting the wrong site; that is now twice.
+    const summaryEl = document.createElement("div");
+    summaryEl.className = "rev-independent-body";
+    summaryEl.textContent = ind.summary || "(no summary given)";
+    box.append(label, summaryEl);
     body.append(box);
   }
 
