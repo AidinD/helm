@@ -34,6 +34,12 @@ const skill = (dir, body) => {
 skill(path.join(home, "skills", "handoff"));
 skill(path.join(home, "skills", "git", "rebase"), "---\nname: rebase\n---\n\nRebase onto upstream first.\n");
 skill(path.join(home, "skills", "git", "blame"));
+// The real shape of Aidin's setup: the skills root is FLAT and its entries are links
+// into <meta-home>/skills-catalog, which is the organised tree. A skill linked from
+// there has to render under the catalog's own path.
+const metaHome = path.join(tmp, "meta-home");
+skill(path.join(metaHome, "skills-catalog", "portfolio", "dev-workflow", "catchup"), "---\nname: catchup\n---\n\nSummarise the branch.\n");
+fs.symlinkSync(path.join(metaHome, "skills-catalog", "portfolio", "dev-workflow", "catchup"), path.join(home, "skills", "catchup"), "junction");
 // The pane's folder is a repo with NO skills of its own - the empty state under test.
 const repo = path.join(tmp, "repo");
 fs.mkdirSync(repo, { recursive: true });
@@ -55,7 +61,7 @@ fs.writeFileSync(
 
 process.env.HELM_CLAUDE_HOME = home;
 process.env.HELM_CONFIG_PATH = path.join(tmp, "config.json");
-process.env.HELM_META_HOME_OVERRIDE = path.join(tmp, "meta-home");
+process.env.HELM_META_HOME_OVERRIDE = metaHome;
 process.env.HELM_E2E_PORT = process.env.HELM_E2E_PORT || "9518";
 const { launch } = await import("./harness.mjs");
 
@@ -86,14 +92,28 @@ try {
 
   const globalBlock = view.blocks.find((b) => b.head.startsWith("Global skills"));
   ok(!!globalBlock, "the global skills block renders");
-  ok(globalBlock.head.endsWith("· 3"), `it counts skills across categories (${globalBlock.head})`);
+  ok(globalBlock.head.endsWith("· 4"), `it counts skills across categories (${globalBlock.head})`);
   ok(globalBlock.headTitle.endsWith(path.join("claude-home", "skills")), `and its heading carries the folder it read (${globalBlock.headTitle})`);
   ok(
     globalBlock.hints.some((h) => h === "git · 2"),
     `a subfolder renders as its own labelled group (${JSON.stringify(globalBlock.hints)})`
   );
+  // THE case from his answer: the skills root is flat, and the categorisation comes
+  // from the catalog the entries link into.
   ok(
-    JSON.stringify(globalBlock.chips) === JSON.stringify(["handoff", "blame", "rebase"]),
+    globalBlock.hints.some((h) => h === "portfolio / dev-workflow · 1"),
+    `a skill linked into skills-catalog renders under the catalog's own path (${JSON.stringify(globalBlock.hints)})`
+  );
+  ok(
+    globalBlock.hints.some((h) => h === "uncategorised · 1"),
+    `and one the catalog does not know is named as the remainder rather than sitting unlabelled (${JSON.stringify(globalBlock.hints)})`
+  );
+  ok(
+    globalBlock.hints.some((h) => h === "Grouped by skills-catalog"),
+    `the page says where the grouping came from - a flat folder rendering as labelled groups is otherwise unexplainable (${JSON.stringify(globalBlock.hints)})`
+  );
+  ok(
+    JSON.stringify(globalBlock.chips) === JSON.stringify(["blame", "rebase", "catchup", "handoff"]),
     `a grouped skill shows its own name, not the folder path (${JSON.stringify(globalBlock.chips)})`
   );
 

@@ -28,8 +28,30 @@ const skill = (dir) => {
   fs.writeFileSync(path.join(dir, "SKILL.md"), "---\nname: x\n---\n\nbody\n", "utf8");
 };
 
-// --- global: two flat skills, one category with two, and a folder that is neither
-skill(path.join(home, "skills", "handoff"));
+// --- the organised catalog the flat skills root links into ------------------
+// This is the real shape on Aidin's machine: ~/.claude/skills is flat, and each of
+// its 33 entries is a junction into <meta-home>/skills-catalog, which is the tree
+// that is actually organised (portfolio/dev-workflow, private/finance, ...). So the
+// categorisation has to come from where a skill POINTS, not from the flat root.
+const catalogDir = path.join(tmp, "skills-catalog");
+skill(path.join(catalogDir, "copied-external", "handoff"));
+skill(path.join(catalogDir, "portfolio", "dev-workflow", "catchup"));
+skill(path.join(catalogDir, "portfolio", "orchestration", "council"));
+// A skill sitting at the catalog's TOP level has no category there, which must not be
+// confused with a skill the catalog has never heard of.
+skill(path.join(catalogDir, "loose"));
+
+// --- global: a flat root that mixes links into the catalog, real skills the catalog
+// does not know, an on-disk category, and a folder that is neither.
+fs.mkdirSync(path.join(home, "skills"), { recursive: true });
+const linkedIn = (name, target) => {
+  // "junction" so this needs no elevation on Windows, which is where it runs.
+  fs.symlinkSync(target, path.join(home, "skills", name), "junction");
+};
+linkedIn("handoff", path.join(catalogDir, "copied-external", "handoff"));
+linkedIn("catchup", path.join(catalogDir, "portfolio", "dev-workflow", "catchup"));
+linkedIn("council", path.join(catalogDir, "portfolio", "orchestration", "council"));
+linkedIn("loose", path.join(catalogDir, "loose"));
 skill(path.join(home, "skills", "triage"));
 skill(path.join(home, "skills", "git", "rebase"));
 skill(path.join(home, "skills", "git", "blame"));
@@ -80,16 +102,39 @@ process.env.HELM_CLAUDE_HOME = home;
 const { listSkills, skillMdPath } = await import("../../src/lib/skills.js");
 
 try {
-  const s = listSkills(project);
+  const s = listSkills(project, { catalogDir });
 
-  // --- global: flat first, then categories -----------------------------------
+  // --- global: grouped by where each skill really lives -----------------------
   const g = s.global;
+  const groupNames = g.groups.map((x) => `${x.category}:${x.skills.map((y) => y.label).join("+")}`);
   ok(g.dir === path.join(home, "skills"), `global source names the folder it read (${g.dir})`);
-  ok(g.count === 5, `counts every global skill including nested ones (got ${g.count})`);
-  ok(g.groups[0].category === null, "the flat skills come first, ungrouped");
+  ok(g.count === 8, `counts every global skill - linked, real and nested (got ${g.count})`);
   ok(
-    JSON.stringify(g.groups[0].skills.map((x) => x.label)) === JSON.stringify(["compound", "handoff", "triage"]),
-    `flat group holds the top-level skills (${JSON.stringify(g.groups[0].skills.map((x) => x.label))})`
+    JSON.stringify(g.groups.find((x) => x.category === "copied-external")?.skills) === JSON.stringify([{ ref: "handoff", label: "handoff" }]),
+    `a skill that LINKS into the catalog is grouped by the catalog path (${JSON.stringify(groupNames)})`
+  );
+  ok(
+    JSON.stringify(g.groups.find((x) => x.category === "portfolio / dev-workflow")?.skills) === JSON.stringify([{ ref: "catchup", label: "catchup" }]),
+    "a two-level catalog path becomes a two-level label"
+  );
+  ok(!!g.groups.find((x) => x.category === "portfolio / orchestration"), "and sibling categories under the same parent stay apart");
+  ok(
+    g.groups.find((x) => x.category === "portfolio / dev-workflow")?.skills[0].ref === "catchup",
+    "the ref stays the name in the SKILLS root, which is the path a session actually loads - the catalog only groups"
+  );
+  // Sitting at the catalog's top level is not the same as being unknown to it.
+  const uncat = g.groups.find((x) => x.category === "uncategorised");
+  ok(
+    JSON.stringify(uncat?.skills.map((x) => x.label)) === JSON.stringify(["compound", "triage"]),
+    `only skills the catalog has never heard of are "uncategorised" (${JSON.stringify(uncat?.skills.map((x) => x.label))})`
+  );
+  ok(
+    g.groups.some((x) => x.category === null && x.skills.some((y) => y.label === "loose")),
+    `a skill at the catalog's own top level has no category, and is not lumped in with the unknown ones (${JSON.stringify(groupNames)})`
+  );
+  ok(
+    g.groups[g.groups.length - 1].category === "uncategorised",
+    `the remainder sorts last, after the real categories (${JSON.stringify(g.groups.map((x) => x.category))})`
   );
   const git = g.groups.find((x) => x.category === "git");
   ok(!!git, "a subfolder of skills becomes its own category");
@@ -104,6 +149,23 @@ try {
   ok(
     !g.groups.some((x) => x.category === "compound"),
     "a folder that IS a skill is never also read as a category"
+  );
+
+  // Without a catalog nothing is invented: the same root is one ungrouped run plus
+  // its on-disk category, and no skill is labelled "uncategorised".
+  const noCat = listSkills(project).global;
+  ok(noCat.groups[0].category === null, "with no catalog, the flat skills are simply ungrouped");
+  ok(
+    !noCat.groups.some((x) => x.category === "uncategorised"),
+    `and nothing is called uncategorised, because nothing was categorised (${JSON.stringify(noCat.groups.map((x) => x.category))})`
+  );
+  ok(noCat.count === g.count, "the same skills are listed either way - the catalog groups them, it is not a source");
+
+  // --- deeper nesting on disk ------------------------------------------------
+  const deep = listSkills("", { catalogDir: null }).global;
+  ok(
+    deep.groups.some((x) => x.category === "git"),
+    "an on-disk subfolder is still its own category when there is no catalog"
   );
 
   // --- project ---------------------------------------------------------------
@@ -136,7 +198,7 @@ try {
   ok(skillMdPath("grouped/two", "plugin", project, "made-up") === null, "nor can an unknown plugin id");
   // Traversal and shape guards. The old resolver joined the name straight in.
   ok(skillMdPath("../../settings", "global") === null, "a ref that climbs out is refused");
-  ok(skillMdPath("git/rebase/deeper", "global") === null, "a ref deeper than category/name is refused");
+  ok(skillMdPath("a/b/c/d/e", "global") === null, "a ref deeper than the category levels this module lists is refused");
   ok(skillMdPath("", "global") === null, "an empty ref is refused");
   ok(skillMdPath("nope", "global") === null, "and a ref with no SKILL.md behind it resolves to nothing");
 } catch (err) {

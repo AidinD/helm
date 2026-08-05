@@ -508,7 +508,12 @@ ipcMain.handle("jot:addSubtask", (_event, { parentId, text }) => {
 });
 
 // --- Skills available to a pane, split global vs project-specific ---
-ipcMain.handle("skills:list", (_event, cwd) => listSkills(cwd));
+// The organised tree the global skills link into. ~/.claude/skills is flat, but its
+// entries point into <meta-home>/skills-catalog, which IS categorised - so Analysis
+// groups them by where they point (Aidin: "jag tänkte på hur de är strukturerade i
+// skills-catalog"). Resolved here because the meta-home is main's to know; skills.js
+// takes it as a parameter and works without one.
+ipcMain.handle("skills:list", (_event, cwd) => listSkills(cwd, { catalogDir: path.join(resolveMetaHome(), "skills-catalog") }));
 
 // --- Slash-invokable items (skills + custom commands) for the composer menu.
 // Both scopes; project overrides global. Excludes built-in TUI commands (they
