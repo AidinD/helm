@@ -725,6 +725,133 @@ function reviewChip(text, kind) {
 }
 
 /**
+ * The patch for a review item, in the document viewer, coloured like a diff.
+ *
+ * Rendered line by line into elements this code creates - never innerHTML of git output.
+ * A diff carries whatever the change carried, including markup, and the point of the
+ * viewer is to READ it, not to run it.
+ */
+function openDiffViewer(row, res) {
+  const overlay = document.getElementById("docViewer");
+  const body = document.getElementById("docvBody");
+  document.getElementById("docvTitle").textContent = `${row.title} · ${res.commits.length} commit${res.commits.length === 1 ? "" : "s"}`;
+  const revealBtn = document.getElementById("docvReveal");
+  // Something that actually happens. There is no open-a-folder bridge in preload, and a
+  // button wired to `window.helm.openPath?.()` would have been a control that visibly
+  // does nothing - the exact bug this app has shipped before. Copying the shas is useful
+  // and real: it is what you paste into git to look further.
+  revealBtn.textContent = "Copy commit ids";
+  revealBtn.onclick = () => {
+    window.helm.copyToClipboard(res.commits.map((c) => c.sha).join(" "));
+    showToast(`Copied ${res.commits.length} commit id(s).`);
+  };
+  body.innerHTML = "";
+
+  // Where the commits came from. A search of the log is a GUESS, and it says so.
+  const prov = document.createElement("div");
+  prov.className = "suggest-hint";
+  prov.textContent =
+    res.source === "record"
+      ? `${res.commits.length} commit(s) named by the review record, in ${res.projectPath}`
+      : `${res.commits.length} commit(s) found by searching the log for "${row.taskId.slice(0, 8)}" - the record names none, so this is a search and could miss a commit that never mentioned the task`;
+  body.append(prov);
+
+  const list = document.createElement("div");
+  list.className = "diff-commits";
+  for (const c of res.commits) {
+    const line = document.createElement("div");
+    line.className = "diff-commit";
+    const sha = document.createElement("span");
+    sha.className = "diff-sha";
+    sha.textContent = c.sha.slice(0, 8);
+    const subj = document.createElement("span");
+    subj.textContent = c.subject;
+    line.append(sha, subj);
+    list.append(line);
+  }
+  body.append(list);
+
+  const pre = document.createElement("pre");
+  pre.className = "diff-body";
+  for (const raw of String(res.text || "").split("\n")) {
+    const line = document.createElement("span");
+    line.className =
+      /^\+\+\+|^---/.test(raw) || /^diff --git/.test(raw)
+        ? "diff-file"
+        : /^@@/.test(raw)
+          ? "diff-hunk"
+          : /^\+/.test(raw)
+            ? "diff-add"
+            : /^-/.test(raw)
+              ? "diff-del"
+              : /^commit [0-9a-f]{7,40}/.test(raw)
+                ? "diff-commit-head"
+                : "";
+    line.textContent = raw + "\n";
+    pre.append(line);
+  }
+  body.append(pre);
+
+  if (res.truncated) {
+    const t = document.createElement("div");
+    t.className = "md-truncated";
+    t.textContent = `Showing ${res.shown} of ${res.total} commits - the rest was cut at a commit boundary to keep this readable. Use the folder button and read it in git for the whole thing.`;
+    body.append(t);
+  }
+  overlay.classList.remove("hidden");
+  body.scrollTop = 0;
+}
+
+/**
+ * Prepare an independent review of this item in a fresh session, and let HIM send it.
+ *
+ * Deliberately a prepared draft rather than a dispatched agent: it starts a real session
+ * with a real model, so the moment it costs something should be a keystroke he makes.
+ * The brief is built from the record - the claims, the gaps, and the declared checks -
+ * because an independent pass that is not told what is being claimed just re-reads the
+ * code and agrees with it.
+ */
+function openIndependentReview(row) {
+  const rec = row.record || {};
+  const short = row.taskId.slice(0, 8);
+  const lines = [
+    `You are an INDEPENDENT reviewer. You did not write this work, and your job is not to agree with it.`,
+    ``,
+    `Task ${short}: ${row.title}`,
+    `Criticality claimed: ${row.criticality || "not stated"}. Verdict claimed: ${rec.verdict || "none"}.`,
+    ``,
+    `What the author says was done:`,
+    rec.summary || "(no summary)",
+    ``,
+    `Their evidence, to CONFIRM OR REFUTE one by one - by running something, not by reading:`,
+    ...(rec.evidence || []).map((e, i) => `${i + 1}. ${typeof e === "string" ? e : `${e.claim || ""}${e.claim && e.detail ? " - " : ""}${e.detail || ""}`}`),
+    ``,
+    `What they say is NOT verified - check whether any of it is worse than stated:`,
+    ...(rec.notVerified || []).map((n, i) => `${i + 1}. ${n}`),
+    ``,
+    `Their declared checks:`,
+    ...(rec.checks || []).map((c) => `- ${c.label}: ${c.cmd}`),
+    ``,
+    `Start with: git log --all --regexp-ignore-case --grep=${short} --format="%H %s"  then read those commits' patch.`,
+    `Then, in order:`,
+    `1. Decide the criticality yourself before reading theirs again. If yours is higher, say so first.`,
+    `2. Name which commands would catch a regression here. A command they do not have is your most useful output.`,
+    `3. Try to BREAK one guard on purpose and check that a test notices. A guard whose removal leaves the suite green is not a guard.`,
+    `4. Report: what is wrong, what is unproven, and what you ran to find out. Cite file:line.`,
+    ``,
+    `Do not change anything. This is a review.`,
+  ];
+  const cwd = rec.projectPath || "";
+  if (!cwd) {
+    showNotice(`"${row.title}" has no project folder on its record, so there is nowhere to root a reviewer. Add projectPath to the record.`);
+    return;
+  }
+  navigateToPage("chat");
+  openFreshDraftInPane(cwd, lines.join("\n"));
+  showToast("A review brief is waiting in a fresh session - read it and press Enter to send it.");
+}
+
+/**
  * Which review rows are open. Empty by default: every row starts COLLAPSED.
  *
  * Aidin, task 10ac9c23: "review sectionen är lite jobbig att läsa - texten är liten och
@@ -1216,6 +1343,45 @@ function reviewActionsEl(row) {
   const g = row.gauntlet || { declared: 0, state: "none" };
   const actions = document.createElement("div");
   actions.className = "rev-actions";
+
+  // The two things reviewing actually needs and did not have (task c3dfbb42: "Kunna se
+  // diff. Kunna skicka oberoende agent på granskning"). Both come FIRST, because they are
+  // what you do before deciding, and Mark done / Send back are the decision.
+  if (row.record) {
+    const diffBtn = document.createElement("button");
+    diffBtn.type = "button";
+    diffBtn.className = "text-btn";
+    diffBtn.textContent = "See the diff";
+    diffBtn.title = "The patch for this task's commits. Read-only.";
+    diffBtn.addEventListener("click", async () => {
+      diffBtn.disabled = true;
+      const was = diffBtn.textContent;
+      diffBtn.textContent = "Reading…";
+      try {
+        const res = await window.helm.getReviewDiff(row.taskId);
+        if (!res?.ok) {
+          // A notice, not a toast: this is usually "nothing ties a commit to this task",
+          // which is a sentence worth reading rather than one worth catching.
+          showNotice(`No diff for "${row.title}": ${res?.error || "unknown reason"}`);
+          return;
+        }
+        openDiffViewer(row, res);
+      } finally {
+        diffBtn.disabled = false;
+        diffBtn.textContent = was;
+      }
+    });
+    actions.append(diffBtn);
+
+    const reviewBtn = document.createElement("button");
+    reviewBtn.type = "button";
+    reviewBtn.className = "text-btn";
+    reviewBtn.textContent = "Independent reviewer";
+    reviewBtn.title = "Opens a fresh session in this project with a review brief prepared. It does NOT send it - you press Enter, so nothing is spent until you do.";
+    reviewBtn.addEventListener("click", () => openIndependentReview(row));
+    actions.append(reviewBtn);
+  }
+
   const doneBtn = document.createElement("button");
   doneBtn.type = "button";
   doneBtn.className = "text-btn";

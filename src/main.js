@@ -42,6 +42,7 @@ import {
   quotaResetFireAt,
 } from "./lib/scheduledPrompts.js";
 import { buildReviewQueue, listReviewRecords, reviewQueueTally, readReviewRecord, recordCheckRun, gauntletStatus, currentHead, codeChangedBetween } from "./lib/reviewRecords.js";
+import { resolveTaskCommits, diffForCommits } from "./lib/reviewDiff.js";
 import { listHandoffCategories, writeHandoff, readHandoff, planHandoffFiling, handoffPath } from "./lib/handoffStore.js";
 import { classifySessionStatus, classifyHandoffCategory, expectsUserInputHeuristic, estimateSessionContextTokens, compactSession, getTranscriptSize, triageAutoTask } from "./lib/orchestratorHelper.js";
 import { savePastedImage, prunePastedImages } from "./lib/images.js";
@@ -5545,6 +5546,38 @@ ipcMain.handle("reviews:acknowledgeNoRecord", (_event, { taskId } = {}) => {
   } catch (err) {
     return { ok: false, error: err?.message || String(err) };
   }
+});
+
+// The CHANGE behind a review item, so reviewing does not mean taking the record's word
+// for what it says was done (task c3dfbb42, "Kunna se diff"). Read-only: it resolves the
+// task's commits (from the record, else by searching the log for the task's short id) and
+// returns their patch. The answer says WHICH source was used, because a diff attributed
+// by search must not look like one attributed by record.
+ipcMain.handle("reviews:diff", (_event, { taskId } = {}) => {
+  const metaHome = resolveMetaHome();
+  const rec = readReviewRecord(metaHome, taskId);
+  if (!rec) {
+    return { ok: false, error: "No review record for that task, so nothing says where its code lives." };
+  }
+  const projectPath = rec.projectPath || null;
+  const resolved = resolveTaskCommits(projectPath, taskId, rec.commits || []);
+  if (resolved.commits.length === 0) {
+    return { ok: false, error: resolved.error || "No commits found for this task.", source: resolved.source };
+  }
+  const diff = diffForCommits(projectPath, resolved.commits);
+  if (!diff.ok) {
+    return { ok: false, error: diff.error, source: resolved.source };
+  }
+  return {
+    ok: true,
+    source: resolved.source,
+    projectPath,
+    commits: resolved.commits,
+    text: diff.text,
+    truncated: diff.truncated,
+    shown: diff.shown,
+    total: diff.total,
+  };
 });
 
 // Run a record's declared checks and stamp the REAL outcome (exit code + output

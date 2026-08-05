@@ -85,6 +85,8 @@ contextBridge.exposeInMainWorld("helm", {
   acknowledgeNoRecord: (taskId) => ipcRenderer.invoke("reviews:acknowledgeNoRecord", { taskId }),
   setReviewStatus: (taskId, status, note) => ipcRenderer.invoke("reviews:setStatus", { taskId, status, note }),
   runReviewChecks: (taskId) => ipcRenderer.invoke("reviews:runChecks", { taskId }),
+  // The change behind a review item: its commits' patch, read-only.
+  getReviewDiff: (taskId) => ipcRenderer.invoke("reviews:diff", { taskId }),
   onReviewsChanged: (cb) => {
     const handler = () => cb();
     ipcRenderer.on("reviews:changed", handler);
