@@ -1,3 +1,6 @@
+import { requireLive } from "./live-gate.mjs";
+requireLive("drives a real second mate so its work can be attributed");
+
 // E2E (LIVE): reproduce 2a5e6196 - when the SECOND first mate creates a second
 // mate, is it attributed to THAT mate or mis-stamped onto the slot-0 mate?
 // Starts a session with the slot-1 mate's mateId (as jumping into the second first

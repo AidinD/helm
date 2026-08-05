@@ -6014,3 +6014,34 @@ Last render wins now, the same fix the dashboard's own refresh race needed.
 And `test-goal-attention-queue` was red for stale reasons, not for the toast work: verified by shelving the change, re-running, getting the same three failures, and restoring.
 Its wording assertion predated "Autopilot run" and the em-dash purge, and it counted expanded attention blocks when a TERMINAL run now renders collapsed - so the errored run was marked in the shape it actually has (`goal-run-summary-needs`) while the test looked for the other one.
 It asserts both shapes now, plus that a run which finished fine is NOT marked, because an attention mark on everything marks nothing.
+
+## 2026-08-05 - A check that spends tokens must declare itself, and the rule is enforced rather than remembered
+
+Aidin asked whether the test suite costs anything: "testsviten körs inte av ai eller hur, det är skript så den använder inte massa tokens?"
+
+The honest answer was no, and finding out why took measuring rather than assuming.
+Fifteen checks drive a real model - a real first mate, a real second mate, a real triage call, a real advisory seat.
+Eleven of them had no gate at all, so `npm test` quietly drew quota.
+Four had grown their own inline gate, in three different flag spellings.
+And one had drifted into the FAST lane, so `npm run test:fast` - the thing to run for a quick answer - made a model call on every run, hidden inside the pool's wall clock.
+That one also got KILLED at the fast lane's 120s cap while genuinely waiting on a model, which reads as a product failure and was not one.
+
+**One shared gate.**
+`scripts/e2e/live-gate.mjs` exports `requireLive(reason[, note])`: it prints a named SKIPPED line and exits 0 unless `--live` (or `HELM_LIVE_CLI_TESTS=1`).
+Called FIRST in a check, above the harness import and above any fixture writing, so a default run pays nothing for it.
+All fifteen use it now; the four hand-rolled gates are gone, with their extra sentences moved into the `note` argument rather than dropped.
+
+**The rule is a test, not a convention.**
+`test-live-checks-declared.mjs` scans every check for the shapes that reach a model (starting a session, spawning the CLI, `sendFromPane`, a triage/judge helper) and FAILS on any that does so without `requireLive`.
+A check that only STUBS the CLI can declare `// LIVE-EXEMPT: <reason>`, where a reason under 20 characters does not count - an exemption has to cost a sentence, like `whyNotCritical` on a review record.
+It also asserts its own classification against fabricated sources, because "0 undeclared" is what a broken regex prints too.
+
+**Two source-scanning bugs found while building it, both the same shape as the thing being guarded.**
+The guard first flagged `test-auto-triage-backoff`, which only does `tick.indexOf("await triageAutoTask(")` - it searches main.js's source for the call by name.
+So quoted strings are stripped before matching while TEMPLATE literals are kept: an `app.eval` body in backticks is code being sent into the app, a quoted string is data being searched.
+Then the runner put the new guard file in the APP lane, because its sample sources contain `import { launch } from "./harness.mjs"` as a string, and the lane split was a plain substring match.
+Both detectors now require the import or the call to be real, anchored to the start of a line.
+
+**The runner says what a run will cost BEFORE it runs.**
+A line up front names the checks that will be skipped (or, with `--live`, the ones that will spend), because a summary printed afterwards is too late to be a decision.
+`--live` is forwarded to each child, and a token-spending check in the fast lane gets the app lane's longer budget so a slow model reply cannot be mistaken for a failure again.

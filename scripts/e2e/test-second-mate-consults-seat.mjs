@@ -1,3 +1,6 @@
+import { requireLive } from "./live-gate.mjs";
+requireLive("drives a real second mate into an advisory seat");
+
 // E2E (LIVE): can a real second-mate session, launched by the app, actually
 // consult an advisory seat?
 //

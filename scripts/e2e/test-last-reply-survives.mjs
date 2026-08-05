@@ -1,3 +1,9 @@
+import { requireLive } from "./live-gate.mjs";
+requireLive(
+  "starts a real session to see its last reply survive a reload",
+  "It is the harness for bee52369 (a reply vanishing from the pane), which is not reproduced yet."
+);
+
 // Does the newest reply stay on screen after a turn finishes?
 //
 // Aidin, task bee52369 (his most urgent): "ibland försvinner det senaste jag och
@@ -40,13 +46,6 @@ function assert(cond, msg) {
   }
 }
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-
-if (!process.argv.includes("--live") && process.env.HELM_LIVE_CLI_TESTS !== "1") {
-  console.log("SKIPPED - this reproduction drives real turns through the app and spends tokens.");
-  console.log("          Run it deliberately:  node scripts/e2e/test-last-reply-survives.mjs --live");
-  console.log("          It is the harness for bee52369 (a reply vanishing from the pane), which is not reproduced yet.");
-  process.exit(0);
-}
 
 const TURNS = Number(process.env.HELM_REPRO_TURNS || 3);
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "helm-lastreply-"));

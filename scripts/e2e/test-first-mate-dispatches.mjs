@@ -1,3 +1,6 @@
+import { requireLive } from "./live-gate.mjs";
+requireLive("drives a real first mate through a dispatch");
+
 // SMOKE (LIVE, stochastic - ONE real Sonnet engagement): does a first mate, given
 // a single-project "I want to work on X" request, now reach for
 // helm_create_second_mate (the playbook fix, commit 0e1667a) instead of doing the

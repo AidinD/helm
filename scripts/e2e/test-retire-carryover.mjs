@@ -1,3 +1,6 @@
+import { requireLive } from "./live-gate.mjs";
+requireLive("starts a real session so a retire has something to carry over");
+
 // E2E (LIVE): retire-with-carry-over runs the outgoing first mate's FINAL
 // summarize turn and hands that summary into the respawned mate. Starts a real
 // first-mate session (one cheap turn), retires it with carry-over (a real Sonnet

@@ -1,3 +1,6 @@
+import { requireLive } from "./live-gate.mjs";
+requireLive("starts a real second-mate session to check its dispatch tools");
+
 // E2E (LIVE): does a SECOND MATE actually get the crew-dispatch tools? Task
 // 9c358433 - "the 2nd mate no longer spins up autopilots, it does the work
 // itself". A second mate is supposed to hold judgment and dispatch crew via

@@ -1,3 +1,6 @@
+import { requireLive } from "./live-gate.mjs";
+requireLive("starts a real first-mate session to see its binding land");
+
 // E2E (LIVE): a first-mate session is bound to its mate SERVER-SIDE, independent
 // of the renderer/UI (bugs 3c52cc0d + 2a5e6196). Starts a first-mate session via
 // window.helm.startSession WITH a mateId but WITHOUT opening a pane - so the
