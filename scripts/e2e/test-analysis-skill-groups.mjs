@@ -117,18 +117,36 @@ try {
     `a grouped skill shows its own name, not the folder path (${JSON.stringify(globalBlock.chips)})`
   );
 
-  const projectBlock = view.blocks.find((b) => b.head.startsWith("This pane's project skills"));
-  ok(!!projectBlock, "the project skills block renders");
-  ok(projectBlock.head.endsWith("· 0"), `and is empty for a repo with no skills (${projectBlock.head})`);
-  // THE point of 07658c1a: the empty state has to answer "what is meant to be here".
+  // Project skills are PER PROJECT now, not for whichever pane is focused - a page you
+  // reach by leaving the pane cannot answer a question about that pane (Aidin,
+  // 2026-08-05: "man kan inte ens vara i ett projekt OCH analysis samtidigt").
   ok(
-    projectBlock.empty.includes(path.join(repo, ".claude", "skills")),
-    `its empty state names the folder it looked in (${JSON.stringify(projectBlock.empty)})`
+    !view.blocks.some((b) => b.head.startsWith("This pane's project skills")),
+    `no block describes "this pane" any more (${JSON.stringify(view.blocks.map((b) => b.head))})`
   );
-  ok(
-    /global list/.test(projectBlock.empty),
-    "and says the pane's skills are the global ones, so 0 does not read as \"no skills available\""
-  );
+  // Which projects appear depends on the machine's real session list (there is no seam
+  // for it that does not also move Electron's own profile), so this asserts the SHAPE
+  // every project block must have. Which projects, and that only ones with skills are
+  // listed, is pinned by test-skill-sources against a fixture.
+  const projectBlocks = view.blocks.filter((b) => b.head.startsWith("Project skills"));
+  ok(projectBlocks.length >= 1, `at least one project skills block renders (${JSON.stringify(view.blocks.map((b) => b.head))})`);
+  for (const b of projectBlocks) {
+    if (b.head === "Project skills") {
+      // The nothing-found case: it must say how many folders were looked at, not just 0.
+      ok(
+        /project folders Helm has sessions in|No project folders known yet/.test(b.empty),
+        `the empty state says how hard it looked (${JSON.stringify(b.empty)})`
+      );
+      ok(!/this pane|focused pane/i.test(b.empty), "and does not talk about a pane you cannot see from here");
+      continue;
+    }
+    ok(/^Project skills · .+/.test(b.head), `a project block is named after its project (${b.head})`);
+    ok(
+      b.hints.some((h) => /[\\/]/.test(h)),
+      `with its full path on screen, since a folder name is ambiguous (${JSON.stringify(b.hints)})`
+    );
+    ok(b.chips.length > 0, `and only projects that HAVE skills get a block (${b.head} has ${b.chips.length})`);
+  }
 
   const pluginBlock = view.blocks.find((b) => b.head.startsWith("Plugin skills"));
   ok(!!pluginBlock, `an enabled plugin's skills get their own block (${JSON.stringify(view.blocks.map((b) => b.head))})`);

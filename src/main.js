@@ -513,7 +513,13 @@ ipcMain.handle("jot:addSubtask", (_event, { parentId, text }) => {
 // groups them by where they point (Aidin: "jag tänkte på hur de är strukturerade i
 // skills-catalog"). Resolved here because the meta-home is main's to know; skills.js
 // takes it as a parameter and works without one.
-ipcMain.handle("skills:list", (_event, cwd) => listSkills(cwd, { catalogDir: path.join(resolveMetaHome(), "skills-catalog") }));
+// `projectRoots` comes from the renderer because the renderer is what knows which
+// projects have sessions. Project skills are reported per project rather than for the
+// focused pane: Analysis is a page you reach by LEAVING the pane, so a pane-scoped
+// panel there could not be read (Aidin, 2026-08-05).
+ipcMain.handle("skills:list", (_event, { projectRoots } = {}) =>
+  listSkills({ catalogDir: path.join(resolveMetaHome(), "skills-catalog"), projectRoots })
+);
 
 // --- Slash-invokable items (skills + custom commands) for the composer menu.
 // Both scopes; project overrides global. Excludes built-in TUI commands (they
