@@ -32,6 +32,9 @@ import os from "node:os";
 import path from "node:path";
 import { personaAgents, ADVISORY_TOOLS } from "../../src/lib/personas.js";
 import { resolveClaudeBinary } from "../../src/lib/launcher.js";
+import { requireLive } from "./live-gate.mjs";
+requireLive("spawns the real CLI to test what an advisory seat cannot do");
+
 
 let exit = 0;
 const ok = (c, m) => {
@@ -41,13 +44,6 @@ const ok = (c, m) => {
   }
 };
 
-const live = process.argv.includes("--live") || process.env.HELM_LIVE_CLI_TESTS === "1";
-if (!live) {
-  console.log("SKIPPED - this check spawns the real claude CLI and spends tokens.");
-  console.log("          Run it deliberately:  node scripts/e2e/test-persona-agent-containment.mjs --live");
-  console.log(`          It is the only check that measures the ceiling (${ADVISORY_TOOLS.join("/")}) instead of reading it.`);
-  process.exit(0);
-}
 
 const CLAUDE = resolveClaudeBinary();
 const AGENTS = personaAgents();

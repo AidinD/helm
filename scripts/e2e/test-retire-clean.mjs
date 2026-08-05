@@ -1,3 +1,6 @@
+import { requireLive } from "./live-gate.mjs";
+requireLive("starts a real session so a clean retire has something to retire");
+
 // E2E (LIVE): retire "start fresh" (clean) is the no-carry-over path. Two checks:
 //   1. offerRetireChoice renders a two-option menu ("start fresh" + "carry over"),
 //      the dropdown that makes carry-over an explicit choice (menu-level, no turns).

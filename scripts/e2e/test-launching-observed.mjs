@@ -12,6 +12,9 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { requireLive } from "./live-gate.mjs";
+requireLive("starts a real session to observe the launch");
+
 import { launch } from "./harness.mjs";
 
 let app;

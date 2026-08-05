@@ -1,3 +1,6 @@
+import { requireLive } from "./live-gate.mjs";
+requireLive("starts a real first-mate session to check its tool gating");
+
 // E2E (LIVE): a meta-home session is only treated as a FIRST MATE when it is
 // actually bound to a mate (mateId passed, or resumed-and-bound). A personal chat
 // the captain keeps in the meta-home (/claude) - no mateId - must NOT get the

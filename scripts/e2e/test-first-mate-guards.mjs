@@ -1,3 +1,6 @@
+import { requireLive } from "./live-gate.mjs";
+requireLive("starts a real first-mate session to check its tool guards");
+
 // E2E: the tier-discipline guards (task ad17e2e6).
 //   Layer 1 (deterministic): the "hot" retire nudge trigger fires when a first
 //     mate's session has run >= FIRST_MATE_HOT_TURNS turns.

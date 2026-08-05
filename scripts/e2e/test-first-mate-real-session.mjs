@@ -1,3 +1,6 @@
+import { requireLive } from "./live-gate.mjs";
+requireLive("runs a real first mate end to end against the CLI");
+
 // E2E (M3, the crux): a REAL claude first-mate session - launched with the same
 // --mcp-config + --allowedTools the app now attaches to a first mate - actually
 // CALLS helm_dispatch, and the app's watcher launches the run + writes a

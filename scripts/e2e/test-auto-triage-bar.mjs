@@ -18,6 +18,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { TRIAGE_SYSTEM_PROMPT, buildTriageInput } from "../../src/lib/autoCaptain.js";
 import { triageAutoTask } from "../../src/lib/orchestratorHelper.js";
+import { requireLive } from "./live-gate.mjs";
+requireLive(
+  "makes real triage calls against the board",
+  "It is the only check that MEASURES where the auto lane's bar sits, rather than reading the prompt."
+);
+
 
 let exit = 0;
 const ok = (c, m) => {
@@ -26,13 +32,6 @@ const ok = (c, m) => {
     exit = 1;
   }
 };
-
-if (!process.argv.includes("--live") && process.env.HELM_LIVE_CLI_TESTS !== "1") {
-  console.log("SKIPPED - this check makes real triage calls and spends tokens.");
-  console.log("          Run it deliberately:  node scripts/e2e/test-auto-triage-bar.mjs --live");
-  console.log("          It is the only check that measures where the auto lane's bar sits, rather than reading the prompt.");
-  process.exit(0);
-}
 
 const repo = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 

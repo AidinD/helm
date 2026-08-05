@@ -7,11 +7,21 @@
 //
 //   node scripts/run-tests.mjs --fast    only the tests that don't launch Electron
 //   node scripts/run-tests.mjs           everything (slow: one app launch per file)
+//   node scripts/run-tests.mjs --live    ALSO the checks that drive real models (costs tokens)
 //   node scripts/run-tests.mjs docs jot  only files whose name matches a term
 //
 // Fast tests run concurrently (they are pure node). App tests run ONE AT A TIME on
 // purpose: each launches a real Electron window and several pin a fixed debug port,
 // so running them in parallel makes them fight over ports and focus.
+//
+// TOKENS. Fifteen checks drive a real model - a real first mate, a real second mate, a
+// real triage call. They self-skip unless --live (scripts/e2e/live-gate.mjs), which is
+// enforced rather than remembered: test-live-checks-declared.mjs fails on any check that
+// reaches a model without declaring itself. Before that existed, eleven of them ran on
+// every `npm test` and one had drifted into the FAST lane, so even a "quick" run made a
+// model call - the question the captain asked on 2026-08-05, whose honest answer was no.
+// This runner names them up front, so what a run will and will not cost is visible
+// BEFORE it starts rather than in the summary afterwards.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -24,20 +34,47 @@ const repo = path.join(here, "..");
 
 const args = process.argv.slice(2);
 const fastOnly = args.includes("--fast");
+const live = args.includes("--live");
 const terms = args.filter((a) => !a.startsWith("--"));
 
-// A test "launches the app" if it imports the CDP harness.
+// A test "launches the app" if it imports the CDP harness, and it "costs" if it calls the
+// shared live gate. Both are read from the source rather than kept in a list here: a list
+// is a second place to forget, and forgetting is what made the suite spend tokens quietly.
 const all = fs
   .readdirSync(e2eDir)
   .filter((f) => f.startsWith("test-") && f.endsWith(".mjs"))
   .filter((f) => terms.length === 0 || terms.some((t) => f.includes(t)))
   .map((f) => {
     const src = fs.readFileSync(path.join(e2eDir, f), "utf8");
-    return { file: f, launches: /harness\.mjs/.test(src) };
+    // An IMPORT of the harness, not a mention of it. A plain substring match put
+    // test-live-checks-declared in the app lane, because that file contains sample
+    // sources as strings - one of which imports the harness. It launches nothing, so
+    // it would have paid an Electron slot forever for a quotation.
+    const importsHarness = /^\s*(?:import\s|const\s*\{[^}]*\}\s*=\s*await\s+import\()[^\n]*harness\.mjs/m.test(src);
+    // Same rule for the gate: a CALL on its own line, not the name appearing in a
+    // string or a regex - which is how the guard test that enforces this rule got
+    // listed as one of the checks that spend tokens.
+    const callsGate = /^\s*requireLive\s*\(/m.test(src);
+    return { file: f, launches: importsHarness, costsTokens: callsGate };
   });
 
 const fast = all.filter((t) => !t.launches);
 const slow = fastOnly ? [] : all.filter((t) => t.launches);
+
+// Said BEFORE anything runs, not in the summary: the point is to know what a run costs
+// while there is still a chance to not run it.
+const costing = [...fast, ...slow].filter((t) => t.costsTokens);
+if (costing.length > 0) {
+  console.log(
+    live
+      ? `--live: ${costing.length} check(s) WILL drive real models and spend tokens: ${costing.map((t) => t.file.replace(/^test-|\.mjs$/g, "")).join(", ")}`
+      : `${costing.length} check(s) drive real models and are being SKIPPED (pass --live to run them): ${costing
+          .map((t) => t.file.replace(/^test-|\.mjs$/g, ""))
+          .join(", ")}`
+  );
+} else if (terms.length === 0) {
+  console.log("no check in this run drives a real model - nothing here spends tokens");
+}
 
 // --- a syntax gate first: cheapest possible check, and the renderer is 14k lines
 const SYNTAX_TARGETS = ["src/main.js", "src/renderer/renderer.js", "src/preload.cjs"];
@@ -124,9 +161,13 @@ const mark = (t, r) => {
 };
 
 console.log(`\n--- ${fast.length} fast tests (${FAST_LANE_WIDTH} at a time) ---`);
+// --live is forwarded to each check (that is the flag its own gate reads), and a check
+// that drives a real model gets the app lane's longer budget even in the fast lane: one
+// of them was KILLED at 120s while genuinely waiting on a model, which read as a product
+// failure and was not one.
 const fastResults = await runPooled(fast, FAST_LANE_WIDTH, async (t) => ({
   t,
-  r: await run(process.execPath, [path.join("scripts", "e2e", t.file)], 120000),
+  r: await run(process.execPath, [path.join("scripts", "e2e", t.file), ...(live ? ["--live"] : [])], t.costsTokens ? 300000 : 120000),
 }));
 for (const { t, r } of fastResults) {
   console.log(`${mark(t, r)}  ${t.file}`);
@@ -140,7 +181,7 @@ if (slow.length) {
   let i = 0;
   for (const t of slow) {
     i += 1;
-    const r = await run(process.execPath, [path.join("scripts", "e2e", t.file)], 300000);
+    const r = await run(process.execPath, [path.join("scripts", "e2e", t.file), ...(live ? ["--live"] : [])], 300000);
     console.log(`${mark(t, r)}  [${i}/${slow.length}] ${t.file}`);
     if (r.code !== 0) {
       failures.push({ file: t.file, out: r.out });
