@@ -4491,8 +4491,11 @@ function renderMarkdownInto(container, text) {
       // The fence's info string is the LANGUAGE, and it used to be thrown away by the
       // same replace that stripped it (task c6094e4f). Captured now and handed to the
       // colouriser, which is the whole reason a code block can look like code.
-      const lang = (segment.match(/^[ \t]*([A-Za-z0-9_+#.-]*)\n/) || [])[1] || "";
-      container.append(codeBlockEl(segment.replace(/^[ \t]*\S*\n/, ""), lang));
+      // The whole info LINE goes, not just its first token: a fence written
+      // ```js title="x" left ` title="x"` sitting in the code as if it were code
+      // (found by an independent review). The language is that line's first word.
+      const lang = (segment.match(/^[ \t]*([A-Za-z0-9_+#.-]+)/) || [])[1] || "";
+      container.append(codeBlockEl(segment.replace(/^[^\n]*\n/, ""), lang));
     } else if (segment) {
       renderTextBlock(container, segment);
     }
@@ -4529,8 +4532,16 @@ const CODE_LANG_ALIASES = {
 };
 
 const CODE_KEYWORDS = {
+  // Deliberately NOT the union of every c-like language's keywords. The first version
+  // was, and an independent review measured the cost: `res.set(...)`, `str.match(...)`,
+  // `map.get(...)`, `x.type` and `from` all came out tinted as keywords, because `set`,
+  // `get`, `match`, `type`, `from`, `where`, `use` and `go` are keywords in SOME language
+  // in that union. Those are the COMMON case in JavaScript, not a pathological one, so
+  // the union made ordinary member calls read as syntax. Words that are only keywords in
+  // a language this list also has to serve are left out; a missed colour is cheaper than
+  // a wrong one.
   clike:
-    "abstract async await base break case catch class const constructor continue debugger default delete do else enum export extends false finally for from function get if implements import in instanceof interface let new null of override private protected public readonly return set static super switch this throw true try type typeof undefined var void while yield struct func defer go impl fn mut pub use where match namespace using",
+    "abstract async await break case catch class const constructor continue debugger default delete do else enum export extends false finally for function if implements import in instanceof interface let new null override private protected public readonly return static super switch this throw true try typeof undefined var void while yield",
   python: "and as assert async await break class continue def del elif else except False finally for from global if import in is lambda None nonlocal not or pass raise return True try while with yield self",
   lua: "and break do else elseif end false for function goto if in local nil not or repeat return then true until while self",
   shell: "if then else elif fi for while do done case esac function return export local readonly set unset echo cd exit source",
@@ -4605,7 +4616,10 @@ function highlightCode(code, lang) {
       const after = rest.slice(best.index + best.text.length);
       const isCall = /^\s*\(/.test(after);
       const isProp = best.index > 0 && rest[best.index - 1] === ".";
-      push(best.text, kw.has(best.text) ? "tok-kw" : isCall ? "tok-fn" : isProp ? "tok-prop" : "");
+      // PROPERTY POSITION WINS over the keyword list. `x.class`, `x.new`, `x.default` are
+      // members, not syntax, and testing the keyword first is how a member came to be
+      // tinted as one even after the list was trimmed.
+      push(best.text, isProp ? (isCall ? "tok-fn" : "tok-prop") : kw.has(best.text) ? "tok-kw" : isCall ? "tok-fn" : "");
     } else {
       push(best.text, best.cls);
     }
@@ -4835,6 +4849,9 @@ function listItemEl(markerText, content, extraClass) {
 
 function renderInlineLines(container, text) {
   const lines = text.split("\n");
+  // Set when a blank line was swallowed as a paragraph break, so the NEXT line can carry
+  // the margin instead of an empty element carrying nothing.
+  let paragraphBreakPending = false;
   lines.forEach((line, idx) => {
     const nextLine = lines[idx + 1];
     const isBlank = line.trim() === "";
@@ -4854,6 +4871,17 @@ function renderInlineLines(container, text) {
     // separator syntax, not content, and rendering it doubles the gap the block's own
     // margin already provides.
     if (isBlank && (isBlockLine(nearestContentLine(lines, idx, -1)) || isBlockLine(nearestContentLine(lines, idx, 1)))) {
+      return;
+    }
+
+    // A blank line between two PLAIN lines is a paragraph break, and the card asks for
+    // "generöst radavstånd + stycke-marginaler". It used to render as an empty span plus a
+    // <br>: a blank line's worth of gap, from line-height, with no margin anywhere - which
+    // an independent review measured (all margins 0). Now the blank is dropped and the
+    // paragraph that follows carries a real top margin, so the gap between paragraphs is
+    // deliberate and bigger than the gap between wrapped lines.
+    if (isBlank && lines.slice(idx + 1).some((l) => l.trim() !== "")) {
+      paragraphBreakPending = true;
       return;
     }
 
@@ -4897,10 +4925,14 @@ function renderInlineLines(container, text) {
       // transition. This class gives it the matching gap.
       if (isBlockLine(nearestContentLine(lines, idx, -1))) {
         lineSpan.className = "md-after-list";
+      } else if (paragraphBreakPending) {
+        // The paragraph margin the swallowed blank line stood for.
+        lineSpan.className = "md-para";
       }
       lineSpan.append(...inlineFormat(line));
       container.append(lineSpan);
     }
+    paragraphBreakPending = false;
 
     // A list item is already display:block and self-breaks onto its own
     // line — a <br> touching one on either side is exactly what broke
@@ -4927,7 +4959,17 @@ function renderInlineLines(container, text) {
  */
 function inlineFormat(text) {
   const nodes = [];
-  const regex = /(`[^`]+`|\*\*[^*]+\*\*|__[^_]+__|\[[^\]\n]+\]\([^)\s]+\)|(?<![\w*])\*[^*\n]+\*(?![\w*])|(?<![\w_])_[^_\n]+_(?![\w_]))/g;
+  // Each alternative is narrower than it looks, and the narrowing is the point - an
+  // independent review found three ways the first version was wrong:
+  //  - a link href may contain ONE level of parentheses. `[x](https://e.com/a_(b)_c)`
+  //    stopped at the first ")", so the href silently pointed somewhere else - worse than
+  //    the old behaviour of showing the source, because it looked like a working link.
+  //  - `2 * 3 * 4` was read as an italic: the asterisks must not be followed or preceded
+  //    by whitespace, which is the rule real markdown uses too.
+  //  - `**fet *och* kursiv**` left literal asterisks, because bold's content was set as
+  //    text. Bold and italic now format their own contents (see below), so nesting works.
+  const regex =
+    /(`[^`]+`|\*\*(?=\S)[\s\S]*?\S\*\*|__(?=\S)[\s\S]*?\S__|\[[^\]\n]+\]\((?:[^()\s]|\([^()\s]*\))+\)|(?<![\w*])\*(?=\S)[^*\n]*?\S\*(?![\w*])|(?<![\w_])_(?=\S)[^_\n]*?\S_(?![\w_]))/g;
   let lastIndex = 0;
   let m;
   while ((m = regex.exec(text))) {
@@ -4935,14 +4977,21 @@ function inlineFormat(text) {
       nodes.push(document.createTextNode(text.slice(lastIndex, m.index)));
     }
     const token = m[0];
-    const link = /^\[([^\]]+)\]\(([^)\s]+)\)$/.exec(token);
+    // The SAME paren-tolerant shape as the alternation above. Leaving this one strict was
+    // the actual bug behind the wrong href: the token matched, this did not, and the token
+    // fell through to the italic branch - so a link with parentheses rendered as an <em>.
+    // Two spellings of one pattern, again.
+    const link = /^\[([^\]]+)\]\(((?:[^()\s]|\([^()\s]*\))+)\)$/.exec(token);
     if (token.startsWith("`")) {
       const c = document.createElement("code");
       c.textContent = token.slice(1, -1);
       nodes.push(c);
     } else if (token.startsWith("**") || token.startsWith("__")) {
       const b = document.createElement("strong");
-      b.textContent = token.slice(2, -2);
+      // Its contents are formatted too, so *italic* and `code` inside bold survive
+      // instead of showing their own markers. Terminates: the inner text is strictly
+      // shorter than the token it came from.
+      b.append(...inlineFormat(token.slice(2, -2)));
       nodes.push(b);
     } else if (link) {
       const [, label, href] = link;
@@ -4966,7 +5015,7 @@ function inlineFormat(text) {
       }
     } else {
       const em = document.createElement("em");
-      em.textContent = token.slice(1, -1);
+      em.append(...inlineFormat(token.slice(1, -1)));
       nodes.push(em);
     }
     lastIndex = regex.lastIndex;
