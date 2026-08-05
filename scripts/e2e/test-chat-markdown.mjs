@@ -172,6 +172,153 @@ try {
     `and a reply in a 1600px pane is held to a readable column rather than the pane's width (${Math.round(type.width)}px)`
   );
 
+  // ===================================================================================
+  // What an independent review found wrong in the first version. Every one of these
+  // passed the assertions above, which is why they are here now: a review's findings are
+  // only fixed once something would notice them coming back.
+  // ===================================================================================
+  const regressions = await app.eval(`(() => {
+    const render = (md) => {
+      const b = document.createElement("div");
+      b.className = "turn-bubble";
+      renderMarkdownInto(b, md);
+      return b;
+    };
+    const tokensOf = (b) => [...b.querySelectorAll(".md-code-block span")].map((s) => ({ cls: s.className, text: s.textContent }));
+
+    // 1. Arithmetic is not emphasis. "2 * 3 * 4" was rendered as "2  3  4".
+    const math = render("Räkna: 2 * 3 * 4 = 24");
+    // 2. Nested emphasis left literal asterisks.
+    const nested = render("**fet *och* kursiv**");
+    // 3. A link whose href contains parentheses pointed somewhere else.
+    const parens = render("Se [wiki](https://example.com/a_(b)_c) nu");
+    // 4. Ordinary members were tinted as keywords.
+    const members = render(["\`\`\`js", "res.set(name, value);", "const t = obj.type;", "str.match(/x/);", "\`\`\`"].join("\\n"));
+    // 5. A fence info string with attributes leaked into the code.
+    const info = render(["\`\`\`js title=\\"x\\"", "const a = 1;", "\`\`\`"].join("\\n"));
+    return {
+      mathText: math.textContent,
+      mathEms: math.querySelectorAll("em").length,
+      nestedHtmlHasStars: /\\*\\*/.test(nested.textContent),
+      nestedStrong: nested.querySelector("strong")?.textContent || null,
+      nestedEmInsideStrong: nested.querySelector("strong em")?.textContent || null,
+      parensHref: parens.querySelector("a.md-link")?.getAttribute("href") || null,
+      parensTail: parens.textContent,
+      memberTokens: tokensOf(members).filter((t) => ["set", "type", "match"].includes(t.text)),
+      infoLang: info.querySelector(".md-code-lang")?.textContent || null,
+      infoCode: info.querySelector(".md-code-block")?.textContent || "",
+    };
+  })()`);
+  ok(regressions.mathText.includes("2 * 3 * 4"), `arithmetic keeps its asterisks (${JSON.stringify(regressions.mathText)})`);
+  ok(regressions.mathEms === 0, "and is not read as an italic");
+  ok(!regressions.nestedHtmlHasStars, "nested emphasis leaves no literal ** behind");
+  ok(regressions.nestedEmInsideStrong === "och", `with the italic INSIDE the bold (${JSON.stringify(regressions.nestedEmInsideStrong)})`);
+  ok(
+    regressions.parensHref === "https://example.com/a_(b)_c",
+    `a link href keeps its parentheses instead of pointing somewhere else (${regressions.parensHref})`
+  );
+  ok(!/_c\)/.test(regressions.parensTail.replace("https://example.com/a_(b)_c", "")), "and leaves no stray tail text");
+  ok(
+    regressions.memberTokens.every((t) => t.cls !== "tok-kw"),
+    `res.set / obj.type / str.match are members, not keywords (${JSON.stringify(regressions.memberTokens)})`
+  );
+  ok(regressions.infoLang === "js", `a fence info string with attributes still yields its language (${regressions.infoLang})`);
+  ok(!/title=/.test(regressions.infoCode), `and does not leak into the code (${JSON.stringify(regressions.infoCode)})`);
+
+  // 6. The card asks for 65-75 characters per line. The first version shipped 76ch, which
+  // MEASURES 87 - so this measures characters, not the css unit.
+  const chars = await app.eval(`(() => {
+    const parent = document.createElement("div");
+    parent.className = "turn assistant";
+    parent.style.cssText = "width:1600px;position:fixed;left:0;top:0;visibility:hidden";
+    const b = document.createElement("div");
+    b.className = "turn-bubble";
+    renderMarkdownInto(b, "Kontextfilernas knappar frågade efter fel sorts post, så en ämnesöverlämning bad om ett projektdokument och fick ett fel tillbaka igen och igen tills kontrollen ändrades.");
+    parent.append(b);
+    document.body.append(parent);
+    const node = document.createTreeWalker(b, NodeFilter.SHOW_TEXT).nextNode();
+    const r = document.createRange();
+    const perLine = [];
+    let start = 0;
+    let lastTop = null;
+    for (let i = 1; i <= node.textContent.length; i++) {
+      r.setStart(node, i - 1);
+      r.setEnd(node, i);
+      const top = Math.round(r.getBoundingClientRect().top);
+      if (lastTop === null) {
+        lastTop = top;
+      } else if (top !== lastTop) {
+        perLine.push(i - 1 - start);
+        start = i - 1;
+        lastTop = top;
+      }
+    }
+    const width = b.getBoundingClientRect().width;
+    parent.remove();
+    return { perLine, width: Math.round(width) };
+  })()`);
+  const longest = Math.max(...chars.perLine);
+  ok(
+    longest >= 60 && longest <= 78,
+    `a full line measures ${longest} characters - the card asks for ~65-75 (column ${chars.width}px, lines ${JSON.stringify(chars.perLine)})`
+  );
+
+  // 7. Colouring code must not make it HARDER to read than leaving it alone. On the light
+  // theme the first version's keywords were 2.20:1 against the code ground, where the
+  // uncoloured text they replaced was 11.80:1.
+  const contrast = await app.eval(`(async () => {
+    const lum = (rgb) => {
+      const [r, g, b] = rgb.map((v) => {
+        const s = v / 255;
+        return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+      });
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const parse = (s) => (s.match(/\\d+(\\.\\d+)?/g) || []).slice(0, 3).map(Number);
+    const ratio = (a, b) => {
+      const [l1, l2] = [lum(a), lum(b)].sort((x, y) => y - x);
+      return (l1 + 0.05) / (l2 + 0.05);
+    };
+    const before = document.documentElement.getAttribute("data-theme");
+    const out = {};
+    for (const theme of ["dark", "brass"]) {
+      document.documentElement.setAttribute("data-theme", theme);
+      await new Promise((r) => setTimeout(r, 60));
+      const holder = document.createElement("div");
+      holder.className = "turn-bubble";
+      const pre = document.createElement("pre");
+      pre.className = "md-code-block";
+      const spans = {};
+      for (const cls of ["tok-kw", "tok-str", "tok-com", "tok-num", "tok-fn", "tok-prop", "tok-tag"]) {
+        const s = document.createElement("span");
+        s.className = cls;
+        s.textContent = "x";
+        pre.append(s);
+        spans[cls] = s;
+      }
+      holder.append(pre);
+      document.body.append(holder);
+      const bg = getComputedStyle(pre).backgroundColor;
+      const ground = parse(bg === "rgba(0, 0, 0, 0)" ? getComputedStyle(holder).backgroundColor : bg);
+      out[theme] = {};
+      for (const [cls, el] of Object.entries(spans)) {
+        out[theme][cls] = Math.round(ratio(parse(getComputedStyle(el).color), ground) * 100) / 100;
+      }
+      holder.remove();
+    }
+    if (before) {
+      document.documentElement.setAttribute("data-theme", before);
+    }
+    return out;
+  })()`);
+  for (const theme of ["dark", "brass"]) {
+    const worst = Math.min(...Object.values(contrast[theme]));
+    ok(
+      worst >= 4.5,
+      `every token colour clears 4.5:1 on the ${theme} theme - worst is ${worst} (${JSON.stringify(contrast[theme])})`
+    );
+  }
+
   const errors = app.getConsoleErrors();
   ok(errors.length === 0, `no console errors (${errors.length})`);
   for (const e of errors.slice(0, 5)) {

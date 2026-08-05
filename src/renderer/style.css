@@ -1690,10 +1690,12 @@ body.advanced .row-jot {
   border: 1px solid var(--border);
   /* THE MEASURE (task c6094e4f). The bubble was 88% of the pane, so on a wide window a
      reply ran 150+ characters per line - the exact thing Aidin pointed at in Claude
-     Desktop's Code view, which holds a narrow column. 76ch at this size is ~640px: long
-     enough for a path or a command to sit on one line, short enough that the eye finds
-     the next line without hunting. The 88% still applies on a narrow pane. */
-  max-width: min(100%, 76ch);
+     Desktop's Code view, which holds a narrow column. 68ch is ~550px, which MEASURES at 74
+     characters of prose (median over real lines) - inside the 65-75 the card asks for.
+     76ch was shipped first and measured 87, which an independent review caught; 68ch is
+     also what the approved mock used, so widening it had been a change nobody asked for.
+     The 88% still applies on a narrow pane. */
+  max-width: min(100%, 68ch);
   /* Slightly lighter than the pane's own text, which is what makes Desktop's column calm
      on a dark background. The size and line-height above already came from that
      comparison (task 8cbe65da); this is the weight half of it. */
@@ -1713,8 +1715,12 @@ body.advanced .row-jot {
 .turn-bubble .md-h:first-child {
   margin-top: 0;
 }
+/* Measured 18.6 / 16.5px at the first attempt - 13% apart at the same weight and colour,
+   which an independent review called what it is: not a hierarchy. Now 1.36 / 1.1 (20.4 /
+   16.5px, 24% apart) with the top level heavier. */
 .turn-bubble .md-h1 {
-  font-size: 1.24em;
+  font-size: 1.36em;
+  font-weight: 680;
 }
 .turn-bubble .md-h2 {
   font-size: 1.1em;
@@ -1881,6 +1887,10 @@ body.advanced .row-jot {
   font-weight: 400;
   overflow-x: auto;
   white-space: pre;
+  /* Room for the copy button pinned to the corner. Without it the button overlapped the
+     first line of code by a few pixels (measured by an independent review) - and on a
+     block with no language header there is nothing else to keep them apart. */
+  padding-right: 38px;
 }
 
 /* The fence's language, which used to be thrown away. In a header row ABOVE the code, not
@@ -1915,16 +1925,43 @@ body.advanced .row-jot {
   color: var(--text-faint);
 }
 
-/* Token colours. Derived from the theme rather than hardcoded to one editor's palette, so
-   they hold on the light themes too: strings and comments lean on the theme's own good/
-   waiting hues, keywords on the accent. */
-.turn-bubble .md-code-block .tok-kw { color: color-mix(in srgb, var(--accent) 78%, #ffffff); }
-.turn-bubble .md-code-block .tok-str { color: var(--good-bright); }
-.turn-bubble .md-code-block .tok-com { color: var(--text-faint); font-style: italic; }
-.turn-bubble .md-code-block .tok-num { color: var(--waiting); }
-.turn-bubble .md-code-block .tok-fn { color: var(--active); }
-.turn-bubble .md-code-block .tok-prop { color: color-mix(in srgb, var(--active) 65%, var(--text)); }
-.turn-bubble .md-code-block .tok-tag { color: color-mix(in srgb, var(--accent) 70%, var(--text)); }
+/* Token colours, as TOKENS - so a theme can set them and nothing has to guess.
+ *
+ * The first version mixed the accent 22% toward #ffffff and claimed that made it
+ * theme-aware. An independent review measured the opposite on brass, the one light theme:
+ * keywords 2.20:1 against the code ground, where the UNCOLOURED text they replaced was
+ * 11.80:1 - the mix made it 43% worse than the raw accent, because mixing toward white on
+ * a light background is mixing toward the background. Colouring code must not make it
+ * harder to read than leaving it alone.
+ *
+ * Dark defaults here; the light theme overrides them below with darker variants. */
+:root {
+  --tok-kw: #d9a2c8;
+  --tok-str: #8fc98a;
+  --tok-com: #7f8c78;
+  --tok-num: #d8bd7a;
+  --tok-fn: #7fb6e0;
+  --tok-prop: #a8cbe3;
+  --tok-tag: #e0a37f;
+}
+/* Brass is the only light theme. Same hues, taken down until they hold against a
+   parchment ground - measured, not guessed. */
+:root[data-theme="brass"] {
+  --tok-kw: #8a3d73;
+  --tok-str: #2f6b2a;
+  --tok-com: #6b6355;
+  --tok-num: #7a5a12;
+  --tok-fn: #1c5a86;
+  --tok-prop: #2a4f66;
+  --tok-tag: #8a4a1c;
+}
+.turn-bubble .md-code-block .tok-kw { color: var(--tok-kw); }
+.turn-bubble .md-code-block .tok-str { color: var(--tok-str); }
+.turn-bubble .md-code-block .tok-com { color: var(--tok-com); font-style: italic; }
+.turn-bubble .md-code-block .tok-num { color: var(--tok-num); }
+.turn-bubble .md-code-block .tok-fn { color: var(--tok-fn); }
+.turn-bubble .md-code-block .tok-prop { color: var(--tok-prop); }
+.turn-bubble .md-code-block .tok-tag { color: var(--tok-tag); }
 /* A diff inside a code fence is coloured by line, like the review page's diff. */
 .turn-bubble .md-code-block .tok-add { color: var(--good-bright); }
 .turn-bubble .md-code-block .tok-del { color: var(--danger-hover); }
@@ -1998,6 +2035,14 @@ body.advanced .row-jot {
 .turn-bubble .md-li-body {
   flex: 1;
   min-width: 0;
+}
+
+/* The paragraph margin the card asks for ("generöst radavstånd + stycke-marginaler").
+   A blank line used to render as an empty span and a <br> - a gap made of line-height,
+   with no margin anywhere - so a paragraph break looked the same as a wrapped line. */
+.turn-bubble .md-para {
+  display: inline-block;
+  margin-top: 0.85em;
 }
 
 .turn-bubble .md-li + .md-li {
