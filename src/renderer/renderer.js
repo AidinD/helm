@@ -14627,6 +14627,57 @@ function fitPill(kind, count) {
 // dashboard's own refresh race needed.
 let analysisRenderToken = 0;
 
+/**
+ * Which project's skills the Analysis block is showing. Kept in memory rather than in
+ * config: it is a way of LOOKING at the page, not a setting - the same distinction the
+ * review badge turns on (it honours the standing repo filter and ignores the page's
+ * chip). Falls back to the first project when the remembered one has no skills any more.
+ */
+let analysisSkillProject = null;
+
+/**
+ * One "Project skills" block for every project, with a pill per project.
+ *
+ * A block per project is what this replaces: three of his projects carry their own skills
+ * already, and the row grew the moment a fourth would (Aidin, 2026-08-05). The pills are
+ * .dash-chip, the Dashboard's own project chips, so this looks like the app rather than
+ * like a new thing.
+ */
+function projectSkillsEl(projects) {
+  const selected = projects.find((p) => p.root === analysisSkillProject) || projects[0];
+  const section = skillListEl(`Project skills · ${selected.name}`, selected, "project", selected.root, {
+    subtitle: selected.root,
+  });
+  // Pills go directly under the heading, above the skills they switch between.
+  const picker = document.createElement("div");
+  picker.className = "dash-chip-grid analysis-project-picker";
+  for (const p of projects) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "dash-chip" + (p.root === selected.root ? " dash-chip-selected" : "");
+    chip.textContent = `${p.name} · ${p.count}`;
+    chip.title = p.root;
+    chip.addEventListener("click", () => {
+      if (p.root === analysisSkillProject) {
+        return;
+      }
+      analysisSkillProject = p.root;
+      // Repaint just this block, in place - re-rendering the whole page would refetch
+      // four stores and scroll the reader back to the top for a pill click.
+      section.replaceWith(projectSkillsEl(projects));
+    });
+    picker.append(chip);
+  }
+  // After the heading (and its subtitle line), before the chips.
+  const firstList = section.querySelector(".skill-chip-list, .pane-empty");
+  if (firstList) {
+    section.insertBefore(picker, firstList);
+  } else {
+    section.append(picker);
+  }
+  return section;
+}
+
 async function renderAnalysisPage() {
   const page = document.getElementById("analysisPage");
   page.innerHTML = "";
@@ -14863,6 +14914,11 @@ async function renderAnalysisPage() {
   // question a global page CAN answer is which of your projects carry their own skills,
   // so only projects that have any get a block, and the empty state says how many were
   // looked at.
+  // ONE block with a project picker, not a block per project: three projects carry their
+  // own skills already and the row of blocks grew immediately (Aidin, 2026-08-05: "Gör
+  // inte en widget per projekt, kommer växa och ser dåligt ut. Kanske istället en pill
+  // eller dropdown i en widget för att välja projekt man vill visa för"). The pills are
+  // the Dashboard's own project chips, same class and same selected state.
   if ((projects || []).length === 0) {
     grid.append(
       skillListEl("Project skills", { dir: null, groups: [], count: 0 }, "project", "", {
@@ -14872,13 +14928,7 @@ async function renderAnalysisPage() {
       })
     );
   } else {
-    for (const p of projects) {
-      grid.append(
-        skillListEl(`Project skills · ${p.name}`, p, "project", p.root, {
-          subtitle: p.root,
-        })
-      );
-    }
+    grid.append(projectSkillsEl(projects));
   }
   // Skills from ENABLED plugins - one block per plugin, because the plugin IS the
   // category. They were reachable by every session and shown nowhere (task 3d0fe057).
