@@ -5,7 +5,23 @@ context flow, and (later) orchestration — without removing any Claude feature.
 Built by wrapping the real `claude` binary headlessly (stream-json), so all
 skills, CLAUDE.md, settings, permissions, and MCP are preserved.
 
-## Current status (2026-07-14)
+## Current status (2026-08-05)
+
+Phase 2 (tiered orchestration) is built and in real daily use; the review pipe and chat rendering are the active surfaces, both mid-hardening. Installer past 0.1.586.
+
+What landed 2026-08-05 (see DECISIONS.md for the reasoning behind each):
+- **Review: diff + independent reviewer.** The review page can show the commits attributed to a task (by record or by log search, labelled which) and dispatch a real second session as an independent reviewer, with a model recommended (not fixed) from the change's criticality/size/touched-files. Verdict round-trips back onto the row via a file the brief tells the reviewer to write.
+- **Review rows start collapsed**, evidence/gaps render as labelled prose lists instead of wrapped chips, and the card is capped at 920px so it reads as a column.
+- **A shipped regression in the row builder killed the whole review page** (a shadowed `body` var), fixed with a test that now exercises every optional field on one row at once instead of three of eight.
+- **Chat markdown now renders real structure** (headings, lists, blockquotes, rules, links, syntax-coloured code via a local tokeniser — not highlight.js, see DECISIONS) instead of showing raw markdown syntax; an independent review caught a light-theme contrast regression and a wrong character-per-line measurement, both fixed same day. The reading column is now capped and centred (860px) without disturbing left/right bubble alignment.
+- **One project-skills widget with a project picker**, replacing one widget per project.
+- Guardrails from the 2026-08-04 pass (the shared `--live` token-spend gate) are unaffected by any of the above.
+
+Testing discipline still holds: every UI fix above shipped with an assertion on the real render path (not source-text regexes), per the standing lesson that source-scanning tests are the weak part when things go wrong.
+
+Remaining is still DE-RISKING plus closing out review-pipe hardening — see `docs/review-pipe-status.md` for exactly what's hardened vs knowingly open in that surface before touching it further.
+
+### (superseded) Prior status (2026-07-14)
 
 Phase 2 (tiered orchestration) is BUILT, hardened, and polished; installer at 0.1.387.
 
