@@ -44,6 +44,24 @@ function assert(cond, msg) {
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// OPT-IN, like the other two checks that reach the real CLI.
+//
+// This one spawns claude on Sonnet 5 and holds a multi-turn session, so it spends
+// tokens and takes tens of seconds - but it launches no Electron, so the runner had it
+// in the FAST lane, where tests get 120s and run eight at a time. Two consequences,
+// both real: `--fast` was not actually free (one model call per run, which is what
+// the captain asked about on 2026-08-05), and on a loaded machine the call exceeded the cap
+// and the test was KILLED - a timeout that reads as a product failure. It passed
+// standalone immediately afterwards.
+//
+// The capability it checks is worth keeping; it just must not be paid for by every
+// quick run. `--live` (or HELM_LIVE_CLI_TESTS=1) opts in.
+const live = process.argv.includes("--live") || process.env.HELM_LIVE_CLI_TESTS === "1";
+if (!live) {
+  console.log("SKIPPED - this check drives a real first-mate session on Sonnet and spends tokens. Pass --live to run it.");
+  process.exit(0);
+}
+
 const CLAUDE = "C:/Users/<you>/.local/bin/claude.exe";
 const REPO = "D:/Repo/Tools/helm";
 const SERVER = path.join(REPO, "src", "mcp", "helmDispatchServer.js");
