@@ -522,8 +522,8 @@ ipcMain.handle("slash:list", (_event, cwd) => {
 });
 
 // --- Open a skill's SKILL.md in the OS default app (from an Analysis-page chip) ---
-ipcMain.handle("skills:open", (_event, { name, origin, cwd }) => {
-  const file = skillMdPath(name, origin, cwd);
+ipcMain.handle("skills:open", (_event, { name, origin, cwd, plugin }) => {
+  const file = skillMdPath(name, origin, cwd, plugin);
   if (!file) {
     return { ok: false, error: "SKILL.md not found" };
   }
@@ -534,8 +534,8 @@ ipcMain.handle("skills:open", (_event, { name, origin, cwd }) => {
 // --- Read a skill's SKILL.md for the in-app rendered viewer (same readable-
 // HTML treatment as context docs). Path is resolved server-side via the
 // guarded skillMdPath; capped like context:read. ---
-ipcMain.handle("skills:read", (_event, { name, origin, cwd } = {}) => {
-  const file = skillMdPath(name, origin, cwd);
+ipcMain.handle("skills:read", (_event, { name, origin, cwd, plugin } = {}) => {
+  const file = skillMdPath(name, origin, cwd, plugin);
   if (!file) {
     return { ok: false, error: "SKILL.md not found" };
   }
@@ -650,7 +650,12 @@ ipcMain.handle("context:list", (_event, cwd) => {
     // HANDOFF.md FIRST: it's the latest session's current-state summary (small,
     // overwritten each handoff - see context:saveHandoff), so a fresh session
     // reads it before diving into DECISIONS.md's full rationale history.
-    for (const name of ["HANDOFF.md", "DECISIONS.md", "PLAN.md"]) {
+    // At the meta-home root a HANDOFF.md is not the continuity file - the topic
+    // handoffs listed just below are (a session with no repo of its own writes
+    // there instead). Listing "HANDOFF.md (none)" next to four real topic
+    // handoffs claimed the opposite, which is half of task 2ba0d277.
+    const docNames = isMetaHomeRoot(cwd) ? ["DECISIONS.md", "PLAN.md"] : ["HANDOFF.md", "DECISIONS.md", "PLAN.md"];
+    for (const name of docNames) {
       const p = path.join(cwd, name);
       out.projectDocs.push({ kind: "projectDoc", name, path: p, exists: fs.existsSync(p) });
     }
