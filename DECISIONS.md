@@ -6045,3 +6045,62 @@ Both detectors now require the import or the call to be real, anchored to the st
 **The runner says what a run will cost BEFORE it runs.**
 A line up front names the checks that will be skipped (or, with `--live`, the ones that will spend), because a summary printed afterwards is too late to be a decision.
 `--live` is forwarded to each child, and a token-spending check in the fast lane gets the app lane's longer budget so a slow model reply cannot be mistaken for a failure again.
+
+## 2026-08-05 - One project-skills block with a picker, not one block per project
+
+Aidin, reacting to a screenshot with three near-identical skill widgets: "Gör inte en widget per projekt, kommer växa och ser dåligt ut. Kanske istället en pill eller dropdown i en widget för att välja projekt man vill visa för."
+
+Rejected: a widget per project (what shipped first) — grows without bound as more repos carry skills, and already looked bad at three.
+Chosen: one block, a `.dash-chip` pill per project (Dashboard's own chip class and selected state, so it reads as the app rather than a new control), full path on hover since two repos can share a basename.
+Picking a pill repaints only that block, not the page — a full re-render would refetch four stores and scroll the reader back to the top for a pill click. The choice lives in memory, not config: a way of looking at the page, not a setting.
+
+## 2026-08-05 - The independent reviewer sends immediately, and the model is recommended, not fixed
+
+Aidin, answering two open questions left on card c3dfbb42: "jag vill att den skickar iväg direkt, men sessionen ska fortfarande skapas så jag kan få feedback - alternativt att feedback kommer direkt på review vyn," and on model choice, "en bra lösning på modell vore att man får en rekommendation baserat på dess komplexitet men att man själv kan välja om man inte vill följa rekommendationen."
+
+**Dispatch, not draft-and-wait.** One confirm (stating that it spends tokens) then the session starts and the brief is sent immediately, rather than leaving a prepared draft session for Aidin to open by hand. Cancelling starts nothing.
+
+**Recommended, not decided.** The model is derived from measurable properties of the change — the record's own declared criticality, diff size, and which files it touches — rather than left as a fixed default or a fully manual choice: critical or a sensitive path -> Opus 5 high effort; core and large -> the same; core and contained -> Sonnet 5; cosmetic and small -> Haiku 4.5. A change with no declared criticality does NOT default to the cheapest model - nobody said it was cheap. The dialog names the pick as a recommendation and leaves every model pickable.
+Rejected: a fixed sensitive-path exemption from the size rule — a three-line change to preload.cjs, a permission gate, a token store, or anything spawning a shell gets the top model regardless of size, because "it's only small" is exactly the argument that would talk you out of reviewing it properly.
+
+**Feedback lands on the review row itself**, resolving the "or" in Aidin's second sentence: the dispatched session's brief instructs it to write its verdict to `<meta-home>/.helm/reviews/<taskId>.independent.md` as its last action, and the row reads that file back and renders it. Files-as-memory, because a separate session cannot call Helm's IPC but can always write a file. The path is resolved in MAIN and handed to the brief, rejecting an earlier version that spelled the path out in the renderer (a hardcoded meta-home and a second spelling of the same path).
+
+`customConfirm` gained an extraEl slot for the model picker rather than growing a second dialog with its own escape/backdrop/settle bugs.
+
+Sending for real is deliberately NOT covered by the default test suite — it spends tokens, which is the one thing that suite must never do; `test-reviewer-dispatch` instead covers the plan, the dialog's preselection and reason, cancel-starts-nothing, the verdict round-trip, and the note path being identical at both ends.
+
+## 2026-08-05 - Chat markdown gets real structure and syntax colour, not highlight.js
+
+Task c6094e4f, "kör din rekommendation, men jag gillar claude desktop weight mer än helms nuvarande" — approving the recommendation from a side-by-side mock (`ccafb3802`) that compared today's plain-text rendering against a proposed one.
+
+**Sans, not the mock's serif.** The mock itself used a serif face; the recommendation rejected it on the mock's own evidence — the readability win is almost entirely measure + line-height + weight, and a serif inside a dense tool UI fights the surrounding chrome. What carried over from Claude Desktop instead was its column width (76ch, later corrected — see below) and weight (420, down from 450).
+
+**No highlight.js**, even though it would have been far less code than a local tokeniser. hljs returns an HTML string, which means either `innerHTML`-ing a reply or reparsing its output back into nodes — and the codebase already has a hard rule against that (a reply is rendered from elements this code creates, never from parsed/injected HTML, so a reply can never carry markup the model didn't intend). Chosen instead: a small local tokeniser covering the C-like family plus python, lua, shell, powershell, css, markup, sql, json, yaml, diff; an unknown language renders as plain text with zero guessed colour, same as before.
+
+**Corrected one week-old release note.** `docsStaleness.js`'s comment claimed hljs was already in use for something; it was not — the fence's language tag was being thrown away by the same replace that stripped markdown syntax, and is now shown in a header strip instead.
+
+### 2026-08-05 (same day, independent review of the above) - Two corrections and one deliberate non-fix
+
+An independent reviewer (Opus 5, high effort — the model this repo's own recommendation logic just started picking, see the entry above) reviewed the c6094e4f change and returned PARTLY CONFORMS, 9 findings. 8 were fixed same-day (`20980ed`); the 9th is recorded here because it reverses a number chosen in the same commit that introduced it:
+
+- **76ch was wrong; 68ch is correct**, and this SUPERSEDES the column width chosen in `bd0a0fd` above. The card asks for ~65-75 characters per line; measuring 76ch with a Range walking real text nodes (not `ch` taken at face value) showed it renders 87 characters, not 76 - CSS `ch` is the width of "0" in the font, not the font's actual average character width, so at this weight/face the two diverge by more than expected. 68ch measures the intended ~74. It also happens to match the earlier approved mock, which had been widened to 76ch for no recorded reason.
+- **Code-block token colour was a regression on the brass (light) theme specifically**, not a matter of taste: keywords measured 2.20:1 contrast against the code background versus 11.80:1 for the plain text they replaced, caused by mixing the accent 22% toward white on a background that is itself near-white. Token colours are now CSS variables with a brass override; worst case is 4.56:1 on brass, 5.20:1 on dark, and the test fails under 4.5.
+- **Deliberately left unfixed, on the record:** the column is not centred (doing so means constraining the whole transcript including right-aligned user turns — a layout decision, not a one-liner; landed 3 commits later in `815b6b2`, see below), the body face was never changed to match the reference (only its weight — the sans-not-serif choice above was Aidin's own call), nested lists still flatten, and a 600-line block costs ~96ms to colour.
+
+## 2026-08-05 - The chat column narrows by capping the scroll's children, not the scroll itself
+
+Aidin, closing the one item the independent review above left open on purpose: "ja, jag vill testa. men det ska fortfarande vara vänster/höger ställt bara att chattfönstrets bredd minskar."
+
+Rejected: capping `.pane-scroll` directly — that would pull the scrollbar and the sticky scroll-to-bottom button inward off the pane's edge, which is not what "the column narrows" should mean.
+Chosen: cap each of the scroll's CHILDREN (860px, centred via auto margins); each turn is already a flex column placing its own bubble on its own side, so left/right alignment is untouched while the column centres.
+The user bubble needed its own 85% cap once the turn started spanning the full (centred) column — without one, a short question would stretch edge to edge and stop reading as a message bubble.
+
+## 2026-08-05 - A row builder is tested with every optional field at once, not three of eight
+
+Aidin: "review vyn renderar inte" — the review page rendered NOTHING (not one broken row, the whole page), shipped in 0.1.586.
+
+Root cause: inside the row builder's `independentReview` branch, a local `const body` (the reviewer's summary text) shadowed the outer `body` variable meaning the row's own collapsible container, so `body.append(box)` appended a box into a node that box itself contained — a DOMException that killed `renderReviewPage` for every row, not just the one with the field.
+
+**Why the test suite didn't catch it:** the branch only runs for a record carrying `independentReview`, and until this same session added that field (recording the reviewer's own verdict — see the dispatch entry above), no record ever had one; the existing row test exercised three of the row's eight optional branches.
+**The fix that generalizes:** the test now renders one row carrying every optional field simultaneously (caveats, whyNotCritical, drift, independentReview, ask, acceptance criteria with linked steps, release, commits, gauntlet) and asserts each is present, including that the independent box lands INSIDE the collapsible body specifically.
+**Named but not re-litigated:** this is at least the second time (per an existing code comment) a scripted line-number-keyed replace hit the wrong call site in this file — 14 `el.append(` calls were mechanically rewritten to `body.append(` and one landed inside a block where `body` already meant something else. The local variable is renamed and commented against being called `body` again; no new tooling was introduced to prevent recurrence, so this remains a live risk in this file.
