@@ -43,6 +43,7 @@ import {
 } from "./lib/scheduledPrompts.js";
 import { buildReviewQueue, listReviewRecords, reviewQueueTally, readReviewRecord, recordCheckRun, gauntletStatus, currentHead, codeChangedBetween } from "./lib/reviewRecords.js";
 import { resolveTaskCommits, diffForCommits } from "./lib/reviewDiff.js";
+import { recommendReviewer, diffStats, REVIEWER_MODELS } from "./lib/reviewerModel.js";
 import { listHandoffCategories, writeHandoff, readHandoff, planHandoffFiling, handoffPath } from "./lib/handoffStore.js";
 import { classifySessionStatus, classifyHandoffCategory, expectsUserInputHeuristic, estimateSessionContextTokens, compactSession, getTranscriptSize, triageAutoTask } from "./lib/orchestratorHelper.js";
 import { savePastedImage, prunePastedImages } from "./lib/images.js";
@@ -5579,6 +5580,76 @@ ipcMain.handle("reviews:diff", (_event, { taskId } = {}) => {
     total: diff.total,
   };
 });
+
+// What an independent reviewer would be sent in on, RECOMMENDED from the change itself
+// (Aidin, 2026-08-05: "en rekommendation baserat på dess komplexitet men att man själv kan
+// välja"). Computed here rather than in the renderer so there is one implementation and so
+// the whole diff does not have to cross IPC just to be counted.
+ipcMain.handle("reviews:reviewerPlan", (_event, { taskId } = {}) => {
+  const metaHome = resolveMetaHome();
+  const rec = readReviewRecord(metaHome, taskId);
+  if (!rec) {
+    return { ok: false, error: "No review record for that task." };
+  }
+  const projectPath = rec.projectPath || null;
+  const resolved = resolveTaskCommits(projectPath, taskId, rec.commits || []);
+  // No commits is not a refusal: a reviewer can still read the record and the working
+  // tree. It just means the recommendation has less to go on, and says so.
+  let stats = { files: 0, added: 0, removed: 0, changedLines: 0, commits: 0, paths: [] };
+  if (resolved.commits.length > 0) {
+    const diff = diffForCommits(projectPath, resolved.commits);
+    if (diff.ok) {
+      stats = diffStats(diff.text);
+    }
+  }
+  const recommendation = recommendReviewer({
+    criticality: rec.criticality,
+    files: stats.files,
+    changedLines: stats.changedLines,
+    commits: resolved.commits.length,
+    paths: stats.paths,
+  });
+  return {
+    ok: true,
+    projectPath,
+    criticality: rec.criticality || null,
+    commitSource: resolved.source,
+    commits: resolved.commits.length,
+    stats: { files: stats.files, added: stats.added, removed: stats.removed, changedLines: stats.changedLines },
+    recommendation,
+    models: REVIEWER_MODELS.map(({ value, label }) => ({ value, label })),
+    // Where the reviewer must write its verdict. Resolved HERE, not spelled out in the
+    // renderer: the meta-home is main's to know (and a test overrides it), and two
+    // spellings of one path is how a feature comes to silently do nothing.
+    notePath: independentNotePath(metaHome, taskId),
+  };
+});
+
+// The reviewer's own verdict, read back. It writes a file rather than calling into Helm -
+// an agent can always write a file, and this is the same files-as-memory shape the rest of
+// the app uses. Read-only, and guarded to the reviews directory.
+ipcMain.handle("reviews:independentNote", (_event, { taskId } = {}) => {
+  const file = independentNotePath(resolveMetaHome(), taskId);
+  if (!file || !fs.existsSync(file)) {
+    return { ok: true, present: false };
+  }
+  try {
+    const stat = fs.statSync(file);
+    const text = fs.readFileSync(file, "utf8").slice(0, 200 * 1024);
+    return { ok: true, present: true, text, writtenAt: stat.mtimeMs, path: file };
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err) };
+  }
+});
+
+/** `<meta-home>/.helm/reviews/<taskId>.independent.md`, or null for a bad id. */
+function independentNotePath(metaHome, taskId) {
+  const id = String(taskId || "").trim().toLowerCase();
+  if (!/^[a-f0-9-]{8,64}$/.test(id)) {
+    return null;
+  }
+  return path.join(metaHome, ".helm", "reviews", `${id}.independent.md`);
+}
 
 // Run a record's declared checks and stamp the REAL outcome (exit code + output
 // tail) into it - the gauntlet. This is the half of the evidence the author of
