@@ -74,8 +74,20 @@ try {
     const overflowWhenFull = getComputedStyle(el).overflowY;
     const paneH = document.querySelector('.pane[data-pane="0"]').getBoundingClientRect().height;
     // A dragged height becomes a FLOOR, not a lock.
-    el.style.height = (grown + 60) + "px";
-    el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    //
+    // Driven through the real GRIP now. This used to set el.style.height and fire a mouseup,
+    // which is how the old native corner grabber was detected - the height was inferred
+    // afterwards by noticing it no longer matched. That inference was deleted when the handle
+    // moved to the composer's top edge (task dce9946c), so simulating a drag that way recorded
+    // nothing and this assertion failed while the behaviour it protects was intact.
+    const grip = document.querySelector('.pane[data-pane="0"] .composer-grip');
+    const gbox = grip.getBoundingClientRect();
+    const gy = gbox.y + gbox.height / 2;
+    const send = (type, y) => grip.dispatchEvent(new PointerEvent(type, { pointerId: 1, clientX: gbox.x + gbox.width / 2, clientY: y, bubbles: true, cancelable: true }));
+    send("pointerdown", gy);
+    send("pointermove", gy - 60); // up is bigger
+    send("pointerup", gy - 60);
+    const afterDrag = Math.round(el.getBoundingClientRect().height);
     el.value = "short again";
     await new Promise(r => setTimeout(r, 60));
     const afterDragShort = Math.round(el.getBoundingClientRect().height);
@@ -83,12 +95,21 @@ try {
     await new Promise(r => setTimeout(r, 60));
     return {
       resize: getComputedStyle(el).resize,
-      base, grown, overflowWhenFull, afterDragShort,
+      hasGrip: !!grip,
+      gripCursor: getComputedStyle(grip).cursor,
+      base, grown, overflowWhenFull, afterDrag, afterDragShort,
       paneH: Math.round(paneH),
     };
   })()`);
   ok(!composer.missing, "the composer exists");
-  ok(composer.resize === "vertical", `it can be dragged by hand (resize: ${composer.resize})`);
+  // It can still be dragged by hand - by the composer's TOP EDGE, not by the textarea's own
+  // native corner grip, which was deliberately turned off (task dce9946c: the corner was a small
+  // target in the wrong place, and it left no signal, so the size had to be inferred from a
+  // mouseup afterwards). This assertion used to read `resize === "vertical"`, which described the
+  // affordance rather than the capability.
+  ok(composer.hasGrip, "it can be dragged by hand - the composer's top edge is a handle");
+  ok(composer.gripCursor === "ns-resize", `and says so (cursor: ${composer.gripCursor})`);
+  ok(composer.resize === "none", `while the textarea's own corner grip stays off (resize: ${composer.resize})`);
   ok(composer.grown > composer.base + 20, `a long text assigned programmatically grows it (${composer.base} -> ${composer.grown}px)`);
   ok(
     composer.grown <= Math.round(composer.paneH * 0.46) + 2,
