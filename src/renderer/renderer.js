@@ -14549,6 +14549,14 @@ function skillListEl(title, source, origin, cwd, opts = {}) {
     h.title = source.dir;
   }
   section.append(h);
+  // A folder NAME is ambiguous - two repos share a basename often enough - so a
+  // per-project block says which folder it means, on screen rather than in a tooltip.
+  if (opts.subtitle) {
+    const sub = document.createElement("div");
+    sub.className = "suggest-hint";
+    sub.textContent = opts.subtitle;
+    section.append(sub);
+  }
   if (count === 0) {
     const empty = document.createElement("div");
     empty.className = "pane-empty";
@@ -14625,8 +14633,15 @@ async function renderAnalysisPage() {
   const myToken = ++analysisRenderToken;
 
   const cwd = panes[focusedPaneIndex]?.cwd || "";
-  const [{ global, project, plugins }, summary, context, helmUsage] = await Promise.all([
-    window.helm.listSkills(cwd),
+  // Project skills are asked for PER PROJECT, from the folders Helm knows sessions in.
+  // Sessions are re-fetched rather than read out of renderer memory: this page can be
+  // the first thing opened after a launch, and a panel that says "0 projects" because
+  // nobody had refreshed yet is the same class of bug as the pane-scoped panel it
+  // replaces - a true-looking number about the wrong thing.
+  const sessionData = await window.helm.getSessions();
+  const projectRoots = [...new Set((sessionData?.sessions || []).map((s) => s.cwd).filter(Boolean))];
+  const [{ global, projects, projectsChecked, plugins }, summary, context, helmUsage] = await Promise.all([
+    window.helm.listSkills(projectRoots),
     window.helm.getUsageSummary(),
     window.helm.listContext(cwd),
     window.helm.getHelmUsage(),
@@ -14840,14 +14855,31 @@ async function renderAnalysisPage() {
   }
 
   grid.append(modelBlock, toolBlock, skillUsageBlock, fitBlock, accuracyBlock, usageBlock, pathsBlock);
-  grid.append(
-    skillListEl("Global skills (~/.claude/skills)", global, "global", cwd),
-    skillListEl(`This pane's project skills${cwd ? "" : " (no folder set on the focused pane)"}`, project, "project", cwd, {
-      emptyHint: cwd
-        ? `This project has no skills of its own - none in ${cwd}\\.claude\\skills. Skills for one repo live there so a teammate inherits them; everything this pane can still reach is in the global list.`
-        : "Set a folder on the focused pane and its project skills show up here.",
-    })
-  );
+  grid.append(skillListEl("Global skills (~/.claude/skills)", global, "global", cwd));
+  // Project skills, PER PROJECT. This used to be "this pane's project skills", which
+  // could not be read: Analysis is a page you reach by leaving the pane, so the panel
+  // described a folder you were not looking at and had no way to name (the captain,
+  // 2026-08-05: "man kan inte ens vara i ett projekt OCH analysis samtidigt"). The
+  // question a global page CAN answer is which of your projects carry their own skills,
+  // so only projects that have any get a block, and the empty state says how many were
+  // looked at.
+  if ((projects || []).length === 0) {
+    grid.append(
+      skillListEl("Project skills", { dir: null, groups: [], count: 0 }, "project", "", {
+        emptyHint: projectsChecked
+          ? `None of the ${projectsChecked} project folders Helm has sessions in carry their own skills. A project's skills live in <project>\\.claude\\skills, committed to that repo so a teammate inherits them - everything reachable everywhere is in the global list above.`
+          : "No project folders known yet - start a session in a repo and it shows up here.",
+      })
+    );
+  } else {
+    for (const p of projects) {
+      grid.append(
+        skillListEl(`Project skills · ${p.name}`, p, "project", p.root, {
+          subtitle: p.root,
+        })
+      );
+    }
+  }
   // Skills from ENABLED plugins - one block per plugin, because the plugin IS the
   // category. They were reachable by every session and shown nowhere (task 3d0fe057).
   for (const p of plugins || []) {

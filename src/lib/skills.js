@@ -31,25 +31,80 @@ import os from "node:os";
  *      as a SOURCE: the skills listed are still the ones a session loads, only
  *      grouped by where they come from.
  *
- * @param {string} cwd focused pane's project folder, for its project skills.
+ * Project skills are reported PER PROJECT, for every project handed in - not for
+ * whichever pane happens to be focused elsewhere in the app. The captain, 2026-08-05:
+ * "man kan inte ens vara i ett projekt OCH analysis samtidigt, så den här panelen
+ * är icke användbar". A page you reach by leaving the pane cannot answer a
+ * question about that pane; asking "which of my projects carry their own skills"
+ * is a question this page can actually answer.
+ *
  * @param {object} [opts]
  * @param {string} [opts.catalogDir] the organised tree the global skills link
  *   into. main passes <meta-home>/skills-catalog; omitted means no such
  *   grouping and every skill stays in the ungrouped run.
+ * @param {string[]} [opts.projectRoots] project folders to check for their own
+ *   `.claude/skills`. Only those that HAVE any are returned; the count of folders
+ *   looked at comes back separately so an empty result can say how hard it looked.
  * @returns {{
  *   global: SkillSource,
- *   project: SkillSource,
+ *   projects: Array<SkillSource & { root: string, name: string }>,
+ *   projectsChecked: number,
  *   plugins: Array<SkillSource & { plugin: string, marketplace: string }>,
  * }}
  * where SkillSource = { dir: string|null, groups: Array<{ category: string|null, skills: Array<{ ref: string, label: string }> }>, count: number }
  */
-export function listSkills(cwd, { catalogDir } = {}) {
+export function listSkills({ catalogDir, projectRoots } = {}) {
   const catalog = catalogCategories(catalogDir);
+  const roots = uniqueRoots(projectRoots);
+  const projects = [];
+  for (const root of roots) {
+    const source = listSkillSource(path.join(root, ".claude", "skills"), catalog, catalogDir);
+    if (source.count > 0) {
+      projects.push({ root, name: path.basename(root) || root, ...source });
+    }
+  }
   return {
     global: listSkillSource(globalSkillsDir(), catalog, catalogDir),
-    project: listSkillSource(cwd ? path.join(cwd, ".claude", "skills") : null, catalog, catalogDir),
+    projects: projects.sort((a, b) => a.name.localeCompare(b.name)),
+    projectsChecked: roots.length,
     plugins: listPluginSkillSources(),
   };
+}
+
+/**
+ * De-duplicated, existing absolute folders, capped.
+ *
+ * The cap is not paranoia about the renderer - it is about cost. This app has
+ * already been measurably slowed by a scan proportional to how many project
+ * directories exist (292 of them here), and that number only grows.
+ */
+const MAX_PROJECT_ROOTS = 200;
+
+function uniqueRoots(roots) {
+  const seen = new Set();
+  const out = [];
+  for (const raw of Array.isArray(roots) ? roots : []) {
+    if (typeof raw !== "string" || !raw.trim() || !path.isAbsolute(raw)) {
+      continue;
+    }
+    const resolved = path.resolve(raw);
+    const key = resolved.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    // A folder that is gone (a deleted worktree, an unplugged drive) is not a
+    // project with no skills - it is not a project, and counting it would make the
+    // empty state overstate how much was looked at.
+    if (!fs.existsSync(resolved)) {
+      continue;
+    }
+    out.push(resolved);
+    if (out.length >= MAX_PROJECT_ROOTS) {
+      break;
+    }
+  }
+  return out;
 }
 
 /** How many levels of subfolder are read as a category before it is just depth. */

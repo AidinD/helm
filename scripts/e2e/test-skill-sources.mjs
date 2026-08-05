@@ -63,9 +63,11 @@ fs.writeFileSync(path.join(home, "skills", "notes", "README.md"), "not a skill\n
 skill(path.join(home, "skills", "compound"));
 skill(path.join(home, "skills", "compound", "inner"));
 
-// --- project
+// --- projects: one with its own skills, one without, one that does not exist
 const project = path.join(tmp, "repo");
 skill(path.join(project, ".claude", "skills", "deploy"));
+const emptyProject = path.join(tmp, "repo-without-skills");
+fs.mkdirSync(emptyProject, { recursive: true });
 
 // --- a marketplace registered by path, one plugin enabled and one not
 const mkt = path.join(tmp, "market");
@@ -102,7 +104,7 @@ process.env.HELM_CLAUDE_HOME = home;
 const { listSkills, skillMdPath } = await import("../../src/lib/skills.js");
 
 try {
-  const s = listSkills(project, { catalogDir });
+  const s = listSkills({ catalogDir, projectRoots: [project, emptyProject, path.join(tmp, "gone")] });
 
   // --- global: grouped by where each skill really lives -----------------------
   const g = s.global;
@@ -153,7 +155,7 @@ try {
 
   // Without a catalog nothing is invented: the same root is one ungrouped run plus
   // its on-disk category, and no skill is labelled "uncategorised".
-  const noCat = listSkills(project).global;
+  const noCat = listSkills({}).global;
   ok(noCat.groups[0].category === null, "with no catalog, the flat skills are simply ungrouped");
   ok(
     !noCat.groups.some((x) => x.category === "uncategorised"),
@@ -162,16 +164,31 @@ try {
   ok(noCat.count === g.count, "the same skills are listed either way - the catalog groups them, it is not a source");
 
   // --- deeper nesting on disk ------------------------------------------------
-  const deep = listSkills("", { catalogDir: null }).global;
+  const deep = listSkills({ catalogDir: null }).global;
   ok(
     deep.groups.some((x) => x.category === "git"),
     "an on-disk subfolder is still its own category when there is no catalog"
   );
 
-  // --- project ---------------------------------------------------------------
-  ok(s.project.count === 1 && s.project.groups[0].skills[0].ref === "deploy", "project skills come from <cwd>/.claude/skills");
-  ok(s.project.dir === path.join(project, ".claude", "skills"), `project source names its folder too (${s.project.dir})`);
-  ok(listSkills("").project.dir === null, "with no folder set, there is no project skills dir to name");
+  // --- projects: per project, not per focused pane ----------------------------
+  // The panel this replaces asked about whichever pane was focused, which cannot be
+  // read from a page you reach by leaving the pane (the captain, 2026-08-05).
+  ok(s.projects.length === 1, `only projects that HAVE skills get a block (${JSON.stringify(s.projects.map((p) => p.name))})`);
+  ok(s.projects[0].root === project && s.projects[0].name === path.basename(project), `each block names its own folder (${s.projects[0].name})`);
+  ok(s.projects[0].count === 1 && s.projects[0].groups[0].skills[0].ref === "deploy", "and lists that project's skills");
+  ok(s.projects[0].dir === path.join(project, ".claude", "skills"), `naming the folder it read (${s.projects[0].dir})`);
+  // The count of folders LOOKED AT is what lets an empty result say how hard it looked -
+  // and a folder that no longer exists must not inflate it.
+  ok(s.projectsChecked === 2, `counts the folders it checked, skipping ones that are gone (${s.projectsChecked})`);
+  ok(listSkills({}).projects.length === 0, "with no project folders handed in there is nothing to report");
+  ok(listSkills({}).projectsChecked === 0, "and nothing is claimed to have been checked");
+  // Duplicates collapse: the same project reached by two sessions is one project.
+  const dupes = listSkills({ projectRoots: [project, project.toUpperCase(), project] });
+  ok(dupes.projects.length === 1 && dupes.projectsChecked === 1, `the same folder twice is one project (${dupes.projectsChecked})`);
+  ok(
+    listSkills({ projectRoots: ["not-absolute", "", null, 42] }).projectsChecked === 0,
+    "anything that is not an absolute path is ignored rather than resolved against the cwd"
+  );
 
   // --- plugins ---------------------------------------------------------------
   const names = s.plugins.map((p) => `${p.plugin}@${p.marketplace}`);

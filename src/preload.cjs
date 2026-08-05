@@ -21,7 +21,9 @@ contextBridge.exposeInMainWorld("helm", {
   getContextTokens: (sessions) => ipcRenderer.invoke("session:contextTokens", { sessions }),
   addJotSubtask: (parentId, text) => ipcRenderer.invoke("jot:addSubtask", { parentId, text }),
   getTranscript: (ids) => ipcRenderer.invoke("transcript:get", ids),
-  listSkills: (cwd) => ipcRenderer.invoke("skills:list", cwd),
+  // Project skills are per PROJECT, not per focused pane - the renderer passes the
+  // project folders it knows sessions in.
+  listSkills: (projectRoots) => ipcRenderer.invoke("skills:list", { projectRoots }),
   listSlashItems: (cwd) => ipcRenderer.invoke("slash:list", cwd),
   trackUsage: (event) => ipcRenderer.invoke("usage:track", event),
   getHelmUsage: () => ipcRenderer.invoke("usage:helmSummary"),
