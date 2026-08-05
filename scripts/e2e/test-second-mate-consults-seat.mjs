@@ -184,7 +184,12 @@ try {
     cwd: ${JSON.stringify(projectDir)},
     secondMateId: "sm_test_consult",
     prompt: "Consult the architect subagent about PLAN.md in this directory - ask it whether the plan is sound. Run it synchronously (run_in_background: false) and wait for its answer. Then reply with its verdict in one sentence. Do not edit any files yourself.",
-    model: "claude-haiku-4-5-20251001",
+    // Sonnet, not Haiku. This test asks whether --agents reaches the process and whether the seat
+    // can be reached BY NAME - not whether a cheap model bothers to follow an instruction. On
+    // Haiku/low it passed four times standalone and then reached no sub-agent at all inside the
+    // full sweep, which made a capability check flaky on model whim. A real second mate runs on the
+    // capable model anyway, so this now matches the tier it is testing.
+    model: "claude-sonnet-5",
     effort: "low"
   })`);
 
