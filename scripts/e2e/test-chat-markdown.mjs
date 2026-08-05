@@ -319,6 +319,43 @@ try {
     );
   }
 
+  // 8. The chat COLUMN: narrower and centred, with the turns still left and right inside
+  // it (the captain, 2026-08-05: "det ska fortfarande vara vänster/höger ställt bara att
+  // chattfönstrets bredd minskar"). Driven through the real .pane-scroll, because the
+  // rule is on ITS children - a probe that appended turns anywhere else showed no column
+  // at all and briefly looked like the CSS was wrong.
+  const column = await app.eval(`(async () => {
+    navigateToPage("chat");
+    await new Promise((r) => setTimeout(r, 350));
+    const pane = document.querySelector('.pane[data-pane="0"]');
+    const stream = pane.querySelector(".pane-scroll");
+    stream.innerHTML = "";
+    const user = turnEl({ role: "user", text: "kort fråga" });
+    const asst = turnEl({ role: "assistant", text: "Ett svar som är långt nog att fylla kolumnens bredd och därmed visa var kolumnen faktiskt slutar i fönstret." });
+    stream.append(user, asst);
+    await new Promise((r) => setTimeout(r, 200));
+    const paneBox = pane.getBoundingClientRect();
+    const userTurn = user.getBoundingClientRect();
+    const asstTurn = asst.getBoundingClientRect();
+    const userBubble = user.querySelector(".turn-bubble").getBoundingClientRect();
+    const asstBubble = asst.querySelector(".turn-bubble").getBoundingClientRect();
+    return {
+      pane: Math.round(paneBox.width),
+      columnWidth: Math.round(asstTurn.width),
+      sameBand: Math.abs(userTurn.left - asstTurn.left) < 2 && Math.abs(userTurn.right - asstTurn.right) < 2,
+      centred: Math.abs((asstTurn.left - paneBox.left) - (paneBox.right - asstTurn.right)) < 40,
+      userAtRight: Math.abs(userBubble.right - asstTurn.right) < 6,
+      asstAtLeft: Math.abs(asstBubble.left - asstTurn.left) < 6,
+      userNarrowerThanColumn: userBubble.width < asstTurn.width * 0.9,
+    };
+  })()`);
+  ok(column.columnWidth < column.pane * 0.7, `the chat column is narrower than the pane (${column.columnWidth}px of ${column.pane}px)`);
+  ok(column.centred, "and centred in it");
+  ok(column.sameBand, "both turns occupy the same band, so the conversation reads as one column");
+  ok(column.asstAtLeft, "the assistant's bubble still sits at the column's LEFT");
+  ok(column.userAtRight, "and yours at its RIGHT - the sides are unchanged, only the width");
+  ok(column.userNarrowerThanColumn, "a short question does not stretch across the whole column");
+
   const errors = app.getConsoleErrors();
   ok(errors.length === 0, `no console errors (${errors.length})`);
   for (const e of errors.slice(0, 5)) {
