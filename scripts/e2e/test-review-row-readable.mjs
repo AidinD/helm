@@ -195,6 +195,83 @@ try {
     `and still has its actions, which an earlier version of this row lost entirely (${JSON.stringify(unrecorded.buttons)})`
   );
 
+  // ===================================================================================
+  // EVERY OPTIONAL BRANCH AT ONCE.
+  //
+  // Aidin, 2026-08-05: "review vyn renderar inte" - the page rendered NOTHING, and the
+  // cause was one line inside the independentReview branch appending the row's box into
+  // its own child (a local `const body` shadowed the row's collapsible body, courtesy of a
+  // scripted line-number replacement landing in the wrong block). It throws a DOMException,
+  // which kills renderReviewPage for the whole page.
+  //
+  // The record above has none of the optional fields, which is exactly why nothing caught
+  // it: the row builder has eight of them and the test exercised three. So this row carries
+  // ALL of them, and the check is both that each renders AND that nothing threw.
+  const everything = await app.eval(`(async () => {
+    document.querySelectorAll("#probeRow").forEach((n) => n.remove());
+    const rec = ${JSON.stringify(ROW.record)};
+    const row = {
+      ...${JSON.stringify(ROW)},
+      taskId: "3f8cca7b-1111-2222-3333-444444444444",
+      verdict: "judgment",
+      caveats: ["No executed check at all - everything here rests on the author's word."],
+      whyNotCritical: "A wrong colour here is recoverable and cheap to notice.",
+      drift: { drifted: true, snapshot: ["a"], live: ["a", "b"] },
+      problems: [],
+      record: {
+        ...rec,
+        verdict: "judgment",
+        ask: "Which of the two shapes do you want?",
+        independentReview: { by: "an independent reviewer, Opus 5", findings: 9, summary: "PARTLY CONFORMS - three real misses." },
+        acceptanceCriteria: ["The page renders", "Every branch renders"],
+        testSteps: [{ step: "Open review", expect: "It renders", ac: 1 }, { step: "Open a row with every field", expect: "It renders", ac: 2 }],
+        release: "v0.1.587",
+        commits: ["815b6b2"],
+      },
+    };
+    let threw = null;
+    let item = null;
+    try {
+      const wrap = document.createElement("div");
+      wrap.id = "probeRow";
+      wrap.append(reviewRowEl(row, "judgment"));
+      document.body.append(wrap);
+      item = wrap.querySelector(".rev-item");
+      item.querySelector(".rev-head").click();
+      await new Promise((r) => setTimeout(r, 200));
+    } catch (err) {
+      threw = String(err && err.message ? err.message : err);
+    }
+    return {
+      threw,
+      body: !!item?.querySelector(".rev-body"),
+      independent: item?.querySelector(".rev-independent")?.textContent?.slice(0, 60) || null,
+      independentInsideBody: !!item?.querySelector(".rev-body .rev-independent"),
+      caveats: !!item?.querySelector(".rev-caveats"),
+      whyNot: !!item?.querySelector(".rev-whynot"),
+      ask: !!item?.querySelector(".rev-ask"),
+      acceptance: !!item?.querySelector(".rev-acceptance"),
+      drift: (item?.querySelector(".rev-warn")?.textContent || "").includes("acceptance criteria changed"),
+      steps: item?.querySelectorAll(".rev-steps li").length || 0,
+      chips: [...(item?.querySelectorAll(".rev-chips .rev-chip") || [])].map((c) => c.textContent.trim()),
+      gauntlet: !!item?.querySelector(".rev-gauntlet"),
+      actions: [...(item?.querySelectorAll(".rev-actions button") || [])].map((b) => b.textContent.trim()),
+    };
+  })()`);
+  ok(everything.threw === null, `a row carrying EVERY optional field renders without throwing (${everything.threw || "no error"})`);
+  ok(everything.body, "it has a collapsible body");
+  ok(!!everything.independent, `the independent reviewer's own summary renders (${JSON.stringify(everything.independent)})`);
+  ok(everything.independentInsideBody, "inside the collapsible body, not outside it - that append is the line that broke the page");
+  ok(everything.caveats && everything.whyNot && everything.ask, "so do the caveats, the why-not-critical line and the ask");
+  ok(everything.acceptance && everything.drift, "so do the acceptance criteria and the drift warning");
+  ok(everything.steps === 2, `the test steps render (${everything.steps})`);
+  ok(
+    everything.chips.includes("in v0.1.587") && everything.chips.includes("815b6b2"),
+    `and the release/commit chips - the only things still chip-shaped (${JSON.stringify(everything.chips)})`
+  );
+  ok(everything.gauntlet, "the gauntlet box renders");
+  ok(everything.actions.length >= 4, `and the actions are all there (${JSON.stringify(everything.actions)})`);
+
   const errors = app.getConsoleErrors();
   ok(errors.length === 0, `no console errors (${errors.length})`);
   for (const e of errors.slice(0, 5)) {
