@@ -14244,29 +14244,55 @@ function barRow(label, count, max) {
   return row;
 }
 
-function skillListEl(title, names, origin, cwd) {
+/**
+ * One skills source (global / this project / a plugin), grouped the way it is
+ * grouped on disk.
+ *
+ * Two of the captain's tasks meet here:
+ *  - 3d0fe057, the categorisation: a subfolder of the skills root renders as its
+ *    own labelled row instead of every skill running together in one list.
+ *  - 07658c1a, "vad är tänkt att visas här?" - asked about an empty "This pane's
+ *    project skills · 0 / None found.", which said neither what it looks for nor
+ *    where it looked. An empty state that cannot answer that is the bug; the
+ *    heading now carries the folder and the empty line says what would fill it.
+ */
+function skillListEl(title, source, origin, cwd, opts = {}) {
   const section = document.createElement("div");
   section.className = "analysis-block";
   const h = document.createElement("h3");
-  h.textContent = `${title} · ${names.length}`;
+  const count = source?.count || 0;
+  h.textContent = `${title} · ${count}`;
+  if (source?.dir) {
+    h.title = source.dir;
+  }
   section.append(h);
-  if (names.length === 0) {
+  if (count === 0) {
     const empty = document.createElement("div");
     empty.className = "pane-empty";
-    empty.textContent = "None found.";
+    empty.textContent = opts.emptyHint || (source?.dir ? `Nothing in ${source.dir} - a skill is a folder there with a SKILL.md in it.` : "None found.");
     section.append(empty);
-  } else {
+    return section;
+  }
+  for (const group of source.groups || []) {
+    if (group.category) {
+      const label = document.createElement("div");
+      label.className = "suggest-hint";
+      label.textContent = `${group.category} · ${group.skills.length}`;
+      section.append(label);
+    }
     const list = document.createElement("div");
     list.className = "skill-chip-list";
-    names.forEach((n) => {
+    for (const skill of group.skills) {
       const chip = document.createElement("button");
       chip.className = "skill-chip";
-      chip.textContent = n;
+      chip.textContent = skill.label;
       chip.title = "Open SKILL.md (right-click to open the file)";
-      const skillRef = { name: n, origin, cwd };
+      // `ref` carries the category, so a grouped skill still resolves; `plugin`
+      // is re-resolved in main against the enumerated plugin list.
+      const skillRef = { name: skill.ref, origin, cwd, plugin: opts.plugin };
       chip.addEventListener("click", () =>
         openDocViewer({
-          label: `${n} · SKILL.md`,
+          label: `${skill.ref} · SKILL.md`,
           read: () => window.helm.readSkill(skillRef),
           reveal: () => window.helm.openSkill(skillRef),
           revealLabel: "Open file",
@@ -14277,7 +14303,7 @@ function skillListEl(title, names, origin, cwd) {
         window.helm.openSkill(skillRef);
       });
       list.append(chip);
-    });
+    }
     section.append(list);
   }
   return section;
@@ -14291,17 +14317,29 @@ function fitPill(kind, count) {
   return pill;
 }
 
+// Two overlapping renders used to BOTH append their grid: this function clears the
+// page, then awaits four IPC calls, and only appends at the end - so a second call
+// starting while the first was still waiting produced every block twice (found while
+// testing the skill grouping; a navigate plus a refresh is enough to trigger it). The
+// token makes the last caller the only one that draws, which is the same fix the
+// dashboard's own refresh race needed.
+let analysisRenderToken = 0;
+
 async function renderAnalysisPage() {
   const page = document.getElementById("analysisPage");
   page.innerHTML = "";
+  const myToken = ++analysisRenderToken;
 
   const cwd = panes[focusedPaneIndex]?.cwd || "";
-  const [{ global, project }, summary, context, helmUsage] = await Promise.all([
+  const [{ global, project, plugins }, summary, context, helmUsage] = await Promise.all([
     window.helm.listSkills(cwd),
     window.helm.getUsageSummary(),
     window.helm.listContext(cwd),
     window.helm.getHelmUsage(),
   ]);
+  if (myToken !== analysisRenderToken) {
+    return; // a newer render already owns the page
+  }
 
   const header = document.createElement("h2");
   header.textContent = "Analysis";
@@ -14510,8 +14548,19 @@ async function renderAnalysisPage() {
   grid.append(modelBlock, toolBlock, skillUsageBlock, fitBlock, accuracyBlock, usageBlock, pathsBlock);
   grid.append(
     skillListEl("Global skills (~/.claude/skills)", global, "global", cwd),
-    skillListEl(`This pane's project skills${cwd ? "" : " (no folder set on the focused pane)"}`, project, "project", cwd)
+    skillListEl(`This pane's project skills${cwd ? "" : " (no folder set on the focused pane)"}`, project, "project", cwd, {
+      emptyHint: cwd
+        ? `This project has no skills of its own - none in ${cwd}\\.claude\\skills. Skills for one repo live there so a teammate inherits them; everything this pane can still reach is in the global list.`
+        : "Set a folder on the focused pane and its project skills show up here.",
+    })
   );
+  // Skills from ENABLED plugins - one block per plugin, because the plugin IS the
+  // category. They were reachable by every session and shown nowhere (task 3d0fe057).
+  for (const p of plugins || []) {
+    grid.append(
+      skillListEl(`Plugin skills (${p.plugin}@${p.marketplace})`, p, "plugin", cwd, { plugin: p.plugin })
+    );
+  }
   grid.append(contextFilesEl(context, cwd));
   page.append(grid);
 }
@@ -14739,13 +14788,23 @@ function contextFilesEl(context, cwd) {
   // Durable project docs (DECISIONS.md/PLAN.md) - the "etc": they do NOT
   // auto-load like CLAUDE.md, so they're exactly what a fresh/carried-over
   // session has to be pointed at.
-  for (const d of context?.projectDocs || []) {
+  //
+  // main sends TWO kinds in this one array: the project docs above, and - for a
+  // session with no repo of its own - the topic handoffs from Helm's own store.
+  // The chip must ask for the kind it IS. Hardcoding "projectDoc" here made every
+  // topic-handoff chip ask main for a project doc by a name the resolver refuses,
+  // so it answered "Invalid project doc" (task 2ba0d277). They also get their own
+  // row below, because they are not files in the project and reading them as such
+  // is what made the section confusing in the first place.
+  const docs = (context?.projectDocs || []).filter((d) => d.kind !== "handoffTopic");
+  const topics = (context?.projectDocs || []).filter((d) => d.kind === "handoffTopic");
+  const docChip = (d, title) => {
     const chip = document.createElement("button");
     chip.className = "skill-chip";
     chip.textContent = d.name + (d.exists ? "" : " (none)");
     chip.disabled = !d.exists;
-    chip.title = d.exists ? "Open (does not auto-load · right-click to reveal in Explorer)" : "Not present";
-    const ref = { cwd, kind: "projectDoc", name: d.name };
+    chip.title = d.exists ? title : "Not present";
+    const ref = { cwd, kind: d.kind || "projectDoc", name: d.name };
     chip.addEventListener("click", () =>
       openDocViewer({ label: d.name, read: () => window.helm.readContext(ref), reveal: () => window.helm.openContext(ref) })
     );
@@ -14753,9 +14812,26 @@ function contextFilesEl(context, cwd) {
       e.preventDefault();
       window.helm.openContext(ref);
     });
-    list.append(chip);
+    return chip;
+  };
+  for (const d of docs) {
+    list.append(docChip(d, "Open (does not auto-load · right-click to reveal in Explorer)"));
   }
   section.append(list);
+
+  if (topics.length) {
+    const topicH = document.createElement("div");
+    topicH.className = "suggest-hint";
+    topicH.textContent = `Topic handoffs · ${topics.length} (continuity for sessions with no repo of their own)`;
+    topicH.title = "Written by \"summarize & carry over\" when there is no project folder to save a HANDOFF.md into. A fresh session on the same subject reads these.";
+    section.append(topicH);
+    const topicList = document.createElement("div");
+    topicList.className = "skill-chip-list";
+    for (const t of topics) {
+      topicList.append(docChip(t, "Open this topic's handoff (right-click to reveal in Explorer)"));
+    }
+    section.append(topicList);
+  }
 
   const memH = document.createElement("div");
   memH.className = "suggest-hint";
