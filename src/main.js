@@ -1977,6 +1977,16 @@ ipcMain.handle("mates:consumeHandoff", (_event, { mateId }) => {
 ipcMain.handle("mates:bindSession", (_event, { mateId, sessionId }) => {
   try {
     const mate = bindMateSession(mateId, sessionId);
+    if (mate && sessionId) {
+      // Defensive backstop for the same gap fixed on the server-side bind
+      // (session:start's onEvent handler): this is the RENDERER's own bind-on-
+      // session call, used when that server-side path was skipped (pane
+      // reassigned before the event landed - see the comment there). Whichever
+      // path runs first wins; createIfAbsent:true on BOTH means a mate-bound
+      // session is never left undiscoverable just because neither path happened
+      // to fire with the resume flag it needed.
+      recordHelmSession(sessionId, { cwd: mate.root || "", createIfAbsent: true });
+    }
     return mate ? { ok: true, mate } : { ok: false, error: "unknown mateId" };
   } catch (err) {
     return { ok: false, error: err?.message || String(err) };
@@ -2262,16 +2272,29 @@ ipcMain.handle(
           // Record into Helm's own index the moment the session id appears, so
           // a session shows in Direct/Fleet while its first turn is still
           // running - not only once it completes. createIfAbsent only on a
-          // FRESH launch (no resume); a resumed Desktop session isn't ours to
-          // index. Title defaults to the first prompt line (renamable via the
+          // FRESH launch (no resume) NORMALLY - a resumed Desktop session isn't
+          // ours to index, since the Desktop app already tracks it.
+          //
+          // EXCEPT when this turn is bound to a first or second mate (even on
+          // resume): that binding is Helm's own durable pointer to this session,
+          // and the Desktop app's local_*.json index is a rolling window that can
+          // age a session back out from under it - the session's transcript stays
+          // on disk and the mate stays pointed at it, but Helm had no record of
+          // its own and the mate silently opened blank on the next jump-in
+          // ("historiken är borta", 2026-08-06 - a9e222f5 aged out of Desktop's
+          // index weeks after its first turn, with nothing here to fall back on).
+          // Forcing createIfAbsent here means every mate-bound session is always
+          // findable through Helm's own store, independent of the Desktop app's
+          // retention. Title defaults to the first prompt line (renamable via the
           // display-only titleOverrides overlay).
+          const isMateBound = (isMetaHomeRoot(cwd) && !!firstMateId) || !!effectiveSecondMateId;
           recordHelmSession(evt.sessionId, {
             cwd,
             model,
             effort,
             permissionMode,
             title: prompt.trim().split("\n")[0].slice(0, 80) || "(untitled)",
-            createIfAbsent: !resumeSessionId,
+            createIfAbsent: !resumeSessionId || isMateBound,
           });
           // Bind a second-mate session to its id SERVER-SIDE the moment it
           // appears, so this instance owns its crew dispatches (processDispatch's
@@ -4753,7 +4776,7 @@ function runRelayTurn(metaHome, { secondMateId: smId, projectPath, message, allo
             // Bind so the second mate owns its crew dispatches + a later
             // relay/jump-in resumes the SAME session, and index it so the
             // relay-driven session shows in the session list like a jumped-into
-            // one (review PLAUSIBLE #3). Fresh launches only (createIfAbsent).
+            // one (review PLAUSIBLE #3).
             bindSecondMateSession(smId, evt.sessionId);
             // Close the fresh-bind window (see boundSessionKey note above): the
             // session now appears in the session list, so lock its id too before
@@ -4763,12 +4786,18 @@ function runRelayTurn(metaHome, { secondMateId: smId, projectPath, message, allo
               boundSessionKey = evt.sessionId;
               sessionTurnLocks.add(evt.sessionId);
             }
+            // createIfAbsent is always true here, not just on a fresh launch: this
+            // is a SECOND-MATE-BOUND session, Helm's own durable pointer to it, and
+            // relying only on the Desktop app's rolling local_*.json index left a
+            // mate permanently unable to find its own session once that index
+            // rotated the entry out (the first-mate sibling of this bug, fixed the
+            // same day - see the comment on the first-mate recordHelmSession call).
             recordHelmSession(evt.sessionId, {
               cwd: projectPath,
               model: "claude-opus-4-8",
               title: message.trim().split("\n")[0].slice(0, 80) || "(second mate)",
               startedBy,
-              createIfAbsent: !resumeSessionId,
+              createIfAbsent: true,
             });
           } catch {
             // best effort
