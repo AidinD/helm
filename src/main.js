@@ -5553,7 +5553,15 @@ function buildReviewsPayload() {
 // next session.
 ipcMain.handle("reviews:setStatus", (_event, { taskId, status, note } = {}) => {
   const config = loadConfig();
-  return setTaskStatus(config.jot || {}, taskId, status, note || "");
+  const res = setTaskStatus(config.jot || {}, taskId, status, note || "");
+  // Content-free (Helm's own usage log, not the task text): how often review
+  // actually ends here (a stamp) vs. bounces back with feedback (Aidin, task
+  // 76790f23 follow-up: "kollar jag på diffen, send back etc"). Only on a
+  // successful write - a rejected status change is not a real review action.
+  if (res?.ok && (status === "done" || status === "in-progress")) {
+    trackHelmUsage({ type: "action", action: status === "done" ? "review_stamped" : "review_sent_back", at: Date.now() });
+  }
+  return res;
 });
 
 // Acknowledge a task that reached done with no review record: "I know this bypassed

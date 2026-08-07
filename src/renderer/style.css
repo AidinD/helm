@@ -4303,6 +4303,17 @@ button.primary {
   font-weight: 600;
 }
 
+/* A second, quieter heading INSIDE a block - for a sub-section that belongs with
+   the block above it (e.g. Review health's "Your review actions") rather than
+   earning its own card. Smaller and less shouty than h3, with room above it to
+   read as a break, not a continuation of the previous row. */
+.analysis-subhead {
+  font-size: 11px;
+  color: var(--text-faint);
+  margin: 14px 0 8px;
+  font-weight: 600;
+}
+
 .bar-row {
   display: flex;
   align-items: center;
