@@ -120,7 +120,15 @@
             <button type="button" id="docvClose" class="docv-btn" title="Close (Esc)">Close</button>
           </div>
         </div>
-        <div class="docv-body md-body" id="docvBody"></div>
+        <div class="docv-row">
+          <!-- Only populated/shown by openDiffViewer - a changed-files column
+               to pick which file's diff to look at (task c3dfbb42: "borde
+               finnas en till kolumn där man kan se ändrade filer och väljer
+               fil att se diff för där"). openDocViewer (plain .md files)
+               hides it, since a single-file doc has nothing to list. -->
+          <div class="docv-filelist hidden" id="docvFileList"></div>
+          <div class="docv-body md-body" id="docvBody"></div>
+        </div>
       </div>
     </div>
 

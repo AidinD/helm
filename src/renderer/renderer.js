@@ -859,11 +859,31 @@ function diffRowCells(row) {
   return cells;
 }
 
+/**
+ * The path a file block is about, or null for a preamble block (a commit's
+ * message + --stat summary, before its first "diff --git" line) - those
+ * aren't about any one file, so the changed-files column never filters them
+ * out. Prefers the "b/" (new) path; a renamed-but-unchanged-content file has
+ * no hunks to show anyway, so which side wins rarely matters in practice.
+ */
+function diffFileBlockPath(file) {
+  const line = file.header.find((l) => /^diff --git /.test(l));
+  if (!line) {
+    return null;
+  }
+  const m = /^diff --git a\/(.+?) b\/(.+)$/.exec(line);
+  return m ? m[2] : null;
+}
+
 /** Renders parsed file blocks (see parseUnifiedDiffFiles) into `body`, side by side. */
 function renderDiffFiles(body, files) {
   for (const file of files) {
     const block = document.createElement("div");
     block.className = "diff-file-block";
+    const filePath = diffFileBlockPath(file);
+    if (filePath) {
+      block.dataset.file = filePath;
+    }
     if (file.header.length > 0) {
       const header = document.createElement("pre");
       header.className = "diff-file-header";
@@ -901,6 +921,7 @@ function renderDiffFiles(body, files) {
 function openDiffViewer(row, res) {
   const overlay = document.getElementById("docViewer");
   const body = document.getElementById("docvBody");
+  const fileList = document.getElementById("docvFileList");
   document.getElementById("docvTitle").textContent = `${row.title} · ${res.commits.length} commit${res.commits.length === 1 ? "" : "s"}`;
   const revealBtn = document.getElementById("docvReveal");
   // Something that actually happens. There is no open-a-folder bridge in preload, and a
@@ -938,7 +959,8 @@ function openDiffViewer(row, res) {
   }
   body.append(list);
 
-  renderDiffFiles(body, parseUnifiedDiffFiles(res.text));
+  const files = parseUnifiedDiffFiles(res.text);
+  renderDiffFiles(body, files);
 
   if (res.truncated) {
     const t = document.createElement("div");
@@ -946,6 +968,54 @@ function openDiffViewer(row, res) {
     t.textContent = `Showing ${res.shown} of ${res.total} commits - the rest was cut at a commit boundary to keep this readable. Use the folder button and read it in git for the whole thing.`;
     body.append(t);
   }
+
+  // The changed-files column (task c3dfbb42 follow-up: "borde finnas en till
+  // kolumn där man kan se ändrade filer och väljer fil att se diff för
+  // där"). Paths in FIRST-APPEARANCE order, deduped - the same file can carry
+  // more than one block when more than one commit touches it, and picking it
+  // shows every one of those blocks together rather than just the first.
+  const paths = [...new Set(files.map(diffFileBlockPath).filter(Boolean))];
+  fileList.innerHTML = "";
+  if (paths.length > 1) {
+    const blocksFor = (path) => [...body.querySelectorAll(".diff-file-block")].filter((b) => b.dataset.file === path);
+    // A preamble block (a commit's message + --stat summary) has no dataset.file at
+    // all, so it is never touched by the hide logic below - it always stays visible,
+    // whichever file is selected.
+    const select = (path, btn) => {
+      fileList.querySelectorAll(".docv-filelist-item").forEach((b) => b.classList.toggle("selected", b === btn));
+      const showAll = !path;
+      for (const p of paths) {
+        blocksFor(p).forEach((b) => b.classList.toggle("hidden", !showAll && p !== path));
+      }
+      if (!showAll) {
+        blocksFor(path)[0]?.scrollIntoView({ block: "start" });
+      } else {
+        body.scrollTop = 0;
+      }
+    };
+    const allBtn = document.createElement("button");
+    allBtn.type = "button";
+    allBtn.className = "docv-filelist-item docv-filelist-all selected";
+    allBtn.textContent = `All files (${paths.length})`;
+    allBtn.addEventListener("click", () => select(null, allBtn));
+    fileList.append(allBtn);
+    for (const p of paths) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "docv-filelist-item";
+      btn.textContent = p.split(/[\\/]/).pop();
+      btn.title = p;
+      btn.addEventListener("click", () => select(p, btn));
+      fileList.append(btn);
+    }
+    fileList.classList.remove("hidden");
+  } else {
+    // One file (or none, e.g. a commit-only record with no diffable change) isn't
+    // worth a column that only ever offers "All files" - the column would be a
+    // control with nothing to actually pick between.
+    fileList.classList.add("hidden");
+  }
+
   overlay.classList.remove("hidden");
   body.scrollTop = 0;
 }
@@ -16017,6 +16087,12 @@ function renderMarkdown(md) {
 function openDocViewer({ label, read, reveal, revealLabel = "Reveal" }) {
   const overlay = document.getElementById("docViewer");
   const body = document.getElementById("docvBody");
+  // A plain .md file has no changed-files column - clear whatever a previous
+  // diff view left in it, rather than showing a stale file list beside an
+  // unrelated document.
+  const fileList = document.getElementById("docvFileList");
+  fileList.classList.add("hidden");
+  fileList.innerHTML = "";
   document.getElementById("docvTitle").textContent = label || "Document";
   const revealBtn = document.getElementById("docvReveal");
   revealBtn.textContent = revealLabel;

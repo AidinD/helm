@@ -120,6 +120,71 @@ try {
   ok(g1.length === 1, `file b.js's 1-for-1 hunk produced exactly 1 row, not 2 (got ${g1.length})`);
   ok(g1[0].oldText === "removed only" && g1[0].newText === "added only", "a simple one-line replace pairs cleanly with no filler");
 
+  // The changed-files column (task c3dfbb42 follow-up: "borde finnas en till kolumn
+  // där man kan se ändrade filer och väljer fil att se diff för där") - driven through
+  // the REAL openDiffViewer, not the parser alone, since the column lives in its click
+  // handlers.
+  const fl = await app.eval(`(() => {
+    const row = { title: "probe", taskId: "aaaaaaaa" };
+    const res = { commits: [{ sha: "abc123def456", subject: "Fix the thing" }], text: ${JSON.stringify(DIFF_TEXT)}, source: "record", truncated: false };
+    openDiffViewer(row, res);
+    const fileList = document.getElementById("docvFileList");
+    const docvBody = document.getElementById("docvBody");
+    const items = () => [...fileList.querySelectorAll(".docv-filelist-item")];
+    // Scoped to docvBody specifically, not the whole document - an earlier probe in
+    // this same test rendered its own .diff-file-block elements into a standalone
+    // #mdProbe/#diffProbe wrapper that is never cleaned up, and a bare document-wide
+    // query would count those leftovers too.
+    const blockState = () => [...docvBody.querySelectorAll(".diff-file-block")].map((b) => ({ file: b.dataset.file || null, hidden: b.classList.contains("hidden") }));
+    const before = { hidden: fileList.classList.contains("hidden"), labels: items().map((b) => b.textContent), blocks: blockState() };
+    items()
+      .find((b) => b.textContent === "a.js")
+      .click();
+    const afterA = { selected: items().map((b) => b.classList.contains("selected")), blocks: blockState() };
+    items()
+      .find((b) => b.textContent.startsWith("All files"))
+      .click();
+    const afterAll = { selected: items().map((b) => b.classList.contains("selected")), blocks: blockState() };
+    return { before, afterA, afterAll };
+  })()`);
+  ok(!fl.before.hidden, "the file-list column shows itself when the diff touches more than one file");
+  ok(JSON.stringify(fl.before.labels) === JSON.stringify(["All files (2)", "a.js", "b.js"]), `it lists "All files (N)" plus each changed file, in order (${JSON.stringify(fl.before.labels)})`);
+  ok(
+    fl.before.blocks.every((b) => !b.hidden),
+    "everything is visible before picking a file"
+  );
+  const aBlocks = fl.afterA.blocks.filter((b) => b.file === "src/a.js");
+  const bBlocks = fl.afterA.blocks.filter((b) => b.file === "src/b.js");
+  const preamble = fl.afterA.blocks.filter((b) => b.file === null);
+  ok(
+    aBlocks.every((b) => !b.hidden),
+    "picking a.js keeps its own block visible"
+  );
+  ok(
+    bBlocks.length > 0 && bBlocks.every((b) => b.hidden),
+    "and hides b.js's block"
+  );
+  ok(
+    preamble.length > 0 && preamble.every((b) => !b.hidden),
+    "the commit-message/--stat preamble is not a file block, so picking a.js never hides it"
+  );
+  ok(fl.afterA.selected[1] === true && fl.afterA.selected[0] === false, "the a.js item is marked selected, All files is not");
+  ok(
+    fl.afterAll.blocks.every((b) => !b.hidden),
+    "clicking All files again shows everything"
+  );
+  ok(fl.afterAll.selected[0] === true, "and re-selects All files");
+
+  const singleFile = await app.eval(`(() => {
+    document.querySelectorAll("#docvFileList .docv-filelist-item").forEach((n) => n.remove());
+    const row = { title: "probe2", taskId: "bbbbbbbb" };
+    const oneFileDiff = ["diff --git a/x.js b/x.js", "index 111..222 100644", "--- a/x.js", "+++ b/x.js", "@@ -1,1 +1,1 @@", "-old", "+new"].join("\\n");
+    const res = { commits: [{ sha: "def", subject: "One file" }], text: oneFileDiff, source: "record", truncated: false };
+    openDiffViewer(row, res);
+    return document.getElementById("docvFileList").classList.contains("hidden");
+  })()`);
+  ok(singleFile, "a diff touching only one file gets no column - it would only ever offer 'All files'");
+
   const consoleErrors = app.getConsoleErrors();
   ok(consoleErrors.length === 0, `no console errors (${consoleErrors.length})`);
 } catch (err) {
