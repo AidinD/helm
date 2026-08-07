@@ -1597,7 +1597,20 @@ body.advanced .row-jot {
  * user's own turns still have somewhere to sit right. */
 .pane-scroll > *:not(.scroll-to-bottom-wrap) {
   width: 100%;
-  max-width: var(--chat-column, 860px);
+  /* 860 -> 1040 (task c6094e4f follow-up, Aidin: "bredden kanske aningen for liten,
+     kan vi oka den kanske 20% eller sa"). */
+  max-width: var(--chat-column, 1040px);
+  margin-inline: auto;
+}
+
+/* The composer gets the SAME centring treatment, but wider than the chat column, not
+   as narrow (Aidin: "minska bredden pa promptdelen ocksa kanske. Inte fullt lika smal
+   som resten men absolut inte anda ut till kanterna") - a deliberately different value
+   from --chat-column, not a shared one, since "not quite as narrow" means wider on
+   purpose. */
+.pane-composer {
+  width: 100%;
+  max-width: 1320px;
   margin-inline: auto;
 }
 
@@ -1707,6 +1720,12 @@ body.advanced .row-jot {
      BUBBLE is what needs the cap - otherwise a one-line question would stretch the whole
      column and stop reading as a message. Assistant bubbles get their own cap (68ch). */
   max-width: 85%;
+  /* Heavier than the shared 450 (Aidin, c6094e4f follow-up: "texten mot den orangea
+     bakgrunden ser tunn ut och att lasa den ar anstrangt"). A solid saturated fill reads
+     thinner at the same numeric weight than the assistant's bordered card does - measured
+     contrast on the active theme is a fine 5.57:1, so this is a perceived-weight fix, not
+     a contrast one. */
+  font-weight: 520;
 }
 
 .turn.assistant .turn-bubble {
