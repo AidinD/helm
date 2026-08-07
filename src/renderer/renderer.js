@@ -725,6 +725,173 @@ function reviewChip(text, kind) {
 }
 
 /**
+ * Splits a unified diff (as `git show --stat --patch` produces, one or more
+ * commits concatenated) into file blocks - each a run of header/meta lines
+ * (commit line, --stat summary, "diff --git"/"index"/"---"/"+++") plus zero
+ * or more hunks, each hunk's content lines paired into old/new rows for a
+ * side-by-side view (Aidin, task c3dfbb42: "Kan vi få en side by side diff
+ * istället som i vanliga git klienter").
+ *
+ * Pairing rule (the one every git GUI uses): consecutive '-' lines and the
+ * '+' lines that immediately follow them are the "before/after" of the same
+ * change and sit on the same rows, positionally; a run with more of one than
+ * the other leaves the shorter side's extra rows blank on its side. A
+ * context line (leading space) always occupies its own row, unpaired,
+ * identical on both sides - it never merges with a pending +/- run.
+ *
+ * Returns [{ header: string[], hunks: [{ header, rows: [{left,right}] }] }].
+ * left/right are null (blank row on that side) or { num, text, type }, type
+ * one of "ctx"|"add"|"del".
+ */
+function parseUnifiedDiffFiles(text) {
+  const lines = String(text || "").split("\n");
+  const files = [];
+  let current = null;
+  let hunk = null;
+  let pendingDel = [];
+  let pendingAdd = [];
+  let oldNum = 0;
+  let newNum = 0;
+
+  function flushPending() {
+    if (!hunk) {
+      pendingDel = [];
+      pendingAdd = [];
+      return;
+    }
+    const n = Math.max(pendingDel.length, pendingAdd.length);
+    for (let i = 0; i < n; i++) {
+      const delText = pendingDel[i];
+      const addText = pendingAdd[i];
+      hunk.rows.push({
+        left: delText !== undefined ? { num: oldNum++, text: delText, type: "del" } : null,
+        right: addText !== undefined ? { num: newNum++, text: addText, type: "add" } : null,
+      });
+    }
+    pendingDel = [];
+    pendingAdd = [];
+  }
+  function closeHunk() {
+    flushPending();
+    if (hunk && current) {
+      current.hunks.push(hunk);
+    }
+    hunk = null;
+  }
+  function closeFile() {
+    closeHunk();
+    if (current) {
+      files.push(current);
+    }
+    current = null;
+  }
+
+  for (const raw of lines) {
+    if (/^commit [0-9a-f]{7,40}/.test(raw) || /^diff --git /.test(raw)) {
+      closeFile();
+      current = { header: [raw], hunks: [] };
+      continue;
+    }
+    if (!current) {
+      current = { header: [raw], hunks: [] };
+      continue;
+    }
+    const hunkMatch = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(raw);
+    if (hunkMatch) {
+      closeHunk();
+      oldNum = parseInt(hunkMatch[1], 10);
+      newNum = parseInt(hunkMatch[2], 10);
+      hunk = { header: raw, rows: [] };
+      continue;
+    }
+    if (!hunk) {
+      current.header.push(raw);
+      continue;
+    }
+    if (raw.startsWith(" ") || raw === "") {
+      flushPending();
+      const contentText = raw.startsWith(" ") ? raw.slice(1) : raw;
+      hunk.rows.push({
+        left: { num: oldNum++, text: contentText, type: "ctx" },
+        right: { num: newNum++, text: contentText, type: "ctx" },
+      });
+    } else if (raw.startsWith("-")) {
+      pendingDel.push(raw.slice(1));
+    } else if (raw.startsWith("+")) {
+      pendingAdd.push(raw.slice(1));
+    } else if (raw.startsWith("\\")) {
+      // "\ No newline at end of file" - a note about the previous line, not content.
+    } else {
+      // A line that isn't diff content while still "inside" a hunk (e.g. a stray
+      // separator some git config injects) - close the hunk rather than guess.
+      closeHunk();
+      current.header.push(raw);
+    }
+  }
+  closeFile();
+  return files;
+}
+
+/** One diff-body line's class, for the plain (non-hunk) header/meta lines. */
+function diffMetaLineClass(raw) {
+  if (/^\+\+\+|^---/.test(raw) || /^diff --git/.test(raw)) {
+    return "diff-file";
+  }
+  if (/^commit [0-9a-f]{7,40}/.test(raw)) {
+    return "diff-commit-head";
+  }
+  return "";
+}
+
+/** A single side-by-side row's four grid cells (old-num, old-text, new-num, new-text). */
+function diffRowCells(row) {
+  const cells = [];
+  for (const side of ["left", "right"]) {
+    const entry = row[side];
+    const numEl = document.createElement("span");
+    numEl.className = `diff-ln diff-ln-${side === "left" ? "old" : "new"}`;
+    numEl.textContent = entry ? String(entry.num) : "";
+    const textEl = document.createElement("span");
+    textEl.className = `diff-cell diff-cell-${side === "left" ? "old" : "new"}` + (entry ? ` diff-${entry.type}` : " diff-empty");
+    textEl.textContent = entry ? entry.text : "";
+    cells.push(numEl, textEl);
+  }
+  return cells;
+}
+
+/** Renders parsed file blocks (see parseUnifiedDiffFiles) into `body`, side by side. */
+function renderDiffFiles(body, files) {
+  for (const file of files) {
+    const block = document.createElement("div");
+    block.className = "diff-file-block";
+    if (file.header.length > 0) {
+      const header = document.createElement("pre");
+      header.className = "diff-file-header";
+      for (const raw of file.header) {
+        const line = document.createElement("span");
+        line.className = diffMetaLineClass(raw);
+        line.textContent = raw + "\n";
+        header.append(line);
+      }
+      block.append(header);
+    }
+    for (const hunk of file.hunks) {
+      const grid = document.createElement("div");
+      grid.className = "diff-grid";
+      const hunkHeader = document.createElement("div");
+      hunkHeader.className = "diff-hunk-row";
+      hunkHeader.textContent = hunk.header;
+      grid.append(hunkHeader);
+      for (const row of hunk.rows) {
+        grid.append(...diffRowCells(row));
+      }
+      block.append(grid);
+    }
+    body.append(block);
+  }
+}
+
+/**
  * The patch for a review item, in the document viewer, coloured like a diff.
  *
  * Rendered line by line into elements this code creates - never innerHTML of git output.
@@ -771,26 +938,7 @@ function openDiffViewer(row, res) {
   }
   body.append(list);
 
-  const pre = document.createElement("pre");
-  pre.className = "diff-body";
-  for (const raw of String(res.text || "").split("\n")) {
-    const line = document.createElement("span");
-    line.className =
-      /^\+\+\+|^---/.test(raw) || /^diff --git/.test(raw)
-        ? "diff-file"
-        : /^@@/.test(raw)
-          ? "diff-hunk"
-          : /^\+/.test(raw)
-            ? "diff-add"
-            : /^-/.test(raw)
-              ? "diff-del"
-              : /^commit [0-9a-f]{7,40}/.test(raw)
-                ? "diff-commit-head"
-                : "";
-    line.textContent = raw + "\n";
-    pre.append(line);
-  }
-  body.append(pre);
+  renderDiffFiles(body, parseUnifiedDiffFiles(res.text));
 
   if (res.truncated) {
     const t = document.createElement("div");
