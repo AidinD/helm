@@ -6146,3 +6146,13 @@ The captain, task c3dfbb42, standing ask since 2026-08-05: "Kan vi få en side b
 ## 2026-08-06 - Chat formatting (c6094e4f): the body face stays Segoe UI
 
 The captain, closing the last open question the card carried across three rounds: "lämna typsnittet." The mock's serif was already rejected in favour of a sans; this closes the follow-up half of that call - no different sans is being picked either. Nothing left open on this card. Its review record's verdict moved from `judgment` to `stamp` accordingly (a `judgment` record must name a decision still waiting on him; there is no longer one).
+
+## 2026-08-07 - Doc/diff viewer resizable, and Analysis gets a Review health widget
+
+Two more from the same batch. c3dfbb42 bounced back once more: "Diff fönstret bör vara resizeable" - `.docv-modal` (shared by the doc viewer and the new side-by-side diff) went from a fixed 760px/max-height-only box to an explicit width+height with `resize: both`, `min-width`/`min-height` floors, and `max-width`/`max-height` ceilings. Verified programmatically (enlarging it to 1500x850 kept the header pinned and let the diff grid actually use the new width) rather than trusting the drag handle by eye alone.
+
+New task 76790f23: "Analysis - Visa hur review hanteras - hur ofta testerna körs, send back, granskning etc." Built a "Review health" block reusing `reviewQueueTally` - the SAME computation already behind the Review page's own header and the subnav badge, via the existing `reviews:list` IPC call (with the same `maxAgeMs` cache the badge/widget callers use, since the underlying computation shells out to git per row and is genuinely expensive). Added on top: how many review items declare at least one check vs. have actually had one RUN and confirmed by the app, how many got an independent reviewer, and a criticality breakdown bar.
+
+**Deliberately not built:** how often a card gets sent BACK from review with feedback. Jot keeps only a task's current status, not a history of the statuses it passed through, so there is nothing to count without adding new instrumentation (recording every backward transition somewhere). Flagged on the card rather than guessed at or silently omitted.
+
+Real numbers surfaced something worth noting even though it wasn't the point of building the widget: of 14 items currently in review across all repo-rooted boards, 13 have no review record at all. The widget just reports what `reviews:list` already computes for the Review page itself - it isn't a new finding, only a new place the same number is visible.

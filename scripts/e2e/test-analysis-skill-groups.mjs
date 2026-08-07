@@ -79,6 +79,7 @@ try {
       hints: [...b.querySelectorAll(".suggest-hint")].map((h) => h.textContent.trim()),
       chips: [...b.querySelectorAll(".skill-chip")].map((c) => c.textContent.trim()),
       empty: (b.querySelector(".pane-empty")?.textContent || "").trim(),
+      childCount: b.children.length,
     }));
     return { blocks };
   })()`);
@@ -89,6 +90,20 @@ try {
   const heads = view.blocks.map((b) => b.head);
   const dupes = heads.filter((h, i) => heads.indexOf(h) !== i);
   ok(dupes.length === 0, `two overlapping renders draw the page once, not twice (duplicated: ${JSON.stringify([...new Set(dupes)])})`);
+
+  // Review health (task 76790f23: "Visa hur review hanteras"). Whether the Jot board this
+  // machine happens to have is empty or not is NOT pinned here - like the project-skills
+  // picker above, reviews:list reads the real board (there is no isolation seam for it
+  // that does not also move Electron's own profile), so this only pins the shape: the
+  // block renders and is never blank (either the empty-state text, or at least the
+  // heading plus real content). The tally math and check-adoption counts were verified
+  // separately by reading the live app's own numbers, not re-derived here.
+  const reviewBlock = view.blocks.find((b) => b.head === "Review health");
+  ok(!!reviewBlock, "the review health block renders");
+  ok(
+    !!reviewBlock?.empty || (reviewBlock?.childCount || 0) > 1,
+    `and is never blank - either an empty-state message or real tally content (${JSON.stringify(reviewBlock)})`
+  );
 
   const globalBlock = view.blocks.find((b) => b.head.startsWith("Global skills"));
   ok(!!globalBlock, "the global skills block renders");
