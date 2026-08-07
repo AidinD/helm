@@ -6164,3 +6164,15 @@ c3dfbb42, one more round: "borde finnas en till kolumn där man kan se ändrade 
 **A file can carry more than one block** (the same file touched by more than one commit in the same review item), so picking it shows every one of those blocks, not just the first. **The commit-message/--stat preamble block is never filtered** - it carries no `dataset.file` at all, so switching between files never hides the context of which commit this is. **A diff touching only one file gets no column at all** - one that could only ever say "All files" would be a control with nothing to pick between, the same reasoning that already killed the "0 skills, 0 projects" panel task 07658c1a replaced.
 
 Verified through the real `openDiffViewer`, not the parser alone (the column lives entirely in its click handlers): the sidebar renders, clicking a file hides every OTHER file's blocks while leaving that file's and the preamble's visible, and clicking "All files" restores everything. Extended `test-diff-side-by-side.mjs` rather than starting a new file, since it already builds the exact two-file fixture this needed. Fast suite 66/66.
+
+## 2026-08-07 - Review health learns the captain's own behaviour, not just the board's state
+
+76790f23 bounced back with the actual gap in the first version: "jag vill mer veta statistik på hur jag hanterar review. Har jag kört testerna? kollar jag på diffen, send back etc?" The first build could only describe the CURRENT STATE of the queue (counts, criticality) - it had nothing to say about what the captain himself does over time, because nothing recorded his actions.
+
+**Fixed at the source, not reconstructed after the fact.** `reviews:setStatus` - the exact IPC the review page's own Done and Send-back buttons call - now logs a content-free action (`review_stamped` or `review_sent_back`) on every SUCCESSFUL status change, and `openDiffViewer` logs `review_diff_opened` every time it runs. All three go through `helmUsage.js`'s existing local, no-content log (the same one already behind "Your Helm views"), so nothing new was invented for storage - just three new event names.
+
+**A failed status change logs nothing.** `setTaskStatus` can fail (unknown task, bad status), and only `res.ok` gates the tracking call - an action that didn't happen is not evidence of a review decision.
+
+**Consequence, stated on the card too:** counts start at zero the day this shipped. There is no way to reconstruct actions that were never logged, so a small number here means "recently added," not "rarely done" - that distinction matters enough to put directly in the widget's surrounding comment, not just this entry.
+
+New `test-review-action-tracking.mjs` drives the real `setReviewStatus`/`openDiffViewer` calls against a real temp Jot board and asserts the exact counts logged, that a failed status change doesn't inflate them, and that the Analysis page's new "Your review actions" sub-section shows them. Fast suite 66/66.

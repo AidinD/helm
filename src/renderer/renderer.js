@@ -919,6 +919,9 @@ function renderDiffFiles(body, files) {
  * viewer is to READ it, not to run it.
  */
 function openDiffViewer(row, res) {
+  // Content-free (Helm's own usage log): did the diff actually get looked at, not
+  // just claimed reviewed (the captain, task 76790f23 follow-up: "kollar jag på diffen").
+  window.helm.trackUsage({ type: "action", action: "review_diff_opened" });
   const overlay = document.getElementById("docViewer");
   const body = document.getElementById("docvBody");
   const fileList = document.getElementById("docvFileList");
@@ -15805,10 +15808,15 @@ async function renderAnalysisPage() {
   // RUN at least once, which is the closest real signal to "how often the tests
   // run" that any stored data can answer.
   //
-  // Deliberately NOT shown here: how often a card gets sent BACK from review with
-  // feedback. Jot keeps only a card's current status, not a history of the status
-  // transitions it passed through - there is nothing to count. Flagged rather than
-  // guessed at; adding that would mean recording every backward move somewhere new.
+  // Round 2 (the captain: "jag vill mer veta statistik på hur jag hanterar review. Har
+  // jag kört testerna? kollar jag på diffen, send back etc?"): the first version
+  // could only describe the current STATE of the board, not the captain's own behaviour
+  // over time - Jot keeps a task's current status, not its history, so "how often
+  // do I send things back" had nothing to count. Fixed at the source instead of
+  // guessed at: reviews:setStatus (the review page's own Done/Send-back buttons)
+  // and openDiffViewer now log a content-free action event each time they fire
+  // (helmUsage.js - the same local, no-content log "Your Helm views" already
+  // uses), so this can show real counts starting from when this shipped.
   const reviewBlock = document.createElement("div");
   reviewBlock.className = "analysis-block";
   const reviewH = document.createElement("h3");
@@ -15817,24 +15825,24 @@ async function renderAnalysisPage() {
   reviewBlock.append(reviewH);
   const rrows = reviewData?.ok ? reviewData.rows || [] : [];
   const rtally = reviewData?.tally || null;
+  const tallyRow = (label, count) => {
+    const row = document.createElement("div");
+    row.className = "fit-row";
+    const l = document.createElement("span");
+    l.className = "fit-model-label";
+    l.textContent = label;
+    const v = document.createElement("span");
+    v.className = "fit-pill fit-pill-appropriate";
+    v.textContent = String(count);
+    row.append(l, v);
+    return row;
+  };
   if (!reviewData?.ok || !rtally || rtally.total === 0) {
     const empty = document.createElement("div");
     empty.className = "pane-empty";
     empty.textContent = reviewData?.ok ? "Nothing in review right now." : `Could not load: ${reviewData?.error || "unknown reason"}`;
     reviewBlock.append(empty);
   } else {
-    const tallyRow = (label, count) => {
-      const row = document.createElement("div");
-      row.className = "fit-row";
-      const l = document.createElement("span");
-      l.className = "fit-model-label";
-      l.textContent = label;
-      const v = document.createElement("span");
-      v.className = "fit-pill fit-pill-appropriate";
-      v.textContent = String(count);
-      row.append(l, v);
-      return row;
-    };
     reviewBlock.append(tallyRow("Total in review", rtally.total));
     reviewBlock.append(tallyRow("Needs your judgment", rtally.judgment));
     reviewBlock.append(tallyRow("Ready to stamp", rtally.stamp));
@@ -15864,6 +15872,31 @@ async function renderAnalysisPage() {
     reviewBlock.append(barRow("critical", critCounts.critical, critMax));
     reviewBlock.append(barRow("core", critCounts.core, critMax));
     reviewBlock.append(barRow("cosmetic", critCounts.cosmetic, critMax));
+  }
+
+  // What the captain actually DID, all-time, not just the board's current state above -
+  // the exact three things he asked for by name. Counts start from zero the day
+  // this shipped (there is no way to reconstruct past actions that were never
+  // logged), so a small number here means "recently added," not "rarely done."
+  const actionCounts = Object.fromEntries((helmUsage.actions || []).map((a) => [a.action, a.count]));
+  const diffOpened = actionCounts.review_diff_opened || 0;
+  const stamped = actionCounts.review_stamped || 0;
+  const sentBack = actionCounts.review_sent_back || 0;
+  if (diffOpened + stamped + sentBack > 0) {
+    const actionsH = document.createElement("h4");
+    actionsH.className = "analysis-subhead";
+    actionsH.textContent = "Your review actions (all-time)";
+    reviewBlock.append(actionsH);
+    reviewBlock.append(tallyRow("Opened a diff", diffOpened));
+    reviewBlock.append(tallyRow("Sent back with feedback", sentBack));
+    reviewBlock.append(tallyRow("Stamped done", stamped));
+    if (stamped + sentBack > 0) {
+      const rate = Math.round((stamped / (stamped + sentBack)) * 100);
+      const behaviourNote = document.createElement("div");
+      behaviourNote.className = "suggest-hint";
+      behaviourNote.textContent = `${rate}% of your review decisions stamped it through; the rest went back with feedback.`;
+      reviewBlock.append(behaviourNote);
+    }
   }
 
   // Helm's OWN usage (distinct from the model/cost blocks above): which views
