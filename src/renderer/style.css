@@ -2723,15 +2723,28 @@ body.advanced .row-jot {
   position: relative;
   margin-top: 8vh;
   width: 760px;
+  /* An explicit starting height, not just a max, because `resize` needs real
+     dimensions to grow/shrink FROM - a max-height alone (the previous rule)
+     left nothing for the drag handle to act on. Aidin, task c3dfbb42
+     follow-up: "Diff fönstret bör vara resizeable" - the side-by-side diff
+     added a second column, and 760px got cramped fast. */
+  height: 76vh;
+  min-width: 420px;
+  min-height: 240px;
   max-width: 92vw;
-  max-height: 80vh;
+  max-height: 92vh;
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 10px;
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
   display: flex;
   flex-direction: column;
+  /* overflow:hidden (not auto) - the modal itself never scrolls, only
+     .docv-body does, via its own overflow-y below. `resize` still draws its
+     handle with overflow:hidden, and this keeps the head from ever being
+     pushed off by a scrollbar. */
   overflow: hidden;
+  resize: both;
 }
 
 .docv-head {
