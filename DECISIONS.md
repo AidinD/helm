@@ -6142,3 +6142,7 @@ Aidin, task c3dfbb42, standing ask since 2026-08-05: "Kan vi få en side by side
 
 **Verified two ways:** a new `test-diff-side-by-side.mjs` drives the real `parseUnifiedDiffFiles`/`renderDiffFiles` with a synthetic diff built to exercise the failure case on purpose (2 deletions, 3 additions in one hunk - the unequal run that must leave a blank filler, not drop the third addition), asserting on every cell's text, line number, and class. Separately, the parser was run against this repo's own most recent real commit's `git show` output (not committed as a test, just a sanity pass) to confirm real, non-synthetic git output parses without throwing.
 **Left as-is, on purpose:** renamed files, binary file diffs ("Binary files ... differ"), and mode-only changes render as their raw header text with no hunk grid (there is nothing to pair) - correct, not a gap, since none of those have line-level content to show side by side.
+
+## 2026-08-06 - Chat formatting (c6094e4f): the body face stays Segoe UI
+
+Aidin, closing the last open question the card carried across three rounds: "lämna typsnittet." The mock's serif was already rejected in favour of a sans; this closes the follow-up half of that call - no different sans is being picked either. Nothing left open on this card. Its review record's verdict moved from `judgment` to `stamp` accordingly (a `judgment` record must name a decision still waiting on him; there is no longer one).
