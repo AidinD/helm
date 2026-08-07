@@ -5499,9 +5499,15 @@ button.primary {
 }
 
 /* The same chips as a project picker inside an Analysis block: a little tighter, and
-   spaced off the skills they switch between. */
+   spaced off the skills they switch between. Margin alone (the original 10px) still read
+   as one continuous row of pills - both rows are the same chip shape, so the eye needs an
+   actual line, not just more air, to read "picker" and "skills for that project" as two
+   different things (Aidin, task 07658c1a: "kan vi lagga en avskiljare mellan projekt
+   pills och skills"). */
 .analysis-project-picker {
   margin: 8px 0 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
 }
 .analysis-project-picker .dash-chip {
   padding: 4px 10px;
