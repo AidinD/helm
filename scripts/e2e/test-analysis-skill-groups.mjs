@@ -91,18 +91,19 @@ try {
   const dupes = heads.filter((h, i) => heads.indexOf(h) !== i);
   ok(dupes.length === 0, `two overlapping renders draw the page once, not twice (duplicated: ${JSON.stringify([...new Set(dupes)])})`);
 
-  // Review health (task 76790f23: "Visa hur review hanteras"). Whether the Jot board this
-  // machine happens to have is empty or not is NOT pinned here - like the project-skills
-  // picker above, reviews:list reads the real board (there is no isolation seam for it
-  // that does not also move Electron's own profile), so this only pins the shape: the
-  // block renders and is never blank (either the empty-state text, or at least the
-  // heading plus real content). The tally math and check-adoption counts were verified
-  // separately by reading the live app's own numbers, not re-derived here.
-  const reviewBlock = view.blocks.find((b) => b.head === "Review health");
-  ok(!!reviewBlock, "the review health block renders");
+  // Review analytics (task 76790f23: "Visa hur review hanteras"). Whether this
+  // machine's real helm-usage.jsonl happens to have logged review decisions or not is
+  // NOT pinned here - like the project-skills picker above, getReviewActionSummary
+  // reads the real local log (there is no isolation seam for it that does not also
+  // move Electron's own profile), so this only pins the shape: the block renders and
+  // is never blank (either the empty-state text, or at least the heading plus real
+  // content). The join math (fractions, model breakdown) is verified separately
+  // against an isolated log in test-review-action-tracking.mjs.
+  const reviewBlock = view.blocks.find((b) => b.head === "Review analytics");
+  ok(!!reviewBlock, "the review analytics block renders");
   ok(
     !!reviewBlock?.empty || (reviewBlock?.childCount || 0) > 1,
-    `and is never blank - either an empty-state message or real tally content (${JSON.stringify(reviewBlock)})`
+    `and is never blank - either an empty-state message or real analytics content (${JSON.stringify(reviewBlock)})`
   );
 
   const globalBlock = view.blocks.find((b) => b.head.startsWith("Global skills"));

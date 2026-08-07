@@ -108,3 +108,69 @@ export function summarizeHelmUsage({ sinceMs } = {}) {
     lastAt: times.length ? Math.max(...times) : null,
   };
 }
+
+/**
+ * How the captain actually handles review, joined by taskId - not just flat counts
+ * of each action, but "did he look at the diff / run the checks / send an
+ * independent reviewer BEFORE the decision he made on that same item" (the captain,
+ * task 76790f23 round 2: "Jag vill bara ha analytics datan, inte nuvarande
+ * state. Jag vill också se av totalen, t.ex öppnade diff 3/5. Jag vill även
+ * att intependent reviewer stats ska vara med och vilken model som valdes").
+ *
+ * A "decision" is a stamp or a send-back (reviews:setStatus succeeding) - the
+ * denominator every fraction is measured against, since that is the moment a
+ * review actually concluded. Whether a given decision was preceded by a
+ * diff-open / checks-run / independent-dispatch for the SAME task is a join
+ * on taskId with the diff/checks/independent event's timestamp at or before
+ * the decision's - an unrelated later look does not retroactively count.
+ */
+export function summarizeReviewActions() {
+  const all = readEvents();
+  const isReviewAction = (e, action) => e.type === "action" && e.action === action;
+  const decisions = all.filter((e) => isReviewAction(e, "review_stamped") || isReviewAction(e, "review_sent_back"));
+  const diffEvents = all.filter((e) => isReviewAction(e, "review_diff_opened"));
+  const checksEvents = all.filter((e) => isReviewAction(e, "review_checks_run"));
+  const independentEvents = all.filter((e) => isReviewAction(e, "review_independent_dispatched"));
+
+  const priorExists = (list, taskId, atOrBefore) => list.some((e) => e.taskId === taskId && (e.at || 0) <= atOrBefore);
+
+  let diffOpenedCount = 0;
+  let checksRunCount = 0;
+  let independentCount = 0;
+  for (const d of decisions) {
+    if (d.taskId == null) {
+      continue; // an old-format event with no taskId cannot be joined to anything
+    }
+    if (priorExists(diffEvents, d.taskId, d.at || 0)) {
+      diffOpenedCount++;
+    }
+    if (priorExists(checksEvents, d.taskId, d.at || 0)) {
+      checksRunCount++;
+    }
+    if (priorExists(independentEvents, d.taskId, d.at || 0)) {
+      independentCount++;
+    }
+  }
+
+  // The model breakdown is about EVERY dispatch, not just ones later decided on -
+  // which model gets picked is a fact about the dispatch itself, independent of
+  // whether the item it reviewed was later stamped or sent back.
+  const byModel = {};
+  for (const e of independentEvents) {
+    const key = `${e.model || "unknown"} · ${e.effort || "unknown"}`;
+    byModel[key] = (byModel[key] || 0) + 1;
+  }
+
+  return {
+    totalDecisions: decisions.length,
+    stamped: decisions.filter((d) => d.action === "review_stamped").length,
+    sentBack: decisions.filter((d) => d.action === "review_sent_back").length,
+    diffOpenedCount,
+    checksRunCount,
+    independentCount,
+    independentTotal: independentEvents.length,
+    independentByModel: Object.entries(byModel)
+      .map(([label, count]) => ({ label, count }))
+      .sort((a, b) => b.count - a.count),
+  };
+}

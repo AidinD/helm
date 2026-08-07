@@ -27,6 +27,7 @@ contextBridge.exposeInMainWorld("helm", {
   listSlashItems: (cwd) => ipcRenderer.invoke("slash:list", cwd),
   trackUsage: (event) => ipcRenderer.invoke("usage:track", event),
   getHelmUsage: () => ipcRenderer.invoke("usage:helmSummary"),
+  getReviewActionSummary: () => ipcRenderer.invoke("usage:reviewActions"),
   openSkill: (opts) => ipcRenderer.invoke("skills:open", opts),
   readSkill: (opts) => ipcRenderer.invoke("skills:read", opts),
   openGlobalClaudeMd: () => ipcRenderer.invoke("claudeMd:openGlobal"),
