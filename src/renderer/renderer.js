@@ -1100,12 +1100,7 @@ async function openIndependentReview(row) {
     async () => {
       const model = modelSel.value;
       const effort = effortSel.value;
-      const res = await window.helm.startSession({
-        cwd: rec.projectPath,
-        prompt: independentReviewBrief(row, rec, plan.notePath),
-        model,
-        effort,
-      });
+      const res = await window.helm.startSession(independentReviewSessionArgs(row, rec, plan, model, effort));
       if (!res?.ok) {
         showNotice(`The reviewer did not start: ${res?.error || "unknown error"}`);
         return;
@@ -1182,6 +1177,33 @@ function independentReviewBrief(row, rec, notePath) {
     `Do not change anything else. This is a review.`,
   ];
   return lines.join("\n");
+}
+
+/**
+ * The startSession(...) call an independent-reviewer dispatch actually sends -
+ * pulled out of the confirm callback so a test can pin its exact shape without
+ * spending a token (contextBridge's window.helm cannot be stubbed from a
+ * renderer test, so the callback itself is untestable directly; this pure
+ * function is).
+ *
+ * allowedTools is scoped to exactly the verdict file the brief tells it to
+ * write, not a broader permission mode: the brief writes OUTSIDE its own
+ * project directory (the meta-home's .helm/reviews/), which the ordinary
+ * permission gate correctly treats as more sensitive than an in-project write
+ * - and this is a headless -p launch with no live channel to answer that
+ * prompt, so it just stalled (the captain: "Would you grant permission to write the
+ * verdict file?" - a question with nobody able to answer it). Pre-approving
+ * exactly that one path keeps "do not change anything else" (the brief's own
+ * instruction) technically enforced, not just requested.
+ */
+function independentReviewSessionArgs(row, rec, plan, model, effort) {
+  return {
+    cwd: rec.projectPath,
+    prompt: independentReviewBrief(row, rec, plan.notePath),
+    model,
+    effort,
+    allowedTools: [`Write(${plan.notePath})`],
+  };
 }
 
 /**

@@ -8,6 +8,7 @@ import { launch } from "./harness.mjs";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 
 function log(...a) {
   console.log("[handoff-file-e2e]", ...a);
@@ -45,9 +46,33 @@ try {
   assert(empty && empty.ok === false, "empty handoff text is rejected, not saved");
   assert(/SECOND handoff/.test(fs.readFileSync(path.join(tmp, "HANDOFF.md"), "utf8")), "the prior handoff survives an empty-save attempt");
 
+  // Committed immediately (the captain, task 76790f23: "ja, en handoff borde commitas
+  // direkt" - a handoff left uncommitted made git status report the repo dirty
+  // FOREVER, which stamped every review check run "ran on uncommitted changes"
+  // regardless of what was actually being tested). A real repo, not the plain
+  // temp dir above, since git has to actually exist to commit into.
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "helm-handoff-repo-"));
+  const git = (...args) => execFileSync("git", ["-C", repo, ...args], { encoding: "utf8", windowsHide: true });
+  git("init", "-q", "-b", "main");
+  git("-c", "user.name=T", "-c", "user.email=t@t", "commit", "--allow-empty", "-q", "-m", "initial");
+  // A genuinely dirty tree at save time (the ordinary edit-then-test-then-
+  // commit flow means there often is one) must survive UNCOMMITTED - the
+  // handoff commit stages ONLY HANDOFF.md, never -A.
+  fs.writeFileSync(path.join(repo, "unrelated-work-in-progress.txt"), "not part of the handoff", "utf8");
+  const repoCwd = repo.replace(/\\/g, "/");
+  const saved = await app.eval(`window.helm.saveHandoff(${JSON.stringify(repoCwd)}, "Handoff that should get committed")`);
+  assert(saved && saved.ok, `saveHandoff still succeeds in a real repo (${JSON.stringify(saved)})`);
+  const statusAfter = git("status", "--porcelain");
+  assert(/HANDOFF\.md/.test(git("log", "-1", "--name-only", "--format=")), "HANDOFF.md was committed - it's in the last commit's file list");
+  assert(!/HANDOFF\.md/.test(statusAfter), "and no longer shows up as uncommitted");
+  assert(/unrelated-work-in-progress\.txt/.test(statusAfter), "but the OTHER uncommitted file is untouched - the handoff commit is scoped to HANDOFF.md only, never -A");
+  const log1 = git("log", "-1", "--format=%s");
+  assert(/handoff/i.test(log1), `the commit message says what it is (${JSON.stringify(log1)})`);
+  fs.rmSync(repo, { recursive: true, force: true });
+
   const errors = app.getConsoleErrors();
   assert(errors.length === 0, `no console errors (got ${errors.length})`);
-  log(exitCode === 0 ? "VERIFY OK: handoffs land in HANDOFF.md and overwrite (latest-only)." : "VERIFY FAILED.");
+  log(exitCode === 0 ? "VERIFY OK: handoffs land in HANDOFF.md, overwrite (latest-only), and commit themselves without sweeping up other work." : "VERIFY FAILED.");
 } catch (err) {
   exitCode = 1;
   log("ERROR:", err.message);

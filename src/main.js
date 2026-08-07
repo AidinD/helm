@@ -901,6 +901,25 @@ ipcMain.handle("context:saveHandoff", async (_event, { cwd, text, title, categor
       }
       throw err;
     }
+    // Commit it immediately (the captain, 2026-08-07: "ja, en handoff borde commitas
+    // direkt"). Left uncommitted, HANDOFF.md sat untracked for weeks and made
+    // `git status --porcelain` report the repo dirty forever - which stamped
+    // EVERY review check run "ran on uncommitted changes" regardless of
+    // whether the actual code under test was committed (task 76790f23).
+    //
+    // Stages ONLY this one file, never `-A` - a handoff save must not sweep up
+    // whatever else happens to be sitting uncommitted in the tree at that
+    // moment (the ordinary edit-then-test-then-commit flow means there often
+    // is something). Best-effort and silent on failure: cwd may not be a git
+    // repo at all, or the commit may fail for an unrelated reason, and a
+    // handoff that saved but didn't commit is still a saved handoff - worth
+    // returning, not worth failing the whole call over.
+    try {
+      execFileSync("git", ["-C", cwd, "add", "--", "HANDOFF.md"], { windowsHide: true });
+      execFileSync("git", ["-C", cwd, "commit", "-m", "[handoff] Update session handoff"], { windowsHide: true });
+    } catch {
+      // best-effort - see comment above
+    }
     return { ok: true, path: file };
   } catch (err) {
     return { ok: false, error: err.message };
@@ -2082,7 +2101,7 @@ function recordHelmSession(sessionId, { cwd, model, effort, permissionMode, titl
 // --- Start (or resume) a rooted session; stream events to the renderer ---
 ipcMain.handle(
   "session:start",
-  (_event, { cwd, prompt, model, effort, permissionMode, resumeSessionId, suggestedModel, suggestedEffort, internal, mateId, secondMateId }) => {
+  (_event, { cwd, prompt, model, effort, permissionMode, resumeSessionId, suggestedModel, suggestedEffort, internal, mateId, secondMateId, allowedTools: callerAllowedTools }) => {
     if (!cwd || !prompt) {
       return { ok: false, error: "cwd and prompt are required" };
     }
@@ -2119,7 +2138,16 @@ ipcMain.handle(
     // project worktree, so it structurally never gets these tools. Best-effort:
     // a failure to build the config must not break launching a normal session.
     let mcpConfig;
-    let allowedTools;
+    // A plain session (neither first-mate nor second-mate rooted) has no computed
+    // allowedTools of its own below - without this, a caller-supplied list (e.g. the
+    // independent reviewer scoping itself to writing ONE file outside its project
+    // directory) was silently discarded, and the tool it actually needed hit the
+    // ordinary permission gate with no live channel to answer it (task 76790f23:
+    // "Would you grant permission to write the verdict file?" - a headless -p launch
+    // stalling on a prompt it structurally cannot receive an answer to). The
+    // first-mate/second-mate branches below still unconditionally override this,
+    // since their own scoping is more specific than whatever a caller passed.
+    let allowedTools = callerAllowedTools;
     let disallowedTools;
     let appendSystemPrompt;
     let strictMcpConfig;
