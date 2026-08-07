@@ -15544,11 +15544,15 @@ async function renderAnalysisPage() {
   // replaces - a true-looking number about the wrong thing.
   const sessionData = await window.helm.getSessions();
   const projectRoots = [...new Set((sessionData?.sessions || []).map((s) => s.cwd).filter(Boolean))];
-  const [{ global, projects, projectsChecked, plugins }, summary, context, helmUsage] = await Promise.all([
+  const [{ global, projects, projectsChecked, plugins }, summary, context, helmUsage, reviewData] = await Promise.all([
     window.helm.listSkills(projectRoots),
     window.helm.getUsageSummary(),
     window.helm.listContext(cwd),
     window.helm.getHelmUsage(),
+    // maxAgeMs, like the badge and the dashboard widget do (reviews:list is
+    // expensive - one or more git calls per row) - this page doesn't need a
+    // fresher number than the 20s the queue itself already tolerates.
+    window.helm.listReviews({ maxAgeMs: 20000 }),
   ]);
   if (myToken !== analysisRenderToken) {
     return; // a newer render already owns the page
@@ -15723,6 +15727,75 @@ async function renderAnalysisPage() {
     }
   }
 
+  // How review is actually handled, not just the queue's own header repeated here
+  // (Aidin, task 76790f23: "Visa hur review hanteras - hur ofta testerna körs,
+  // send back, granskning etc"). Reuses reviews:list's own tally (the SAME
+  // computation the Review page's header and subnav badge already show), plus a
+  // check-adoption count derived from the rows it returns - declared vs actually
+  // RUN at least once, which is the closest real signal to "how often the tests
+  // run" that any stored data can answer.
+  //
+  // Deliberately NOT shown here: how often a card gets sent BACK from review with
+  // feedback. Jot keeps only a card's current status, not a history of the status
+  // transitions it passed through - there is nothing to count. Flagged rather than
+  // guessed at; adding that would mean recording every backward move somewhere new.
+  const reviewBlock = document.createElement("div");
+  reviewBlock.className = "analysis-block";
+  const reviewH = document.createElement("h3");
+  reviewH.textContent = "Review health";
+  reviewH.title = "The same tally the Review page's own header shows, plus how many items have actually had their declared checks run (not just declared).";
+  reviewBlock.append(reviewH);
+  const rrows = reviewData?.ok ? reviewData.rows || [] : [];
+  const rtally = reviewData?.tally || null;
+  if (!reviewData?.ok || !rtally || rtally.total === 0) {
+    const empty = document.createElement("div");
+    empty.className = "pane-empty";
+    empty.textContent = reviewData?.ok ? "Nothing in review right now." : `Could not load: ${reviewData?.error || "unknown reason"}`;
+    reviewBlock.append(empty);
+  } else {
+    const tallyRow = (label, count) => {
+      const row = document.createElement("div");
+      row.className = "fit-row";
+      const l = document.createElement("span");
+      l.className = "fit-model-label";
+      l.textContent = label;
+      const v = document.createElement("span");
+      v.className = "fit-pill fit-pill-appropriate";
+      v.textContent = String(count);
+      row.append(l, v);
+      return row;
+    };
+    reviewBlock.append(tallyRow("Total in review", rtally.total));
+    reviewBlock.append(tallyRow("Needs your judgment", rtally.judgment));
+    reviewBlock.append(tallyRow("Ready to stamp", rtally.stamp));
+    reviewBlock.append(tallyRow("Claimed but unconfirmed", rtally.unconfirmed));
+    reviewBlock.append(tallyRow("No record at all", rtally.unrecorded));
+    if (rtally.incomplete > 0) {
+      reviewBlock.append(tallyRow("Record exists but is inadmissible", rtally.incomplete));
+    }
+
+    const declared = rrows.filter((r) => (r.record?.checks || []).length > 0).length;
+    const actuallyRun = rrows.filter((r) => (r.record?.checkRuns || []).length > 0).length;
+    const independent = rrows.filter((r) => !!r.record?.independentReview).length;
+    const checksNote = document.createElement("div");
+    checksNote.className = "suggest-hint";
+    checksNote.textContent =
+      `${declared}/${rtally.total} declare at least one check; ${actuallyRun}/${rtally.total} have actually had one run and confirmed by the app (not just claimed). ` +
+      `${independent}/${rtally.total} got an independent reviewer.`;
+    reviewBlock.append(checksNote);
+
+    const critCounts = { critical: 0, core: 0, cosmetic: 0 };
+    for (const r of rrows) {
+      if (r.criticality && critCounts[r.criticality] !== undefined) {
+        critCounts[r.criticality]++;
+      }
+    }
+    const critMax = Math.max(critCounts.critical, critCounts.core, critCounts.cosmetic, 1);
+    reviewBlock.append(barRow("critical", critCounts.critical, critMax));
+    reviewBlock.append(barRow("core", critCounts.core, critMax));
+    reviewBlock.append(barRow("cosmetic", critCounts.cosmetic, critMax));
+  }
+
   // Helm's OWN usage (distinct from the model/cost blocks above): which views
   // you visit and your common navigation paths - local + content-free.
   const usageBlock = document.createElement("div");
@@ -15758,7 +15831,7 @@ async function renderAnalysisPage() {
     pathList.forEach((t) => pathsBlock.append(barRow(t.path, t.count, pathMax)));
   }
 
-  grid.append(modelBlock, toolBlock, skillUsageBlock, fitBlock, accuracyBlock, usageBlock, pathsBlock);
+  grid.append(modelBlock, toolBlock, skillUsageBlock, fitBlock, accuracyBlock, reviewBlock, usageBlock, pathsBlock);
   grid.append(skillListEl("Global skills (~/.claude/skills)", global, "global", cwd));
   // Project skills, PER PROJECT. This used to be "this pane's project skills", which
   // could not be read: Analysis is a page you reach by leaving the pane, so the panel
