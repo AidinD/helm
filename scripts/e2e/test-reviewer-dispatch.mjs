@@ -153,6 +153,31 @@ try {
   ok(!cancelled.overlay, "cancelling closes the dialog");
   ok(cancelled.sessionsAfter === cancelled.sessionsBefore, `and starts no session (${cancelled.sessionsBefore} -> ${cancelled.sessionsAfter})`);
 
+  // --- what an ACTUAL send would ask for, without ever spending a token -------
+  //
+  // Aidin: the reviewer's own brief told it to write its verdict OUTSIDE its
+  // project directory (the meta-home's .helm/reviews/), and a headless launch has
+  // no live channel to answer the permission prompt that crosses - it just
+  // stalled asking "Would you grant permission to write the verdict file?" with
+  // nobody able to answer. The fix is startSession being given a scoped
+  // allowedTools entry for exactly that path.
+  //
+  // window.helm is a contextBridge object and cannot be reassigned/stubbed from
+  // a renderer test (verified: it silently no-ops), so the args-building was
+  // pulled into independentReviewSessionArgs specifically so this can call the
+  // REAL function directly and pin its exact output, with no IPC and no CLI
+  // spawned - not re-deriving what it should send by hand.
+  const dispatchArgs = await app.eval(`(() => {
+    const plan = ${JSON.stringify({ notePath: path.join(reviewsDir, `${TASK}.independent.md`) })};
+    return independentReviewSessionArgs(${JSON.stringify(ROW)}, ${JSON.stringify(ROW.record)}, plan, "claude-opus-5", "high");
+  })()`);
+  ok(
+    Array.isArray(dispatchArgs?.allowedTools) && dispatchArgs.allowedTools.includes(`Write(${path.join(reviewsDir, `${TASK}.independent.md`)})`),
+    `the real dispatch call scopes allowedTools to write exactly its own verdict file, not a broader permission mode (${JSON.stringify(dispatchArgs?.allowedTools)})`
+  );
+  ok(dispatchArgs?.cwd === "D:\\Repo\\Tools\\helm", "rooted in the reviewed project, same as before");
+  ok(dispatchArgs?.prompt?.includes(path.join(reviewsDir, `${TASK}.independent.md`)), "and the brief still tells it to write to that same path");
+
   // --- the verdict, back on the row -----------------------------------------
   const note = await app.eval(`(async () => {
     document.querySelectorAll("#probeRow").forEach((n) => n.remove());
