@@ -78,7 +78,7 @@ const configuredMateSlots = () => {
 };
 import { personaOverlay, personaAgents, PERSONAS } from "./lib/personas.js";
 import { listSlashItems } from "./lib/slashCommands.js";
-import { trackHelmUsage, summarizeHelmUsage } from "./lib/helmUsage.js";
+import { trackHelmUsage, summarizeHelmUsage, summarizeReviewActions } from "./lib/helmUsage.js";
 import { mcpAllowedToolsFromConfig } from "./lib/userMcp.js";
 import { initAutoUpdate } from "./lib/autoUpdate.js";
 import { deriveSecondMates, bindSecondMateSession, renameSecondMate, readBindings, proposeSecondMate, markSecondMateCreated, secondMateIdForSession, secondMateId, removeSecondMates } from "./lib/secondMates.js";
@@ -1345,6 +1345,7 @@ ipcMain.handle("usage:track", (_event, event) => {
   return { ok: true };
 });
 ipcMain.handle("usage:helmSummary", () => summarizeHelmUsage());
+ipcMain.handle("usage:reviewActions", () => summarizeReviewActions());
 
 // --- App version, same scheme as Crewline/Jot: major.minor (hand-bumped in
 // package.json) + a commit count since that bump, so the last number resets
@@ -5559,7 +5560,7 @@ ipcMain.handle("reviews:setStatus", (_event, { taskId, status, note } = {}) => {
   // 76790f23 follow-up: "kollar jag på diffen, send back etc"). Only on a
   // successful write - a rejected status change is not a real review action.
   if (res?.ok && (status === "done" || status === "in-progress")) {
-    trackHelmUsage({ type: "action", action: status === "done" ? "review_stamped" : "review_sent_back", at: Date.now() });
+    trackHelmUsage({ type: "action", action: status === "done" ? "review_stamped" : "review_sent_back", taskId, at: Date.now() });
   }
   return res;
 });
@@ -5701,6 +5702,10 @@ ipcMain.handle("reviews:runChecks", async (_event, { taskId } = {}) => {
   if (checks.length === 0) {
     return { ok: false, error: "This record declares no checks to run." };
   }
+  // Logged once per button click (not per check inside the loop below) - this is
+  // "did Aidin run the checks", joined against a later decision by taskId in
+  // summarizeReviewActions, not a per-check tally.
+  trackHelmUsage({ type: "action", action: "review_checks_run", taskId, at: Date.now() });
   const results = [];
   for (const check of checks) {
     // Where a check RUNS is part of the check. The first cut defaulted to the

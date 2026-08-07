@@ -921,7 +921,9 @@ function renderDiffFiles(body, files) {
 function openDiffViewer(row, res) {
   // Content-free (Helm's own usage log): did the diff actually get looked at, not
   // just claimed reviewed (Aidin, task 76790f23 follow-up: "kollar jag på diffen").
-  window.helm.trackUsage({ type: "action", action: "review_diff_opened" });
+  // taskId is what lets summarizeReviewActions join this against the eventual
+  // decision on the SAME item, not just count diff-opens in the abstract.
+  window.helm.trackUsage({ type: "action", action: "review_diff_opened", taskId: row.taskId });
   const overlay = document.getElementById("docViewer");
   const body = document.getElementById("docvBody");
   const fileList = document.getElementById("docvFileList");
@@ -1108,6 +1110,11 @@ async function openIndependentReview(row) {
         showNotice(`The reviewer did not start: ${res?.error || "unknown error"}`);
         return;
       }
+      // Content-free (Helm's own usage log): which model an independent reviewer
+      // was actually sent on, joined against the eventual decision by taskId
+      // (Aidin, task 76790f23 round 2: "Jag vill även att intependent reviewer
+      // stats ska vara med och vilken model som valdes").
+      window.helm.trackUsage({ type: "action", action: "review_independent_dispatched", taskId: row.taskId, model, effort });
       // A notice, not a toast: it is now running somewhere else, and the row will grow
       // its verdict when it writes one.
       showNotice(
@@ -15617,15 +15624,12 @@ async function renderAnalysisPage() {
   // replaces - a true-looking number about the wrong thing.
   const sessionData = await window.helm.getSessions();
   const projectRoots = [...new Set((sessionData?.sessions || []).map((s) => s.cwd).filter(Boolean))];
-  const [{ global, projects, projectsChecked, plugins }, summary, context, helmUsage, reviewData] = await Promise.all([
+  const [{ global, projects, projectsChecked, plugins }, summary, context, helmUsage, reviewActions] = await Promise.all([
     window.helm.listSkills(projectRoots),
     window.helm.getUsageSummary(),
     window.helm.listContext(cwd),
     window.helm.getHelmUsage(),
-    // maxAgeMs, like the badge and the dashboard widget do (reviews:list is
-    // expensive - one or more git calls per row) - this page doesn't need a
-    // fresher number than the 20s the queue itself already tolerates.
-    window.helm.listReviews({ maxAgeMs: 20000 }),
+    window.helm.getReviewActionSummary(),
   ]);
   if (myToken !== analysisRenderToken) {
     return; // a newer render already owns the page
@@ -15800,102 +15804,61 @@ async function renderAnalysisPage() {
     }
   }
 
-  // How review is actually handled, not just the queue's own header repeated here
-  // (Aidin, task 76790f23: "Visa hur review hanteras - hur ofta testerna körs,
-  // send back, granskning etc"). Reuses reviews:list's own tally (the SAME
-  // computation the Review page's header and subnav badge already show), plus a
-  // check-adoption count derived from the rows it returns - declared vs actually
-  // RUN at least once, which is the closest real signal to "how often the tests
-  // run" that any stored data can answer.
+  // Pure analytics on how Aidin handles review, not the board's current state
+  // (Aidin, task 76790f23, round 2: "Jag vill bara ha analytics datan, inte
+  // nuvarande state" - the first version's tally/criticality bars described
+  // the LIVE queue, which is already the Review page's own job; this block
+  // now only reports what he actually DID, joined against each decision by
+  // taskId so "opened diff 3/5" means what it says: 3 of his 5 decisions were
+  // preceded by actually opening that item's diff, not two unrelated counts
+  // divided by each other. reviews:setStatus/openDiffViewer/reviews:runChecks/
+  // the independent-reviewer dispatch each log one content-free event
+  // (helmUsage.js - the same local log "Your Helm views" already uses);
+  // summarizeReviewActions (main process) does the join.
   //
-  // Round 2 (Aidin: "jag vill mer veta statistik på hur jag hanterar review. Har
-  // jag kört testerna? kollar jag på diffen, send back etc?"): the first version
-  // could only describe the current STATE of the board, not Aidin's own behaviour
-  // over time - Jot keeps a task's current status, not its history, so "how often
-  // do I send things back" had nothing to count. Fixed at the source instead of
-  // guessed at: reviews:setStatus (the review page's own Done/Send-back buttons)
-  // and openDiffViewer now log a content-free action event each time they fire
-  // (helmUsage.js - the same local, no-content log "Your Helm views" already
-  // uses), so this can show real counts starting from when this shipped.
+  // Counts start at zero from whenever each event type shipped - there is no
+  // way to reconstruct an action that was never logged, so a low number here
+  // means "recently added," not "rarely done."
   const reviewBlock = document.createElement("div");
   reviewBlock.className = "analysis-block";
   const reviewH = document.createElement("h3");
-  reviewH.textContent = "Review health";
-  reviewH.title = "The same tally the Review page's own header shows, plus how many items have actually had their declared checks run (not just declared).";
+  reviewH.textContent = "Review analytics";
+  reviewH.title = "What you actually did across your review decisions - opened the diff, ran the checks, sent an independent reviewer - not the board's current state (see the Review page for that).";
   reviewBlock.append(reviewH);
-  const rrows = reviewData?.ok ? reviewData.rows || [] : [];
-  const rtally = reviewData?.tally || null;
-  const tallyRow = (label, count) => {
-    const row = document.createElement("div");
-    row.className = "fit-row";
-    const l = document.createElement("span");
-    l.className = "fit-model-label";
-    l.textContent = label;
-    const v = document.createElement("span");
-    v.className = "fit-pill fit-pill-appropriate";
-    v.textContent = String(count);
-    row.append(l, v);
-    return row;
-  };
-  if (!reviewData?.ok || !rtally || rtally.total === 0) {
+  const ra = reviewActions || { totalDecisions: 0, stamped: 0, sentBack: 0, diffOpenedCount: 0, checksRunCount: 0, independentCount: 0, independentTotal: 0, independentByModel: [] };
+  if (ra.totalDecisions === 0) {
     const empty = document.createElement("div");
     empty.className = "pane-empty";
-    empty.textContent = reviewData?.ok ? "Nothing in review right now." : `Could not load: ${reviewData?.error || "unknown reason"}`;
+    empty.textContent = "No review decisions logged yet - stamp or send back an item from the Review page to start building this up.";
     reviewBlock.append(empty);
   } else {
-    reviewBlock.append(tallyRow("Total in review", rtally.total));
-    reviewBlock.append(tallyRow("Needs your judgment", rtally.judgment));
-    reviewBlock.append(tallyRow("Ready to stamp", rtally.stamp));
-    reviewBlock.append(tallyRow("Claimed but unconfirmed", rtally.unconfirmed));
-    reviewBlock.append(tallyRow("No record at all", rtally.unrecorded));
-    if (rtally.incomplete > 0) {
-      reviewBlock.append(tallyRow("Record exists but is inadmissible", rtally.incomplete));
-    }
+    const fractionRow = (label, n, total) => {
+      const row = document.createElement("div");
+      row.className = "fit-row";
+      const l = document.createElement("span");
+      l.className = "fit-model-label";
+      l.textContent = label;
+      const v = document.createElement("span");
+      v.className = "fit-pill fit-pill-appropriate";
+      v.textContent = `${n}/${total}`;
+      row.append(l, v);
+      return row;
+    };
+    reviewBlock.append(fractionRow("Stamped it done", ra.stamped, ra.totalDecisions));
+    reviewBlock.append(fractionRow("Sent it back with feedback", ra.sentBack, ra.totalDecisions));
+    reviewBlock.append(fractionRow("Opened the diff first", ra.diffOpenedCount, ra.totalDecisions));
+    reviewBlock.append(fractionRow("Ran the checks first", ra.checksRunCount, ra.totalDecisions));
+    reviewBlock.append(fractionRow("Sent an independent reviewer first", ra.independentCount, ra.totalDecisions));
 
-    const declared = rrows.filter((r) => (r.record?.checks || []).length > 0).length;
-    const actuallyRun = rrows.filter((r) => (r.record?.checkRuns || []).length > 0).length;
-    const independent = rrows.filter((r) => !!r.record?.independentReview).length;
-    const checksNote = document.createElement("div");
-    checksNote.className = "suggest-hint";
-    checksNote.textContent =
-      `${declared}/${rtally.total} declare at least one check; ${actuallyRun}/${rtally.total} have actually had one run and confirmed by the app (not just claimed). ` +
-      `${independent}/${rtally.total} got an independent reviewer.`;
-    reviewBlock.append(checksNote);
-
-    const critCounts = { critical: 0, core: 0, cosmetic: 0 };
-    for (const r of rrows) {
-      if (r.criticality && critCounts[r.criticality] !== undefined) {
-        critCounts[r.criticality]++;
+    if (ra.independentByModel.length > 0) {
+      const modelH = document.createElement("h4");
+      modelH.className = "analysis-subhead";
+      modelH.textContent = `Independent reviewer, by model chosen (${ra.independentTotal} dispatched)`;
+      reviewBlock.append(modelH);
+      const modelMax = ra.independentByModel[0].count;
+      for (const m of ra.independentByModel) {
+        reviewBlock.append(barRow(m.label, m.count, modelMax));
       }
-    }
-    const critMax = Math.max(critCounts.critical, critCounts.core, critCounts.cosmetic, 1);
-    reviewBlock.append(barRow("critical", critCounts.critical, critMax));
-    reviewBlock.append(barRow("core", critCounts.core, critMax));
-    reviewBlock.append(barRow("cosmetic", critCounts.cosmetic, critMax));
-  }
-
-  // What Aidin actually DID, all-time, not just the board's current state above -
-  // the exact three things he asked for by name. Counts start from zero the day
-  // this shipped (there is no way to reconstruct past actions that were never
-  // logged), so a small number here means "recently added," not "rarely done."
-  const actionCounts = Object.fromEntries((helmUsage.actions || []).map((a) => [a.action, a.count]));
-  const diffOpened = actionCounts.review_diff_opened || 0;
-  const stamped = actionCounts.review_stamped || 0;
-  const sentBack = actionCounts.review_sent_back || 0;
-  if (diffOpened + stamped + sentBack > 0) {
-    const actionsH = document.createElement("h4");
-    actionsH.className = "analysis-subhead";
-    actionsH.textContent = "Your review actions (all-time)";
-    reviewBlock.append(actionsH);
-    reviewBlock.append(tallyRow("Opened a diff", diffOpened));
-    reviewBlock.append(tallyRow("Sent back with feedback", sentBack));
-    reviewBlock.append(tallyRow("Stamped done", stamped));
-    if (stamped + sentBack > 0) {
-      const rate = Math.round((stamped / (stamped + sentBack)) * 100);
-      const behaviourNote = document.createElement("div");
-      behaviourNote.className = "suggest-hint";
-      behaviourNote.textContent = `${rate}% of your review decisions stamped it through; the rest went back with feedback.`;
-      reviewBlock.append(behaviourNote);
     }
   }
 

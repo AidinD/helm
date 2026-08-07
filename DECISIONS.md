@@ -6176,3 +6176,17 @@ Verified through the real `openDiffViewer`, not the parser alone (the column liv
 **Consequence, stated on the card too:** counts start at zero the day this shipped. There is no way to reconstruct actions that were never logged, so a small number here means "recently added," not "rarely done" - that distinction matters enough to put directly in the widget's surrounding comment, not just this entry.
 
 New `test-review-action-tracking.mjs` drives the real `setReviewStatus`/`openDiffViewer` calls against a real temp Jot board and asserts the exact counts logged, that a failed status change doesn't inflate them, and that the Analysis page's new "Your review actions" sub-section shows them. Fast suite 66/66.
+
+## 2026-08-07 - Review analytics: a real join by taskId, not two counts divided by each other
+
+76790f23 bounced back a second time, sharpening round 1: "Jag vill bara ha analytics datan, inte nuvarande state. Jag vill också se av totalen, t.ex öppnade diff 3/5. Jag vill även att intependent reviewer stats ska vara med och vilken model som valdes."
+
+**The board-state half of the widget is gone.** Total in review, needs-judgment, ready-to-stamp, unconfirmed, criticality bars - all removed. That was always the Review page's own job (same `reviewQueueTally`); Aidin's ask was specifically for what HE does, not the board's current shape, so keeping both in one block was answering a question he didn't ask alongside the one he did.
+
+**"3/5" has to mean the actual 3 of the actual 5, not two unrelated counts.** A flat `diffOpened=3` and `totalDecisions=5` sitting next to each other would let "3/5" imply something the data never claimed - that those were the SAME three decisions. `summarizeReviewActions` (helmUsage.js) now joins by `taskId`: every event (`review_diff_opened`, `review_checks_run`, `review_independent_dispatched`, `review_stamped`, `review_sent_back`) carries the task id, and a decision counts as "preceded by X" only when an X-event for the SAME taskId has a timestamp at or before the decision's own. An action logged AFTER its task's decision (tested explicitly) does not retroactively count.
+
+**Two more sources wired in for this round.** `reviews:runChecks` (the "Run checks" button) now logs `review_checks_run`; the independent-reviewer dispatch confirm (in `openIndependentReview`) logs `review_independent_dispatched` with the model and effort actually chosen - both through the same `helmUsage.js` log as everything else, no new storage.
+
+**Model breakdown is over ALL dispatches, not just decided-on ones** - which model gets picked is a fact about the dispatch itself, independent of what happens to the item later.
+
+`test-review-action-tracking.mjs` rewritten to drive two tasks - one with every action taken before its decision, one with none - and assert the exact join result, including the after-the-fact-doesn't-count case and that the old tally/criticality text is gone from the rendered block. Fast suite 66/66.
