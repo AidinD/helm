@@ -30,17 +30,28 @@ function assert(cond, msg) {
   }
 }
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-async function renderDash() {
-  await app.eval(`(async () => { await fillDashboardSections({ force: true }); return true; })()`);
-  await app.eval(`(async () => { await fillDashboardSections({ force: true }); return true; })()`);
-  await wait(250);
+// Render the surviving first-mate card into a probe (mirrors
+// test-direct-report-rollup). The classic Fleet section (#dashFleetSlot) went
+// with the section stack (task 337895ce); the roll-up now lives on the mate's
+// card, rendered by the First-mate widget. Rebuilt after each acknowledge, since
+// Done refreshes the REAL dashboard, not this probe.
+async function renderMateCard() {
+  await app.eval(`(() => {
+    document.querySelectorAll("#mateCardProbe").forEach((n) => n.remove());
+    const host = document.createElement("div");
+    host.id = "mateCardProbe";
+    document.body.append(host);
+    host.append(fleetMateCardEl(window.__mate, [], {}));
+    return true;
+  })()`);
+  await wait(150);
 }
 // The roll-up's row text for the mate we dispatched from. Find it by
 // textContent (which includes collapsed/hidden rows, unlike innerText), open
 // it, then read the rows.
 const rollupText = () =>
   app.eval(`(() => {
-    const el = [...document.querySelectorAll("#dashFleetSlot .fleet-report-rollup")].find((r) => /DONE_/.test(r.textContent));
+    const el = [...document.querySelectorAll("#mateCardProbe .fleet-report-rollup")].find((r) => /DONE_/.test(r.textContent));
     if (el) { el.classList.add("open"); }
     return el ? (el.querySelector(".fleet-report-rows")?.textContent || "") : "";
   })()`);
@@ -49,7 +60,7 @@ try {
   await app.waitForSelector("#pageToggle", 30000, { visible: true });
   await wait(900);
 
-  const mateId = await app.eval(`(async () => { const m = await window.helm.listMates(); return m.active[0].mateId; })()`);
+  const mateId = await app.eval(`(async () => { const m = await window.helm.listMates(); window.__mate = m.active[0]; return window.__mate.mateId; })()`);
   assert(!!mateId, "resolved a real first-mate id to dispatch from");
 
   await app.eval(`(async () => {
@@ -57,10 +68,9 @@ try {
     goalRuns.clear();
     goalRuns.set("noWt", { goalRunId:"noWt", ordinal:++goalRunSeq, goal:"DONE_no_worktree_run", projectPath:"P", dispatchedBy:${JSON.stringify(mateId)}, status:"done", result:{ commitCount:0, stoppedReason:"converged" }, iterations:[], error:null, escalation:null });
     goalRuns.set("wt", { goalRunId:"wt", ordinal:++goalRunSeq, goal:"DONE_with_worktree_run", projectPath:"P", dispatchedBy:${JSON.stringify(mateId)}, status:"done", result:{ commitCount:2, branchName:"helm/goal-wt", worktreePath:"D:/nope/helm-worktrees/wt" }, iterations:[], error:null, escalation:null });
-    navigateToPage("dashboard");
     return true;
   })()`);
-  await renderDash();
+  await renderMateCard();
 
   let text = await rollupText();
   assert(/DONE_no_worktree_run/.test(text) && /DONE_with_worktree_run/.test(text), "both runs appear in the mate roll-up initially");
@@ -68,7 +78,7 @@ try {
   // Helper: click the Done button on a roll-up row matching a goal substring.
   const clickDone = (needle) =>
     app.eval(`(() => {
-      const el = [...document.querySelectorAll("#dashFleetSlot .fleet-report-rollup")].find((r) => /DONE_/.test(r.textContent));
+      const el = [...document.querySelectorAll("#mateCardProbe .fleet-report-rollup")].find((r) => /DONE_/.test(r.textContent));
       el && el.classList.add("open");
       const rows = [...(el?.querySelectorAll(".fleet-report-rows .dash-queue-row") || [])];
       const row = rows.find((r) => new RegExp(${JSON.stringify(needle)}).test(r.textContent));
@@ -82,6 +92,7 @@ try {
   const clickedNoWt = await clickDone("DONE_no_worktree_run");
   assert(clickedNoWt, "found and clicked Done on the no-worktree run in the roll-up");
   await wait(400);
+  await renderMateCard(); // rebuild so the roll-up reflects the acknowledge
   text = await rollupText();
   assert(!/DONE_no_worktree_run/.test(text), "the no-worktree run leaves the roll-up after Done");
   assert(/DONE_with_worktree_run/.test(text), "the other run is still in the roll-up");

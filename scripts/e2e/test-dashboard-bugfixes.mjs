@@ -26,14 +26,6 @@ function assert(cond, msg) {
 }
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// The first fillDashboardSections call only renders the page skeleton if the
-// slots are missing (then returns without filling), so drive it twice.
-async function renderDash() {
-  await app.eval(`(async () => { await fillDashboardSections({ force: true }); return true; })()`);
-  await app.eval(`(async () => { await fillDashboardSections({ force: true }); return true; })()`);
-  await wait(250);
-}
-
 try {
   await app.waitForSelector("#pageToggle", 30000, { visible: true });
   await wait(900);
@@ -65,29 +57,42 @@ try {
   assert(stillFocused, "the composer stays focused after the async transcript load resolves");
 
   // --- Fix 3: 2nd-mate archive-with-handoff busy key matches the node --------
-  await app.eval(`(() => {
-    state.sessions = [{ sessionId: "local_spin", cliSessionId: "cli_spin", cwd: "D:/Repo/Tools/helm", title: "SpinnerProbeSession", status: "idle", lastActivityAt: 2 }];
-    handoffBusyIds.clear();
-    navigateToPage("dashboard");
-    return true;
-  })()`);
-  await renderDash();
+  // The classic Fleet section (#dashFleetSlot) went with the section stack (task
+  // 337895ce). The Direct/second-mate node it rendered survives on the Captain
+  // widget's card (fleetDirectCardEl); render that into a probe (mirrors
+  // test-direct-report-rollup). The node's own id is cliSessionId || sessionId -
+  // exactly the key archiveWithHandoff now uses (busyKey = cliSessionId) - so this
+  // still guards the old key-mismatch bug: the raw sessionId must NOT light it.
+  const renderNode = () =>
+    app.eval(`(() => {
+      document.querySelectorAll("#spinProbe").forEach((n) => n.remove());
+      const host = document.createElement("div");
+      host.id = "spinProbe";
+      document.body.append(host);
+      const directSms = [
+        { secondMateId: "sd_spin", firstMateId: "direct", name: "SpinnerProbeSession", sessionId: "cli_spin", isSessionNode: true, crew: [] },
+      ];
+      host.append(fleetDirectCardEl(directSms));
+      return true;
+    })()`);
 
-  const nodeText = await app.eval(`[...document.querySelectorAll("#dashFleetSlot .fleet-branch.secondmate")].map((b) => b.textContent).join(" || ")`);
-  assert(/SpinnerProbeSession/.test(nodeText), "the seeded session renders as a Direct second-mate node on the dashboard");
+  await app.eval(`handoffBusyIds.clear(); true`);
+  await renderNode();
+  const nodeText = await app.eval(`[...document.querySelectorAll("#spinProbe .fleet-branch.secondmate")].map((b) => b.textContent).join(" || ")`);
+  assert(/SpinnerProbeSession/.test(nodeText), "the seeded session renders as a Direct second-mate node");
 
   // The OLD, buggy key (raw sessionId) must NOT light the spinner.
   await app.eval(`(() => { handoffBusyIds.clear(); handoffBusyIds.add("local_spin"); return true; })()`);
-  await renderDash();
-  const litWrongKey = await app.eval(`[...document.querySelectorAll("#dashFleetSlot .fleet-branch.card-handoff-busy")].some((b) => (b.textContent || "").includes("SpinnerProbeSession"))`);
+  await renderNode();
+  const litWrongKey = await app.eval(`[...document.querySelectorAll("#spinProbe .fleet-branch.card-handoff-busy")].some((b) => (b.textContent || "").includes("SpinnerProbeSession"))`);
   assert(!litWrongKey, "the raw sessionId key does NOT light the on-card spinner (regression guard for the old bug)");
 
   // The CORRECT key (cliSessionId || sessionId, what archiveWithHandoff now uses) lights it.
   await app.eval(`(() => { handoffBusyIds.clear(); handoffBusyIds.add("cli_spin"); return true; })()`);
-  await renderDash();
-  const litRightKey = await app.eval(`[...document.querySelectorAll("#dashFleetSlot .fleet-branch.card-handoff-busy")].some((b) => (b.textContent || "").includes("SpinnerProbeSession"))`);
+  await renderNode();
+  const litRightKey = await app.eval(`[...document.querySelectorAll("#spinProbe .fleet-branch.card-handoff-busy")].some((b) => (b.textContent || "").includes("SpinnerProbeSession"))`);
   assert(litRightKey, "the cliSessionId key lights the on-card spinner (the fix)");
-  const badgeText = await app.eval(`[...document.querySelectorAll("#dashFleetSlot .fleet-branch.card-handoff-busy .card-handoff-badge")].map((b) => b.textContent).join("")`);
+  const badgeText = await app.eval(`[...document.querySelectorAll("#spinProbe .fleet-branch.card-handoff-busy .card-handoff-badge")].map((b) => b.textContent).join("")`);
   assert(/Saving handoff/.test(badgeText), "the lit card shows the 'Saving handoff…' spinner badge");
 
   const errors = app.getConsoleErrors();

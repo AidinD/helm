@@ -32,14 +32,22 @@ try {
     return true;
   })()`);
 
-  // Dashboard queue shows the two attention runs as needs-you rows.
-  await app.eval(`(() => { navigateToPage("dashboard"); return true; })()`);
-  await app.waitForSelector("#dashboardPage .dash-queue-row", 8000);
-  // Scope the "needs-you queue" assertions to the queue slot itself. The clean
-  // done run legitimately appears elsewhere on the Dashboard now (the Report-back
-  // section - see test-report-back.mjs), so checking against the whole page would
-  // conflate the two. The point of THIS test is the queue slot's contents.
-  const queueText = await app.eval(`document.querySelector("#dashQueueSlot").innerText`);
+  // The needs-you queue survives as the Needs-you widget's body (widgetBodyNeedsYou
+  // -> dashboardQueueSection). The classic #dashQueueSlot went with the section
+  // stack (task 337895ce), so render the SAME content function into a probe and
+  // scope the queue assertions to it - the clean done run legitimately appears
+  // elsewhere on the Dashboard now (a captain report roll-up), so a whole-page
+  // check would conflate the two. This mirrors test-direct-report-rollup's probe.
+  await app.eval(`(() => {
+    document.querySelectorAll("#queueProbe").forEach((n) => n.remove());
+    const host = document.createElement("div");
+    host.id = "queueProbe";
+    document.body.append(host);
+    host.append(dashboardQueueSection());
+    return true;
+  })()`);
+  await app.waitForSelector("#queueProbe .dash-queue-row", 8000);
+  const queueText = await app.eval(`document.querySelector("#queueProbe").innerText`);
   // Wording, not rule: the row says "Autopilot run" (the page it points at is called
   // Autopilot) with a plain hyphen, not "Goal run —". What is being tested is that a
   // failed run and an escalated one are both IN the needs-you queue.
@@ -49,7 +57,7 @@ try {
 
   // Clicking a goal-run row navigates to the Goal facet.
   const clicked = await app.eval(`(() => {
-    const rows = [...document.querySelectorAll('#dashboardPage .dash-queue-row')];
+    const rows = [...document.querySelectorAll('#queueProbe .dash-queue-row')];
     const r = rows.find((x) => /failed/.test(x.textContent));
     if (r) { r.click(); return true; }
     return false;
