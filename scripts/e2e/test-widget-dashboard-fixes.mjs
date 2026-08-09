@@ -214,18 +214,19 @@ try {
     ok(captain.rendered > 0, `and the Captain widget renders something (${captain.rendered} chars)`);
   }
 
-  // Both dashboards must derive it the SAME way - two derivations is how they
-  // drifted apart in the first place.
+  // The dashboard derives the fleet through the shared builder - not its own
+  // second derivation, which is how the two dashboards drifted apart before the
+  // classic one was removed (task 337895ce). Only the widget dashboard remains,
+  // so this now guards that IT uses the builder and nothing re-derives on its own.
   const single = await app.eval(`(() => {
     const src = renderWidgetDashboard.toString() + fillDashboardSections.toString();
     return {
       widgetUsesBuilder: /buildFleetModel\\(/.test(renderWidgetDashboard.toString()),
-      classicUsesBuilder: /buildFleetModel\\(/.test(fillDashboardSections.toString()),
       strayAugment: (src.match(/augmentSecondMatesWithSessions\\(/g) || []).length,
     };
   })()`);
-  ok(single.widgetUsesBuilder && single.classicUsesBuilder, `both dashboards go through the shared builder (${J(single)})`);
-  ok(single.strayAugment === 0, "and neither re-derives the fleet on its own");
+  ok(single.widgetUsesBuilder, `the (only) dashboard goes through the shared fleet builder (${J(single)})`);
+  ok(single.strayAugment === 0, "and nothing re-derives the fleet on its own");
 
   // --- 4. THE WIDGET DASHBOARD HAS TO STAY LIVE ----------------------------
   // Aidin, 2026-08-02, watching the auto-captain's first real run: the card moved
