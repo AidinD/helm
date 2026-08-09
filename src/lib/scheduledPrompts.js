@@ -97,13 +97,65 @@ export function acknowledgeScheduledPrompt(id, { now = Date.now() } = {}) {
 }
 
 /**
- * Resolve the fireAt for a "when the quota window resets" schedule from the
- * persisted quota readings. Returns null when no window has a usable future
- * reset, so the caller can fall back to a plain delay rather than guessing.
+ * How long each named rate-limit window lasts, so an elapsed reading of a
+ * RECURRING window can be rolled forward to its next boundary. The CLI only
+ * ever tells us when the LAST observed window ended; the windows themselves
+ * repeat (a five-hour window that ended at T ends again at T+5h, T+10h, ...).
  *
- * quotaWindows is main.js's accumulator shape: [{ info: { resetsAt, ... }, at }]
- * where resetsAt is unix SECONDS. Picks the SOONEST future reset - that is the
- * first moment work can plausibly continue.
+ * Keyed by the `rateLimitType` the CLI reports (e.g. "five_hour", "seven_day",
+ * "seven_day_opus"). We parse "<count>_<unit>[_<model>]" so an unseen variant
+ * (a per-model weekly window, say) still resolves without a code change.
+ */
+const PERIOD_WORD_COUNTS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, ten: 10 };
+const PERIOD_UNIT_MS = {
+  minute: 60_000,
+  hour: 60 * 60_000,
+  day: 24 * 60 * 60_000,
+  week: 7 * 24 * 60 * 60_000,
+};
+
+export function windowPeriodMs(rateLimitType) {
+  if (!rateLimitType || typeof rateLimitType !== "string") {
+    return null;
+  }
+  const tokens = rateLimitType.toLowerCase().split(/[_-]/);
+  let count = null;
+  let unitMs = null;
+  for (const tok of tokens) {
+    if (count === null && PERIOD_WORD_COUNTS[tok] !== undefined) {
+      count = PERIOD_WORD_COUNTS[tok];
+    } else if (count === null && /^\d+$/.test(tok)) {
+      count = parseInt(tok, 10);
+    }
+    // units may be plural in some variants ("hours"); match on the singular stem
+    const stem = tok.replace(/s$/, "");
+    if (unitMs === null && PERIOD_UNIT_MS[stem] !== undefined) {
+      unitMs = PERIOD_UNIT_MS[stem];
+    }
+  }
+  if (count === null || count <= 0 || unitMs === null) {
+    return null;
+  }
+  return count * unitMs;
+}
+
+/**
+ * Resolve the fireAt for a "when the quota window resets" schedule from the
+ * persisted quota readings. Returns null when no window has a usable reset, so
+ * the caller can fall back to a plain delay rather than guessing.
+ *
+ * quotaWindows is main.js's accumulator shape: [{ info: { resetsAt, rateLimitType }, at }]
+ * where resetsAt is unix SECONDS. Picks the SOONEST upcoming reset across all
+ * windows - that is the first moment work can plausibly continue.
+ *
+ * The windows recur, so an ELAPSED reading is not dead: for a window whose
+ * period we know (see windowPeriodMs), we roll its last-known end forward to the
+ * next boundary. Without that, a stale short window (a five-hour one whose stored
+ * end has passed) was silently dropped and the schedule fell through to whatever
+ * window still had a future stamp - typically the seven-day one, landing the
+ * prompt DAYS out instead of at the next few-hour reset (Aidin, task 5143316e:
+ * "schedule on token reset ger helt fel tid"). A window whose period we cannot
+ * parse still yields nothing when elapsed, rather than a guess.
  */
 export function quotaResetFireAt(quotaWindows, now = Date.now(), graceMs = 60_000) {
   let soonest = null;
@@ -112,9 +164,20 @@ export function quotaResetFireAt(quotaWindows, now = Date.now(), graceMs = 60_00
     if (typeof secs !== "number" || secs <= 0) {
       continue;
     }
-    const ms = secs * 1000;
+    let ms = secs * 1000;
     if (ms <= now) {
-      continue; // already elapsed - that window tells us nothing about the future
+      // Elapsed reading: roll a recurring window forward to its next boundary.
+      // A window whose period we can't determine tells us nothing about the
+      // future, so it is skipped (the pre-fix behaviour, kept for that case).
+      const period = windowPeriodMs(w?.info?.rateLimitType);
+      if (!period) {
+        continue;
+      }
+      const missed = Math.ceil((now - ms) / period);
+      ms += missed * period;
+      if (ms <= now) {
+        ms += period; // landed exactly on 'now' - take the next boundary
+      }
     }
     if (soonest === null || ms < soonest) {
       soonest = ms;

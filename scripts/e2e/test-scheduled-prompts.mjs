@@ -36,9 +36,30 @@ try {
   ];
   const fireAt = s.quotaResetFireAt(windows, T0);
   ok(fireAt === T0 + 30 * MIN + 60_000, `picks the SOONEST future reset + a grace minute (got ${fireAt !== null ? (fireAt - T0) / MIN + "m" : "null"})`);
-  ok(s.quotaResetFireAt([{ info: { resetsAt: Math.floor((T0 - 5 * MIN) / 1000) }, at: T0 }], T0) === null, "an already-elapsed window yields null (don't guess a future from a dead reading)");
+  ok(s.quotaResetFireAt([{ info: { resetsAt: Math.floor((T0 - 5 * MIN) / 1000) }, at: T0 }], T0) === null, "an elapsed window with NO known period yields null (don't guess a future from a dead reading)");
   ok(s.quotaResetFireAt([], T0) === null, "no windows -> null");
   ok(s.quotaResetFireAt(null, T0) === null, "null windows -> null, no throw");
+
+  // THE BUG (task 5143316e "ger helt fel tid"): the recurring five-hour window's
+  // last-known end has PASSED, and only the seven-day window still has a future
+  // stamp. The old code dropped the stale short window and scheduled the prompt at
+  // the seven-day reset - days out. It must instead roll the five-hour window
+  // forward to its NEXT boundary (~within 5h) and pick that.
+  ok(s.windowPeriodMs("five_hour") === 5 * 60 * MIN, "windowPeriodMs parses five_hour");
+  ok(s.windowPeriodMs("seven_day") === 7 * 24 * 60 * MIN, "windowPeriodMs parses seven_day");
+  ok(s.windowPeriodMs("seven_day_opus") === 7 * 24 * 60 * MIN, "windowPeriodMs parses a per-model weekly variant");
+  ok(s.windowPeriodMs("mystery_window") === null, "an unparseable type has no period (so it stays skipped when elapsed)");
+  const staleShort = [
+    // five-hour ended 90m ago -> next boundary is in (5h - 90m) = 3h30m
+    { info: { rateLimitType: "five_hour", resetsAt: Math.floor((T0 - 90 * MIN) / 1000) }, at: T0 },
+    // seven-day resets 80h out - the wrong answer the old code gave
+    { info: { rateLimitType: "seven_day", resetsAt: Math.floor((T0 + 80 * 60 * MIN) / 1000) }, at: T0 },
+  ];
+  const rolled = s.quotaResetFireAt(staleShort, T0);
+  ok(
+    rolled === T0 + 210 * MIN + 60_000,
+    `rolls a stale five-hour window to its next boundary (~3h30m) instead of jumping to the 80h weekly reset (got ${rolled !== null ? Math.round((rolled - T0) / MIN) + "m" : "null"})`
+  );
 
   // --- add / validation ---
   let threw = 0;
