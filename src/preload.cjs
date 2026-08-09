@@ -28,6 +28,13 @@ contextBridge.exposeInMainWorld("helm", {
   trackUsage: (event) => ipcRenderer.invoke("usage:track", event),
   getHelmUsage: () => ipcRenderer.invoke("usage:helmSummary"),
   getReviewActionSummary: () => ipcRenderer.invoke("usage:reviewActions"),
+  getAuthStatus: () => ipcRenderer.invoke("auth:status"),
+  startAuthLogin: () => ipcRenderer.invoke("auth:login"),
+  onAuthLoginOutput: (cb) => {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on("auth:loginOutput", handler);
+    return () => ipcRenderer.removeListener("auth:loginOutput", handler);
+  },
   openSkill: (opts) => ipcRenderer.invoke("skills:open", opts),
   readSkill: (opts) => ipcRenderer.invoke("skills:read", opts),
   openGlobalClaudeMd: () => ipcRenderer.invoke("claudeMd:openGlobal"),

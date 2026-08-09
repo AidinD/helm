@@ -3918,33 +3918,51 @@ function toggleContextPopover(anchor, pane) {
 // <select> — Chromium's native select popup rendered white-on-white in this
 // Electron build despite color-scheme:dark set three different ways, so this
 // sidesteps it entirely by never using a native popup at all.
+/**
+ * A pill that opens a value picker.
+ *
+ * `options` is a flat list of `{ value, label }`, OR - to keep a long list from
+ * cluttering (Aidin, task cf96055c: "helst i en submeny för att inte plottra") -
+ * an entry may instead be `{ label, submenu: [{ value, label }, ...] }`, which
+ * renders as a nested menu (the context menu already supports `submenu`). The
+ * label shown ON the pill is looked up across BOTH levels, so a value chosen
+ * from a submenu still names itself on the pill rather than falling back to the
+ * raw id.
+ */
 function dropdownPill(initialValue, options, onSelect) {
   const btn = document.createElement("button");
   btn.className = "meta-pill";
   btn.dataset.hasMenu = "1";
   btn.type = "button";
 
+  // Every leaf option, top-level and nested, so the pill's own label lookup sees
+  // a value no matter which level it was picked from.
+  const leaves = options.flatMap((o) => (o.submenu ? o.submenu : [o])).filter((o) => o.value !== undefined);
+
   const setValue = (value) => {
     btn.dataset.value = value;
-    const opt = options.find((o) => o.value === value);
+    const opt = leaves.find((o) => o.value === value);
     btn.textContent = opt ? opt.label : value;
   };
   setValue(initialValue);
 
+  const toMenuItem = (o) => {
+    if (o.submenu) {
+      return { label: o.label, submenu: o.submenu.map(toMenuItem) };
+    }
+    return {
+      label: o.label,
+      onClick: () => {
+        setValue(o.value);
+        onSelect(o.value);
+      },
+    };
+  };
+
   btn.addEventListener("click", (e) => {
     e.stopPropagation();
     const rect = btn.getBoundingClientRect();
-    showContextMenu(
-      rect.left,
-      rect.bottom + 4,
-      options.map((o) => ({
-        label: o.label,
-        onClick: () => {
-          setValue(o.value);
-          onSelect(o.value);
-        },
-      }))
-    );
+    showContextMenu(rect.left, rect.bottom + 4, options.map(toMenuItem));
   });
 
   return { el: btn, setValue, get value() { return btn.dataset.value; } };
@@ -6750,6 +6768,39 @@ function autoSizeComposer(promptEl) {
   promptEl.dataset.autoHeight = String(next);
 }
 
+// The model picker's options, shared by every model pill (composer, routines,
+// goal). Current-generation models sit at the top level; older ones go behind a
+// "More models" submenu so the common list stays short (Aidin, task cf96055c:
+// "Kunna välja tidigare modeller ... helst i en submeny för att inte plottra"),
+// mirroring the desktop app's own model menu. Every id here is one the installed
+// `claude` CLI actually resolves - verified against the ids bundled in claude.exe,
+// not guessed, so a pick can never become a control that errors on an unknown
+// model. Opus 4.8 is kept at the TOP level, not buried in the submenu: it is the
+// one older model in active use here (the second-mate default, and Aidin's own
+// preference over Opus 5 for work whose prompts were written for it).
+const MODEL_MENU_OPTIONS = [
+  { value: "claude-sonnet-5", label: "Sonnet 5" },
+  { value: "claude-opus-5", label: "Opus 5" },
+  { value: "claude-opus-4-8", label: "Opus 4.8" },
+  { value: "claude-haiku-4-5-20251001", label: "Haiku 4.5" },
+  {
+    label: "More models",
+    submenu: [
+      { value: "claude-opus-4-7", label: "Opus 4.7" },
+      { value: "claude-opus-4-6", label: "Opus 4.6" },
+      { value: "claude-opus-4-5", label: "Opus 4.5" },
+      { value: "claude-sonnet-4-6", label: "Sonnet 4.6" },
+      { value: "claude-sonnet-4-5", label: "Sonnet 4.5" },
+      { value: "claude-fable-5", label: "Fable 5" },
+    ],
+  },
+];
+
+/** The same menu with an "Auto" entry on top, for pickers that support letting Helm choose. */
+function modelMenuWithAuto() {
+  return [{ value: "auto", label: "Auto" }, ...MODEL_MENU_OPTIONS];
+}
+
 function paneComposerEl(index) {
   const pane = panes[index];
   const wrap = document.createElement("div");
@@ -7271,16 +7322,7 @@ function paneComposerEl(index) {
   // modelDefault (e.g. a first-mate/orchestrator session defaults to Sonnet -
   // the delegate/summarize tier per model-per-tier), still fully overridable
   // here; everything else defaults to "auto".
-  const modelDD = dropdownPill(
-    pane.modelDefault || "auto",
-    [
-      { value: "auto", label: "Auto" },
-      { value: "claude-sonnet-5", label: "Sonnet 5" },
-      { value: "claude-opus-4-8", label: "Opus 4.8" },
-      { value: "claude-haiku-4-5-20251001", label: "Haiku 4.5" },
-    ],
-    () => {}
-  );
+  const modelDD = dropdownPill(pane.modelDefault || "auto", modelMenuWithAuto(), () => {});
   const effortDD = dropdownPill(
     "auto",
     [
@@ -13145,16 +13187,7 @@ function renderGoalPage() {
   modelEffortLabel.textContent = "Model / effort (optional)";
   const modelEffortRow = document.createElement("div");
   modelEffortRow.className = "goal-cwd-row goal-model-row";
-  const modelDD = dropdownPill(
-    "auto",
-    [
-      { value: "auto", label: "Auto" },
-      { value: "claude-sonnet-5", label: "Sonnet 5" },
-      { value: "claude-opus-4-8", label: "Opus 4.8" },
-      { value: "claude-haiku-4-5-20251001", label: "Haiku 4.5" },
-    ],
-    () => {}
-  );
+  const modelDD = dropdownPill("auto", modelMenuWithAuto(), () => {});
   const effortDD = dropdownPill(
     "auto",
     [
@@ -14796,7 +14829,7 @@ function routineRowEl(routine) {
   // reads as "Default model" rather than looking like nothing was chosen.
   const modelChip = document.createElement("span");
   modelChip.className = "dash-goal-tag routine-model-tag";
-  const mopt = ROUTINE_MODEL_OPTIONS.find((o) => o.value === (routine.model || ""));
+  const mopt = flattenModelOptions(ROUTINE_MODEL_OPTIONS).find((o) => o.value === (routine.model || ""));
   modelChip.textContent = routine.model ? (mopt ? mopt.label : routine.model) : "Default model";
   top.append(title, tag, modelChip);
   qbody.append(top);
@@ -14857,13 +14890,13 @@ function routineRowEl(routine) {
 // Add/edit form for a routine. `routine` null -> create; else edit in place.
 // Model / effort choices for a routine. "" = Default, i.e. Helm passes no
 // --model/--effort and the Claude CLI uses whatever it's configured to (f76ebb76
-// "vad är default?"). The concrete ids match the fleet/suggest list elsewhere.
-const ROUTINE_MODEL_OPTIONS = [
-  { value: "", label: "Default (CLI model)" },
-  { value: "claude-sonnet-5", label: "Sonnet 5" },
-  { value: "claude-opus-4-8", label: "Opus 4.8" },
-  { value: "claude-haiku-4-5-20251001", label: "Haiku 4.5" },
-];
+// "vad är default?"). Reuses the shared model menu (submenu and all) so a routine
+// can pick the same set of models as the composer, with "Default" on top.
+const ROUTINE_MODEL_OPTIONS = [{ value: "", label: "Default (CLI model)" }, ...MODEL_MENU_OPTIONS];
+/** Flatten a possibly-submenu'd option list to its leaves, for a label lookup. */
+function flattenModelOptions(options) {
+  return options.flatMap((o) => (o.submenu ? o.submenu : [o]));
+}
 const ROUTINE_EFFORT_OPTIONS = [
   { value: "", label: "Default" },
   { value: "low", label: "Low" },
@@ -15331,6 +15364,122 @@ function archiveRowEl(session, actionLabel, onAction) {
   return row;
 }
 
+// Runs the CLI's real browser sign-in via main, shared by the Settings button
+// and the shortcut that appears on an auth failure in chat (task 3218cdd4). One
+// implementation so both surfaces behave identically. `onResolved` lets a caller
+// refresh whatever status readout it owns once the flow ends.
+let signInInFlight = false;
+async function runSignInFlow(onResolved) {
+  if (signInInFlight) {
+    showNotice("A sign-in is already in progress - finish it in the browser window that opened.");
+    return;
+  }
+  signInInFlight = true;
+  // Capture the OAuth URL as the CLI prints it, so a browser that didn't open on
+  // its own still leaves the user a way in.
+  let capturedUrl = null;
+  const unsubscribe = window.helm.onAuthLoginOutput((payload) => {
+    if (payload?.url && !capturedUrl) {
+      capturedUrl = payload.url;
+      showNotice("Sign-in opened in your browser. If it didn't open, use the link.", {
+        tone: "info",
+        actions: [{ label: "Copy sign-in link", onClick: () => window.helm.copyToClipboard(capturedUrl).then(() => showToast("Copied the sign-in link.")) }],
+      });
+    }
+  });
+  showNotice("Opening Claude sign-in in your browser…", { tone: "info" });
+  try {
+    const res = await window.helm.startAuthLogin();
+    if (res?.ok) {
+      const who = res.status?.email ? ` as ${res.status.email}` : "";
+      showToast(`Signed in${who}. New sessions will authenticate again.`);
+    } else {
+      showNotice(`Sign-in did not complete: ${res?.error || "unknown reason"}`, { tone: "warn" });
+    }
+    onResolved?.(res);
+  } catch (err) {
+    showNotice(`Sign-in failed: ${err?.message || String(err)}`, { tone: "warn" });
+    onResolved?.({ ok: false, error: String(err) });
+  } finally {
+    unsubscribe?.();
+    signInInFlight = false;
+  }
+}
+
+// A session that failed because the CLI's login expired is the ONE error a
+// captain can fix in one click, so it gets a shortcut rather than just a red
+// turn they have to decode (task 3218cdd4). Matches the CLI's own wording
+// ("Failed to authenticate", "OAuth session expired") loosely enough to catch
+// the variants without firing on unrelated errors that merely contain "auth".
+function maybeSurfaceAuthError(message) {
+  const text = String(message || "");
+  if (!/\b(oauth|authenticat)/i.test(text) || !/expired|refresh|failed to authenticate|log ?in|sign ?in|unauthor/i.test(text)) {
+    return;
+  }
+  showNotice("A session failed to authenticate - the Claude sign-in has expired. Sign in once and every session works again.", {
+    tone: "warn",
+    actions: [{ label: "Sign in", onClick: () => runSignInFlow() }],
+  });
+}
+
+/** A human sentence for an auth status object from `claude auth status --json`. */
+function authStatusLine(status) {
+  if (!status || status.ok === false) {
+    return `Couldn't read sign-in status${status?.error ? `: ${status.error}` : ""}.`;
+  }
+  if (!status.loggedIn) {
+    return "Signed out - sessions will fail to authenticate until you sign in.";
+  }
+  const parts = [];
+  if (status.email) {
+    parts.push(status.email);
+  }
+  if (status.orgName) {
+    parts.push(status.orgName);
+  }
+  if (status.subscriptionType) {
+    parts.push(`${status.subscriptionType} plan`);
+  }
+  return `Signed in${parts.length ? ` — ${parts.join(" · ")}` : ""}.`;
+}
+
+function settingsAccountGroup() {
+  const group = document.createElement("div");
+  group.className = "settings-group";
+  group.append(settingsGroupHeading("Account"));
+
+  const row = document.createElement("div");
+  row.className = "settings-select-row";
+  const textWrap = document.createElement("div");
+  textWrap.className = "settings-toggle-text";
+  const title = document.createElement("div");
+  title.className = "settings-toggle-title";
+  title.textContent = "Claude sign-in";
+  const desc = document.createElement("div");
+  desc.className = "settings-toggle-desc";
+  desc.textContent = "Checking sign-in status…";
+  textWrap.append(title, desc);
+
+  const btn = document.createElement("button");
+  btn.className = "text-btn";
+  btn.textContent = "Sign in";
+  btn.title = "Runs Claude's own browser sign-in (claude auth login). Fixes 'OAuth session expired' for every session at once.";
+  const refresh = () => {
+    desc.textContent = "Checking sign-in status…";
+    window.helm.getAuthStatus().then((status) => {
+      desc.textContent = authStatusLine(status);
+      // Re-label so the affordance matches the state: re-authenticating when
+      // already signed in reads as "Re-sign in", not a no-op "Sign in".
+      btn.textContent = status?.loggedIn ? "Re-sign in" : "Sign in";
+    });
+  };
+  btn.addEventListener("click", () => runSignInFlow(refresh));
+  row.append(textWrap, btn);
+  group.append(row);
+  refresh();
+  return group;
+}
+
 function renderSettingsPage() {
   const page = document.getElementById("settingsPage");
   page.innerHTML = "";
@@ -15568,7 +15717,7 @@ function renderSettingsPage() {
   // .settings-columns CSS).
   const columns = document.createElement("div");
   columns.className = "settings-columns";
-  columns.append(passiveGroup, activeGroup, voiceGroup, appearanceGroup);
+  columns.append(settingsAccountGroup(), passiveGroup, activeGroup, voiceGroup, appearanceGroup);
   block.append(columns);
 
   page.append(block);
@@ -16637,6 +16786,7 @@ window.helm.onSessionEvent((evt) => {
       stopLiveStatsTicker(index);
       setPaneBusyUI(index, "");
       pane.turns.push({ role: "assistant", kind: "text", text: "⚠ " + evt.message, pending: true });
+      maybeSurfaceAuthError(evt.message);
       bumpSessionActivity(pane.sessionId);
       renderPane(index);
       break;
@@ -16688,6 +16838,7 @@ window.helm.onSessionEvent((evt) => {
           kind: "text",
           text: "⚠ " + truncateText(message, 400),
         });
+        maybeSurfaceAuthError(message);
         bumpSessionActivity(pane.sessionId);
         renderPane(index);
       } else if (!evt.summary?.sawResult) {
