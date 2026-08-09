@@ -105,21 +105,37 @@ try {
   ok(/Couldn't read/.test(lines.unreadable), "an unreadable status says that rather than pretending");
 
   // --- the auth-failure shortcut fires on the right messages, not others ---
+  // maybeSurfaceAuthError also runs over the last reply on a SUCCESSFUL turn (an
+  // auth failure can arrive as result text, not an error event), so it must NOT
+  // fire on ordinary replies that merely DISCUSS auth - the false-alarm bug an
+  // independent review caught (2026-08-09). These prose lines are realistic
+  // successful summaries from a session that just built an auth feature.
   const surfacing = await app.eval(`(() => {
     document.querySelectorAll(".notice").forEach((n) => n.remove());
     const count = () => document.querySelectorAll(".notice").length;
     maybeSurfaceAuthError("Failed to authenticate: OAuth session expired and could not be refreshed");
     const afterAuth = count();
     const hasSignIn = [...document.querySelectorAll(".notice .text-btn")].some((b) => b.textContent.trim() === "Sign in");
+    // A SECOND identical failure must not stack a duplicate notice.
+    maybeSurfaceAuthError("Failed to authenticate: OAuth session expired and could not be refreshed");
+    const afterDuplicate = count();
     document.querySelectorAll(".notice").forEach((n) => n.remove());
     maybeSurfaceAuthError("TypeError: cannot read property 'foo' of undefined");
     const afterUnrelated = count();
     document.querySelectorAll(".notice").forEach((n) => n.remove());
-    return { afterAuth, hasSignIn, afterUnrelated };
+    const proseFires = [
+      "Added OAuth login flow; tokens refresh automatically and the sign-in works.",
+      "Implemented authentication: users can sign in and the session token will refresh.",
+      "I refactored the OAuth handler so expired tokens are detected.",
+      "The unauthorized branch now returns 403 for the OAuth callback.",
+    ].map((s) => { maybeSurfaceAuthError(s); const n = count(); document.querySelectorAll(".notice").forEach((x) => x.remove()); return n; });
+    return { afterAuth, hasSignIn, afterDuplicate, afterUnrelated, proseMax: Math.max(0, ...proseFires) };
   })()`);
   ok(surfacing.afterAuth === 1, `an auth-expired error raises a notice (${surfacing.afterAuth})`);
   ok(surfacing.hasSignIn, "with a Sign in action on it");
+  ok(surfacing.afterDuplicate === 1, `a second identical auth failure does NOT stack a duplicate (${surfacing.afterDuplicate})`);
   ok(surfacing.afterUnrelated === 0, "an unrelated error does NOT raise the auth shortcut");
+  ok(surfacing.proseMax === 0, `a successful reply that merely DISCUSSES auth does NOT raise the shortcut (max fired: ${surfacing.proseMax})`);
 
   const consoleErrors = app.getConsoleErrors();
   ok(consoleErrors.length === 0, `no console errors (${consoleErrors.length})`);

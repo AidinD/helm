@@ -15489,12 +15489,36 @@ async function runSignInFlow(onResolved) {
 // turn they have to decode (task 3218cdd4). Matches the CLI's own wording
 // ("Failed to authenticate", "OAuth session expired") loosely enough to catch
 // the variants without firing on unrelated errors that merely contain "auth".
+const AUTH_NOTICE_TEXT =
+  "A session failed to authenticate - the Claude sign-in has expired. Sign in once and every session works again.";
 function maybeSurfaceAuthError(message) {
   const text = String(message || "");
-  if (!/\b(oauth|authenticat)/i.test(text) || !/expired|refresh|failed to authenticate|log ?in|sign ?in|unauthor/i.test(text)) {
+  // Anchor on the CLI's actual auth-FAILURE phrasings, not any co-occurrence of
+  // auth words. The success-branch call site feeds ordinary assistant replies
+  // through here, so a broad "oauth AND refresh/login/expired" test fired on a
+  // session that had merely BUILT an auth feature ("added OAuth login, tokens
+  // refresh automatically") - a false "your sign-in expired" alarm, on the very
+  // codebase that is used to build Helm (independent review, 2026-08-09). These
+  // patterns match the failure the CLI emits, not prose about authentication.
+  const isAuthFailure =
+    /failed to authenticate/i.test(text) ||
+    /authentication failed/i.test(text) ||
+    /oauth session (has )?expired/i.test(text) ||
+    /session expired and could not be refreshed/i.test(text) ||
+    /token (has )?expired and could not be refreshed/i.test(text) ||
+    /\b(un|not[- ])authenticated\b/i.test(text) ||
+    /\bclaude (auth )?login\b/i.test(text) || // the CLI's own remediation hint
+    /please (sign|log) ?-? ?in (again|to continue)/i.test(text);
+  if (!isAuthFailure) {
     return;
   }
-  showNotice("A session failed to authenticate - the Claude sign-in has expired. Sign in once and every session works again.", {
+  // Don't stack duplicates: across several failing turns in one session this
+  // fired once per turn. If the same notice is already up (or queued), leave it.
+  const already = [...document.querySelectorAll(".notice .notice-text")].some((n) => n.textContent === AUTH_NOTICE_TEXT);
+  if (already) {
+    return;
+  }
+  showNotice(AUTH_NOTICE_TEXT, {
     tone: "warn",
     actions: [{ label: "Sign in", onClick: () => runSignInFlow() }],
   });
