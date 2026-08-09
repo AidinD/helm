@@ -6247,3 +6247,25 @@ Picking "Work" therefore dropped the private review items from the badge and kep
 Fixed (50f8c36) by adding an `ignoreDomainFilter` flag that both badge call-sites pass, mirroring `ignoreProjectFilter` exactly; the page and dashboard widget still honour the focus.
 The regression test now asserts the badge path stays at the full repo-rooted count under both a Work and a Private focus - the case the first version of the test skipped, which is why the leak slipped through the author's own suite.
 Everything else in the four commits (the quota roll-forward across every edge case, the captain label, the domain plumbing end to end, the Lavish fixtures) the reviewer found sound.
+
+## 2026-08-09 (round 2) - Three cards came back from review with feedback
+
+After reviewing v0.1.609 the captain sent three cards back with specific feedback.
+
+**Model submenu ran off the bottom (cf96055c).**
+The "More models" submenu flipped horizontally near the right edge but had no vertical handling.
+"More models" sits at the bottom of a menu that itself opens UPWARD from the composer's send button, so its submenu extended past the bottom of the window and the lower models were unreachable.
+`buildMenuItems` now measures the submenu on hover and adds a `flip-up` class (bottom-anchored) when opening downward would overflow.
+
+**Auth was an ugly column, and the shortcut missed the result-text case (3218cdd4).**
+The Settings Account group was one of the masonry columns, so it took a whole 240px column for one row and squeezed "Re-sign in" onto three lines.
+It's now a compact full-width horizontal bar under the header (dot + label + status + one-line button), outside the columns - the "horisontell widget längst upp" the captain asked for.
+Separately: an auth failure can arrive as the CLI's RESULT text (a "successful" ~0-token turn), not an error event, so the one-click Sign in shortcut never appeared for it - the "failed to authenticate hela tiden" the card describes.
+The done/success branch now runs `maybeSurfaceAuthError` over the final reply too.
+Not reproducible here: whether the recurring failures stem from more than an expired token (subscription/org side) is beyond Helm's reach - this makes re-auth one click away, it can't stop the token expiring.
+
+**Review checks read stale immediately after running (5143316e, a new issue on an old card).**
+This is separate from the card's original quota-time bug (fixed in v0.1.609).
+Checks run in a detached worktree at the record's own commit and stamp that commit, but `buildReviewQueue` judged staleness against the live project HEAD - so any later unrelated commit made a just-run check read "the code changed after it ran".
+Staleness is now measured against the record's own pinned commit (resolved to a full sha to compare against the run's full head), matching what `reviews:runChecks` binds the worktree to; falls back to live HEAD only when the record pins no resolvable commit.
+The E2E test asserts both directions: HEAD moving past the pin stays passing, while re-pinning the record to a newer code commit still reads stale - so the real signal isn't silenced.
