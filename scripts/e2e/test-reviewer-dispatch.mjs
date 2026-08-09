@@ -205,6 +205,45 @@ try {
   ok(/NOT CONFIRMED/.test(note.text || ""), `carrying its actual verdict (${JSON.stringify((note.text || "").slice(0, 40))})`);
   ok(/main\.js:4120/.test(note.text || ""), "including the finding's file:line, unmangled");
 
+  // What you can DO with a verdict once you've read it (task 76790f23: "jag vill
+  // kunna se verdict lättläst ... och om jag inte håller med eller vill ha second
+  // opinion vill jag ha möjlighet att skicka verdict vidare till en till granskare",
+  // plus "Hur ger man tillbaka den oberoende granskarens feedback till [den] som
+  // gjorde featuren?").
+  const verdictActions = await app.eval(`(async () => {
+    const item = document.querySelector("#probeRow .rev-item");
+    const box = item.querySelector(".rev-list-independent");
+    return {
+      buttons: [...box.querySelectorAll(".rev-independent-actions button")].map((b) => b.textContent.trim()),
+      // Rendered as real markdown now, not one pre-wrapped text node: a heading in
+      // the verdict must become an element, not literal "#" characters on screen.
+      renderedElementCount: box.querySelector(".rev-independent-note").childElementCount,
+    };
+  })()`);
+  ok(
+    JSON.stringify(verdictActions.buttons) === JSON.stringify(["View verdict", "Second opinion", "Open a fix session"]),
+    `the verdict carries its three actions (${JSON.stringify(verdictActions.buttons)})`
+  );
+  ok(verdictActions.renderedElementCount > 0, `and renders as markdown elements rather than one flat text node (${verdictActions.renderedElementCount})`);
+
+  // The SECOND-opinion brief must carry the first verdict AND tell the new
+  // reviewer to reach its own conclusion first - a second opinion that just reads
+  // the first one's reasoning and agrees is worth nothing.
+  const secondBrief = await app.eval(`(() => {
+    const plan = ${JSON.stringify({ notePath: path.join(reviewsDir, `${TASK}.independent.md`) })};
+    const prior = "NOT CONFIRMED - the backoff is skipped when the card is retried by hand.";
+    const withPrior = independentReviewSessionArgs(${JSON.stringify(ROW)}, ${JSON.stringify(ROW.record)}, plan, "claude-opus-5", "high", prior);
+    const without = independentReviewSessionArgs(${JSON.stringify(ROW)}, ${JSON.stringify(ROW.record)}, plan, "claude-opus-5", "high");
+    return { withPrior: withPrior.prompt, without: without.prompt };
+  })()`);
+  ok(
+    secondBrief.withPrior.includes("NOT CONFIRMED - the backoff is skipped when the card is retried by hand."),
+    "a second-opinion brief carries the first reviewer's actual verdict text"
+  );
+  ok(/Do your OWN\s+investigation FIRST/.test(secondBrief.withPrior), "and tells it to reach its own conclusion BEFORE reading that verdict");
+  ok(/restate anything of theirs\s+that still holds/.test(secondBrief.withPrior), "and that its verdict replaces rather than appends to the first");
+  ok(!secondBrief.without.includes("PREVIOUS INDEPENDENT REVIEWER"), "while an ordinary first dispatch carries none of that");
+
   // A row whose reviewer has not written anything renders no such block - an empty
   // "Independent reviewer" heading would read as a pass that was never made.
   const absent = await app.eval(`(async () => {

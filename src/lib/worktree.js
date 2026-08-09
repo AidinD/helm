@@ -370,6 +370,76 @@ export function createWorktree(projectPath, options = {}) {
 }
 
 /**
+ * Creates a DETACHED (no branch) worktree pinned to a specific, already-
+ * committed sha - for read-only verification, not new work. `createWorktree`
+ * above always creates a new branch off the current state, which is right
+ * for dispatched work but wrong here in two ways: it would litter the
+ * branch list with one throwaway `helm/<id>` per check run, and "off the
+ * current state" is exactly the live, possibly-dirty tree this exists to
+ * get away from.
+ *
+ * Used by the review gauntlet (Aidin, task 76790f23: "Bind varje review till
+ * en commit för att förhindra 'Ran on uncommited changes' när man kör run
+ * checks") - a check run in a clean, isolated checkout of the record's own
+ * commit can never be tainted by unrelated uncommitted work sitting in the
+ * main working tree at the same moment, which a check run in `rec.projectPath`
+ * directly always could be.
+ *
+ * Same `deps`/env-file provisioning as `createWorktree`, and the same
+ * caller-must-remove-it contract (see `removeWorktree` - a detached worktree
+ * has no branch to also delete, but the worktree removal itself is identical).
+ *
+ * @param {string} projectPath - absolute path to the source repo.
+ * @param {string} sha - the commit to check out, detached.
+ * @param {object} [options]
+ * @param {string} [options.id] - worktree directory name; defaults to a
+ *   timestamp + random suffix so concurrent calls never collide.
+ * @param {"junction"|"install"|"none"} [options.deps="none"]
+ * @returns {{ worktreePath: string, envFilesCopied: string[],
+ *   depsProvisioned: { strategy: string, path: string }|null, depsError: string|null }}
+ */
+export function createDetachedWorktree(projectPath, sha, options = {}) {
+  const resolvedProject = path.resolve(projectPath);
+  if (!fs.existsSync(resolvedProject)) {
+    throw new Error(`Project path does not exist: ${resolvedProject}`);
+  }
+  if (!/^[0-9a-f]{7,40}$/i.test(String(sha || ""))) {
+    throw new Error(`Not a commit sha: ${JSON.stringify(sha)}`);
+  }
+
+  const id = options.id || `check-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const worktreesRoot = worktreesRootFor(resolvedProject);
+  const worktreePath = path.join(worktreesRoot, id);
+  const deps = options.deps || "none";
+
+  if (fs.existsSync(worktreePath)) {
+    throw new Error(`Worktree path already exists: ${worktreePath}`);
+  }
+  fs.mkdirSync(worktreesRoot, { recursive: true });
+
+  try {
+    runGit(resolvedProject, ["worktree", "add", "--detach", worktreePath, sha]);
+  } catch (err) {
+    throw new Error(`git worktree add --detach failed for ${resolvedProject}@${sha}: ${err.message}`);
+  }
+
+  const envFilesCopied = copyEnvFiles(resolvedProject, worktreePath);
+
+  let depsProvisioned = null;
+  let depsError = null;
+  if (deps !== "none") {
+    try {
+      depsProvisioned = provisionDeps(resolvedProject, worktreePath, deps);
+    } catch (err) {
+      depsError = err.message;
+      console.error(`[worktree] Dependency provisioning ("${deps}") failed for ${worktreePath}: ${err.message}`);
+    }
+  }
+
+  return { worktreePath, envFilesCopied, depsProvisioned, depsError };
+}
+
+/**
  * True if a worktree has uncommitted changes (staged, unstaged, or
  * untracked). Used by `removeWorktree` to fail closed by default — mirrors
  * the fail-closed principle both firstmate and gnhf apply to worktree
