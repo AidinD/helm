@@ -4028,6 +4028,25 @@ ipcMain.handle("goal:openWorktree", (_event, { worktreePath }) => {
   return { ok: true };
 });
 
+// Which of the given worktree paths still exist on disk. Used by the Fleet's
+// archive guard (task a827cc95): archiving an autopilot node hides its manual
+// "clean worktree" button, so before doing that we warn if a real worktree is
+// still sitting there - but only if one actually is, not on every archive.
+ipcMain.handle("goal:existingWorktrees", (_event, { paths } = {}) => {
+  const list = Array.isArray(paths) ? paths.filter(Boolean) : [];
+  const existing = [];
+  for (const p of list) {
+    try {
+      if (fs.existsSync(p)) {
+        existing.push(p);
+      }
+    } catch {
+      // unreadable - treat as not-present rather than blocking the archive
+    }
+  }
+  return { ok: true, existing };
+});
+
 ipcMain.handle("goal:deleteWorktree", (_event, { goalRunId, projectPath, worktreePath, force }) => {
   if (!projectPath || !worktreePath) {
     return { ok: false, error: "projectPath and worktreePath are required" };

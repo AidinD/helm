@@ -239,6 +239,8 @@ contextBridge.exposeInMainWorld("helm", {
   // on success, drops the persisted history record too.
   openGoalWorktree: (worktreePath) => ipcRenderer.invoke("goal:openWorktree", { worktreePath }),
   deleteGoalWorktree: (opts) => ipcRenderer.invoke("goal:deleteWorktree", opts),
+  // Which of these worktree paths still exist on disk (Fleet archive guard, a827cc95).
+  existingWorktrees: (paths) => ipcRenderer.invoke("goal:existingWorktrees", { paths }),
   // Report-back "Done + clean up": remove the worktree + delete the branch only
   // if it's merged (unmerged branches are kept). Keeps the run record.
   cleanupGoalRun: (opts) => ipcRenderer.invoke("goal:cleanupRun", opts),
