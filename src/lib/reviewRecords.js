@@ -969,6 +969,10 @@ export function buildReviewQueue(reviewTasks, records, metaHome = null) {
         const out = execFileSync("git", ["-C", projectPath, "rev-parse", `${shaish}^{commit}`], {
           encoding: "utf8",
           windowsHide: true,
+          // Swallow git's stderr: an unreachable pinned commit (rebased/squashed
+          // away - the exact fallback case) otherwise prints "fatal: ambiguous
+          // argument" to the main process on every queue build (review, 2026-08-09).
+          stdio: ["ignore", "pipe", "ignore"],
         }).trim();
         full = /^[0-9a-f]{40}$/.test(out) ? out : null;
       } catch {
