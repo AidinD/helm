@@ -116,21 +116,57 @@ export function shippedVersionForCommits(projectPath, commits, { run = git } = {
     .map((c) => (typeof c === "string" ? c : c?.sha))
     .map((s) => String(s || "").trim().split(/\s+/)[0])
     .filter((s) => SHA_RE.test(s));
-  const lastSha = shas.at(-1);
-  if (!lastSha) {
+  if (shas.length === 0) {
     return { version: null, error: "The record pins no commit, so there is nothing to locate in a release." };
   }
-  let out;
-  try {
-    out = run(projectPath, ["tag", "--contains", lastSha, "--sort=v:refname"]);
-  } catch (err) {
-    return { version: null, error: short(err) };
+  // The fix is fully shipped only once its NEWEST commit is in a release, and the release
+  // that carries the WHOLE fix is the LATEST of each commit's earliest-containing tag.
+  // Computed per commit rather than by array position on purpose: record.commits is
+  // oldest-first (matching boundShaFull's `.at(-1)` = tip) but the log fallback is
+  // newest-first, so assuming either ordering silently picks the wrong commit and can
+  // report an earlier version than reality - or "shipped" when the tip is not yet released.
+  const earliestContainingTag = (sha) => {
+    let out;
+    try {
+      out = run(projectPath, ["tag", "--contains", sha, "--sort=v:refname"]);
+    } catch (err) {
+      return { error: short(err), tag: null };
+    }
+    const tags = String(out || "")
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter((t) => /^v\d/.test(t));
+    return { error: null, tag: tags[0] || null };
+  };
+  let latest = null;
+  for (const sha of shas) {
+    const { error, tag } = earliestContainingTag(sha);
+    if (error) {
+      return { version: null, error };
+    }
+    if (!tag) {
+      // This commit is in no release yet, so the whole fix is not shipped.
+      return { version: null, error: null };
+    }
+    if (latest === null || compareVersionTags(tag, latest) > 0) {
+      latest = tag;
+    }
   }
-  const tags = String(out || "")
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter((t) => /^v\d/.test(t));
-  return { version: tags[0] || null, error: null };
+  return { version: latest, error: null };
+}
+
+/** Numeric compare of two "vMAJOR.MINOR.PATCH" tags: >0 if a is newer than b. */
+function compareVersionTags(a, b) {
+  const parse = (t) => String(t).replace(/^v/, "").split(".").map((n) => parseInt(n, 10) || 0);
+  const pa = parse(a);
+  const pb = parse(b);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] || 0) - (pb[i] || 0);
+    if (d !== 0) {
+      return d;
+    }
+  }
+  return 0;
 }
 
 function parseCommitLines(out) {
