@@ -20,6 +20,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { buildReviewQueue } from "../../src/lib/reviewRecords.js";
 
 let exit = 0;
 let app = null;
@@ -109,6 +110,45 @@ try {
 
   const listed = git("worktree", "list", "--porcelain");
   ok(!new RegExp(worktreesRoot.replace(/\\/g, "\\\\")).test(listed), "and git itself no longer tracks the worktree either");
+
+  // Staleness baseline (task 5143316e: "det står stale - the code changed after
+  // it ran"). The check just ran, pinned to the record's own commit. Now advance
+  // the live project HEAD past that commit with an UNRELATED code commit - the
+  // ordinary case during an active session. The gauntlet must still read passing:
+  // staleness is measured against the record's pinned commit (what the check ran
+  // against), not the live HEAD, or every freshly-run check would read stale the
+  // moment any later commit lands.
+  fs.writeFileSync(path.join(repo, "later-unrelated-feature.mjs"), "export const x = 1;\n", "utf8");
+  git("add", "later-unrelated-feature.mjs");
+  git("-c", "user.name=T", "-c", "user.email=t@t", "commit", "-q", "-m", "unrelated later code commit");
+  const newHead = git("rev-parse", "HEAD").trim();
+  ok(newHead !== boundSha, "sanity: the live HEAD has genuinely moved past the record's commit with a code change");
+
+  // Build the queue the way the review page does (buildReviewQueue is what computes
+  // the gauntlet), with the freshly-stamped record and a synthetic review task. The
+  // record's check ran against boundSha; live HEAD is now newHead. The gauntlet must
+  // read passing, because staleness is measured against the record's pinned commit.
+  const stampedRec = JSON.parse(fs.readFileSync(path.join(reviewsDir, `${TASK}.json`), "utf8"));
+  const queue = buildReviewQueue([{ id: TASK, title: "fixture" }], [stampedRec], metaHome);
+  const row = queue.find((r) => String(r.taskId).toLowerCase() === TASK.toLowerCase());
+  ok(!!row, "the record produces a review row");
+  ok(
+    row?.gauntlet?.stale === 0,
+    `the freshly-run check is NOT marked stale even though live HEAD moved past the record's commit (stale=${row?.gauntlet?.stale}, state=${row?.gauntlet?.state})`
+  );
+  ok(row?.gauntlet?.state === "passing", `so the gauntlet reads passing, not "the code changed after it ran" (${row?.gauntlet?.state})`);
+
+  // The OTHER direction, so the fix didn't just silence staleness: if the record is
+  // RE-PINNED to the later commit (its own commits updated) while the check still
+  // ran against the old one, that IS genuinely stale and must still read so.
+  const repinnedRec = { ...stampedRec, commits: [newHead] };
+  const staleRow = buildReviewQueue([{ id: TASK, title: "fixture" }], [repinnedRec], metaHome).find(
+    (r) => String(r.taskId).toLowerCase() === TASK.toLowerCase()
+  );
+  ok(
+    staleRow?.gauntlet?.stale === 1 && staleRow?.gauntlet?.state !== "passing",
+    `re-pinning the record to a newer code commit DOES mark the old run stale (stale=${staleRow?.gauntlet?.stale}, state=${staleRow?.gauntlet?.state})`
+  );
 
   const consoleErrors = app.getConsoleErrors();
   ok(consoleErrors.length === 0, `no console errors (${consoleErrors.length})`);

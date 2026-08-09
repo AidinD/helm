@@ -954,6 +954,41 @@ export function buildReviewQueue(reviewTasks, records, metaHome = null) {
     }
     return codeChangedCache.get(key);
   };
+  // Resolve a (possibly short) commit-ish to its full 40-char sha, so a record's
+  // stored short sha ("f261da8") can be compared against a check run's full head.
+  // Cached, and null when it can't be resolved (commit gone after a rebase, etc).
+  const resolveShaCache = new Map();
+  const resolveShaFor = (projectPath, shaish) => {
+    if (!projectPath || !shaish) {
+      return null;
+    }
+    const key = `${projectPath}|${shaish}`;
+    if (!resolveShaCache.has(key)) {
+      let full = null;
+      try {
+        const out = execFileSync("git", ["-C", projectPath, "rev-parse", `${shaish}^{commit}`], {
+          encoding: "utf8",
+          windowsHide: true,
+        }).trim();
+        full = /^[0-9a-f]{40}$/.test(out) ? out : null;
+      } catch {
+        full = null;
+      }
+      resolveShaCache.set(key, full);
+    }
+    return resolveShaCache.get(key);
+  };
+  // The commit a record is pinned to - the LAST entry of rec.commits, matching
+  // what reviews:runChecks checks the isolated worktree out at. This, not the live
+  // project HEAD, is the staleness baseline: a check runs against the record's own
+  // commit, so measuring "did the code change after it ran" against live HEAD marked
+  // every freshly-run check stale the moment any later commit landed - which is
+  // exactly what happens during an active session (task 5143316e: "det står stale -
+  // the code changed after it ran när jag försöker köra e2e tester").
+  const boundShaFull = (rec) => {
+    const boundSha = (rec.commits || []).map((c) => (typeof c === "string" ? c : c?.sha)).filter(Boolean).at(-1);
+    return boundSha ? resolveShaFor(rec.projectPath, boundSha) : null;
+  };
   const byId = new Map((records || []).map((r) => [String(r.taskId).toLowerCase(), r]));
   const rows = (reviewTasks || []).map((t) => {
     const rec = byId.get(String(t.id).toLowerCase()) || null;
@@ -995,7 +1030,12 @@ export function buildReviewQueue(reviewTasks, records, metaHome = null) {
       drift: rec ? acceptanceDrift(rec, t.description || "") : { drifted: false, snapshot: [], live: [] },
       gauntlet: rec
         ? gauntletStatus(rec, metaHome, {
-            head: headFor((rec.checks || [])[0]?.cwd || rec.projectPath),
+            // Staleness baseline is the record's OWN pinned commit (what the checks
+            // ran against), not the live project HEAD - or every run reads stale as
+            // soon as any later, unrelated commit lands (task 5143316e). Falls back
+            // to live HEAD only when the record pins no resolvable commit, matching
+            // reviews:runChecks' own fallback.
+            head: boundShaFull(rec) || headFor((rec.checks || [])[0]?.cwd || rec.projectPath),
             // A commit that only touched documentation cannot have changed what a
             // check does, so it must not stale one. Cached per commit pair: without
             // it this would be a git call per check per render.
