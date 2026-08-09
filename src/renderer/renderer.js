@@ -1842,6 +1842,114 @@ function reviewRowEl(row, band = null) {
  * Extracted rather than duplicated at the two call sites on purpose: two copies of
  * an action row is exactly how the two paths drift into offering different buttons.
  */
+// An image-attach zone for the Send back dialog (task 1116b7ef). Returns { el,
+// images } where images is a live array of { base64, ext } the dialog reads on
+// submit. Accepts a file picker, paste, and drop - the same three ways the
+// composer takes images - and shows a small thumbnail per attachment.
+function sendBackImageZone() {
+  const images = [];
+  const el = document.createElement("div");
+  el.className = "sendback-images";
+  const bar = document.createElement("div");
+  bar.className = "sendback-images-bar";
+  const pick = document.createElement("button");
+  pick.type = "button";
+  pick.className = "text-btn";
+  pick.textContent = "Attach image";
+  pick.title = "Attach a screenshot - or paste / drop one onto this box. It lands on the Jot card.";
+  const hint = document.createElement("span");
+  hint.className = "sendback-images-hint";
+  hint.textContent = "or paste / drop";
+  bar.append(pick, hint);
+  const thumbs = document.createElement("div");
+  thumbs.className = "sendback-thumbs";
+  el.append(bar, thumbs);
+
+  const addImage = (file) =>
+    new Promise((resolve) => {
+      if (!file || !file.type || !file.type.startsWith("image/")) {
+        resolve();
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = String(reader.result || "");
+        const base64 = dataUrl.includes(",") ? dataUrl.split(",")[1] : "";
+        if (!base64) {
+          resolve();
+          return;
+        }
+        const ext = (file.type.split("/")[1] || "png").toLowerCase();
+        const entry = { base64, ext };
+        images.push(entry);
+        const thumb = document.createElement("div");
+        thumb.className = "sendback-thumb";
+        const img = document.createElement("img");
+        img.src = dataUrl;
+        const rm = document.createElement("button");
+        rm.type = "button";
+        rm.className = "sendback-thumb-rm";
+        rm.textContent = "×";
+        rm.title = "Remove";
+        rm.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const i = images.indexOf(entry);
+          if (i >= 0) {
+            images.splice(i, 1);
+          }
+          thumb.remove();
+        });
+        thumb.append(img, rm);
+        thumbs.append(thumb);
+        resolve();
+      };
+      reader.onerror = () => resolve();
+      reader.readAsDataURL(file);
+    });
+
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "image/*";
+  input.multiple = true;
+  input.style.display = "none";
+  input.addEventListener("change", async () => {
+    for (const f of Array.from(input.files || [])) {
+      await addImage(f);
+    }
+    input.value = "";
+  });
+  pick.addEventListener("click", (e) => {
+    e.stopPropagation();
+    input.click();
+  });
+  el.append(input);
+
+  el.addEventListener("paste", async (e) => {
+    const items = Array.from(e.clipboardData?.items || []).filter((it) => it.type && it.type.startsWith("image/"));
+    if (!items.length) {
+      return;
+    }
+    e.preventDefault();
+    for (const it of items) {
+      await addImage(it.getAsFile());
+    }
+  });
+  el.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    el.classList.add("sendback-images-drag");
+  });
+  el.addEventListener("dragleave", () => el.classList.remove("sendback-images-drag"));
+  el.addEventListener("drop", async (e) => {
+    e.preventDefault();
+    el.classList.remove("sendback-images-drag");
+    for (const f of Array.from(e.dataTransfer?.files || [])) {
+      await addImage(f);
+    }
+  });
+
+  return { el, images };
+}
+
 function reviewActionsEl(row) {
   const g = row.gauntlet || { declared: 0, state: "none" };
   const actions = document.createElement("div");
@@ -1935,17 +2043,26 @@ function reviewActionsEl(row) {
     // written (task ebb4e567). The rest of this handler was always what the captain asked
     // for - a required reason, dated, written onto the Jot card as the task moves
     // back a step - so only the asking was broken.
+    // Optional screenshots ride along with the note (task 1116b7ef). The zone
+    // collects them; sendReviewBack writes them under the Jot card and appends
+    // the note - a plain note with no images behaves exactly as before.
+    const imgZone = sendBackImageZone();
     customPrompt(
       `Send "${row.title}" back to in-progress. What needs changing?`,
       (note) => {
         window.helm
-          .setReviewStatus(row.taskId, "in-progress", `[the captain ${new Date().toISOString().slice(0, 10)}] ${note}`)
+          .sendReviewBack(row.taskId, `[the captain ${new Date().toISOString().slice(0, 10)}] ${note}`, imgZone.images)
           .then((res) => {
-            showToast(res?.ok ? "Sent back with your note." : res?.error || "Couldn't update the board.");
+            const n = imgZone.images.length;
+            showToast(res?.ok ? `Sent back with your note${n ? ` and ${n} image${n === 1 ? "" : "s"}` : ""}.` : res?.error || "Couldn't update the board.");
             renderReviewPage();
           });
       },
-      { confirmLabel: "Send back", placeholder: "What needs changing, and why - this lands on the Jot card." }
+      {
+        confirmLabel: "Send back",
+        placeholder: "What needs changing, and why - this lands on the Jot card.",
+        extraEl: imgZone.el,
+      }
     );
   });
   actions.append(doneBtn, backBtn);
@@ -8904,7 +9021,7 @@ function customConfirm(message, confirmLabel, onConfirm, { deliberate = false, o
  * Calls onSubmit(text) with a trimmed, non-empty string, or onCancel() - never both,
  * and never with an empty string, since every caller so far needs a real reason.
  */
-function customPrompt(message, onSubmit, { confirmLabel = "Save", placeholder = "", multiline = true, onCancel = null } = {}) {
+function customPrompt(message, onSubmit, { confirmLabel = "Save", placeholder = "", multiline = true, onCancel = null, extraEl = null } = {}) {
   const overlay = document.createElement("div");
   overlay.className = "confirm-overlay";
   const box = document.createElement("div");
@@ -8980,7 +9097,13 @@ function customPrompt(message, onSubmit, { confirmLabel = "Save", placeholder = 
   });
   document.addEventListener("keydown", onKey);
   row.append(cancel, ok);
-  box.append(msg, field, row);
+  box.append(msg, field);
+  // Optional extra content (e.g. an image-attach zone) between the field and the
+  // buttons - the caller owns it and reads whatever it collected inside onSubmit.
+  if (extraEl) {
+    box.append(extraEl);
+  }
+  box.append(row);
   overlay.append(box);
   document.body.append(overlay);
   field.focus();

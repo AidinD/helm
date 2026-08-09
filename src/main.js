@@ -13,6 +13,7 @@ import { execFile, execFileSync, spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { readAllSessions, enrichWithJot, setSessionArchived, forkTranscriptAtUserMessage, switchSessionRootFolder } from "./lib/sessions.js";
 import { loadJot, loadGoals, addSubtask, formatJotSummaryForClassifier, projectBoardSummary, reviewTasks, signedOffWithoutRecord, setTaskStatus, setTaskTags, readJotState, ensureTagsExist } from "./lib/jot.js";
+import { resolveJotDataDir } from "./lib/jotDataDir.js";
 import { loadConfig, writeConfig } from "./lib/config.js";
 import { startSession, resolveClaudeBinary } from "./lib/launcher.js";
 import { createLiveSessionRegistry } from "./lib/liveSessions.js";
@@ -5709,6 +5710,46 @@ ipcMain.handle("reviews:setStatus", (_event, { taskId, status, note } = {}) => {
   // successful write - a rejected status change is not a real review action.
   if (res?.ok && (status === "done" || status === "in-progress")) {
     trackHelmUsage({ type: "action", action: status === "done" ? "review_stamped" : "review_sent_back", taskId, at: Date.now() });
+  }
+  return res;
+});
+
+// Send a review back to in-progress WITH images (task 1116b7ef: "man ska kunna
+// lägga till bilder när man send back en review"). Each base64 image is written
+// under Jot's OWN data dir (jot-images/<taskId>/<uuid>.<ext>) and its relative
+// path appended to the task's images array - the same layout Jot uses - so the
+// screenshots show on the card, next to the note. The note + status change go
+// through the same setTaskStatus as a plain send-back.
+ipcMain.handle("reviews:sendBack", (_event, { taskId, note, images } = {}) => {
+  if (!taskId) {
+    return { ok: false, error: "No task id." };
+  }
+  const rels = [];
+  try {
+    const list = Array.isArray(images) ? images : [];
+    if (list.length) {
+      const dir = path.join(resolveJotDataDir(), "jot-images", String(taskId));
+      fs.mkdirSync(dir, { recursive: true });
+      for (const img of list) {
+        const base64 = String(img?.base64 || "");
+        if (!base64) {
+          continue;
+        }
+        // Sanitize the extension to a short alnum token - never trust it as a path.
+        const ext = String(img?.ext || "png").replace(/[^a-z0-9]/gi, "").slice(0, 5) || "png";
+        const name = `${crypto.randomUUID()}.${ext}`;
+        fs.writeFileSync(path.join(dir, name), Buffer.from(base64, "base64"));
+        // Stored with the same separator Jot itself writes (path.join = OS native).
+        rels.push(path.join("jot-images", String(taskId), name));
+      }
+    }
+  } catch (err) {
+    return { ok: false, error: `Couldn't save the image(s): ${err?.message || err}` };
+  }
+  const config = loadConfig();
+  const res = setTaskStatus(config.jot || {}, taskId, "in-progress", note || "", rels);
+  if (res?.ok) {
+    trackHelmUsage({ type: "action", action: "review_sent_back", taskId, at: Date.now() });
   }
   return res;
 });

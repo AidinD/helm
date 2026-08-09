@@ -92,6 +92,9 @@ contextBridge.exposeInMainWorld("helm", {
   listReviews: (opts) => ipcRenderer.invoke("reviews:list", opts || {}),
   acknowledgeNoRecord: (taskId) => ipcRenderer.invoke("reviews:acknowledgeNoRecord", { taskId }),
   setReviewStatus: (taskId, status, note) => ipcRenderer.invoke("reviews:setStatus", { taskId, status, note }),
+  // Send a review back to in-progress with optional images (task 1116b7ef).
+  // images: [{ base64, ext }].
+  sendReviewBack: (taskId, note, images) => ipcRenderer.invoke("reviews:sendBack", { taskId, note, images }),
   runReviewChecks: (taskId) => ipcRenderer.invoke("reviews:runChecks", { taskId }),
   // The change behind a review item: its commits' patch, read-only.
   getReviewDiff: (taskId) => ipcRenderer.invoke("reviews:diff", { taskId }),

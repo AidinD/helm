@@ -461,7 +461,7 @@ export function setTaskTags(jotConfig, taskId, { add = [], remove = [], note = "
   });
 }
 
-export function setTaskStatus(jotConfig, taskId, status, note = "") {
+export function setTaskStatus(jotConfig, taskId, status, note = "", images = []) {
   if (!taskId) {
     return { ok: false, error: "Missing task id." };
   }
@@ -481,6 +481,13 @@ export function setTaskStatus(jotConfig, taskId, status, note = "") {
     const trimmed = String(note || "").trim();
     if (trimmed) {
       todo.description = `${todo.description || ""}${todo.description ? "\n\n" : ""}${trimmed}`;
+    }
+    // Relative image paths (already written under the Jot data dir by the caller)
+    // are appended to the todo's own images array, the same field Jot itself uses,
+    // so a sent-back review's screenshots show on the card (task 1116b7ef).
+    const imgs = (Array.isArray(images) ? images : []).map((s) => String(s || "").trim()).filter(Boolean);
+    if (imgs.length) {
+      todo.images = [...(Array.isArray(todo.images) ? todo.images : []), ...imgs];
     }
     return { ok: true, result: { from, to: status } };
   });
