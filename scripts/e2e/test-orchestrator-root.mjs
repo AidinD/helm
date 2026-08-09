@@ -54,18 +54,24 @@ try {
   assert(memFiles.length > 0, `cwd's auto-memory dir is populated (${memFiles.length} .md files) - orchestrator has memory`);
   assert(memFiles.includes("MEMORY.md"), "memory dir includes the MEMORY.md index");
 
-  // Click the actual button and confirm the opened pane is rooted in the same
-  // meta-home cwd - proves the renderer plumbs info.cwd through.
-  await app.eval('(document.querySelector(\'#pageToggle button[data-page="dashboard"]\') || {}).click?.()');
-  const clicked = await app.eval(
-    "(() => { const b = [...document.querySelectorAll('button')].find((x) => x.textContent.includes('New orchestrator session')); if (!b) return false; b.click(); return true; })()"
-  );
-  assert(clicked, "found + clicked the '+ New orchestrator session' button");
+  // Open a fresh orchestrator session and confirm the pane is rooted in the same
+  // meta-home cwd - proves the renderer plumbs info.cwd through. The old
+  // '+ New orchestrator session' button is gone: the app now lands on the
+  // Dashboard, not a privileged orchestrator chat ("there is no privileged
+  // 'orchestrator session' to land on anymore", renderer.js). The fresh-orchestrator
+  // ROOT it created still exists, reached now by jumping into a first mate that has
+  // no bound session (jumpIntoFirstMate -> openFreshDraftInPane(state.orchestratorHome)).
+  // Drive that real path instead of a button that no longer exists.
+  await app.eval('navigateToPage("chat")');
   await app.waitForSelector("#chatPage", 8000, { visible: true });
   let paneCwd = null;
   try {
     paneCwd = await app.eval(
-      "(typeof panes !== 'undefined' ? (panes.find((p) => p && p.isOrchestrator) || {}).cwd : null) || null"
+      `(() => {
+        jumpIntoFirstMate({ mateId: "e2e-orch-root", name: "E2E Orchestrator", sessionId: null });
+        const p = (typeof panes !== "undefined") ? (panes.find((x) => x && x.isOrchestrator) || panes[0]) : null;
+        return p ? (p.cwd || null) : null;
+      })()`
     );
   } catch (e) {
     log("(pane cwd not readable from page scope:", e.message + ")");
@@ -73,7 +79,7 @@ try {
   if (paneCwd) {
     assert(
       path.resolve(paneCwd).toLowerCase() === path.resolve(cwd).toLowerCase(),
-      `opened orchestrator pane is rooted in the meta-home (got ${JSON.stringify(paneCwd)})`
+      `a fresh orchestrator session is rooted in the meta-home (got ${JSON.stringify(paneCwd)})`
     );
   } else {
     log("(skipped pane-cwd assertion - not exposed; IPC check above already proves the root)");

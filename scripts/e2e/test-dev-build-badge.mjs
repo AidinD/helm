@@ -44,7 +44,12 @@ try {
   assert(r.badgeHidden === false && r.badgeVisible === true, "the DEV badge is shown (not hidden) in a dev run");
   assert(r.bodyHasDevClass === true, "body.dev-build is set (drives the header accent stripe)");
 
-  await app.screenshot("scripts/e2e/_dev-badge.png");
+  // (No screenshot here. It asserted nothing - the four checks above fully prove the
+  // badge - yet it wrote a stray scripts/e2e/_dev-badge.png and, worse, the harness's
+  // CDP capture "can occasionally hang" (its own doc) and is meant to be treated as
+  // best-effort; unguarded, its 10s timeout failed this whole test while every real
+  // assertion had passed. Removed rather than wrapped in try/catch: there is no reason
+  // to write the PNG at all.)
 
   const errors = app.getConsoleErrors();
   assert(errors.length === 0, `no console errors (got ${errors.length})`);

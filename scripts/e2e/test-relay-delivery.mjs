@@ -7,11 +7,23 @@
 // is deliberately directive so the turn reliably calls helm_report_up.
 //
 // Run:  node scripts/e2e/test-relay-delivery.mjs
+import { requireLive } from "./live-gate.mjs";
 import { launch } from "./harness.mjs";
 import { spawn, execSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+
+// This drives a REAL second-mate Opus turn (via helm_relay_to_second_mate) and then
+// polls up to five minutes for its report-up, so it must self-skip on a default run -
+// exactly like the 15 other live checks. It was the one live test missing this gate,
+// so an ordinary `node scripts/run-tests.mjs` both spent tokens on it AND timed out
+// waiting for the turn (300s) instead of skipping it. Gate FIRST, before any fixture
+// setup / git init / launch(), so a non-live run pays nothing. NOTE: the relay reaches
+// a model through the MCP dispatch server, a shape test-live-checks-declared.mjs cannot
+// yet see (it strips the quoted tool name / server path), which is why that guard never
+// flagged this omission - see the follow-up on widening REACHES_MODEL.
+requireLive("drives a real second-mate Opus turn via helm_relay_to_second_mate and polls for its report-up");
 
 function log(...a) {
   console.log("[relay-delivery-e2e]", ...a);

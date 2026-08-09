@@ -64,8 +64,18 @@ try {
   for (const page of PAGES) {
     const res = await app.eval(`(async () => {
       navigateToPage(${JSON.stringify(page)});
-      await new Promise((r) => setTimeout(r, 350));
-      const el = document.querySelector(".analysis-page:not(.hidden), .layout:not(.hidden)");
+      // Some views render asynchronously (review does an IPC round-trip for its
+      // rows), so poll until the visible page has actually drawn instead of a fixed
+      // delay - the fixed 350ms raced the async render under the full serial suite's
+      // load, which is why this test flaked in the sweep but passed in isolation.
+      let el = null;
+      for (let i = 0; i < 60; i++) {
+        el = document.querySelector(".analysis-page:not(.hidden), .layout:not(.hidden)");
+        if (el && el.childElementCount > 0) {
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 50));
+      }
       return { drew: !!el && el.childElementCount > 0, id: el?.id || null };
     })()`);
     ok(res.drew, `the ${page} view renders (${res.id || "nothing visible"})`);
@@ -75,9 +85,18 @@ try {
   const chat = await app.eval(`(async () => {
     navigateToPage("chat");
     openFreshDraftInPane(${JSON.stringify(tmp.replace(/\\/g, "\\\\"))}, "hello", { forceIndex: 0 });
-    await new Promise((r) => setTimeout(r, 400));
-    const paneEl = document.querySelector('.pane[data-pane="0"]');
-    const promptEl = paneEl?.querySelector(".pane-composer textarea");
+    // Poll for the pane + its seeded draft rather than a fixed wait (same
+    // under-load race as the per-view loop above).
+    let paneEl = null;
+    let promptEl = null;
+    for (let i = 0; i < 60; i++) {
+      paneEl = document.querySelector('.pane[data-pane="0"]');
+      promptEl = paneEl?.querySelector(".pane-composer textarea");
+      if (promptEl && promptEl.value === "hello") {
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 50));
+    }
     const workspace = document.getElementById("workspace");
     return {
       pane: !!paneEl,

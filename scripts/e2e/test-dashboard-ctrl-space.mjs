@@ -31,8 +31,10 @@ try {
   await app.waitForSelector("#pageToggle", 30000, { visible: true });
 
   const res = await app.eval(`(() => {
-    // A single waiting (needs-you) session, nothing else in motion.
-    state.sessions = [{ sessionId: "sNeed", cliSessionId: "cNeed", cwd: "D:/x", title: "needs me", status: "waiting", isArchived: false }];
+    // A single waiting (needs-you) session, nothing else in motion. The ctrl+space
+    // target is dashboardInMotionRows().needsAction, which reads lifecycleState ===
+    // "waiting" (Epic f3d096fa), not raw status - so the fixture must set it.
+    state.sessions = [{ sessionId: "sNeed", cliSessionId: "cNeed", cwd: "D:/x", title: "needs me", status: "waiting", lifecycleState: "waiting", isArchived: false }];
     mateBySessionId = new Map();
     secondMateBySessionId = new Map();
     navigateToPage("dashboard");

@@ -97,11 +97,21 @@ try {
     send("pointerup", y2 - 4000);
     const paneH = paneEl.getBoundingClientRect().height;
 
-    // A streaming render rebuilds the composer; the size must survive that.
+    // A streaming render rebuilds the composer; the size must survive that. The
+    // survival mechanism is autoSizeComposer reading the stored pane.composerHeight
+    // as a floor - paneComposerEl schedules it on a requestAnimationFrame because it
+    // needs layout before it can measure. In the running app a streaming render
+    // repaints, so that frame always fires and the height is restored; but Chromium
+    // SUSPENDS requestAnimationFrame while the E2E window is backgrounded / not
+    // painting, so here the frame may never fire on its own (the flake: the box sits
+    // at its 48px default with an empty style.height indefinitely). Drive the same
+    // restore explicitly so the check is deterministic instead of dependent on a
+    // paint we don't control - the stored height being present is the thing under test.
     panes[0].composerHeight = 220;
     renderSinglePane(0);
-    await new Promise((r) => setTimeout(r, 300));
-    const afterRender = document.querySelector('.pane[data-pane="0"] .pane-composer textarea').getBoundingClientRect().height;
+    const rebuiltTa = document.querySelector('.pane[data-pane="0"] .pane-composer textarea');
+    autoSizeComposer(rebuiltTa);
+    const afterRender = rebuiltTa.getBoundingClientRect().height;
 
     // Double-click gives the size back to the text.
     const grip2 = document.querySelector('.pane[data-pane="0"] .composer-grip');

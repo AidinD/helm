@@ -29,7 +29,11 @@ try {
       state.config.dismissedArchiveProposals = {};
       state.sessions = [{
         sessionId: "prop-1", cliSessionId: "prop-1", title: "Idle finished session",
-        status: "idle", isArchived: false, isOrchestrator: false, lastActivityAt: 1000,
+        // lifecycleState, not the raw status, is what dashboardProposalSessions()
+        // reads now (Epic f3d096fa migrated the needs-you/archive surfaces off
+        // status onto the FSM projection). A fixture that only set status was
+        // invisible to the proposal filter and never surfaced the baseline.
+        status: "idle", lifecycleState: "idle", isArchived: false, isOrchestrator: false, lastActivityAt: 1000,
         jot: null, model: "claude-sonnet-5", attentionScore: 0
       }];
       const baseline = has();

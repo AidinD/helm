@@ -49,6 +49,10 @@ try {
         verify: { command: "npm test", passed: true, output: "12 tests passed" }
       }]
     });
+    // Terminal (done/error) runs render COLLAPSED to a one-line summary by default
+    // (bug b72fcd1f); only runs in goalRunExpanded show their full detail with the
+    // iteration cards this test inspects. Expand it, exactly as a user click would.
+    goalRunExpanded.add("r1");
     renderGoalPage();
     return true;
   })()`);
