@@ -146,18 +146,13 @@ try {
   assert(smDivergence.synthetic === false, "a registered 2nd mate is NOT re-synthesized as a prompt-title node on id-form mismatch");
   assert(smDivergence.registeredName === "Beatdrop mate", "the 2nd mate keeps its registered fleet name (single-sourced with the chat header)");
 
-  // b7f662fd - the redundant top proposals banner is gone, and the Fleet header
-  // no longer shows the (confusing "0") live count.
-  const fleetChrome = await app.eval(`(() => {
-    const proposed = { secondMateId: "sm_prop", status: "proposed", sessionId: null, firstMateId: "direct", projectPath: "D:/p", name: "P", brief: "b", crew: [] };
-    const section = dashboardFleetSection([], [proposed], {});
-    return {
-      hasBanner: !!section.querySelector(".fleet-proposals"),
-      hasCount: !!section.querySelector(".dash-board-head .dash-count"),
-    };
-  })()`);
-  assert(fleetChrome.hasBanner === false, "the top 'topics proposed' banner is removed");
-  assert(fleetChrome.hasCount === false, "the Fleet header shows no count");
+  // b7f662fd - the redundant top proposals banner and the confusing "0" Fleet
+  // header count were both removed. That check drove dashboardFleetSection, which
+  // itself no longer exists: the entire classic Fleet section (its header, its
+  // count, and the proposals banner) was deleted when the widget grid became the
+  // only dashboard (task 337895ce), so there is nothing left to assert the absence
+  // against. The widget fleet cards (fleetMateCardEl / fleetSecondMateEl, exercised
+  // below) never had a proposals banner or a section-header count.
 
   // 9ad82c28 - a registered (crew-derived) second mate reflects its OWN session's
   // status, not just crew: "working" when its session is active, not "idle".

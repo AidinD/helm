@@ -8737,36 +8737,9 @@ function refreshDashboardIfVisible(opts = {}) {
 
 // Per-section fingerprints so fillDashboardSections can skip sections whose
 // source data is unchanged. Reset on each full renderDashboardPage.
-let dashSectionFingerprints = { onboarding: null, queue: null, fleet: null, goals: null, newSession: null };
-
-function dashboardQueueFingerprint(inMotion) {
-  const rows = (inMotion || dashboardInMotionRows())
-    // Include iteration count + error for a goal run: its status stays "running"
-    // for its whole life, so without these the row's "Iteration N (phase)" text
-    // freezes as iterations advance (review: agent 1). Mirrors runsFp in the
-    // fleet fingerprint, which already tracks iteration count for the same run.
-    .map((r) =>
-      r.kind === "goalRun"
-        ? `g:${r.run?.goalRunId}:${r.run?.status}:${r.run?.iterations?.length || 0}:${r.run?.error ? 1 : 0}`
-        : // Append a crew-liveness bit: a first mate's session status stays
-          // "waiting" its whole idle life, so without this the "waiting on
-          // crew" -> "needs input" flip (when its last crew run finishes) never
-          // repaints the queue. The card is already covered by runsFp in
-          // dashboardFleetFingerprint; only this per-row fingerprint needs it.
-          `s:${r.session.sessionId}:${r.session.status}:${r.session.title}:${r.session.lastActivityAt}:${mateHasLiveCrew(firstMateForSession(r.session)) ? 1 : 0}`
-    )
-    .join("|");
-  const proposals = dashboardProposalSessions()
-    .map((s) => `${s.sessionId}:${s.lastActivityAt}`)
-    .join(",");
-  return [rows, proposals, dashboardArchiveGroupExpanded, state.config.archiveSuggestions?.enabled].join("##");
-}
 
 
-function dashboardNewSessionFingerprint() {
-  const cwds = [...new Set(state.sessions.filter((s) => s.cwd).map((s) => s.cwd))].sort().join("|");
-  return [cwds, dashboardSelectedChip].join("##");
-}
+
 
 // What the widget dashboard is a picture OF. Deliberately cheap and synchronous:
 // it runs on every poll tick, so it must not fetch anything. Sessions carry the
@@ -8803,33 +8776,6 @@ function widgetDashboardFingerprint() {
   return [sessions, runs, layout, state.config?.autoCaptain?.enabled === true, view, quota].join("##");
 }
 
-function dashboardFleetFingerprint(mates = [], secondMates = [], boardSummary = {}) {
-  const runsFp = [...goalRuns.values()]
-    .map((r) => `${r.goalRunId}:${r.dispatchedBy || "-"}:${r.status}:${r.iterations?.length || 0}:${r.escalation ? 1 : 0}`)
-    .join("|");
-  // Include each mate's open-session context tokens so the gauge + the "ctx"
-  // retire nudge repaint as context climbs (review: agent 2 - otherwise the
-  // gauge only updates when something unrelated forces a refresh).
-  const matesFp = mates
-    .map((m) => {
-      const p = panes.find((pane) => pane && pane.cliSessionId && pane.cliSessionId === m.sessionId);
-      // Include the mate's bound-session status so the card repaints its
-      // "needs you" / "working" badge + accent when the mate transitions.
-      const st = m.sessionId
-        ? state.sessions.find((s) => (s.cliSessionId || s.sessionId) === m.sessionId)?.status || "-"
-        : "-";
-      // Effective context = live pane value when open, else the per-poll estimate
-      // (so a non-open mate's gauge repaints as its context changes - bug bf1ea538).
-      const ctx = p && typeof p.contextTokens === "number" ? p.contextTokens : contextTokensBySession[m.sessionId] || 0;
-      return `${m.mateId}:${m.name}:${m.sessionId || "-"}:${st}:${ctx}`;
-    })
-    .join(",");
-  const smFp = secondMates.map((s) => `${s.secondMateId}:${s.name}:${s.sessionId || "-"}:${s.crew.length}`).join(",");
-  const boardFp = Object.entries(boardSummary)
-    .map(([p, b]) => `${p}:${b.open}:${b.inProgress}:${b.minActivePriority}`)
-    .join(",");
-  return [runsFp, matesFp, smFp, boardFp].join("##");
-}
 
 // The Fleet: the orchestration model made visible as three columns (the locked
 // mock). Two NAMED first mates (sessions you jump into) + Direct. Under each
@@ -9439,54 +9385,7 @@ function paintDashboardSubtitle(mates = null) {
   el.textContent = `${listed} ${names.length === 1 ? "is" : "are"} on watch. Retire, rename or hand one off from the Fleet below.`;
 }
 
-function dashboardFleetSection(mates = [], secondMates = [], boardSummary = {}) {
-  const section = document.createElement("section");
-  section.className = "dash-board dash-fleet";
-  // No count on the Fleet header: it previously showed the live-crew count, which
-  // read as "0" next to a populated fleet and confused more than it informed
-  // (b7f662fd). The per-mate cards already convey liveness.
-  section.append(dashBoardHead("Fleet", null, "First mates → second mates (project sessions) → crew"));
 
-  // The top "N topics proposed - engage one to start" banner was removed
-  // (b7f662fd / adcef9e9): it duplicated the proposed second mates already listed
-  // under each first-mate card, where they're engaged and managed in context. A
-  // proposal lives under its mate, not in a redundant top strip that also let old,
-  // never-engaged proposals accumulate as stale "engage me" chips.
-
-  const cols = document.createElement("div");
-  cols.className = "fleet-cols";
-
-  // One column per active first mate (ordered by slot), then Direct.
-  for (const mate of mates) {
-    const sms = secondMates.filter((s) => s.firstMateId === mate.mateId);
-    // Header is just "First mate" - the mate's name (in the card below) is the
-    // identity, so the slot number was redundant noise now that mates are named.
-    cols.append(fleetColumnEl("First mate", fleetMateCardEl(mate, sms, boardSummary), false));
-  }
-  // Direct lists your SESSIONS only (Aidin's choice). A run-derived direct node
-  // (an autonomous run with no session) would otherwise show as a confusing
-  // duplicate that jumps somewhere different than the same-named session - those
-  // live on the Autopilot page instead.
-  // Auto runs are deliberately NOT here: they have their own column/widget, and
-  // listing them in both made "your own work" include work you never started.
-  const directSms = secondMates.filter((s) => s.firstMateId === "direct" && isLiveWorkNode(s) && !isAutoStartedNode(s));
-  cols.append(fleetColumnEl("Direct · your own work", fleetDirectCardEl(directSms), true));
-
-  section.append(cols);
-  return section;
-}
-
-function fleetColumnEl(label, cardEl, isDirect) {
-  const col = document.createElement("div");
-  col.className = "fleet-col";
-  const lab = document.createElement("div");
-  lab.className = "fleet-col-label" + (isDirect ? " direct" : "");
-  const dot = document.createElement("span");
-  dot.className = "fleet-col-dot";
-  lab.append(dot, document.createTextNode(label));
-  col.append(lab, cardEl);
-  return col;
-}
 
 // A first-mate card: anchor + name (+ rename/retire), context gauge if its
 // session is open, a dual-trigger retire nudge (saturated OR work wrapped), and
@@ -10701,140 +10600,8 @@ async function fillDashboardSections({ force = false } = {}) {
     lastWidgetDashboardFingerprint = widgetDashboardFingerprint();
     return;
   }
-  // eslint-disable-next-line no-unreachable
-  if (!document.getElementById("dashQueueSlot")) {
-    if (isDashboardVisible()) {
-      await renderDashboardPage();
-    }
-    return;
-  }
-  // Keep the topbar quota + orchestration chips current on every tick.
-  renderDashQuota();
-  renderDashOrchestration();
-
-  // Persona catalog for the Fleet cards' picker - loaded once, before the
-  // (synchronous) fleet render below reads it.
-  await ensurePersonaCatalog();
-
-  const goalsResult = await window.helm.getJotGoals();
-  const inMotion = dashboardInMotionRows();
-  const isColdStart = inMotion.length === 0 && (!goalsResult.ok || goalsResult.goals.length === 0);
-
-  if (bailIfPressed()) {
-    return;
-  }
-  const onboardingFp = String(isColdStart);
-  if (force || onboardingFp !== dashSectionFingerprints.onboarding) {
-    dashSectionFingerprints.onboarding = onboardingFp;
-    const slot = document.getElementById("dashOnboardingSlot");
-    // may be gone if the widget dashboard swapped the page during an await
-    if (slot) {
-      slot.replaceChildren(...(isColdStart ? [dashboardOnboardingBlock()] : []));
-    }
-  }
-
-  const queueFp = dashboardQueueFingerprint(inMotion);
-  if (force || queueFp !== dashSectionFingerprints.queue) {
-    dashSectionFingerprints.queue = queueFp;
-    writeDashSlot("dashQueueSlot", dashboardQueueSection());
-  }
-
-  // No separate captain Report-back section: terminal runs report back UNDER
-  // their dispatcher (the first-mate card roll-up), and anything that needs the
-  // captain surfaces in the Needs-you queue above (Aidin 2026-07-11 - "faculty
-  // not a room"). See fleetMateReportRollupEl.
-
-  const [matesResult, secondMatesResult] = await Promise.all([window.helm.listMates(), window.helm.listSecondMates()]);
-  const activeMatesList = matesResult?.ok ? matesResult.active : [];
-  paintDashboardSubtitle(activeMatesList);
-  // Shared with the widget dashboard - see buildFleetModel for why this must not
-  // be two separate derivations.
-  const { secondMates: secondMatesList, boardSummary } = await buildFleetModel(
-    activeMatesList,
-    secondMatesResult?.ok ? secondMatesResult.secondMates : []
-  );
-  if (bailIfPressed()) {
-    return;
-  }
-  const fleetFp = dashboardFleetFingerprint(activeMatesList, secondMatesList, boardSummary);
-  if (force || fleetFp !== dashSectionFingerprints.fleet) {
-    dashSectionFingerprints.fleet = fleetFp;
-    const fleet = dashboardFleetSection(activeMatesList, secondMatesList, boardSummary);
-    writeDashSlot("dashFleetSlot", ...(fleet ? [fleet] : []));
-  }
-
-  if (bailIfPressed()) {
-    return;
-  }
-  if (bailIfPressed()) {
-    return;
-  }
-  // Docs drift (task 0831417b). Also on the CLASSIC dashboard, not only as a
-  // widget: the widget dashboard is opt-in and currently off, so a widget-only
-  // nudge would be invisible on exactly the board being used - an attention signal
-  // that never fires is worse than none, because you trust the quiet.
-  const drift = await dashboardDriftSection();
-  const driftFp = drift ? drift.dataset.fp : "none";
-  if (force || driftFp !== dashSectionFingerprints.drift) {
-    dashSectionFingerprints.drift = driftFp;
-    writeDashSlot("dashDriftSlot", ...(drift ? [drift] : []));
-  }
-
-  if (bailIfPressed()) {
-    return;
-  }
-  const newSessionFp = dashboardNewSessionFingerprint();
-  if (force || newSessionFp !== dashSectionFingerprints.newSession) {
-    dashSectionFingerprints.newSession = newSessionFp;
-    writeDashSlot("dashNewSessionSlot", await dashboardNewSessionSection());
-  }
 }
 
-/**
- * Classic-dashboard module for docs drift (task 0831417b). Returns null when there
- * is genuinely nothing to say, so a clean board shows no section at all - unlike
- * the widget, which a user placed deliberately and so gets an explicit "all
- * current".
- *
- * But it does NOT return null when the check FAILED. The first cut did, which meant
- * a broken read (no git, no sessions dir) looked exactly like a clean board on the
- * one surface actually in use - the silent all-clear this nudge exists to prevent.
- *
- * `fetchStale` is injectable for the same reason as the widget's: window.helm is
- * contextBridge-exposed and not writable, so a test can't otherwise drive this
- * with known data.
- */
-async function dashboardDriftSection(fetchStale = () => window.helm.staleProjects()) {
-  let res;
-  try {
-    res = await fetchStale();
-  } catch (err) {
-    return driftSectionEl([], { problem: "Couldn't check docs drift." });
-  }
-  if (res?.pending) {
-    return null; // nothing measured yet; the next poll will have it
-  }
-  const rows = res?.ok ? res.rows || [] : [];
-  const unchecked = res?.ok ? res.uncheckedPaths || [] : [];
-  // Safety net: a reply that reports a COUNT of unchecked projects but no names
-  // (an older cached payload) must still never render as the all-clear. On the
-  // classic board the all-clear is the ABSENCE of this section, so a silent
-  // return here is indistinguishable from "everything is fine".
-  const problem = !res?.ok
-    ? `Couldn't check docs drift${res?.error ? `: ${res.error}` : "."}`
-    : !unchecked.length && res.unchecked > 0
-      ? `${res.unchecked} of ${res.considered} project${res.considered === 1 ? "" : "s"} couldn't be checked`
-      : null;
-  const footnote = driftFootnote(res);
-  // The footnote KEEPS THE SECTION ALIVE. It carries the only un-park control there
-  // is, so returning null here when everything happens to be parked deleted the
-  // user's own escape hatch and left the state editable only by hand in config.json
-  // (found by the pre-release review, reproduced end to end).
-  if (rows.length === 0 && !problem && unchecked.length === 0 && !footnote) {
-    return null;
-  }
-  return driftSectionEl(rows, { problem, unchecked, footnote, parked: res?.parked || 0 });
-}
 
 /**
  * The quiet line under the list: what was deliberately left out, and why. Aidin
@@ -10855,55 +10622,6 @@ function driftFootnote(res) {
   return bits.length ? `Not counted: ${bits.join(", ")}.` : null;
 }
 
-function driftSectionEl(rows, { problem = null, unchecked = [], footnote = null, parked = 0 } = {}) {
-  const section = document.createElement("section");
-  section.className = "dash-board";
-  // sessionId is in the fingerprint too: without it, a project whose commit count
-  // hasn't moved would keep its old Jump-in target forever, even after that
-  // session was archived out from under the button.
-  section.dataset.fp = [
-    problem || "",
-    footnote || "",
-    // The REASON is part of the fingerprint: keying on the path alone meant a
-    // project whose failure changed (say "bad object HEAD" -> "folder is gone")
-    // kept showing the old cause, which is the one thing this row exists to say.
-    ...unchecked.map((u) => `?${u.path}:${u.reason || ""}`),
-    ...rows.map((r) => `${r.path}:${r.commitsSince}:${r.sessionId || ""}`),
-  ].join("|");
-  // The shared head builder, so the title gets the same small uppercase treatment
-  // as every neighbouring module - a hand-rolled span matches no CSS rule and read
-  // as a different visual language sitting between Goals and New session.
-  const head = dashBoardHead("Docs drift", rows.length || null, "state-of-play behind the code - reconcile so these stay archivable");
-  const body = document.createElement("div");
-  body.className = "dash-board-body";
-  for (const row of rows) {
-    body.append(driftLineEl(row));
-  }
-  // Name each project that couldn't be read, and why. "2 of 14 projects couldn't
-  // be checked" was unusable (Aidin, 2026-07-28): it named nothing, so there was
-  // no way to tell a broken repo from a folder that was never version-controlled.
-  for (const u of unchecked) {
-    body.append(driftLineEl({ path: u.path, name: u.name, unreadable: u.reason }));
-  }
-  if (problem) {
-    const warn = document.createElement("div");
-    warn.className = "wd-drift-line";
-    const t = document.createElement("span");
-    t.className = "wd-drift-name";
-    t.textContent = problem;
-    const tag = document.createElement("span");
-    tag.className = "wd-drift-count crit";
-    tag.textContent = "unknown";
-    tag.title = "Treat this as 'not checked', not as 'nothing to reconcile'.";
-    warn.append(t, tag);
-    body.append(warn);
-  }
-  if (footnote) {
-    body.append(driftFootEl(footnote, parked));
-  }
-  section.append(head, body);
-  return section;
-}
 
 /**
  * The footnote, with un-parking attached to it. The un-park control lives HERE
@@ -11032,7 +10750,6 @@ function widgetLayout(mates) {
     { id: "w-captain", type: "captain", span: 4 },
     { id: "w-auto", type: "auto", span: 4 },
     { id: "w-docsDrift", type: "docsDrift", span: 4 },
-    { id: "w-goals", type: "goals", span: 12 }
   );
   return layout;
 }
@@ -11142,12 +10859,6 @@ async function saveWidgetLayout(layout) {
   await window.helm.setConfig({ dashboardWidgets: next });
 }
 
-async function setWidgetDashboardEnabled(enabled) {
-  const next = { ...(state.config?.dashboardWidgets || {}), enabled };
-  state.config = { ...state.config, dashboardWidgets: next };
-  await window.helm.setConfig({ dashboardWidgets: next });
-  await renderDashboardPage();
-}
 
 /** A labelled stat block ("4 / own sessions"). */
 function widgetStat(label, value, note, variant) {
@@ -12167,119 +11878,6 @@ async function renderDashboardPage() {
   // commits its own atomic swap, so the page is not cleared here: an overlapping
   // render can't leave it blank.
   await renderWidgetDashboard(page);
-  return;
-  // eslint-disable-next-line no-unreachable
-  page.innerHTML = "";
-
-  const topbar = document.createElement("div");
-  topbar.className = "dash-topbar";
-  const heading = document.createElement("div");
-  const h2 = document.createElement("h2");
-  h2.textContent = "Dashboard";
-  const sub = document.createElement("div");
-  sub.className = "analysis-totals";
-  sub.style.marginBottom = "0";
-  sub.id = "dashSubtitle";
-  // Left EMPTY until the mates are actually known. This line used to be a
-  // hardcoded "No first mate on watch right now...", which the app printed
-  // unconditionally - directly above a Fleet section listing two first mates on
-  // watch (Aidin, 2026-08-03: "Vad betyder den här texten egentligen?"). It was
-  // stale copy from when a first mate was an on-demand role you started by hand;
-  // ensureMates has guaranteed standing mates for a long time. A subtitle that
-  // contradicts the page under it is worse than no subtitle, and saying nothing
-  // for the moment before the data lands is honest.
-  sub.textContent = "";
-  heading.append(h2, sub);
-  // Paint from the cache right away; whichever dashboard renders next repaints it
-  // with a fresh list. Doing it here rather than only after the fetch is what keeps
-  // the line from depending on which render finishes first.
-  if (Array.isArray(lastKnownMates)) {
-    queueMicrotask(() => paintDashboardSubtitle());
-  } else {
-    // Nothing cached yet (first dashboard render of the session). Ask directly
-    // rather than waiting for whatever else happens to fetch mates - the line was
-    // blank until an unrelated refresh ran, which is not something a reader can
-    // know or trigger. One IPC, once.
-    window.helm
-      .listMates()
-      .then((res) => paintDashboardSubtitle(res?.ok ? res.active || [] : []))
-      .catch(() => {});
-  }
-  const topbarActions = document.createElement("div");
-  topbarActions.className = "dash-topbar-actions";
-  // Token-quota readout on the Dashboard too (6ed0b09e) - previously only in the
-  // per-pane context-gauge popover, invisible when no chat is open. Live-updated
-  // by renderDashQuota (poll tick + quota events).
-  const quotaChip = document.createElement("div");
-  quotaChip.id = "dashQuotaChip";
-  quotaChip.className = "dash-quota-chip";
-  // Phase-2 orchestration guardrail control (Slice 0): budget readout + kill/
-  // resume. Populated live by renderDashOrchestration.
-  const orchChip = document.createElement("div");
-  orchChip.id = "dashOrchestrationChip";
-  orchChip.className = "dash-orch-chip";
-  // Opt into the widget dashboard (4bf2421c). Reversible from there.
-  const widgetToggle = document.createElement("button");
-  widgetToggle.type = "button";
-  widgetToggle.className = "text-btn";
-  widgetToggle.textContent = "Widget layout";
-  widgetToggle.title = "Switch the dashboard to a drag-and-drop widget grid. Reversible - this layout stays as it is.";
-  widgetToggle.addEventListener("click", () => setWidgetDashboardEnabled(true));
-  topbarActions.append(quotaChip, orchChip, widgetToggle);
-  topbar.append(heading, topbarActions);
-  page.append(topbar);
-  renderDashQuota();
-  renderDashOrchestration();
-
-  // Each dynamic section lives in its own stable slot so the refresh tick can
-  // re-render just the section whose data changed (fillDashboardSections),
-  // rather than tearing the whole page down. display:contents on the slot keeps
-  // it transparent to layout, so the sections space exactly as before.
-  const mkSlot = (id) => {
-    const d = document.createElement("div");
-    d.id = id;
-    d.className = "dash-section-slot";
-    return d;
-  };
-  page.append(
-    mkSlot("dashOnboardingSlot"),
-    mkSlot("dashQueueSlot"),
-    mkSlot("dashFleetSlot"),
-    mkSlot("dashDriftSlot"),
-    mkSlot("dashNewSessionSlot")
-  );
-  dashSectionFingerprints = { onboarding: null, queue: null, report: null, fleet: null, goals: null, drift: null, newSession: null };
-  await fillDashboardSections({ force: true });
-}
-
-// First-run orientation. Shown only in the cold/low-data state (no active or
-// waiting sessions, and no Jot goals) so it reads as calm guidance rather
-// than a permanent fixture - it naturally disappears once real data exists,
-// no dismiss control needed. Reuses the same .dash-board/.dash-hint tokens as
-// the rest of the dashboard rather than inventing new structure.
-function dashboardOnboardingBlock() {
-  const section = document.createElement("section");
-  section.className = "dash-board dash-onboarding";
-
-  const title = document.createElement("div");
-  title.className = "dash-onboarding-title";
-  title.textContent = "Welcome to your dashboard";
-  section.append(title);
-
-  const list = document.createElement("ul");
-  list.className = "dash-onboarding-list";
-  [
-    '"Needs you & in motion" surfaces sessions waiting on your input or currently working - it stays empty until something is running.',
-    "Work is organized by goal below, pulled straight from your Jot board.",
-    'Pick a project under "New session" and start fresh whenever you\'re ready.',
-  ].forEach((text) => {
-    const li = document.createElement("li");
-    li.textContent = text;
-    list.append(li);
-  });
-  section.append(list);
-
-  return section;
 }
 
 // Shared between dashboardProposalSessions() below and the sidebar's
@@ -12993,137 +12591,7 @@ const REPO_CHIP_ICON = "\u{1F4C1}"; // folder
 // Local UI state for the archive-suggestion group, reset on reload.
 let dashboardArchiveGroupExpanded = false;
 
-async function dashboardNewSessionSection() {
-  const section = document.createElement("section");
-  section.className = "dash-board";
-  section.append(dashBoardHead("New session", null, "Starts fresh every time - never resumed history"));
 
-  const body = document.createElement("div");
-  body.className = "dash-board-body";
-  const panel = document.createElement("div");
-  panel.className = "dash-new-session-panel";
-
-  const projectTitle = document.createElement("div");
-  projectTitle.className = "dash-ns-col-title";
-  projectTitle.textContent = "Pick a project";
-  panel.append(projectTitle);
-
-  const chipGrid = document.createElement("div");
-  chipGrid.className = "dash-chip-grid";
-
-  const knownRepos = [...new Set(state.sessions.filter((s) => s.cwd).map((s) => s.cwd))];
-  const domains = await window.helm.listDomains();
-
-  // { cwd, label, icon } for every selectable chip, repos first then domains,
-  // so dashAutoContextStripEl can look up the selected chip's label/icon by
-  // cwd regardless of which kind it is.
-  const chips = [
-    ...knownRepos.map((cwd) => ({
-      cwd,
-      label: cwd.split(/[\\/]/).filter(Boolean).pop() || cwd,
-      icon: REPO_CHIP_ICON,
-    })),
-    ...domains.map((d) => ({ cwd: d.path, label: d.name, icon: d.icon, domainId: d.id })),
-  ];
-
-  chips.forEach((chip) =>
-    chipGrid.append(
-      dashChipEl(chip.label, chip.cwd, chip.icon, {
-        // Only a registered domain is removable - a repo chip is derived from
-        // real sessions, not a standalone registration to undo.
-        onRemove: chip.domainId
-          ? async () => {
-              const result = await window.helm.removeDomain(chip.domainId);
-              if (!result.ok) {
-                showToast(result.error || "Couldn't remove domain.");
-                return;
-              }
-              if (dashboardSelectedChip === chip.cwd) {
-                dashboardSelectedChip = null;
-              }
-              fillDashboardSections();
-            }
-          : null,
-      })
-    )
-  );
-  chipGrid.append(dashChipEl("+ other…", "__other__", null, { title: "Use any folder for just this session - not saved" }));
-  chipGrid.append(
-    dashChipEl("+ new domain…", "__new_domain__", null, {
-      title: "Permanently add a non-repo folder (e.g. Gym, Kombucha) as a recurring project",
-    })
-  );
-  panel.append(chipGrid);
-
-  panel.append(dashAutoContextStripEl(dashboardSelectedChip, chips));
-
-  const launchRow = document.createElement("div");
-  launchRow.className = "dash-launch-row";
-  const startBtn = document.createElement("button");
-  startBtn.className = "text-btn";
-  startBtn.textContent = "Start fresh session";
-  startBtn.addEventListener("click", async () => {
-    if (!dashboardSelectedChip || dashboardSelectedChip === "__other__" || dashboardSelectedChip === "__new_domain__") {
-      showToast("Pick a project chip first.");
-      return;
-    }
-    navigateToPage("chat");
-    openFreshDraftInPane(dashboardSelectedChip, "");
-  });
-  launchRow.append(startBtn);
-
-  body.append(panel, launchRow);
-  section.append(body);
-  return section;
-}
-
-function dashChipEl(label, cwd, icon, opts = {}) {
-  const chip = document.createElement("div");
-  chip.className = "dash-chip" + (dashboardSelectedChip === cwd ? " dash-chip-selected" : "");
-  if (opts.title) {
-    chip.title = opts.title;
-  }
-  if (icon) {
-    const ic = document.createElement("span");
-    ic.className = "dash-chip-ic";
-    ic.textContent = icon;
-    chip.append(ic);
-  }
-  chip.append(document.createTextNode(label));
-  if (opts.onRemove) {
-    const removeBtn = document.createElement("span");
-    removeBtn.className = "dash-chip-remove";
-    removeBtn.textContent = "×"; // multiplication sign, used as an "x"
-    removeBtn.title = "Remove this domain";
-    removeBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      opts.onRemove();
-    });
-    chip.append(removeBtn);
-  }
-  chip.addEventListener("click", async () => {
-    // fillDashboardSections (not renderDashboardPage) - a chip pick only
-    // changes the New Session slot's fingerprint, so this repaints just that
-    // slot in place. renderDashboardPage tears down page.innerHTML and
-    // rebuilds the whole page, which reset scroll to the top on every click -
-    // felt like "clicking a chip bounces me back to the top of the dashboard".
-    if (cwd === "__other__") {
-      const folder = await window.helm.pickFolder();
-      if (folder) {
-        dashboardSelectedChip = folder;
-        fillDashboardSections();
-      }
-      return;
-    }
-    if (cwd === "__new_domain__") {
-      await promptRegisterDomain();
-      return;
-    }
-    dashboardSelectedChip = cwd;
-    fillDashboardSections();
-  });
-  return chip;
-}
 
 // Minimal "register a new domain" flow. Folder comes from the native picker
 // (which can also create a new folder); the name defaults to the folder's
@@ -13181,52 +12649,6 @@ async function promptRegisterDomain() {
   });
 }
 
-// Passive confirmation strip - nothing to check, nothing to decide. Names the
-// selected project (falling back to the first chip, or a generic label when
-// none are known yet) so the sentence reads correctly either way. `chips` is
-// the same { cwd, label, icon } list dashboardNewSessionSection built, so
-// this works identically for a repo chip or a non-repo domain chip - the
-// only difference is a domain's file list doesn't assume PLAN.md/
-// DECISIONS.md exist (those are repo conventions; a domain's CLAUDE.md is
-// even optional).
-function dashAutoContextStripEl(selectedCwd, chips) {
-  const selected = chips.find((c) => c.cwd === selectedCwd) || chips[0] || null;
-  const projectLabel = selected ? selected.label : "the project";
-  const isDomain = selected ? selected.icon !== REPO_CHIP_ICON : false;
-
-  const strip = document.createElement("div");
-  strip.className = "dash-auto-context";
-
-  const icon = document.createElement("div");
-  icon.className = "dash-auto-context-ic";
-  icon.textContent = "⚡"; // lightning bolt
-  strip.append(icon);
-
-  const ctxBody = document.createElement("div");
-  ctxBody.className = "dash-auto-context-body";
-  const title = document.createElement("div");
-  title.className = "dash-auto-context-title";
-  const projectStrong = document.createElement("b");
-  projectStrong.textContent = projectLabel;
-  title.append("Starts fresh - auto-loads ", projectStrong, "'s CLAUDE.md + memory automatically");
-  ctxBody.append(title);
-
-  const files = document.createElement("div");
-  files.className = "dash-auto-context-files";
-  const fileNames = isDomain ? ["CLAUDE.md (optional)", "memory/*.md"] : ["CLAUDE.md", "PLAN.md", "DECISIONS.md", "memory/*.md"];
-  fileNames.forEach((name) => {
-    const code = document.createElement("code");
-    code.textContent = name;
-    files.append(code);
-  });
-  const rest = document.createElement("span");
-  rest.textContent = "· no history resumed, no files to pick";
-  files.append(rest);
-  ctxBody.append(files);
-
-  strip.append(ctxBody);
-  return strip;
-}
 
 // --- Shared small pieces ----------------------------------------------
 

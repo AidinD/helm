@@ -188,7 +188,10 @@ try {
       names: [...host.querySelectorAll(".wd-drift-name")].map(e => e.textContent),
       counts: [...host.querySelectorAll(".wd-drift-count")].map(e => e.textContent),
       crit: host.querySelectorAll(".wd-drift-count.crit").length,
-      jumps: host.querySelectorAll(".wd-drift-jump").length
+      // Count only the "Jump in" buttons: the "Reconcile" button reuses the same
+      // .wd-drift-jump class, so a bare class count sees both (task 0831417b added
+      // Reconcile after this assertion was written).
+      jumps: [...host.querySelectorAll(".wd-drift-jump")].filter((b) => b.textContent === "Jump in").length
     };
   })()`);
   assert(widget.lines === 2, `the widget renders one line per drifting project (${widget.lines})`);
@@ -242,7 +245,9 @@ try {
     host.append(driftLineEl({ path: target.cwd || "x", name: "jump-test", commitsSince: 99, threshold: 8, sessionId: target.sessionId }));
     const vis = () => ({ chat: !document.getElementById("chatPage").classList.contains("hidden"), dash: !document.getElementById("dashboardPage").classList.contains("hidden") });
     const before = vis();
-    host.querySelector(".wd-drift-jump").click();
+    // Click the "Jump in" button specifically - "Reconcile" shares .wd-drift-jump
+    // and is rendered first, so a bare querySelector would click the wrong one.
+    [...host.querySelectorAll(".wd-drift-jump")].find((b) => b.textContent === "Jump in").click();
     await new Promise(r => setTimeout(r, 700));
     const after = vis();
     host.remove();
@@ -255,64 +260,12 @@ try {
     assert(jump.opened === true, "and the target session is the one selected");
   }
 
-  // The CLASSIC dashboard section. This is the board that actually matters: the
-  // widget dashboard is opt-in and currently off, so a widget-only nudge would be
-  // invisible on the board in use - an attention signal that never fires is worse
-  // than none, because you come to trust the quiet.
-  const section = await app.eval(`(async () => {
-    const stub = async () => ({ ok: true, rows: [
-      { path: "D:/Repo/Tools/fake-a", name: "fake-a", commitsSince: 40, threshold: 8, sessionId: null }
-    ] });
-    const sec = await dashboardDriftSection(stub);
-    const clean = await dashboardDriftSection(async () => ({ ok: true, rows: [], unchecked: 0, considered: 4 }));
-    const broke = await dashboardDriftSection(async () => { throw new Error("boom"); });
-    const failed = await dashboardDriftSection(async () => ({ ok: false, error: "git missing", rows: [] }));
-    const partial = await dashboardDriftSection(async () => ({ ok: true, rows: [], unchecked: 3, considered: 9 }));
-    const pending = await dashboardDriftSection(async () => ({ ok: true, rows: [], pending: true }));
-    const txt = (el) => (el ? el.textContent.replace(/\\s+/g, " ") : null);
-    // The fingerprint must move when only the jump-in target changes.
-    const fpA = (await dashboardDriftSection(async () => ({ ok: true, rows: [{ path: "p", name: "p", commitsSince: 9, threshold: 8, sessionId: "A" }] }))).dataset.fp;
-    const fpB = (await dashboardDriftSection(async () => ({ ok: true, rows: [{ path: "p", name: "p", commitsSince: 9, threshold: 8, sessionId: "B" }] }))).dataset.fp;
-    return {
-      rendered: !!sec,
-      cls: sec?.className,
-      lines: sec ? sec.querySelectorAll(".wd-drift-line").length : 0,
-      headIsH3: !!sec?.querySelector(".dash-board-head h3"),
-      headText: sec?.querySelector(".dash-board-head h3")?.textContent,
-      hasCount: !!sec?.querySelector(".dash-count"),
-      hasFingerprint: typeof sec?.dataset?.fp === "string" && sec.dataset.fp.length > 0,
-      cleanIsNull: clean === null,
-      pendingIsNull: pending === null,
-      brokeText: txt(broke),
-      failedText: txt(failed),
-      partialText: txt(partial),
-      fpTracksSession: fpA !== fpB
-    };
-  })()`);
-  assert(section.rendered === true && section.lines === 1, `the classic dashboard renders a drift section (${section.lines} line(s))`);
-  assert(section.cls === "dash-board", `it reuses the existing dashboard module shell (got "${section.cls}")`);
-  // Not just the shell: the HEAD has to come from the shared builder, or the title
-  // renders unstyled next to every other module's small uppercase heading.
-  assert(section.headIsH3 === true && section.headText.startsWith("Docs drift"), `the head comes from the shared dashBoardHead builder (h3: ${section.headIsH3}, "${section.headText}")`);
-  assert(section.hasCount === true, "and carries the same count pill convention as its neighbours");
-  assert(section.hasFingerprint === true, "it carries a fingerprint, so the poll tick doesn't rebuild it every second");
-  assert(section.fpTracksSession === true, "the fingerprint tracks the jump-in target, not just the commit count - otherwise the button keeps pointing at an archived session");
-  assert(section.cleanIsNull === true, "no drift means no section at all on the classic board - it stays quiet rather than showing an empty module");
-  assert(section.pendingIsNull === true, "before the first sweep finishes it shows nothing, rather than guessing");
-  // The failure modes. A read that could not look must NEVER render as the
-  // all-clear: on the classic board the all-clear IS the absence of the section,
-  // so returning null on failure was indistinguishable from "everything is fine".
-  assert(/couldn't check/i.test(section.brokeText || ""), `a thrown read renders an explicit "couldn't check", not silence (got "${section.brokeText}")`);
-  assert(/couldn't check/i.test(section.failedText || "") && /git missing/.test(section.failedText || ""), `an ok:false read surfaces its reason (got "${section.failedText}")`);
-  assert(/3 of 9/.test(section.partialText || "") && /unknown/i.test(section.partialText || ""), `a partially-checked sweep says how many it couldn't check (got "${section.partialText}")`);
-
-  // And it is present on the real board, in the slot the refresh writes to.
-  const live = await app.eval(`(() => {
-    const slot = document.getElementById("dashDriftSlot");
-    return { slotExists: !!slot, sectionRendered: !!slot?.querySelector(".dash-board") };
-  })()`);
-  assert(live.slotExists === true, "the classic dashboard has a slot for it");
-  log(`     (real board: drift section ${live.sectionRendered ? "IS" : "is not"} showing - depends on whether this machine has drift right now)`);
+  // NOTE: the classic dashboard drift SECTION (dashboardDriftSection, rendered
+  // into #dashDriftSlot) was removed with the classic section stack when the
+  // widget grid became the only dashboard (task 337895ce). Its behaviour -
+  // clean/pending render nothing, thrown/failed/partial reads say so instead of
+  // claiming all-clear - is the same contract the widget body above (lines ~179-228)
+  // is asserted against, so no coverage is lost by dropping the classic block.
 
   // The one-time seed: it reaches an already-arranged board once, and stays gone
   // once removed (otherwise "remove" would be a suggestion, not a decision).
