@@ -4,13 +4,24 @@
 // Helm via CDP. Starts on Dashboard and confirms the call switches to Plan
 // and renders the sandboxed mockup iframe.
 //
-// Arg: absolute path to a sample .html mockup (defaults to the bundled one).
+// Arg: absolute path to a sample .html mockup. With none given the test writes
+// its OWN temp mockup and cleans it up - it used to default to a hardcoded path
+// inside one session's scratchpad, which vanished with that session and made the
+// file-open half fail with "File not found" for everyone after.
 // Run:  node scripts/e2e/test-open-mockup-in-plan.mjs [path-to-mock.html]
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { launch } from "./harness.mjs";
 
+let ownTempFile = null;
 const MOCK_FILE =
   process.argv[2] ||
-  "C:/Users/aidin/AppData/Local/Temp/claude/D--Dropbox-Mina-Dokument-Claude/f260acf8-62c5-48c9-80fd-1589d8af917f/scratchpad/mock-sample.html";
+  (() => {
+    ownTempFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "helm-mockopen-")), "mock-sample.html");
+    fs.writeFileSync(ownTempFile, "<!doctype html><html><body><h1 id='mm'>Mock from file</h1></body></html>", "utf8");
+    return ownTempFile;
+  })();
 
 function log(...a) {
   console.log("[open-mockup-e2e]", ...a);
@@ -63,5 +74,12 @@ try {
 } finally {
   const killOut = await app.close();
   log("cleanup:", killOut || "(nothing killed)");
+  if (ownTempFile) {
+    try {
+      fs.rmSync(path.dirname(ownTempFile), { recursive: true, force: true });
+    } catch {
+      // best-effort temp cleanup
+    }
+  }
 }
 process.exit(exitCode);
