@@ -13551,6 +13551,15 @@ function openGoalRun(goalRunId) {
 // tellable apart) + per-run cancel, then status line, plan, iteration cards,
 // escalation, and final summary/error. Extracted from the old single-run
 // rendering so the Goal page can show several runs at once.
+// Human label for a run's model + effort (task e5273837). Reuses the shared
+// model menu so the label matches the picker ("Opus 4.8" not "claude-opus-4-8");
+// "Auto model" when the run left the choice to the CLI.
+function goalModelEffortLabel(run) {
+  const opt = run.model ? flattenModelOptions(MODEL_MENU_OPTIONS).find((o) => o.value === run.model) : null;
+  const modelLabel = run.model ? opt?.label || run.model.replace(/^claude-/, "") : "Auto model";
+  return run.effort ? `${modelLabel} · ${run.effort} effort` : modelLabel;
+}
+
 function goalRunDetailEl(run) {
   const wrap = document.createElement("div");
   // id so a crew report row on the Dashboard can deep-link straight to THIS
@@ -13617,6 +13626,15 @@ function goalRunDetailEl(run) {
   head.append(right);
   wrap.append(head);
 
+  // Which model + effort the run's iterations used (task e5273837: "Jag vill att
+  // det ska visas vilken model+effort som användes"). A muted meta line under the
+  // title. "Auto" when the run left the pick to the CLI. All iterations run at the
+  // run's model/effort, so this is a run-level fact, not per-iteration.
+  const meta = document.createElement("div");
+  meta.className = "goal-run-meta";
+  meta.textContent = goalModelEffortLabel(run);
+  wrap.append(meta);
+
   const progress = document.createElement("div");
   progress.className = "goal-progress";
 
@@ -13637,7 +13655,18 @@ function goalRunDetailEl(run) {
       statusLine.textContent = `Paused · ${run.iterations.length} iteration(s) so far…`;
     }
   } else if (run.status === "done") {
-    statusLine.textContent = run.escalation ? "Run paused for you." : "Run finished.";
+    // A clearer verdict than a bare "Run finished" (task e5273837: "verdict på
+    // den"): say the outcome and what it left - how many commits, and whether it
+    // is waiting on you. goalRunReport is the same source the Dashboard report
+    // row uses, so the two agree.
+    if (run.escalation) {
+      statusLine.textContent = "Run paused for you.";
+    } else {
+      const report = goalRunReport(run);
+      const commits = report.commitCount || 0;
+      const commitPart = commits > 0 ? `${commits} commit${commits === 1 ? "" : "s"} to review` : "no commits";
+      statusLine.textContent = `Finished · ${commitPart} · ${run.iterations.length} iteration${run.iterations.length === 1 ? "" : "s"}`;
+    }
   } else if (run.status === "error") {
     statusLine.textContent = "Run ended with an error.";
   } else if (run.status === "interrupted") {
