@@ -10187,8 +10187,7 @@ function fleetSecondMateEl(sm) {
     parkBtn.className = "fleet-btn fleet-archive-btn";
     parkBtn.textContent = "Archive";
     parkBtn.title = "Park this project's row. It comes back on its own the next time work is dispatched here.";
-    parkBtn.addEventListener("click", async (e) => {
-      e.stopPropagation();
+    const doPark = async () => {
       parkBtn.disabled = true;
       const res = await window.helm.archiveSecondMate(sm.secondMateId);
       if (!res?.ok) {
@@ -10206,6 +10205,58 @@ function fleetSecondMateEl(sm) {
         state.config.archivedSecondMates.push(sm.secondMateId);
       }
       refreshDashboardIfVisible();
+    };
+    parkBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      // Archive-before-worktree guard (task a827cc95: "vad händer om jag arkiverar
+      // den här innan jag rensar autopilots worktree - jag råkade nyss göra det").
+      // Archiving hides the row AND its manual "clean worktree" button; the worktree
+      // and run record survive (the housekeeping sweep still reclaims a clean,
+      // terminal one), but a captain who wanted to clean it by hand just lost the
+      // control. So if a run under this node still has a worktree ON DISK, warn
+      // first - and offer to open it so they can deal with it before it goes.
+      const candidatePaths = [
+        ...new Set(
+          (sm.crew || [])
+            .map(crewLiveRun)
+            .map((r) => r?.result?.worktreePath || r?.worktreePath)
+            .filter(Boolean)
+        ),
+      ];
+      let present = [];
+      if (candidatePaths.length) {
+        try {
+          const res = await window.helm.existingWorktrees(candidatePaths);
+          present = res?.existing || [];
+        } catch {
+          present = [];
+        }
+      }
+      if (present.length) {
+        const one = present[0];
+        customConfirm(
+          `"${sm.name}" still has ${present.length === 1 ? "an autopilot worktree" : `${present.length} autopilot worktrees`} on disk (e.g. ${one}). ` +
+            `Archiving hides this row and its "clean worktree" button. The worktree isn't deleted - Helm's housekeeping sweep still reclaims it once the run is finished and clean - but you won't be able to clean it by hand from here. Archive anyway?`,
+          "Archive anyway",
+          () => doPark(),
+          {
+            deliberate: true,
+            extraEl: (() => {
+              const openBtn = document.createElement("button");
+              openBtn.type = "button";
+              openBtn.className = "text-btn";
+              openBtn.textContent = "Open the worktree folder";
+              openBtn.addEventListener("click", (ev) => {
+                ev.stopPropagation();
+                window.helm.openGoalWorktree(one);
+              });
+              return openBtn;
+            })(),
+          }
+        );
+        return;
+      }
+      doPark();
     });
     head.append(parkBtn);
   }
