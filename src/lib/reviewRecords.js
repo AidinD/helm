@@ -976,6 +976,9 @@ export function buildReviewQueue(reviewTasks, records, metaHome = null) {
       // boards can share a category name.
       parentId: t.parentId || null,
       categoryId: t.categoryId || null,
+      // Work/private classification from the owning Jot category, for the Review
+      // page's domain filter (task 0ca1f3d3). null = unclassified (shown in all modes).
+      domain: t.domain === "work" || t.domain === "private" ? t.domain : null,
       record: rec,
       incomplete: problems.length > 0,
       problems,

@@ -1962,6 +1962,13 @@ function reviewActionsEl(row) {
 // away - a queue that quietly omits work would defeat the surface's whole purpose.
 let reviewOnlyRepoRooted = true;
 let reviewProjectFilter = null; // a category name, or null for every project
+// Work/private focus, brought back on the Review page (task 0ca1f3d3: "här borde
+// vi faktiskt lägga tillbaka private/work togglen som fanns i focus"). Unlike the
+// old Focus/Goals toggle - removed because it filtered a PLANNING list that just
+// duplicated Jot - this filters review WORK: which finished tasks you look at now.
+// The domain comes straight from each Jot category's own W/P classification. "all"
+// = no domain filtering; resets on reload, like the other two.
+let reviewDomainFilter = "all"; // "all" | "work" | "private"
 
 // Which band a row belongs to. The queue's own module decides this and sends it as
 // row.band; the fallback is for a row from an older payload. At module scope so the page,
@@ -1982,7 +1989,12 @@ const bandOf = (r) => r.band || r.verdict;
  */
 function visibleReviewRows(allRows, { ignoreProjectFilter = false } = {}) {
   const project = ignoreProjectFilter ? null : reviewProjectFilter;
-  return (allRows || []).filter((r) => (!reviewOnlyRepoRooted || r.repoPath) && (!project || r.category === project));
+  return (allRows || []).filter(
+    (r) =>
+      (!reviewOnlyRepoRooted || r.repoPath) &&
+      (!project || r.category === project) &&
+      (reviewDomainFilter === "all" || r.domain === reviewDomainFilter)
+  );
 }
 
 function reviewTallyFromRows(rows) {
@@ -2005,7 +2017,13 @@ function reviewTallyFromRows(rows) {
 function reviewFilterBarEl(allRows, nonRepoCount) {
   const bar = document.createElement("div");
   bar.className = "rev-filters";
-  const eligible = allRows.filter((r) => !reviewOnlyRepoRooted || r.repoPath);
+  // Repo-eligible rows, before the domain filter - so the Work/Private chips can
+  // count what they WOULD show and never erase their own option (the same rule the
+  // project chips follow against the whole queue).
+  const repoEligible = allRows.filter((r) => !reviewOnlyRepoRooted || r.repoPath);
+  // Rows the project chips count from: repo-eligible AND matching the active domain,
+  // so a project's number agrees with what clicking it under this focus shows.
+  const eligible = repoEligible.filter((r) => reviewDomainFilter === "all" || r.domain === reviewDomainFilter);
   const counts = new Map();
   for (const r of eligible) {
     const key = r.category || "(no project)";
@@ -2026,6 +2044,37 @@ function reviewFilterBarEl(allRows, nonRepoCount) {
     });
     return b;
   };
+
+  // Work/private focus (task 0ca1f3d3). A small segmented control at the head of the
+  // bar. Counts come from repoEligible (pre-domain) so switching focus never hides
+  // the chip that switches it back. Picking a domain also clears the project chip, so
+  // a project that has nothing in the new focus can't strand the page on an empty view.
+  const domainCounts = { work: 0, private: 0 };
+  for (const r of repoEligible) {
+    if (r.domain === "work" || r.domain === "private") {
+      domainCounts[r.domain]++;
+    }
+  }
+  const domSeg = document.createElement("div");
+  domSeg.className = "rev-domain-seg";
+  const domChip = (label, mode) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "rev-filter-chip rev-domain-chip" + (reviewDomainFilter === mode ? " is-active" : "");
+    b.textContent = label;
+    b.addEventListener("click", () => {
+      reviewDomainFilter = reviewDomainFilter === mode ? "all" : mode;
+      reviewProjectFilter = null;
+      renderReviewPage();
+    });
+    return b;
+  };
+  domSeg.append(
+    domChip(`All (${repoEligible.length})`, "all"),
+    domChip(`Work (${domainCounts.work})`, "work"),
+    domChip(`Private (${domainCounts.private})`, "private")
+  );
+  bar.append(domSeg);
 
   bar.append(
     chip(`All projects (${eligible.length})`, !reviewProjectFilter, () => {
@@ -9862,6 +9911,19 @@ function fleetSecondMateEl(sm) {
   topRow.append(badge, proj, mk);
   const now = document.createElement("div");
   now.className = "fleet-branch-now";
+  // Which project this session runs against (task 0c4494ce: "det borde framkomma
+  // vilket projekt de här kör mot i captain vyn"). The row's name is the session
+  // TOPIC, which only hints at the repo - so show the actual folder it is rooted
+  // in, with the full path on hover to tell two same-named folders apart.
+  const rootPath = sess?.cwd || sm.projectPath || "";
+  if (rootPath) {
+    const proj = rootPath.split(/[\\/]/).filter(Boolean).pop() || rootPath;
+    const projTag = document.createElement("span");
+    projTag.className = "fleet-branch-cwd";
+    projTag.textContent = proj;
+    projTag.title = rootPath;
+    now.append(projTag, document.createTextNode(" · "));
+  }
   const liveN = crew.filter(crewRunning).length;
   if (isProposed) {
     now.append(document.createTextNode((sm.brief ? `${sm.brief.length > 60 ? sm.brief.slice(0, 60) + "…" : sm.brief} · ` : "") + "proposed - engage to start · "));

@@ -91,11 +91,15 @@ ok(/if \(n === 0\) \{\s*continue;/.test(widget), "zero-value bands are skipped -
 // the badge printed the backend's tally of the WHOLE queue. Two counts of two different
 // things, presented as the same number.
 const filterFns = new Function(
-  `let reviewOnlyRepoRooted = true, reviewProjectFilter = null;
+  `let reviewOnlyRepoRooted = true, reviewProjectFilter = null, reviewDomainFilter = "all";
    const bandOf = (r) => r.band || r.verdict;
    ${grab("visibleReviewRows")}
    ${grab("reviewTallyFromRows")}
-   return { visibleReviewRows, reviewTallyFromRows, setFilter: (repo, proj) => { reviewOnlyRepoRooted = repo; reviewProjectFilter = proj; } };`
+   return {
+     visibleReviewRows, reviewTallyFromRows,
+     setFilter: (repo, proj) => { reviewOnlyRepoRooted = repo; reviewProjectFilter = proj; },
+     setDomain: (d) => { reviewDomainFilter = d; },
+   };`
 )();
 
 // His actual board: one row in a repo, eleven that are not.
@@ -122,6 +126,28 @@ ok(filterFns.visibleReviewRows(board).length === 12, "turning the filter off sho
 filterFns.setFilter(true, "Helm");
 ok(filterFns.visibleReviewRows(twoProjects).length === 1, "a project filter narrows it the same way for every surface - checked against a board with TWO repo-rooted projects, so the repo filter alone cannot satisfy it");
 ok(filterFns.reviewTallyFromRows([]).total === 0, "an empty set tallies to zero rather than NaN");
+
+// --- the work/private focus (task 0ca1f3d3) ---------------------------------
+// Brought back on Review: the row's domain comes from its Jot category (Helm=private,
+// Skiff=work). The filter shows only the chosen domain; an unclassified row (no
+// domain set) is shown only under "all", never under a specific focus.
+filterFns.setFilter(true, null);
+const domainBoard = [
+  { repoPath: "D:/r/helm", category: "Helm", band: "judgment", domain: "private" },
+  { repoPath: "D:/r/skiff", category: "Skiff", band: "stamp", domain: "work" },
+  { repoPath: "D:/r/halyard", category: "Halyard", band: "judgment", domain: "work" },
+  { repoPath: "D:/r/x", category: "Unclassified", band: "unrecorded", domain: null },
+];
+filterFns.setDomain("all");
+ok(filterFns.visibleReviewRows(domainBoard).length === 4, "domain 'all' shows every repo-rooted row, whatever its work/private tag");
+filterFns.setDomain("work");
+const workRows = filterFns.visibleReviewRows(domainBoard);
+ok(workRows.length === 2 && workRows.every((r) => r.domain === "work"), `Work focus shows only work-domain rows (${workRows.length})`);
+filterFns.setDomain("private");
+const privRows = filterFns.visibleReviewRows(domainBoard);
+ok(privRows.length === 1 && privRows[0].category === "Helm", `Private focus shows only private-domain rows (${privRows.length})`);
+ok(!privRows.some((r) => r.domain === null), "an unclassified row is NOT shown under a specific focus");
+filterFns.setDomain("all");
 
 // All three surfaces must go through those two functions, or they drift apart again.
 ok(/const rows = visibleReviewRows\(allRows\);/.test(rSrc), "the page filters through the shared function");
