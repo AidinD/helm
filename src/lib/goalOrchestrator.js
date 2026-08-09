@@ -536,7 +536,17 @@ function runIteration({ worktreePath, goal, notesContent, planContent, repoMapCo
     const claudePath = resolveClaudeBinary();
     const args = [
       "-p",
-      prompt,
+      // The prompt goes on STDIN, not here as an argv value. It accumulates the
+      // goal, prior iterations' notes, the plan and the contract, so by a few
+      // iterations in it grew past Windows' ~32 KB total command-line limit and
+      // every spawn failed with ENAMETOOLONG - which is exactly how a real run's
+      // last iterations died (the captain, task e5273837: iterations 4-5 "Failed to
+      // spawn claude: spawn ENAMETOOLONG"). --input-format text (the default,
+      // stated explicitly) makes `claude -p` read the prompt from stdin; verified
+      // it returns a normal result that way. The bounded flags (schema, system
+      // prompt) stay as args - only the unbounded prompt moves off the line.
+      "--input-format",
+      "text",
       "--output-format",
       "json",
       "--json-schema",
@@ -580,6 +590,19 @@ function runIteration({ worktreePath, goal, notesContent, planContent, repoMapCo
       resolve({ ok: false, error: `Failed to spawn claude: ${err.message}`, contract });
       return;
     }
+
+    // Hand the prompt to the child over stdin (see the --input-format comment
+    // above). Best-effort: if the child already exited, the write throws EPIPE,
+    // which must not crash the run - the exit is handled by the close handler.
+    try {
+      child.stdin.write(prompt);
+      child.stdin.end();
+    } catch (err) {
+      // ignore - a child that died before reading stdin surfaces via close/error
+    }
+    child.stdin.on("error", () => {
+      // Swallow a late EPIPE on stdin (child gone) - not the run's real outcome.
+    });
 
     // Report the freshly-spawned child up to runGoal's caller (main.js) so it
     // can be tracked for the before-quit orphan sweep and for goal:cancel's
