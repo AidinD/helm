@@ -11836,7 +11836,15 @@ async function renderWidgetDashboard(page) {
   const heading = document.createElement("div");
   const h2 = document.createElement("h2");
   h2.textContent = "Dashboard";
-  heading.append(h2);
+  // The subtitle that names the first mates on watch (or the cold-start line when
+  // none are). paintDashboardSubtitle already runs above; it needs this element to
+  // write into - the classic topbar used to own it, and it moved here with the
+  // classic layout's removal (task 337895ce) rather than being dropped.
+  const sub = document.createElement("div");
+  sub.className = "analysis-totals";
+  sub.style.marginBottom = "0";
+  sub.id = "dashSubtitle";
+  heading.append(h2, sub);
   // The "Classic layout" toggle is gone - there is no classic layout to switch to
   // anymore (task 337895ce). Add-widget lives on the grid's own add tile.
   topbar.append(heading);
@@ -11867,6 +11875,10 @@ async function renderWidgetDashboard(page) {
     return;
   }
   page.replaceChildren(topbar, grid);
+  // Now that the topbar (with #dashSubtitle) is on the page, fill the subtitle -
+  // the earlier paintDashboardSubtitle ran before this element existed (task
+  // 337895ce moved the subtitle onto the widget topbar).
+  paintDashboardSubtitle(mates);
 }
 
 async function renderDashboardPage() {

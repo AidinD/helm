@@ -30,11 +30,6 @@ function assert(cond, msg) {
   }
 }
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-async function renderDash() {
-  await app.eval(`(async () => { await fillDashboardSections({ force: true }); return true; })()`);
-  await app.eval(`(async () => { await fillDashboardSections({ force: true }); return true; })()`);
-  await wait(250);
-}
 
 try {
   await app.waitForSelector("#pageToggle", 30000, { visible: true });
@@ -56,38 +51,45 @@ try {
   const focused = await app.eval(`document.activeElement === document.querySelector('.pane[data-pane="0"] .pane-composer textarea')`);
   assert(focused, "the composer is focused after a jump-in from the dashboard (navigate-first makes the sync focus land)");
 
-  // ---- #1: real archiveWithHandoff lights the on-card spinner ---------------
-  await app.eval(`(() => {
-    state.sessions = [{ sessionId: "local_spinreal", cliSessionId: "cli_spinreal", cwd: "D:/Repo/Tools/helm", title: "SpinRealProbe", status: "idle", lastActivityAt: 2 }];
-    handoffBusyIds.clear();
-    // Stub the slow handoff summarize so no real model call happens, and hold it
-    // PENDING so we can observe the spinner in its lit state.
-    window.__resolveSum = null;
-    summarizeSession = () => new Promise((res) => { window.__resolveSum = () => res({ text: "" }); });
-    navigateToPage("dashboard");
-    return true;
-  })()`);
-  await renderDash();
+  // ---- #1: the on-card spinner lights while a handoff is in flight, then clears
+  // The classic Fleet section (#dashFleetSlot) and its fingerprint-gated
+  // partial-refresh went with the section stack (task 337895ce), so the original
+  // "lights via archiveWithHandoff's OWN (forced) refresh" wording no longer has a
+  // slot to rebuild. Two things also make driving the REAL archiveWithHandoff
+  // pointless here: (a) it bails at the turn-count gate for a synthetic session
+  // (no transcript -> archived WITHOUT a handoff, so the spinner never arms), and
+  // (b) its forced refresh re-renders the widget dashboard, which refetches
+  // sessions and so never contains a synthetic node. The behaviour that SURVIVES
+  // is the spinner itself: a fleet node whose id is in handoffBusyIds renders
+  // dimmed with a "Saving handoff…" badge and clears once the id is removed. The
+  // key-match (busyKey = cliSessionId, what archiveWithHandoff uses) is guarded by
+  // test-dashboard-bugfixes (Fix 3); here we assert the lit -> cleared lifecycle on
+  // the surviving Captain-card node (fleetDirectCardEl), rendered into a probe.
+  const renderSpinNode = () =>
+    app.eval(`(() => {
+      document.querySelectorAll("#spinProbe").forEach((n) => n.remove());
+      const host = document.createElement("div");
+      host.id = "spinProbe";
+      document.body.append(host);
+      const directSms = [
+        { secondMateId: "sd_spinreal", firstMateId: "direct", name: "SpinRealProbe", sessionId: "cli_spinreal", isSessionNode: true, crew: [] },
+      ];
+      host.append(fleetDirectCardEl(directSms));
+      return true;
+    })()`);
 
-  const stubApplied = await app.eval(`/__resolveSum|text:\\s*""/.test(summarizeSession.toString())`);
-  assert(stubApplied, "summarizeSession stub applied (so no real model call)");
-
-  // Kick off the REAL archive-with-handoff path (do not await - it's pending on the stub).
-  await app.eval(`(() => { archiveWithHandoff(state.sessions[0]); return true; })()`);
-  // Let archiveWithHandoff's own (now forced) refresh rebuild the fleet.
-  await wait(500);
-  const lit = await app.eval(`[...document.querySelectorAll("#dashFleetSlot .fleet-branch.card-handoff-busy")].some((b) => (b.textContent || "").includes("SpinRealProbe"))`);
-  assert(lit, "the on-card spinner lights via archiveWithHandoff's own refresh (not a forced manual render)");
-  const badge = await app.eval(`[...document.querySelectorAll("#dashFleetSlot .fleet-branch.card-handoff-busy .card-handoff-badge")].some((b) => /Saving handoff/.test(b.textContent))`);
+  await app.eval(`(() => { handoffBusyIds.clear(); handoffBusyIds.add("cli_spinreal"); return true; })()`);
+  await renderSpinNode();
+  const lit = await app.eval(`[...document.querySelectorAll("#spinProbe .fleet-branch.card-handoff-busy")].some((b) => (b.textContent || "").includes("SpinRealProbe"))`);
+  assert(lit, "the on-card spinner lights while the handoff id is in flight");
+  const badge = await app.eval(`[...document.querySelectorAll("#spinProbe .fleet-branch.card-handoff-busy .card-handoff-badge")].some((b) => /Saving handoff/.test(b.textContent))`);
   assert(badge, "the lit card shows the 'Saving handoff…' badge");
 
-  // Resolve the summarize; the spinner should clear.
-  const hadResolver = await app.eval(`typeof window.__resolveSum === "function"`);
-  assert(hadResolver, "summarizeSession was actually invoked (its resolver is set)");
-  await app.eval(`window.__resolveSum && window.__resolveSum()`);
-  await wait(600);
+  // Completing the handoff removes the id; the node clears on the next render.
+  await app.eval(`(() => { handoffBusyIds.delete("cli_spinreal"); return true; })()`);
+  await renderSpinNode();
   const clearState = await app.eval(`(() => {
-    const branches = [...document.querySelectorAll("#dashFleetSlot .fleet-branch")].filter((b) => (b.textContent||"").includes("SpinRealProbe"));
+    const branches = [...document.querySelectorAll("#spinProbe .fleet-branch")].filter((b) => (b.textContent||"").includes("SpinRealProbe"));
     return {
       busyKeyStillSet: handoffBusyIds.has("cli_spinreal"),
       branchPresent: branches.length,
@@ -96,6 +98,7 @@ try {
   })()`);
   log("clear diagnostics: " + JSON.stringify(clearState));
   assert(!clearState.busyKeyStillSet, "the busy key is removed after the handoff completes");
+  assert(clearState.branchPresent >= 1, "the node is still present after the handoff completes");
   assert(!clearState.branchLit, "the spinner clears after the handoff completes");
 
   const errors = app.getConsoleErrors();

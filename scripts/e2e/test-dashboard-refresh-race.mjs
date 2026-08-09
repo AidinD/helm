@@ -41,8 +41,14 @@ try {
   await app.eval(`(() => { state.sessions = []; navigateToPage("dashboard"); return true; })()`);
   await renderDash();
 
+  // The Dashboard is the widget grid now (task 337895ce); the first-mate cards it
+  // renders (widgetBodyFirstMate -> fleetMateCardEl) live in .wd-grid. The classic
+  // #dashFleetSlot and its per-slot swap are gone, but the pointer-held guard that
+  // defers a refresh while a card is pressed survives - that is the behaviour under
+  // test. Press a FIRST-mate card (not the Captain/.direct card, which has no
+  // jumpIntoFirstMate handler).
   const setup = await app.eval(`(() => {
-    const card = document.querySelector("#dashFleetSlot .fleet-mate-card");
+    const card = document.querySelector(".wd-grid .fleet-mate-card:not(.direct)");
     if (!card) return { ok: false };
     window.__probeCard = card;
     window.__jumped = null;
@@ -55,19 +61,25 @@ try {
   })()`);
   assert(setup.ok, "the dashboard renders at least one first-mate card to press");
 
-  // (a) Press the card, then fire a refresh that WOULD replace the fleet slot
-  // (a new Direct session changes the fleet fingerprint). With the pointer held
-  // the refresh must be deferred: the pressed node stays connected and the new
-  // node is NOT rendered yet.
+  // (a) Press the card, then fire a NON-forced refresh that WOULD rebuild the
+  // board (a seeded goal run changes widgetDashboardFingerprint - and unlike a
+  // session it survives the render's own getSessions refetch, so the flush later
+  // actually rebuilds). With the pointer held the refresh must be deferred: the
+  // pressed node stays connected and the board is NOT rebuilt yet. A sentinel child
+  // of #dashboardPage proves it - an atomic renderDashboardPage (page.replaceChildren)
+  // removes it; a bailed refresh leaves it.
   const deferred = await app.eval(`(async () => {
+    const page = document.getElementById("dashboardPage");
+    const sentinel = document.createElement("span");
+    sentinel.id = "__raceSentinel";
+    page.append(sentinel);
     window.__probeCard.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
-    state.sessions = [{ sessionId: "local_race", cliSessionId: "cli_race", cwd: "D:/Repo/Tools/helm", title: "RaceProbeSession", status: "idle", lastActivityAt: 9 }];
+    goalRuns.set("race", { goalRunId: "race", ordinal: ++goalRunSeq, goal: "RaceProbeRun", projectPath: "P", status: "running", iterations: [], result: null, error: null, escalation: null, latestPlan: null });
     await fillDashboardSections(); // non-forced: this is what the poll/event does
-    const slotText = document.querySelector("#dashFleetSlot").innerText;
-    return { stillConnected: window.__probeCard.isConnected, newNodeShown: /RaceProbeSession/.test(slotText) };
+    return { stillConnected: window.__probeCard.isConnected, rebuilt: !document.getElementById("__raceSentinel") };
   })()`);
   assert(deferred.stillConnected, "the pressed card node survives a refresh fired while the pointer is held");
-  assert(!deferred.newNodeShown, "the refresh is deferred (the new session node is NOT rendered mid-press)");
+  assert(!deferred.rebuilt, "the refresh is deferred (the board is NOT rebuilt mid-press)");
 
   // (b) A click on the still-present node registers.
   const clicked = await app.eval(`(() => {
@@ -76,11 +88,12 @@ try {
   })()`);
   assert(!!clicked, "a click on the held card still registers (jumpIntoFirstMate ran)");
 
-  // (c) After release, the deferred refresh flushes (the new node appears).
+  // (c) After release, the deferred refresh flushes (the board rebuilds - the
+  // sentinel is gone).
   await app.eval(`document.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }))`);
-  await wait(120);
-  const flushed = await app.eval(`/RaceProbeSession/.test(document.querySelector("#dashFleetSlot").innerText)`);
-  assert(flushed, "the deferred refresh runs after pointer release (the new session node now renders)");
+  await wait(300);
+  const flushed = await app.eval(`!document.getElementById("__raceSentinel")`);
+  assert(flushed, "the deferred refresh runs after pointer release (the board rebuilds)");
 
   const errors = app.getConsoleErrors();
   assert(errors.length === 0, `no console errors (got ${errors.length})`);

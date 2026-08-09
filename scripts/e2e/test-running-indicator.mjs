@@ -50,14 +50,24 @@ try {
   assert(await hidden("#dashboardRunningIndicator"), "indicator hides again once no run is running");
 
   // (b) Dashboard in-motion row -----------------------------------------------
+  // The in-motion queue survives as the Needs-you widget's body
+  // (widgetBodyNeedsYou -> dashboardQueueSection). The classic #dashQueueSlot went
+  // with the section stack (task 337895ce), so render the same content function
+  // into a probe and read the rows from it (mirrors test-direct-report-rollup).
   await app.eval(`goalRuns.clear(); true`);
   await injectRun("rr3");
-  await app.eval(`(() => { navigateToPage("dashboard"); return true; })()`);
-  await app.waitForSelector("#dashQueueSlot", 8000);
-  await wait(900); // let the force-fill (incl. goals fetch) settle
-  const rowTexts = await app.eval(`[...document.querySelectorAll("#dashQueueSlot .dash-queue-row")].map(r => r.textContent)`);
+  await app.eval(`(() => {
+    document.querySelectorAll("#queueProbe").forEach((n) => n.remove());
+    const host = document.createElement("div");
+    host.id = "queueProbe";
+    document.body.append(host);
+    host.append(dashboardQueueSection());
+    return true;
+  })()`);
+  await app.waitForSelector("#queueProbe .dash-queue-row", 8000);
+  const rowTexts = await app.eval(`[...document.querySelectorAll("#queueProbe .dash-queue-row")].map(r => r.textContent)`);
   assert(rowTexts.some((t) => /working/.test(t)), "a running run shows as a 'working' row in the in-motion queue (got: " + JSON.stringify(rowTexts) + ")");
-  assert((await app.eval(`document.querySelectorAll("#dashQueueSlot .dash-queue-row .dash-pulse-dot").length`)) >= 1, "the running row uses the working pulse dot, not the needs-you warning");
+  assert((await app.eval(`document.querySelectorAll("#queueProbe .dash-queue-row .dash-pulse-dot").length`)) >= 1, "the running row uses the working pulse dot, not the needs-you warning");
 
   await app.eval(`goalRuns.clear(); updateRunningIndicator(); true`);
 

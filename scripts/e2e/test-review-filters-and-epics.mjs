@@ -148,7 +148,10 @@ try {
     codeOnly.chips.some((c) => /helm \(3\)/.test(c)),
     `and are per project (${codeOnly.chips.find((c) => /helm/.test(c))})`
   );
-  ok(!codeOnly.chips.some((c) => /Privat/.test(c)), "a filtered-out board offers no chip while the code filter is on");
+  // Match the PROJECT chip "Privat (N)" specifically, not the work/private domain
+  // chip "Private (N)" that now leads the bar (task 0ca1f3d3) - "Privat (" excludes
+  // "Private (" because the char after "Privat" is "e", not a space.
+  ok(!codeOnly.chips.some((c) => /Privat \(/.test(c)), "a filtered-out board offers no chip while the code filter is on");
   ok(everything.chips.some((c) => /Privat \(2\)/.test(c)), `but does once everything is shown (${everything.chips.find((c) => /Privat/.test(c))})`);
 
   const errors = app.getConsoleErrors();
