@@ -14,7 +14,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { readAllSessions, enrichWithJot, setSessionArchived, forkTranscriptAtUserMessage, switchSessionRootFolder } from "./lib/sessions.js";
 import { loadJot, loadGoals, addSubtask, formatJotSummaryForClassifier, projectBoardSummary, reviewTasks, signedOffWithoutRecord, setTaskStatus, setTaskTags, readJotState, ensureTagsExist } from "./lib/jot.js";
 import { loadConfig, writeConfig } from "./lib/config.js";
-import { startSession } from "./lib/launcher.js";
+import { startSession, resolveClaudeBinary } from "./lib/launcher.js";
 import { createLiveSessionRegistry } from "./lib/liveSessions.js";
 import { sessionLifecycleState, applyStatusOverrides, sessionStateSource } from "./lib/sessionState.js";
 import { createJotHostStore } from "./lib/jotHostStore.js";
@@ -1352,6 +1352,125 @@ ipcMain.handle("voice:streamStop", (_event, { streamId }) => {
   stopWhisperStream(child);
   liveVoiceStreams.delete(streamId);
   return { ok: true };
+});
+
+// --- Authentication (task 3218cdd4: "Failed to authenticate: OAuth session
+// expired and could not be refreshed"). Helm wraps the real `claude` CLI and
+// inherits its login; when the CLI's OAuth token expires and cannot refresh,
+// every headless `claude -p` launch fails and there was no way to re-auth from
+// inside Helm - you had to drop to a terminal. Rather than reimplement OAuth
+// (token storage, refresh, a callback server - all of which the CLI already
+// does and Helm must never duplicate), these handlers DRIVE the CLI's own
+// `claude auth` subcommands: status to show who is signed in, login to run the
+// real browser sign-in flow. Helm reads the same credential store the CLI
+// writes, so a successful `claude auth login` fixes every subsequent launch
+// with no extra plumbing. ---
+
+// How to invoke the CLI without a shell where possible (a real .exe), matching
+// launcher.js's own resolution so both go through the same binary.
+function claudeSpawnTarget() {
+  const bin = resolveClaudeBinary();
+  return { bin, shell: !String(bin).toLowerCase().endsWith(".exe") };
+}
+
+ipcMain.handle("auth:status", async () => {
+  const { bin, shell } = claudeSpawnTarget();
+  return await new Promise((resolve) => {
+    execFile(bin, ["auth", "status", "--json"], { windowsHide: true, shell, timeout: 15000 }, (err, stdout) => {
+      // `claude auth status` exits non-zero when signed OUT, still printing JSON
+      // with loggedIn:false - so parse stdout regardless of the exit code, and
+      // only report a hard error when there is nothing parseable at all.
+      const raw = String(stdout || "").trim();
+      try {
+        const parsed = JSON.parse(raw);
+        resolve({ ok: true, ...parsed });
+      } catch {
+        resolve({ ok: false, error: err ? err.message : `Could not read auth status${raw ? `: ${raw.slice(0, 200)}` : ""}` });
+      }
+    });
+  });
+});
+
+// Runs the CLI's real interactive sign-in. It opens the system browser and waits
+// for the OAuth callback; we stream its stdout to the renderer (so the URL is
+// reachable even if the browser does not auto-open) and resolve once it exits,
+// handing back the freshly-read status. Only one at a time - a second concurrent
+// login flow would fight the first over the same callback port.
+let authLoginChild = null;
+ipcMain.handle("auth:login", async () => {
+  if (authLoginChild) {
+    return { ok: false, error: "A sign-in is already in progress - finish it in the browser, or wait for it to time out." };
+  }
+  const { bin, shell } = claudeSpawnTarget();
+  const send = (payload) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("auth:loginOutput", payload);
+    }
+  };
+  return await new Promise((resolve) => {
+    let out = "";
+    let settled = false;
+    const done = (result) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      authLoginChild = null;
+      resolve(result);
+    };
+    let child;
+    try {
+      // --claudeai: the subscription flow (matches how the captain is signed in -
+      // authMethod "claude.ai"), not the API-console billing one.
+      child = spawn(bin, ["auth", "login", "--claudeai"], { windowsHide: true, shell });
+    } catch (err) {
+      done({ ok: false, error: `Could not start sign-in: ${err.message}` });
+      return;
+    }
+    authLoginChild = child;
+    // The whole point is a human completing a browser flow, so the ceiling is
+    // generous - but not unbounded, or a login the user abandoned would wedge
+    // the single-flight guard above forever.
+    const timer = setTimeout(() => {
+      killChildTree(child);
+      done({ ok: false, error: "Sign-in timed out after 3 minutes. Try again, or run `claude auth login` in a terminal." });
+    }, 3 * 60 * 1000);
+    const grab = (d) => {
+      const text = d.toString("utf8");
+      out += text;
+      // Surface the OAuth URL as it appears so the renderer can offer it as a
+      // fallback if the browser did not open on its own.
+      const urlMatch = out.match(/https:\/\/\S*(?:claude\.ai|anthropic\.com|console\.anthropic\.com)\/\S+/);
+      send({ chunk: text, url: urlMatch ? urlMatch[0] : null });
+    };
+    child.stdout?.on("data", grab);
+    child.stderr?.on("data", grab);
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      done({ ok: false, error: `Sign-in failed to start: ${err.message}` });
+    });
+    child.on("close", async (code) => {
+      clearTimeout(timer);
+      // Re-read status rather than trusting the exit code alone - the source of
+      // truth is whether the credential store now says loggedIn.
+      let status = null;
+      try {
+        status = await new Promise((res) => {
+          execFile(bin, ["auth", "status", "--json"], { windowsHide: true, shell, timeout: 15000 }, (_e, so) => {
+            try {
+              res(JSON.parse(String(so || "").trim()));
+            } catch {
+              res(null);
+            }
+          });
+        });
+      } catch {
+        status = null;
+      }
+      const loggedIn = status?.loggedIn === true;
+      done({ ok: loggedIn, exitCode: code, status, error: loggedIn ? null : "Sign-in did not complete - the account is still signed out." });
+    });
+  });
 });
 
 // --- Aggregate usage summary (models + tools most used) ---
