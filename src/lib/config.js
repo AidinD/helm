@@ -143,13 +143,14 @@ const DEFAULT_CONFIG = {
   autoCaptain: {
     enabled: false,
   },
-  // Widget dashboard (task 4bf2421c): the Dashboard as a drag-and-drop grid of
-  // widgets instead of the fixed section stack. OFF by default and fully
-  // reversible - the classic dashboard stays intact behind the same toggle, so
-  // enabling this never destroys the layout the captain works in every day.
+  // Widget dashboard (task 4bf2421c): the Dashboard is a drag-and-drop grid of
+  // widgets. The old fixed section stack ("classic layout") was removed once the
+  // widget view had been in daily use (task 337895ce), so this is now the only
+  // dashboard - `enabled` is vestigial (the render path no longer reads it to
+  // choose a layout) and defaults true; `layout` is the real state.
   // layout: ordered [{ id, type, span, mateId? }]; null = seed the default set.
   dashboardWidgets: {
-    enabled: false,
+    enabled: true,
     layout: null,
   },
   jot: {

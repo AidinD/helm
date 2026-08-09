@@ -10683,7 +10683,10 @@ async function fillDashboardSections({ force = false } = {}) {
   // So: repaint, but only when something actually changed, and never mid-drag -
   // being torn out while rearranging was the real reason for the original guard,
   // and that reason is preserved exactly.
-  if (state.config?.dashboardWidgets?.enabled === true) {
+  // The Dashboard is always the widget grid now (task 337895ce). This repaint
+  // path is the only one; the classic section-slot tail below it is unreachable
+  // and removed with the rest of the classic layout.
+  {
     if (widgetDragId || !isDashboardVisible()) {
       return;
     }
@@ -10698,6 +10701,7 @@ async function fillDashboardSections({ force = false } = {}) {
     lastWidgetDashboardFingerprint = widgetDashboardFingerprint();
     return;
   }
+  // eslint-disable-next-line no-unreachable
   if (!document.getElementById("dashQueueSlot")) {
     if (isDashboardVisible()) {
       await renderDashboardPage();
@@ -10916,11 +10920,8 @@ function driftSectionEl(rows, { problem = null, unchecked = [], footnote = null,
  * user navigated away and back. Found by the pre-release review.
  */
 function repaintDashboard() {
-  if (state.config?.dashboardWidgets?.enabled === true) {
-    renderDashboardPage();
-    return;
-  }
-  refreshDashboardIfVisible({ force: true });
+  // One dashboard now (widgets), so always re-render it (task 337895ce).
+  renderDashboardPage();
 }
 
 function driftFootEl(text, parkedCount = 0) {
@@ -12125,16 +12126,9 @@ async function renderWidgetDashboard(page) {
   const h2 = document.createElement("h2");
   h2.textContent = "Dashboard";
   heading.append(h2);
-  const actions = document.createElement("div");
-  actions.className = "dash-topbar-actions";
-  const classic = document.createElement("button");
-  classic.type = "button";
-  classic.className = "text-btn";
-  classic.textContent = "Classic layout";
-  classic.title = "Switch back to the section dashboard (nothing is lost - your widget layout is kept).";
-  classic.addEventListener("click", () => setWidgetDashboardEnabled(false));
-  actions.append(classic);
-  topbar.append(heading, actions);
+  // The "Classic layout" toggle is gone - there is no classic layout to switch to
+  // anymore (task 337895ce). Add-widget lives on the grid's own add tile.
+  topbar.append(heading);
 
   const grid = document.createElement("div");
   grid.className = "wd-grid";
@@ -12168,15 +12162,13 @@ async function renderDashboardPage() {
   const page = document.getElementById("dashboardPage");
   page.className = "analysis-page dashboard-page";
 
-  // Widget dashboard (4bf2421c) when enabled; the classic section stack below is
-  // left completely intact so the toggle is reversible. NOTE: the page is NOT
-  // cleared here for the widget path - renderWidgetDashboard commits its own
-  // atomic swap, so an overlapping render can't leave the page blank.
-  if (state.config?.dashboardWidgets?.enabled === true) {
-    dashSectionFingerprints = { onboarding: null, queue: null, report: null, fleet: null, goals: null, newSession: null };
-    await renderWidgetDashboard(page);
-    return;
-  }
+  // The Dashboard IS the widget grid now - the classic section stack was removed
+  // once the widget view had been in daily use (task 337895ce). renderWidgetDashboard
+  // commits its own atomic swap, so the page is not cleared here: an overlapping
+  // render can't leave it blank.
+  await renderWidgetDashboard(page);
+  return;
+  // eslint-disable-next-line no-unreachable
   page.innerHTML = "";
 
   const topbar = document.createElement("div");
