@@ -4079,6 +4079,15 @@ function buildMenuItems(items) {
         const itemRect = el.getBoundingClientRect();
         const submenuMinWidth = 160;
         sub.classList.toggle("flip-left", itemRect.right + submenuMinWidth > window.innerWidth);
+        // Vertical overflow: the submenu opens downward from the item's top. When
+        // the item sits low - e.g. "More models" at the bottom of a menu that
+        // itself opened UPWARD from the composer's send button - the submenu ran
+        // off the bottom of the window (task cf96055c: "more models listan
+        // renderas utanför vyn"). Hover has made it displayable, so measure its
+        // real height; fall back to an estimate if the layout hasn't flushed. Flip
+        // it to grow upward (bottom-anchored) when it would overflow the bottom.
+        const subHeight = sub.getBoundingClientRect().height || it.submenu.length * 30 + 10;
+        sub.classList.toggle("flip-up", itemRect.top + subHeight > window.innerHeight - 8);
       });
     } else if (it.onClick) {
       el.addEventListener("click", (e) => {
@@ -15512,41 +15521,51 @@ function authStatusLine(status) {
   return `Signed in${parts.length ? ` — ${parts.join(" · ")}` : ""}.`;
 }
 
-function settingsAccountGroup() {
-  const group = document.createElement("div");
-  group.className = "settings-group";
-  group.append(settingsGroupHeading("Account"));
+// A single full-width horizontal bar at the top of Settings, NOT one of the
+// masonry columns. As a .settings-group it took a whole 240px column for one
+// row - "extremt fult ... borde inte ta en kolumn" (the captain, task 3218cdd4) - and
+// the status line squeezed the button into a three-line "Re- / sign / in". Here
+// the status takes the width it needs and the button sits at the end, on one line.
+function settingsAccountBar() {
+  const bar = document.createElement("div");
+  bar.className = "settings-account-bar";
 
-  const row = document.createElement("div");
-  row.className = "settings-select-row";
-  const textWrap = document.createElement("div");
-  textWrap.className = "settings-toggle-text";
-  const title = document.createElement("div");
-  title.className = "settings-toggle-title";
-  title.textContent = "Claude sign-in";
-  const desc = document.createElement("div");
-  desc.className = "settings-toggle-desc";
-  desc.textContent = "Checking sign-in status…";
-  textWrap.append(title, desc);
+  const info = document.createElement("div");
+  info.className = "settings-account-info";
+  const label = document.createElement("span");
+  label.className = "settings-account-label";
+  label.textContent = "Claude sign-in";
+  const status = document.createElement("span");
+  status.className = "settings-account-status";
+  status.textContent = "Checking sign-in status…";
+  info.append(label, status);
+
+  const dot = document.createElement("span");
+  dot.className = "settings-account-dot";
 
   const btn = document.createElement("button");
-  btn.className = "text-btn";
+  btn.className = "text-btn settings-account-btn";
   btn.textContent = "Sign in";
   btn.title = "Runs Claude's own browser sign-in (claude auth login). Fixes 'OAuth session expired' for every session at once.";
   const refresh = () => {
-    desc.textContent = "Checking sign-in status…";
-    window.helm.getAuthStatus().then((status) => {
-      desc.textContent = authStatusLine(status);
+    status.textContent = "Checking sign-in status…";
+    dot.className = "settings-account-dot";
+    window.helm.getAuthStatus().then((s) => {
+      status.textContent = authStatusLine(s);
       // Re-label so the affordance matches the state: re-authenticating when
       // already signed in reads as "Re-sign in", not a no-op "Sign in".
-      btn.textContent = status?.loggedIn ? "Re-sign in" : "Sign in";
+      btn.textContent = s?.loggedIn ? "Re-sign in" : "Sign in";
+      // A single status dot: green signed-in, amber signed-out, neutral if the
+      // status couldn't be read - the state at a glance without reading the line.
+      dot.className =
+        "settings-account-dot " + (s && s.ok !== false ? (s.loggedIn ? "is-in" : "is-out") : "is-unknown");
     });
   };
   btn.addEventListener("click", () => runSignInFlow(refresh));
-  row.append(textWrap, btn);
-  group.append(row);
+
+  bar.append(dot, info, btn);
   refresh();
-  return group;
+  return bar;
 }
 
 function renderSettingsPage() {
@@ -15556,6 +15575,10 @@ function renderSettingsPage() {
   const header = document.createElement("h2");
   header.textContent = "Settings";
   page.append(header);
+
+  // Account is a full-width bar directly under the header, not one of the
+  // masonry columns below (task 3218cdd4).
+  page.append(settingsAccountBar());
 
   // Skills (analysis) and Archive moved to their own #headerUtilityNav next
   // to the gear (2026-07-06) - reachable in one click, no longer buried here.
@@ -15786,7 +15809,7 @@ function renderSettingsPage() {
   // .settings-columns CSS).
   const columns = document.createElement("div");
   columns.className = "settings-columns";
-  columns.append(settingsAccountGroup(), passiveGroup, activeGroup, voiceGroup, appearanceGroup);
+  columns.append(passiveGroup, activeGroup, voiceGroup, appearanceGroup);
   block.append(columns);
 
   page.append(block);
@@ -16946,6 +16969,15 @@ window.helm.onSessionEvent((evt) => {
           totalTokens: evt.summary?.outputTokens ?? evt.summary?.totalTokens ?? null,
           costUsd: evt.summary?.costUsd ?? null,
         };
+        // An auth failure can arrive as the CLI's RESULT text - a "successful"
+        // turn (sawResult true, ~0 tokens) whose content is just "Failed to
+        // authenticate: OAuth session expired ..." - not as an error event. Seen
+        // exactly this way (task 3218cdd4: "failed to authenticate hela tiden", a
+        // plain 0-token turn with no shortcut). The error branches above already
+        // call maybeSurfaceAuthError; this covers the result-text path, or the one
+        // error a captain can fix in a click renders as an ordinary reply.
+        const lastReplyText = [...pane.turns].reverse().find((t) => t.role === "assistant" && t.kind === "text")?.text || "";
+        maybeSurfaceAuthError(lastReplyText);
         loadTranscriptInto(index).then(refresh);
         fireQueuedPromptIfAny(index, pane);
       }
