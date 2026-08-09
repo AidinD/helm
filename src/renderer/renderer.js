@@ -17552,6 +17552,29 @@ function applyBuildStatus(status) {
 window.helm.getBuildStatus().then(applyBuildStatus);
 window.helm.onBuildStaleUpdate(applyBuildStatus);
 
+// Model-freshness indicator: main.js (checkModelFreshness, run once a day)
+// scans the installed `claude` binary for model ids newer than anything in
+// src/lib/models.js's KNOWN_MODEL_IDS. Purely informational, same as the
+// stale-build pill - the fix is a one-line edit to that file (add the id),
+// not something this button does for you.
+function applyModelFreshness(status) {
+  const pill = document.getElementById("modelFreshnessPill");
+  if (!pill) {
+    return;
+  }
+  const ids = status?.newModelIds || [];
+  if (ids.length) {
+    pill.textContent = ids.length === 1 ? `New model: ${ids[0]}` : `${ids.length} new models`;
+    pill.title = `The installed claude CLI recognizes ${ids.join(", ")}, which src/lib/models.js doesn't list yet. Add ${ids.length === 1 ? "it" : "them"} there (and to the model picker/reviewer tiers if it should be selectable).`;
+    pill.classList.remove("hidden");
+  } else {
+    pill.classList.add("hidden");
+  }
+}
+
+window.helm.getModelFreshness().then(applyModelFreshness);
+window.helm.onModelFreshnessUpdate(applyModelFreshness);
+
 // A setting that could not be saved has to SAY so. setConfig returns the config
 // object itself (assigned straight into state.config all over this file), so it has
 // no room to report a failure - without this the setting would appear to apply and
