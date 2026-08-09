@@ -548,6 +548,7 @@ export function reviewTasks(jotConfig = {}) {
     return { ok: false, error: `Couldn't read the Jot board at ${jotPath}`, tasks: [] };
   }
   const catName = new Map((Array.isArray(data.categories) ? data.categories : []).map((c) => [c.id, c.name]));
+  const catById = new Map((Array.isArray(data.categories) ? data.categories : []).map((c) => [c.id, c]));
   const byId = new Map((Array.isArray(data.todos) ? data.todos : []).map((t) => [t.id, t]));
   // Subtasks in review are INCLUDED. They used to be filtered out (`!t.parentId`), so
   // a subtask sitting in review was invisible to the Review page, needed no record and
@@ -574,6 +575,14 @@ export function reviewTasks(jotConfig = {}) {
       // Which board column this came from, so the page can offer a project filter and
       // decide what is even reviewable. The NAME alone collides across boards.
       categoryId: t.categoryId || null,
+      // Real work/private classification from the owning Jot category (Category.domain,
+      // 1.5.14+), threaded through so the Review page can offer a Work/Private filter
+      // (task 0ca1f3d3). null when the category has none set - a neutral row shown in
+      // every mode.
+      domain: (() => {
+        const cat = catById.get(t.categoryId);
+        return cat && (cat.domain === "work" || cat.domain === "private") ? cat.domain : null;
+      })(),
     }));
   return { ok: true, path: jotPath, tasks };
 }

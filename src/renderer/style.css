@@ -5095,6 +5095,18 @@ button.primary {
   min-width: 8px;
 }
 
+/* Work/private focus segment (task 0ca1f3d3). Its chips reuse .rev-filter-chip
+   so they match the project chips exactly; the wrapper just keeps the three
+   together and sets them off from the project chips with a hairline divider. */
+.rev-domain-seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding-right: 8px;
+  margin-right: 2px;
+  border-right: 1px solid var(--border);
+}
+
 .rev-filter-chip {
   background: var(--bg-card);
   color: var(--text-dim);
@@ -5339,6 +5351,17 @@ button.primary {
 .fleet-jumpin {
   color: var(--accent);
   font-weight: 600;
+}
+/* The project a fleet row runs against (task 0c4494ce). A quiet monospace-ish
+   tag so the folder reads as an identifier without competing with the status. */
+.fleet-branch-cwd {
+  color: var(--text-dim);
+  font-weight: 600;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: none;
 }
 .fleet-spin {
   width: 6px;
