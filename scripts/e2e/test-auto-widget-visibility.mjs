@@ -195,8 +195,8 @@ ok(
   "and no longer demands a session the auto flow cannot produce"
 );
 ok(
-  (code.match(/isLiveWorkNode\(s\) && !isAutoStartedNode\(s\)/g) || []).length === 2,
-  "both Direct surfaces (the Fleet column and the Captain widget) exclude auto runs"
+  (code.match(/isLiveWorkNode\(s\) && !isAutoStartedNode\(s\)/g) || []).length === 1,
+  "the Direct surface (the Captain widget) excludes auto runs - the classic Fleet column that was the other copy is gone (task 337895ce)"
 );
 ok(!/s\.isSessionNode && s\.startedBy === "auto"/.test(code), "the broken filter is gone, not merely bypassed");
 ok(

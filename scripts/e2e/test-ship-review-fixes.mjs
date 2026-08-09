@@ -91,9 +91,13 @@ try {
   ok(!bindings.sm_doomed, "its binding is gone, so nothing points at a parent that no longer exists");
 
   // ---- 2. the un-park control survives parking everything -----------------
+  // The classic docs-drift section (dashboardDriftSection) was removed with the
+  // classic dashboard (task 337895ce); the docs-drift WIDGET (widgetBodyDocsDrift)
+  // survives and is where this regression now has to hold, so the check is driven
+  // against the widget body alone.
   const drift = await app.eval(`(async () => {
     // Two fabricated drifting rows and one parked, then park them ALL and check the
-    // section still exists with a way back.
+    // widget still exists with a way back.
     const payload = (rows, parked) => ({
       ok: true, rows, considered: 3, unchecked: 0, uncheckedPaths: [],
       parked, dormant: 0, dormantDays: 60,
@@ -103,27 +107,15 @@ try {
       [{ path: "D:/a", name: "a", commitsSince: 20, threshold: 8 }], 1)));
     const none = document.createElement("div");
     none.append(await widgetBodyDocsDrift(null, null, async () => payload([], 3)));
-    const classicNone = await dashboardDriftSection(async () => payload([], 3));
-    const classicClean = await dashboardDriftSection(async () => payload([], 0));
     return {
       withRows: two.textContent,
       allParkedWidget: none.textContent,
       allParkedWidgetHasUnpark: !!none.querySelector(".wd-drift-park"),
-      allParkedClassic: classicNone ? classicNone.textContent : null,
-      allParkedClassicHasUnpark: !!classicNone?.querySelector(".wd-drift-park"),
-      trulyCleanIsNull: classicClean === null,
     };
   })()`);
   ok(/show parked/.test(drift.withRows), "the un-park link is there while rows remain");
-  ok(
-    drift.allParkedClassic !== null,
-    `parking EVERYTHING does not delete the section on the classic board (${J(drift.allParkedClassic)})`
-  );
-  ok(drift.allParkedClassicHasUnpark, "and the un-park control is still reachable there");
-  ok(drift.allParkedWidgetHasUnpark, "same on the widget board");
+  ok(drift.allParkedWidgetHasUnpark, "parking EVERYTHING still leaves the un-park control on the widget board");
   ok(/3 parked/.test(drift.allParkedWidget), `it says how many are parked (${J(drift.allParkedWidget)})`);
-  // The section must still go quiet when there is genuinely nothing to say.
-  ok(drift.trulyCleanIsNull, "with nothing drifting AND nothing parked it disappears, as before");
 
   // ---- 3. parking does not make the module read as "never measured" -------
   const pending = await app.eval(`(async () => {
