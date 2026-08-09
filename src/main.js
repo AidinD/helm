@@ -5859,8 +5859,17 @@ ipcMain.handle("reviews:diff", (_event, { taskId } = {}) => {
 // project+commit, and tags are fetched at most once per project per app run so a
 // release the publisher created on the remote (electron-builder makes the tag on GitHub,
 // not locally) becomes visible to `git tag --contains` without a per-render fetch.
-const shippedVersionCache = new Map(); // `${projectPath}|${lastSha}` -> {version,error}
-const shippedVersionFetchedFor = new Set(); // projectPaths whose tags we already refreshed
+// POSITIVE results only: a released version never un-releases, so it is safe to cache
+// forever. A null (not-yet-released) is deliberately NOT cached, so a release cut mid-
+// session shows up without an app restart (the captain already restarts Helm after updates - the
+// review chip must not add its own restart-to-see-it friction). Keyed by the exact commit
+// set so adding commits to a record recomputes.
+const shippedVersionCache = new Map();
+// Tag fetches are throttled per project (not once-per-run) for the same reason: a
+// just-published tag the publisher created on the remote becomes visible within the TTL,
+// without fetching on every single render.
+const shippedVersionTagFetchAt = new Map(); // projectPath -> last fetch epoch ms
+const SHIPPED_TAG_FETCH_TTL_MS = 60 * 1000;
 ipcMain.handle("reviews:shippedVersion", (_event, { taskId } = {}) => {
   try {
     const metaHome = resolveMetaHome();
@@ -5873,13 +5882,13 @@ ipcMain.handle("reviews:shippedVersion", (_event, { taskId } = {}) => {
     if (resolved.commits.length === 0) {
       return { version: null };
     }
-    const lastSha = resolved.commits.at(-1)?.sha || null;
-    const key = `${projectPath}|${lastSha}`;
+    const key = `${projectPath}|${resolved.commits.map((c) => c.sha).join(",")}`;
     if (shippedVersionCache.has(key)) {
       return shippedVersionCache.get(key);
     }
-    if (!shippedVersionFetchedFor.has(projectPath)) {
-      shippedVersionFetchedFor.add(projectPath);
+    const now = Date.now();
+    if ((shippedVersionTagFetchAt.get(projectPath) || 0) + SHIPPED_TAG_FETCH_TTL_MS < now) {
+      shippedVersionTagFetchAt.set(projectPath, now);
       try {
         // Best-effort and time-boxed: offline or no remote just falls back to local tags.
         execFileSync("git", ["-C", projectPath, "fetch", "--tags", "--quiet"], {
@@ -5892,7 +5901,9 @@ ipcMain.handle("reviews:shippedVersion", (_event, { taskId } = {}) => {
       }
     }
     const res = shippedVersionForCommits(projectPath, resolved.commits);
-    shippedVersionCache.set(key, res);
+    if (res && res.version) {
+      shippedVersionCache.set(key, res);
+    }
     return res;
   } catch {
     return { version: null };

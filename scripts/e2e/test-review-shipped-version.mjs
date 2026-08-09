@@ -27,24 +27,46 @@ const ok = (c, m) => {
 const here = os.tmpdir();
 
 try {
-  // `git tag --contains --sort=v:refname` lists containing tags ascending; the helper takes
-  // the first v* as the earliest release. The fake records which sha it was asked about so
-  // we can prove it uses the LAST commit.
-  let askedSha = null;
-  const fakeRun = (_p, args) => {
+  // `git tag --contains <sha> --sort=v:refname` lists the tags that contain that ONE commit,
+  // ascending; the helper takes the first v* as that commit's earliest-containing release,
+  // and the WHOLE fix's version is the LATEST of those across all its commits. Per-commit
+  // tag lists let us prove that, and prove the answer does not depend on commit order.
+  const TAGS = {
+    // an early commit: first shipped in v0.1.609
+    aaaaaaa: "some-annotation\nv0.1.609\nv0.1.624\nv0.2.0\n",
+    // the fix's tip commit: not in a release until v0.1.624
+    ccccccc: "v0.1.624\nv0.2.0\n",
+    // a commit no release contains yet (valid hex so it survives SHA validation)
+    ddddddd: "",
+  };
+  const asked = [];
+  const runFor = (map) => (_p, args) => {
     // args: ["tag", "--contains", <sha>, "--sort=v:refname"]
-    askedSha = args[2];
-    // Ascending, with a stray non-version tag that must be ignored.
-    return "some-annotation\nv0.1.609\nv0.1.624\nv0.2.0\n";
+    const sha = args[2];
+    asked.push(sha);
+    return map[sha] ?? "";
   };
 
-  const res = shippedVersionForCommits(here, ["aaaaaaa first", { sha: "bbbbbbb" }, "ccccccc last"], { run: fakeRun });
-  ok(res.version === "v0.1.609", `the EARLIEST containing release is chosen (${JSON.stringify(res.version)})`);
-  ok(askedSha === "ccccccc", `it asks about the LAST commit of the fix (${JSON.stringify(askedSha)})`);
+  // Two released commits, tip LAST: the whole fix shipped in the LATER tag (v0.1.624), not
+  // the earlier one - the fix is only fully present once its tip is in a release.
+  const tipLast = shippedVersionForCommits(here, ["aaaaaaa old", { sha: "ccccccc" }], { run: runFor(TAGS) });
+  ok(tipLast.version === "v0.1.624", `the version is the LATEST of each commit's earliest release, i.e. once the whole fix is in (${JSON.stringify(tipLast.version)})`);
+
+  // SAME commits, order reversed: the answer must not change (order-independent - the bug
+  // the earlier .at(-1) had, since the record source is oldest-first but the log fallback is
+  // newest-first).
+  asked.length = 0;
+  const tipFirst = shippedVersionForCommits(here, [{ sha: "ccccccc" }, "aaaaaaa old"], { run: runFor(TAGS) });
+  ok(tipFirst.version === "v0.1.624", `reversing the commit order gives the same version (${JSON.stringify(tipFirst.version)})`);
+  ok(asked.includes("aaaaaaa") && asked.includes("ccccccc"), `every commit is checked, not just one by position (${JSON.stringify(asked)})`);
+
+  // One commit of the fix is not in any release yet -> the WHOLE fix is not shipped.
+  const partly = shippedVersionForCommits(here, ["aaaaaaa old", { sha: "ddddddd" }], { run: runFor(TAGS) });
+  ok(partly.version === null && partly.error === null, "if any commit of the fix is unreleased, no version is claimed (and it is not an error)");
 
   // No tag contains it yet -> null, not an error state.
   const unreleased = shippedVersionForCommits(here, ["deadbee"], { run: () => "" });
-  ok(unreleased.version === null && unreleased.error === null, "unreleased work shows no version and is not an error");
+  ok(unreleased.version === null && unreleased.error === null, "fully unreleased work shows no version and is not an error");
 
   // No commit pinned -> null with a reason.
   const noCommit = shippedVersionForCommits(here, [], { run: () => "should-not-run" });
@@ -79,7 +101,7 @@ try {
 
 console.log(
   exit === 0
-    ? "VERIFY OK: the shipped version is the earliest release tag containing the fix's last commit, resolved per-project, null when unreleased, and wired IPC->preload->chip."
+    ? "VERIFY OK: the shipped version is the latest of each commit's earliest containing release (order-independent, null if any commit is unreleased), resolved per-project, and wired IPC->preload->chip."
     : "VERIFY FAILED."
 );
 process.exit(exit);
