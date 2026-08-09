@@ -1616,6 +1616,24 @@ function reviewRowEl(row, band = null) {
   for (const c of rec.commits || []) {
     chips.append(reviewChip(c, "commit"));
   }
+  // Which released version the fix is out in, resolved from git tags on the record's own
+  // repo (task 860b4661). Only when the record didn't already name one by hand (rec.release)
+  // and it pins commits to locate. Filled in async - a hidden chip that reveals itself only
+  // if the fix is actually in a tagged release, so unreleased work shows nothing.
+  if (rec.taskId && !rec.release && (rec.commits || []).length > 0 && window.helm?.getShippedVersion) {
+    const shipped = reviewChip("", "rel");
+    shipped.hidden = true;
+    chips.append(shipped);
+    window.helm
+      .getShippedVersion(rec.taskId)
+      .then((res) => {
+        if (res && res.version) {
+          shipped.textContent = `shipped in ${res.version}`;
+          shipped.hidden = false;
+        }
+      })
+      .catch(() => {});
+  }
   if (chips.children.length > 0) {
     body.append(chips);
   }
@@ -4973,9 +4991,23 @@ function rememberPendingTurn(sessionId, turn) {
   pendingTurnsBySession.set(sessionId, list.slice(-PENDING_PER_SESSION_CAP));
 }
 
-function mergeReloadedTurns(previous, fromFile, sessionId = null) {
+function mergeReloadedTurns(previous, fromFile, sessionId = null, { authoritative = false } = {}) {
   const prev = Array.isArray(previous) ? previous : [];
   const file = Array.isArray(fromFile) ? fromFile : [];
+  // A completed turn ("done" with a genuine result) has flushed everything to the
+  // transcript file, so the file is the whole truth. Keeping the streamed pending turns
+  // on top of it is exactly what duplicated output at the end of a conversation:
+  // streaming pushes assistant-text blocks live (and never tool turns), then this reload
+  // brings the file's own copy - grouped under "Used N tools" - while the live blocks,
+  // no longer matched (they fall outside the tail window behind a tool-heavy turn, or
+  // differ file-message-vs-streamed-block), got re-appended as naked duplicate bubbles.
+  // On an authoritative reload, trust the file completely and drop the pending buffer.
+  if (authoritative) {
+    if (sessionId) {
+      pendingTurnsBySession.delete(sessionId);
+    }
+    return file;
+  }
   const remembered = sessionId ? pendingTurnsBySession.get(sessionId) || [] : [];
   if (prev.length === 0 && remembered.length === 0) {
     return file;
@@ -5006,7 +5038,7 @@ function mergeReloadedTurns(previous, fromFile, sessionId = null) {
   return keep.length > 0 ? [...file, ...keep] : file;
 }
 
-async function loadTranscriptInto(paneIndex) {
+async function loadTranscriptInto(paneIndex, { authoritative = false } = {}) {
   const pane = panes[paneIndex];
   if (!pane || !pane.cliSessionId) {
     return;
@@ -5019,8 +5051,9 @@ async function loadTranscriptInto(paneIndex) {
     return; // pane was reassigned while loading
   }
   // Additive, never destructive - see mergeReloadedTurns. A reload used to be able to
-  // delete a prompt that had been sent but not yet written to the file.
-  pane.turns = mergeReloadedTurns(pane.turns, turns, pane.sessionId);
+  // delete a prompt that had been sent but not yet written to the file. The one
+  // exception is an authoritative reload (a completed turn), which trusts the file.
+  pane.turns = mergeReloadedTurns(pane.turns, turns, pane.sessionId, { authoritative });
   pane.hiddenCount = hiddenCount || 0;
   pane.contextTokens = typeof contextTokens === "number" ? contextTokens : null;
   // The composer was built before this async load finished, so its gauge
@@ -16441,6 +16474,19 @@ window.helm.onSessionEvent((evt) => {
     runningSessions.add(evt.sessionId);
   } else if (evt.kind === "closed" && evt.sessionId) {
     runningSessions.delete(evt.sessionId);
+    // Backstop against a stuck spinner: a process that exits emitting only "closed"
+    // (no "done"/"error" ever routed - e.g. a launchId with no history entry, or a
+    // crash before the result event) would otherwise leave the pane on "Working…"
+    // forever, so the session looks hung and needs an app restart (bug b608c99b).
+    // done/error already clear busy; this idempotently clears any pane still marked
+    // busy for this session so the spinner can never outlive the process.
+    const stuckIdx = panes.findIndex((p) => p && p.busy && p.cliSessionId === evt.sessionId);
+    if (stuckIdx >= 0) {
+      panes[stuckIdx].busy = false;
+      panes[stuckIdx].currentLaunchId = null;
+      stopLiveStatsTicker(stuckIdx);
+      setPaneBusyUI(stuckIdx, "");
+    }
   }
 
   // Routes purely via launchPaneHistory + an identity check, the same
@@ -16631,7 +16677,11 @@ window.helm.onSessionEvent((evt) => {
         // error a captain can fix in a click renders as an ordinary reply.
         const lastReplyText = [...pane.turns].reverse().find((t) => t.role === "assistant" && t.kind === "text")?.text || "";
         maybeSurfaceAuthError(lastReplyText);
-        loadTranscriptInto(index).then(refresh);
+        // Authoritative: the turn finished with a genuine result, so the file now holds
+        // the whole conversation. Replacing (not merging) drops the streamed pending
+        // blocks so the completed reply can't render twice - once as live bubbles and
+        // again as the file's "Used N tools" grouped copy (bug b608c99b).
+        loadTranscriptInto(index, { authoritative: true }).then(refresh);
         fireQueuedPromptIfAny(index, pane);
       }
       break;

@@ -590,6 +590,17 @@ export function reviewTasks(jotConfig = {}) {
         const cat = catById.get(t.categoryId);
         return cat && (cat.domain === "work" || cat.domain === "private") ? cat.domain : null;
       })(),
+      // The explicit folder this board is bound to (Jot's Category.repoPath), when set.
+      // This is the AUTHORITATIVE repo binding; the review payload prefers it over the
+      // fuzzy category-name-to-cwd guess, which only reliably resolved for helm itself -
+      // helm is the meta-home and never shows up as a session cwd, so it was the one
+      // project the guess was backfilled for. Every other board fell through to null and
+      // got filtered out of the default (repo-rooted) view (task 75a01d5d: "Review verkar
+      // bara göra ordentliga reviews för helm").
+      categoryRepoPath: (() => {
+        const cat = catById.get(t.categoryId);
+        return cat && typeof cat.repoPath === "string" && cat.repoPath.trim() ? cat.repoPath.trim() : null;
+      })(),
     }));
   return { ok: true, path: jotPath, tasks };
 }

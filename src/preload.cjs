@@ -98,6 +98,8 @@ contextBridge.exposeInMainWorld("helm", {
   runReviewChecks: (taskId) => ipcRenderer.invoke("reviews:runChecks", { taskId }),
   // The change behind a review item: its commits' patch, read-only.
   getReviewDiff: (taskId) => ipcRenderer.invoke("reviews:diff", { taskId }),
+  // The released app version a fix is out in (null if not yet in a tagged release).
+  getShippedVersion: (taskId) => ipcRenderer.invoke("reviews:shippedVersion", { taskId }),
   // What an independent reviewer would be sent in on, recommended from the change.
   getReviewerPlan: (taskId) => ipcRenderer.invoke("reviews:reviewerPlan", { taskId }),
   // The reviewer's own verdict, once it has written one.

@@ -1018,6 +1018,10 @@ export function buildReviewQueue(reviewTasks, records, metaHome = null) {
       // Work/private classification from the owning Jot category, for the Review
       // page's domain filter (task 0ca1f3d3). null = unclassified (shown in all modes).
       domain: t.domain === "work" || t.domain === "private" ? t.domain : null,
+      // Jot's explicit per-board folder binding (Category.repoPath), threaded so the
+      // review payload can prefer it over the fuzzy category-name-to-cwd guess that only
+      // resolved for helm (task 75a01d5d). null when the board declares no binding.
+      categoryRepoPath: t.categoryRepoPath || null,
       record: rec,
       incomplete: problems.length > 0,
       problems,

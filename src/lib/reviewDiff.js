@@ -87,6 +87,52 @@ export function resolveTaskCommits(projectPath, taskId, recorded = [], { run = g
   }
 }
 
+/**
+ * The released app version a task's fix is out in, or null if it is not in any
+ * released tag yet (task 860b4661: "review - borde visa vilken version fixen finns ute
+ * i om versionerad").
+ *
+ * Uses `git tag --contains <sha>` on the fix's LAST commit - the same commit the review
+ * record pins its checks to (boundShaFull's `.at(-1)`): once the newest commit of a fix
+ * is in a release, the whole fix is. `--sort=v:refname` lists the containing tags
+ * ascending, so the first `v*` is the EARLIEST release that carries the fix. This works
+ * per-project off the record's own repo, so a fix in any tagged repo resolves, and a repo
+ * that does not tag releases simply returns null ("if versioned").
+ *
+ * Caller is responsible for making recent tags visible first (a release tag created on the
+ * remote by the publisher is not local until fetched); this stays a pure tag read so it is
+ * testable without a network.
+ *
+ * @param {string} projectPath
+ * @param {Array<string|{sha:string}>} commits record.commits (shas or "sha subject" strings)
+ * @param {object} [deps] injectable git runner, for tests without a repo.
+ * @returns {{ version: string|null, error: string|null }}
+ */
+export function shippedVersionForCommits(projectPath, commits, { run = git } = {}) {
+  if (!projectPath || !fs.existsSync(projectPath)) {
+    return { version: null, error: "This record names no project folder that exists." };
+  }
+  const shas = (Array.isArray(commits) ? commits : [])
+    .map((c) => (typeof c === "string" ? c : c?.sha))
+    .map((s) => String(s || "").trim().split(/\s+/)[0])
+    .filter((s) => SHA_RE.test(s));
+  const lastSha = shas.at(-1);
+  if (!lastSha) {
+    return { version: null, error: "The record pins no commit, so there is nothing to locate in a release." };
+  }
+  let out;
+  try {
+    out = run(projectPath, ["tag", "--contains", lastSha, "--sort=v:refname"]);
+  } catch (err) {
+    return { version: null, error: short(err) };
+  }
+  const tags = String(out || "")
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((t) => /^v\d/.test(t));
+  return { version: tags[0] || null, error: null };
+}
+
 function parseCommitLines(out) {
   return String(out || "")
     .split(/\r?\n/)
