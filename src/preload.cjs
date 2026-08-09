@@ -142,6 +142,15 @@ contextBridge.exposeInMainWorld("helm", {
     ipcRenderer.on("build:staleUpdate", listener);
     return () => ipcRenderer.removeListener("build:staleUpdate", listener);
   },
+  // Model-freshness indicator: getModelFreshness() returns the last check's
+  // result (see runModelFreshnessCheck in main.js); onModelFreshnessUpdate
+  // fires only when the set of newly-seen model ids actually changes.
+  getModelFreshness: () => ipcRenderer.invoke("models:freshnessStatus"),
+  onModelFreshnessUpdate: (handler) => {
+    const listener = (_event, payload) => handler(payload);
+    ipcRenderer.on("models:freshnessUpdate", listener);
+    return () => ipcRenderer.removeListener("models:freshnessUpdate", listener);
+  },
   // Fired when a setting could not be saved. setConfig cannot report this in its
   // return value - the renderer assigns that straight into state.config in ~40
   // places - so the failure comes back on its own channel instead of vanishing.

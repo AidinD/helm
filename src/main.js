@@ -49,6 +49,7 @@ import { listHandoffCategories, writeHandoff, readHandoff, planHandoffFiling, ha
 import { classifySessionStatus, classifyHandoffCategory, expectsUserInputHeuristic, estimateSessionContextTokens, compactSession, getTranscriptSize, triageAutoTask } from "./lib/orchestratorHelper.js";
 import { savePastedImage, prunePastedImages } from "./lib/images.js";
 import { computeVersionString, captureRunningBuildIdentity, checkForNewerBuild } from "./lib/version.js";
+import { checkModelFreshness } from "./lib/modelFreshness.js";
 import { runGoal } from "./lib/goalOrchestrator.js";
 import { loadGoalRunHistory, upsertGoalRunRecord, removeGoalRunRecord } from "./lib/goalRunHistory.js";
 import {
@@ -4834,6 +4835,25 @@ function runStaleBuildCheck() {
   }
 }
 
+// Model-freshness indicator (Jot card "Behöver strategi för när ny version av
+// claude släpps"): once a day is plenty - a new Claude generation ships on
+// the order of months, not minutes, and the check itself is a full binary
+// read (see modelFreshness.js), not something to run on a tight timer.
+const MODEL_FRESHNESS_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+let latestModelFreshness = { checked: false, newModelIds: [] };
+
+function runModelFreshnessCheck() {
+  const result = checkModelFreshness();
+  const changed = JSON.stringify(result.newModelIds) !== JSON.stringify(latestModelFreshness.newModelIds);
+  latestModelFreshness = result;
+  // Only push when the set of newly-seen ids actually changed - same reason
+  // as runStaleBuildCheck: no point re-sending an identical payload on every
+  // tick for the life of the session.
+  if (changed && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("models:freshnessUpdate", latestModelFreshness);
+  }
+}
+
 // --- First-mate tier: the dispatch request watcher (design section 1 "A1" +
 // section 4). The app is the single dispatch authority: it watches the
 // meta-home request inbox, and for each new request validates it, enforces the
@@ -6107,12 +6127,16 @@ ipcMain.handle("scheduledPrompts:cancel", (_event, { id } = {}) => {
   return { ok: cancelScheduledPrompt(id) };
 });
 
+ipcMain.handle("models:freshnessStatus", () => latestModelFreshness);
+
 app.whenReady().then(() => {
   prunePastedImages();
   seedQuotaWindows();
   createWindow();
   setInterval(runOrchestratorSweep, ORCHESTRATOR_SWEEP_INTERVAL_MS);
   setInterval(runStaleBuildCheck, STALE_BUILD_CHECK_INTERVAL_MS);
+  runModelFreshnessCheck();
+  setInterval(runModelFreshnessCheck, MODEL_FRESHNESS_CHECK_INTERVAL_MS);
   startDispatchWatcher();
   // Helm-owned routines scheduler: a catch-up pass now (fires anything missed
   // while Helm was closed), then a check every minute.
