@@ -26,9 +26,12 @@ try {
     state.config = state.config || {};
     state.config.archiveSuggestions = { enabled: true };
     // A first-mate-bound idle session + a plain idle session, both with no open Jot work.
+    // lifecycleState (not raw status) is what dashboardProposalSessions() filters on
+    // now (Epic f3d096fa); without it the "plain idle session IS suggested" control
+    // never surfaces and the test passes/fails for the wrong reason.
     state.sessions = [
-      { sessionId: "local_fm", cliSessionId: "cli_fm", cwd: "D:/x", title: "fix the login bug", status: "idle", lastActivityAt: 2, jot: null },
-      { sessionId: "local_plain", cliSessionId: "cli_plain", cwd: "D:/y", title: "Some idle project session", status: "idle", lastActivityAt: 1, jot: null },
+      { sessionId: "local_fm", cliSessionId: "cli_fm", cwd: "D:/x", title: "fix the login bug", status: "idle", lifecycleState: "idle", lastActivityAt: 2, jot: null },
+      { sessionId: "local_plain", cliSessionId: "cli_plain", cwd: "D:/y", title: "Some idle project session", status: "idle", lifecycleState: "idle", lastActivityAt: 1, jot: null },
     ];
     mateSessionIds = new Set(["cli_fm"]);
     mateBySessionId = new Map([["cli_fm", { mateId: "m1", name: "Jack Sparrow", sessionId: "cli_fm" }]]);

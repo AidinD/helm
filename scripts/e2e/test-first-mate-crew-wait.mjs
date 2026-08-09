@@ -28,11 +28,14 @@ try {
     state.config = state.config || {};
     state.config.acknowledgedGoalRuns = [];
     // A first mate (m0) with a waiting bound session + two ERRORED crew runs.
+    // needsAction reads lifecycleState === "waiting" (Epic f3d096fa's FSM projection),
+    // not the raw status, so both fixtures must carry it or the "genuine need-a-click"
+    // control never fires.
     const mateErr = { mateId: "m0", slot: 0, name: "Captain Ahab", sessionId: "s0" };
-    const sessErr = { sessionId: "s0", cliSessionId: "s0", status: "waiting", title: "You are Captain Ahab", model: "claude-sonnet-5", lastActivityAt: 1 };
+    const sessErr = { sessionId: "s0", cliSessionId: "s0", status: "waiting", lifecycleState: "waiting", title: "You are Captain Ahab", model: "claude-sonnet-5", lastActivityAt: 1 };
     // A second first mate (m1) with a waiting session and NO crew (genuine input).
     const mateBare = { mateId: "m1", slot: 1, name: "Hector Barbossa", sessionId: "s1" };
-    const sessBare = { sessionId: "s1", cliSessionId: "s1", status: "waiting", title: "You are Barbossa", model: "claude-sonnet-5", lastActivityAt: 1 };
+    const sessBare = { sessionId: "s1", cliSessionId: "s1", status: "waiting", lifecycleState: "waiting", title: "You are Barbossa", model: "claude-sonnet-5", lastActivityAt: 1 };
     mateBySessionId.set("s0", mateErr);
     mateBySessionId.set("s1", mateBare);
     state.sessions = [sessErr, sessBare];

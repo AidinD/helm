@@ -75,12 +75,25 @@ try {
   app = await launch();
   await app.waitForSelector("#pageToggle", 30000, { visible: true });
 
+  // The Review PAGE defaults to showing only repo-rooted records (reviewOnlyRepoRooted),
+  // and these fixtures are deliberately not bound to a repo-rooted Jot category - so
+  // without this they'd be filtered out and every DOM assertion below would read an
+  // empty page. The repo filter is an orthogonal "how to look at the board" choice, not
+  // part of what this test checks (how a forged run is PRESENTED), so neutralise it here.
+  // (It does not affect window.helm.listReviews() / res.tally, which count the whole queue.)
+  await app.eval(`reviewOnlyRepoRooted = false`);
+
   const res = await app.eval(`window.helm.listReviews()`);
   const row = (res.rows || [])[0];
   ok(row?.gauntlet?.state !== "passing", `the gauntlet does not read passing (${row?.gauntlet?.state})`);
   ok(row?.gauntlet?.unverified === 1, `the fabricated run is counted as unverified (${JSON.stringify(row?.gauntlet)})`);
   ok(row?.gauntlet?.passed === 0, "and not as a pass");
-  ok(res.tally?.unconfirmed === 1 && res.tally?.stamp === 0, `the header counts it as claimed-but-unconfirmed, not as a stamp (${JSON.stringify(res.tally)})`);
+  // A hand-written {ok:true} run on a `core` record is now re-validated as inadmissible
+  // ON READ (buildReviewQueue downgrades its verdict), so it lands in the `incomplete`
+  // ("below the bar") band rather than `unconfirmed` - a STRONGER non-pass classification.
+  // Either way the one requirement holds: it is NOT a stamp. (Was `unconfirmed === 1`
+  // before the read-validation downgrade existed.)
+  ok(res.tally?.incomplete === 1 && res.tally?.stamp === 0, `the header counts it as below-the-bar, not as a stamp (${JSON.stringify(res.tally)})`);
 
   await app.eval(`navigateToPage("review")`);
   await new Promise((r) => setTimeout(r, 1200));
@@ -105,7 +118,7 @@ try {
   ok(ui.label === "auth e2e (34 assertions)", "the label is still shown - the point is that both are visible");
   ok(/NOT VERIFIED/.test(ui.header), `the summary line names the reason rather than just a count (${ui.header})`);
   ok(!/passing/i.test(ui.header), "the summary line does not say passing");
-  ok(ui.bands.some((b) => /Claimed, not confirmed/.test(b)), `it sits under its own honest heading (${JSON.stringify(ui.bands)})`);
+  ok(ui.bands.some((b) => /Below the bar/.test(b)), `it sits under its own honest heading (${JSON.stringify(ui.bands)})`);
   // This used to assert the absence of "verified end to end" - a phrase no heading has
   // contained since the wording changed, so it asserted the absence of something that
   // never existed. Assert the real requirement: the ONLY heading present is the honest

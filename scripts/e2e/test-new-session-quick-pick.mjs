@@ -81,14 +81,28 @@ try {
   // --- the button actually opens it -----------------------------------------
   const opened = await app.eval(`(async () => {
     navigateToPage("fleet");
-    await new Promise((r) => setTimeout(r, 400));
-    const btn = [...document.querySelectorAll(".fleet-mate-card.direct .fleet-btn")].find((b) => b.textContent.includes("+ Session"));
+    // Poll for the captain's card to render rather than a fixed wait - the Fleet
+    // section draws from an async refresh, and a fixed delay raced it under the
+    // full serial suite's load (green in isolation, flaky in the sweep).
+    let btn = null;
+    for (let i = 0; i < 60; i++) {
+      btn = [...document.querySelectorAll(".fleet-mate-card.direct .fleet-btn")].find((b) => b.textContent.includes("+ Session"));
+      if (btn) {
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 50));
+    }
     if (!btn) {
       return { found: false };
     }
     btn.click();
-    await new Promise((r) => setTimeout(r, 400));
     const menu = document.getElementById("contextMenu");
+    for (let i = 0; i < 40; i++) {
+      if (menu && !menu.classList.contains("hidden") && menu.querySelectorAll(".item").length > 0) {
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 50));
+    }
     return {
       found: true,
       visible: !menu.classList.contains("hidden"),
