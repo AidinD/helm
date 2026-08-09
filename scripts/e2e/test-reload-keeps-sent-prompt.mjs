@@ -103,6 +103,28 @@ try {
         const merged = mergeReloadedTurns([...settled, sent], settled);
         return merged[merged.length - 1] === sent;
       })(),
+      // An AUTHORITATIVE reload (a turn that finished with a genuine result) trusts the
+      // file completely and drops the streamed pending copies - the fix for the duplicate
+      // output at the end of a conversation (bug b608c99b). The failing shape: a tool-heavy
+      // turn writes >60 file entries after the streamed reply, so the tail-window match
+      // misses it and the OLD merge re-appended the streamed copy after the file's own.
+      authoritative: (() => {
+        const sid = "sess-auth";
+        const streamed = pa("the streamed reply");
+        rememberPendingTurn(sid, streamed);
+        const onScreenA = [...settled, streamed];
+        const filler = Array.from({ length: 65 }, (_, i) => a("tool step " + i));
+        const fileA = [...settled, a("the streamed reply"), ...filler];
+        const merged = mergeReloadedTurns(onScreenA, fileA, sid, { authoritative: true });
+        // A later ORDINARY reload must not resurrect it: the authoritative pass cleared
+        // the per-session buffer so it cannot linger as a parallel copy.
+        const followup = mergeReloadedTurns([], fileA, sid);
+        return {
+          dupes: merged.filter((t) => t.text === "the streamed reply").length,
+          isFile: merged.length === fileA.length,
+          bufferCleared: followup.length === fileA.length,
+        };
+      })(),
     };
   })()`);
 
@@ -161,14 +183,27 @@ try {
   ok(res.nulls.every(Boolean), "missing inputs return an array rather than throwing");
   ok(res.identity, "a kept turn stays the same object, so the incremental renderer's identity check is undisturbed");
 
+  // The fix for the duplicate-at-conversation-end bug: an authoritative reload replaces.
+  ok(res.authoritative.dupes === 1, `an authoritative reload shows the completed reply ONCE, not twice (${res.authoritative.dupes})`);
+  ok(res.authoritative.isFile, "an authoritative reload takes the file as-is, even for a pending turn the tail window cannot match");
+  ok(res.authoritative.bufferCleared, "and it clears the per-session buffer so a later reload cannot re-add the streamed copy");
+
   // Both call sites must use it. Fixing one and leaving the other is how this class of bug
   // survives its own fix - the "Show earlier messages" reload had the identical line.
   const rSrc = fs.readFileSync(new URL("../../src/renderer/renderer.js", import.meta.url), "utf8");
   const blunt = rSrc.split("\n").filter((l) => /^\s*pane\.turns = turns;/.test(l));
   ok(blunt.length === 0, `no blunt "pane.turns = turns" replacement is left anywhere (${blunt.length})`);
+  // Both reload paths must still merge AND pass the session (the per-session buffer is
+  // consulted). One of them now also passes { authoritative } - matched without the
+  // closing paren so the extra arg does not read as a regression here.
   ok(
-    (rSrc.match(/mergeReloadedTurns\(pane\.turns, turns, pane\.sessionId\)/g) || []).length === 2,
-    `both reload paths merge, and both pass the session so the per-session buffer is consulted (${(rSrc.match(/mergeReloadedTurns\(pane\.turns, turns, pane\.sessionId\)/g) || []).length})`
+    (rSrc.match(/mergeReloadedTurns\(pane\.turns, turns, pane\.sessionId/g) || []).length === 2,
+    `both reload paths merge and pass the session (${(rSrc.match(/mergeReloadedTurns\(pane\.turns, turns, pane\.sessionId/g) || []).length})`
+  );
+  // The completion path must reload AUTHORITATIVELY, or the duplicate returns.
+  ok(
+    /loadTranscriptInto\(index, \{ authoritative: true \}\)/.test(rSrc),
+    "the done/success branch reloads authoritatively so the finished reply cannot render twice"
   );
 
   const errors = app.getConsoleErrors();

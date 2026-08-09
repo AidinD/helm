@@ -43,7 +43,7 @@ import {
   quotaResetFireAt,
 } from "./lib/scheduledPrompts.js";
 import { buildReviewQueue, listReviewRecords, reviewQueueTally, readReviewRecord, recordCheckRun, gauntletStatus, currentHead, codeChangedBetween } from "./lib/reviewRecords.js";
-import { resolveTaskCommits, diffForCommits } from "./lib/reviewDiff.js";
+import { resolveTaskCommits, diffForCommits, shippedVersionForCommits } from "./lib/reviewDiff.js";
 import { recommendReviewer, diffStats, REVIEWER_MODELS } from "./lib/reviewerModel.js";
 import { listHandoffCategories, writeHandoff, readHandoff, planHandoffFiling, handoffPath } from "./lib/handoffStore.js";
 import { classifySessionStatus, classifyHandoffCategory, expectsUserInputHeuristic, estimateSessionContextTokens, compactSession, getTranscriptSize, triageAutoTask } from "./lib/orchestratorHelper.js";
@@ -5710,7 +5710,13 @@ function buildReviewsPayload() {
   // exists to prevent.
   const roots = repoRootedCategories(records);
   for (const row of rows) {
-    row.repoPath = roots.repoFor(row.category);
+    // Jot's explicit per-board folder binding (Category.repoPath) is authoritative when
+    // set; the fuzzy category-name-to-cwd guess is only a fallback. That guess reliably
+    // resolved for helm alone - helm is the meta-home and never appears as a session cwd,
+    // so it was backfilled from review records - which left every other board's rows with
+    // no repoPath and dropped from the default repo-rooted view (task 75a01d5d: "Review
+    // verkar bara göra ordentliga reviews för helm").
+    row.repoPath = row.categoryRepoPath || roots.repoFor(row.category);
   }
   // The audit half: work that reached done without ever being recorded. A direct
   // board write cannot be prevented from here, only detected - and it has to surface
@@ -5845,6 +5851,52 @@ ipcMain.handle("reviews:diff", (_event, { taskId } = {}) => {
     shown: diff.shown,
     total: diff.total,
   };
+});
+
+// The released app version a task's fix is out in, shown as a chip on the review record
+// (task 860b4661). Resolved lazily per row rather than in buildReviewsPayload so the
+// (occasionally networked) tag lookup never slows the whole page. Cached per
+// project+commit, and tags are fetched at most once per project per app run so a
+// release the publisher created on the remote (electron-builder makes the tag on GitHub,
+// not locally) becomes visible to `git tag --contains` without a per-render fetch.
+const shippedVersionCache = new Map(); // `${projectPath}|${lastSha}` -> {version,error}
+const shippedVersionFetchedFor = new Set(); // projectPaths whose tags we already refreshed
+ipcMain.handle("reviews:shippedVersion", (_event, { taskId } = {}) => {
+  try {
+    const metaHome = resolveMetaHome();
+    const rec = readReviewRecord(metaHome, taskId);
+    const projectPath = rec?.projectPath || null;
+    if (!rec || !projectPath) {
+      return { version: null };
+    }
+    const resolved = resolveTaskCommits(projectPath, taskId, rec.commits || []);
+    if (resolved.commits.length === 0) {
+      return { version: null };
+    }
+    const lastSha = resolved.commits.at(-1)?.sha || null;
+    const key = `${projectPath}|${lastSha}`;
+    if (shippedVersionCache.has(key)) {
+      return shippedVersionCache.get(key);
+    }
+    if (!shippedVersionFetchedFor.has(projectPath)) {
+      shippedVersionFetchedFor.add(projectPath);
+      try {
+        // Best-effort and time-boxed: offline or no remote just falls back to local tags.
+        execFileSync("git", ["-C", projectPath, "fetch", "--tags", "--quiet"], {
+          timeout: 5000,
+          windowsHide: true,
+          stdio: "ignore",
+        });
+      } catch {
+        // ignore - local tags are still queried below
+      }
+    }
+    const res = shippedVersionForCommits(projectPath, resolved.commits);
+    shippedVersionCache.set(key, res);
+    return res;
+  } catch {
+    return { version: null };
+  }
 });
 
 // What an independent reviewer would be sent in on, RECOMMENDED from the change itself
