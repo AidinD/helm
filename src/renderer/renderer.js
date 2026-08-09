@@ -1987,13 +1987,19 @@ const bandOf = (r) => r.band || r.verdict;
  * miscounted; there were simply two counts of two different things, which is the same defect
  * class as the amber frame and the double-reported runs.
  */
-function visibleReviewRows(allRows, { ignoreProjectFilter = false } = {}) {
+function visibleReviewRows(allRows, { ignoreProjectFilter = false, ignoreDomainFilter = false } = {}) {
   const project = ignoreProjectFilter ? null : reviewProjectFilter;
+  // The subnav badge is a GLOBAL attention signal, so it passes ignoreDomainFilter
+  // (as it already passes ignoreProjectFilter): a work/private focus chosen on the
+  // page must not shrink the badge and leave real review items uncounted until a
+  // restart - the same under-flagging bug ignoreProjectFilter was added to prevent
+  // (daa4245f), which this filter would otherwise reintroduce on a new axis.
+  const domain = ignoreDomainFilter ? "all" : reviewDomainFilter;
   return (allRows || []).filter(
     (r) =>
       (!reviewOnlyRepoRooted || r.repoPath) &&
       (!project || r.category === project) &&
-      (reviewDomainFilter === "all" || r.domain === reviewDomainFilter)
+      (domain === "all" || r.domain === domain)
   );
 }
 
@@ -2350,11 +2356,11 @@ async function renderReviewPage() {
   // Badge on the subnav: the count that actually needs him, not the total - a
   // total would nag about work that is already settled.
   //
-  // Computed WITHOUT the project chip, unlike the page's own tally above. The badge is a global
-  // signal; if it followed the chip, selecting one project here would quietly shrink it and keep
-  // it shrunk (see paintReviewBadge). The repo filter is still applied - that is a decision about
-  // what belongs in review, not a way of looking at it.
-  paintReviewBadge(reviewTallyFromRows(visibleReviewRows(allRows, { ignoreProjectFilter: true })));
+  // Computed WITHOUT the project chip OR the work/private focus, unlike the page's own tally above.
+  // The badge is a global signal; if it followed either, a view choice here would quietly shrink it
+  // and keep it shrunk (see paintReviewBadge). The repo filter is still applied - that is a decision
+  // about what belongs in review, not a way of looking at it.
+  paintReviewBadge(reviewTallyFromRows(visibleReviewRows(allRows, { ignoreProjectFilter: true, ignoreDomainFilter: true })));
 }
 
 // How many review rows actually need him: the count that raises the subnav badge.
@@ -2397,14 +2403,15 @@ async function paintReviewBadge(tally = null) {
       // that fetched its own unfiltered one changed value depending on which surface had
       // painted it last (task daa4245f).
       //
-      // But NOT through the project chip. Making the surfaces agree also made the subnav badge
-      // inherit a filter set on another page: clicking one project on the Review page left the
-      // badge counting only that project, with nothing on screen to say so and no reset until
-      // the app restarted. Under-flagging an attention signal is the failure Aidin has
-      // explicitly rejected, and a global badge is the wrong place to honour a local view
-      // choice. The repo filter IS honoured - that one is a standing decision about what
-      // belongs in review at all, not a way of looking at it. Raised by review, 2026-08-04.
-      t = res?.rows ? reviewTallyFromRows(visibleReviewRows(res.rows, { ignoreProjectFilter: true })) : res?.tally || null;
+      // But NOT through the project chip OR the work/private focus. Making the surfaces agree also
+      // made the subnav badge inherit a filter set on another page: clicking one project (or one
+      // domain) on the Review page left the badge counting only that slice, with nothing on screen
+      // to say so and no reset until the app restarted. Under-flagging an attention signal is the
+      // failure Aidin has explicitly rejected, and a global badge is the wrong place to honour a
+      // local view choice. The repo filter IS honoured - that one is a standing decision about what
+      // belongs in review at all, not a way of looking at it. Raised by review, 2026-08-04 (project
+      // chip) and 2026-08-09 (domain focus).
+      t = res?.rows ? reviewTallyFromRows(visibleReviewRows(res.rows, { ignoreProjectFilter: true, ignoreDomainFilter: true })) : res?.tally || null;
     } catch {
       return; // leave whatever is there rather than clearing a real count on a hiccup
     }

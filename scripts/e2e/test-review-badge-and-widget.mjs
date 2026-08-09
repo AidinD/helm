@@ -66,8 +66,8 @@ ok(
 
 // The page must still paint it, or a stamp would not clear the badge until the tick.
 ok(
-  /paintReviewBadge\(reviewTallyFromRows\(visibleReviewRows\(allRows, \{ ignoreProjectFilter: true \}\)\)\)/.test(rSrc),
-  "renderReviewPage paints the badge from the same rows, minus the project chip"
+  /paintReviewBadge\(reviewTallyFromRows\(visibleReviewRows\(allRows, \{ ignoreProjectFilter: true, ignoreDomainFilter: true \}\)\)\)/.test(rSrc),
+  "renderReviewPage paints the badge from the same rows, minus the project chip AND the domain focus"
 );
 // And the old inline block must be gone, not merely bypassed.
 ok(
@@ -147,6 +147,23 @@ filterFns.setDomain("private");
 const privRows = filterFns.visibleReviewRows(domainBoard);
 ok(privRows.length === 1 && privRows[0].category === "Helm", `Private focus shows only private-domain rows (${privRows.length})`);
 ok(!privRows.some((r) => r.domain === null), "an unclassified row is NOT shown under a specific focus");
+
+// THE BADGE MUST NOT FOLLOW THE DOMAIN FOCUS (raised by independent review, 2026-08-09).
+// The page's Work/Private choice is a local view; the subnav badge is a global attention
+// signal. If the badge honoured the domain filter, picking "Work" would drop the private
+// review items from the count and leave them uncounted until restart - the exact
+// under-flagging ignoreProjectFilter exists to prevent, on a new axis. The badge path passes
+// BOTH ignore flags, so it counts every repo-rooted row whatever focus is active.
+filterFns.setDomain("work");
+ok(
+  filterFns.visibleReviewRows(domainBoard, { ignoreProjectFilter: true, ignoreDomainFilter: true }).length === 4,
+  "the badge counts every repo-rooted row even while the page is focused on Work (it does not inherit the domain filter)"
+);
+filterFns.setDomain("private");
+ok(
+  filterFns.visibleReviewRows(domainBoard, { ignoreProjectFilter: true, ignoreDomainFilter: true }).length === 4,
+  "and the same under a Private focus - the global signal is domain-blind"
+);
 filterFns.setDomain("all");
 
 // All three surfaces must go through those two functions, or they drift apart again.
@@ -157,7 +174,7 @@ ok(
   "the widget counts the rows the page would show, not the whole queue"
 );
 ok(
-  /reviewTallyFromRows\(visibleReviewRows\(res\.rows, \{ ignoreProjectFilter: true \}\)\)/.test(paint),
+  /reviewTallyFromRows\(visibleReviewRows\(res\.rows, \{ ignoreProjectFilter: true, ignoreDomainFilter: true \}\)\)/.test(paint),
   "and the badge does the same when it fetches its own"
 );
 // The badge must NOT follow the project chip. Making the three surfaces agree also made the subnav
