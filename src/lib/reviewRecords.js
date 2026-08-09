@@ -598,7 +598,7 @@ export function verifyCheckRun(metaHome, taskId, run, declaredCmd = undefined) {
  * doesn't declare is refused outright, so a run cannot be parked under a name the
  * reader never sees.
  */
-export function recordCheckRun(metaHome, taskId, run, { now = Date.now() } = {}) {
+export function recordCheckRun(metaHome, taskId, run, { now = Date.now(), pinnedHead = null } = {}) {
   const rec = readReviewRecord(metaHome, taskId);
   if (!rec) {
     return { ok: false, error: "No review record for that task." };
@@ -611,9 +611,15 @@ export function recordCheckRun(metaHome, taskId, run, { now = Date.now() } = {})
     return { ok: false, error: `This record declares no check labelled "${run.label}" - a run must belong to a declared check.` };
   }
   const runs = Array.isArray(rec.checkRuns) ? rec.checkRuns.filter((r) => r.label !== run.label) : [];
-  // Same resolution order the runner uses (check.cwd || rec.projectPath), so a record
-  // cannot dodge pinning by putting cwd on the check.
-  const head = currentHead(declared.cwd || rec.projectPath);
+  // pinnedHead lets a caller that ran the check in an ISOLATED worktree (the captain,
+  // task 76790f23: "Bind varje review till en commit") stamp the commit it
+  // actually verified against, instead of re-querying the live project
+  // directory here - which would report `dirty: true` from whatever unrelated
+  // work is sitting uncommitted in the main tree at this exact moment,
+  // regardless of how cleanly the check itself ran. Falls back to the old
+  // live-directory query for a caller that ran the check in place (no worktree
+  // available, e.g. projectPath isn't a git repo).
+  const head = pinnedHead || currentHead(declared.cwd || rec.projectPath);
   const stamped = {
     label: String(run.label),
     // What was DECLARED, not what the caller says it ran. Storing the caller's

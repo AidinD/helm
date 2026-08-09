@@ -1036,8 +1036,14 @@ function openDiffViewer(row, res) {
  *
  * The reviewer is also told to write its verdict to a file, which the review row reads
  * back - so the answer arrives where the question was asked, not only in a chat pane.
+ *
+ * `priorVerdict`, when given (the "Second opinion" button), is a PRIOR reviewer's own
+ * verdict text - the new reviewer is told what it found and asked to reach its own
+ * conclusion independently, then say whether it agrees. Not a resume of that first
+ * reviewer's session (it has already exited by the time its verdict is readable at
+ * all) - a fresh one, briefed on the disagreement.
  */
-async function openIndependentReview(row) {
+async function openIndependentReview(row, priorVerdict = null) {
   const rec = row.record || {};
   const cwdCheck = rec.projectPath || "";
   if (!cwdCheck) {
@@ -1095,12 +1101,14 @@ async function openIndependentReview(row) {
   extra.append(modelRow, effortRow);
 
   customConfirm(
-    `Send an independent reviewer at "${row.title}"?\n\nIt starts a real session and sends the brief immediately, so this spends tokens.`,
+    priorVerdict
+      ? `Send a SECOND independent reviewer at "${row.title}"?\n\nIt gets the first reviewer's verdict and is asked to reach its own conclusion, then say whether it agrees. It starts a real session and sends the brief immediately, so this spends tokens.`
+      : `Send an independent reviewer at "${row.title}"?\n\nIt starts a real session and sends the brief immediately, so this spends tokens.`,
     "Send it",
     async () => {
       const model = modelSel.value;
       const effort = effortSel.value;
-      const res = await window.helm.startSession(independentReviewSessionArgs(row, rec, plan, model, effort));
+      const res = await window.helm.startSession(independentReviewSessionArgs(row, rec, plan, model, effort, priorVerdict));
       if (!res?.ok) {
         showNotice(`The reviewer did not start: ${res?.error || "unknown error"}`);
         return;
@@ -1138,7 +1146,7 @@ function reviewerModelLabelInRenderer(value) {
  * an independent pass that is not told what is being claimed just re-reads the code and
  * agrees with it.
  */
-function independentReviewBrief(row, rec, notePath) {
+function independentReviewBrief(row, rec, notePath, priorVerdict = null) {
   const short = row.taskId.slice(0, 8);
   const lines = [
     `You are an INDEPENDENT reviewer. You did not write this work, and your job is not to agree with it.`,
@@ -1165,6 +1173,28 @@ function independentReviewBrief(row, rec, notePath) {
     `3. Try to BREAK one guard on purpose and check that a test notices. A guard whose removal leaves the suite green is not a guard.`,
     `4. Report: what is wrong, what is unproven, and what you ran to find out. Cite file:line.`,
     ``,
+    // A SECOND opinion: the prior verdict goes in AFTER the instructions above, and
+    // is framed as a claim to test rather than a conclusion to start from - the whole
+    // value of asking twice is lost if the second reviewer just re-reads the first
+    // one's reasoning and nods. Reaching its own conclusion first, then comparing, is
+    // the same discipline the brief already imposes about the AUTHOR's own claims.
+    ...(priorVerdict
+      ? [
+          `--- A PREVIOUS INDEPENDENT REVIEWER ALREADY LOOKED AT THIS ---`,
+          ``,
+          `the captain asked for a second opinion because he is not convinced by it. Do your OWN`,
+          `investigation FIRST, using the steps above, and only then read this and say`,
+          `plainly whether you agree, and about which specific points. Where you disagree,`,
+          `say what you ran that they apparently did not.`,
+          ``,
+          `Their verdict:`,
+          priorVerdict,
+          ``,
+          `Your verdict REPLACES theirs in the file below, so restate anything of theirs`,
+          `that still holds - do not write only the delta.`,
+          ``,
+        ]
+      : []),
     `WRITE YOUR VERDICT TO A FILE, as your last action, so it reaches the review page and not`,
     `only this chat:`,
     ``,
@@ -1196,14 +1226,36 @@ function independentReviewBrief(row, rec, notePath) {
  * exactly that one path keeps "do not change anything else" (the brief's own
  * instruction) technically enforced, not just requested.
  */
-function independentReviewSessionArgs(row, rec, plan, model, effort) {
+function independentReviewSessionArgs(row, rec, plan, model, effort, priorVerdict = null) {
   return {
     cwd: rec.projectPath,
-    prompt: independentReviewBrief(row, rec, plan.notePath),
+    prompt: independentReviewBrief(row, rec, plan.notePath, priorVerdict),
     model,
     effort,
     allowedTools: [`Write(${plan.notePath})`],
   };
+}
+
+/**
+ * The prompt that carries an independent reviewer's verdict into a session that
+ * can actually act on it (the "Open a fix session" button).
+ *
+ * States plainly that the verdict is a CLAIM, not an instruction: a reviewer can
+ * be wrong, and a session that starts by assuming otherwise will "fix" things
+ * that were never broken. The same posture the review brief takes towards the
+ * author's claims, pointed the other way.
+ */
+function independentVerdictFixBrief(row, verdictText) {
+  return [
+    `An independent reviewer looked at "${row.title}" (task ${row.taskId.slice(0, 8)}) and reported the following.`,
+    ``,
+    `Treat this as a CLAIM to verify, not a work order - it did not write the code and it can be wrong.`,
+    `For each finding: reproduce it first. Fix what is real, and say plainly which findings you could NOT`,
+    `reproduce and why, rather than quietly fixing around them.`,
+    ``,
+    `--- the reviewer's verdict ---`,
+    verdictText,
+  ].join("\n");
 }
 
 /**
@@ -1376,12 +1428,71 @@ function reviewRowEl(row, band = null) {
       const when = new Date(res.writtenAt);
       lab.textContent = `Independent reviewer · written ${when.toLocaleString()}`;
       lab.title = res.path;
+      const verdictText = res.text.trim();
       const text = document.createElement("div");
       text.className = "rev-independent-note";
-      // Plain text, not markdown: this file is written by an agent, and the doc viewer's
-      // renderer is for files we control. It reads fine as text and cannot inject markup.
-      text.textContent = res.text.trim();
+      // Now rendered as markdown (the captain, task 76790f23: "jag vill kunna se verdict
+      // lättläst") via the SAME safe DOM-construction renderer chat replies already
+      // use (renderMarkdownInto never touches innerHTML - it builds elements from the
+      // text itself, so an agent-authored file is exactly as safe here as a chat
+      // reply from the model already is). The prior plain-text choice reasoned this
+      // file was less trusted than "files we control" (DECISIONS.md etc.), but that
+      // distinction does not hold: this IS a model's own text output, the same trust
+      // level as every reply already rendered this way.
+      renderMarkdownInto(text, verdictText);
       indBox.append(lab, text);
+
+      const indActions = document.createElement("div");
+      indActions.className = "rev-independent-actions";
+      const viewBtn = document.createElement("button");
+      viewBtn.type = "button";
+      viewBtn.className = "text-btn";
+      viewBtn.textContent = "View verdict";
+      viewBtn.title = "Open the full verdict in its own readable, resizable view.";
+      viewBtn.addEventListener("click", () =>
+        openDocViewer({
+          label: `${row.title} · independent reviewer's verdict`,
+          read: () => Promise.resolve({ ok: true, text: verdictText }),
+          reveal: () => window.helm.copyToClipboard(res.path).then(() => showToast("Copied the verdict file's path.")),
+          revealLabel: "Copy path",
+        })
+      );
+      indActions.append(viewBtn);
+
+      // A second, independent opinion on the SAME work - not a resume of the first
+      // reviewer's own session (which has already exited by the time its verdict is
+      // readable here), a fresh one told what the first one found (the captain: "om jag
+      // inte håller med eller vill ha second opinion vill jag ha möjlighet att
+      // skicka verdict vidare till en till granskare"). Only offered once a first
+      // verdict exists - a "second" opinion with no first would just be another
+      // ordinary dispatch, already offered above.
+      const secondBtn = document.createElement("button");
+      secondBtn.type = "button";
+      secondBtn.className = "text-btn";
+      secondBtn.textContent = "Second opinion";
+      secondBtn.title = "Sends a FRESH independent reviewer, told what the first one found, asked to reach its own conclusion and say whether it agrees.";
+      secondBtn.addEventListener("click", () => openIndependentReview(row, verdictText));
+      indActions.append(secondBtn);
+
+      // Getting the verdict to whoever can act on it (the captain: "Hur ger man tillbaka
+      // den oberoende granskarens feedback till ain som gjorde featuren?"). This
+      // opens a fresh draft in the project, seeded with the verdict as the job -
+      // it does NOT send. Deliberate: "Send back" already exists for the board
+      // decision, and this is the separate question of starting the actual fix.
+      // Leaving it unsent means the verdict can be read and the prompt edited
+      // before a single token is spent, which matters most when the verdict is
+      // the very thing being disputed.
+      const fixBtn = document.createElement("button");
+      fixBtn.type = "button";
+      fixBtn.className = "text-btn";
+      fixBtn.textContent = "Open a fix session";
+      fixBtn.title = "Opens a fresh session in this project with the verdict as the brief. It does NOT send - you read it and press Enter.";
+      fixBtn.addEventListener("click", () => {
+        openFreshDraftInPane(rec.projectPath, independentVerdictFixBrief(row, verdictText), { forceIndex: 0 });
+        navigateToPage("chat");
+      });
+      indActions.append(fixBtn);
+      indBox.append(indActions);
     })
     .catch(() => {
       // A row that cannot read its reviewer note still renders the record.

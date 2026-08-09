@@ -59,6 +59,7 @@ import {
   hasUncommittedWork,
   pruneWorktrees,
   primaryBranch,
+  createDetachedWorktree,
 } from "./lib/worktree.js";
 import { planSweep, describeSweep, reconcileSweepReport } from "./lib/worktreeSweep.js";
 import { docsStaleness, staleProjectsAsync, docsNudgeCandidates, DOCS_NUDGE_ACTIVE_DAYS } from "./lib/docsStaleness.js";
@@ -5734,6 +5735,38 @@ ipcMain.handle("reviews:runChecks", async (_event, { taskId } = {}) => {
   // "did the captain run the checks", joined against a later decision by taskId in
   // summarizeReviewActions, not a per-check tally.
   trackHelmUsage({ type: "action", action: "review_checks_run", taskId, at: Date.now() });
+
+  // Bind the whole run to ONE commit (the captain, task 76790f23: "Bind varje review
+  // till en commit för att förhindra 'Ran on uncommited changes' när man kör
+  // run checks"). Running a check straight in rec.projectPath means whatever is
+  // sitting uncommitted there at THIS exact moment - unrelated work-in-progress
+  // on the next task, most of the time - taints every result, regardless of
+  // whether the code actually under review is safely committed. An isolated,
+  // detached worktree checked out at the record's own commit is immune to that
+  // by construction: it holds nothing but that commit, so `git status` inside
+  // it is clean unless the check itself dirties it.
+  //
+  // Best-effort: if the record has no commits, projectPath isn't a git repo, or
+  // the worktree fails to create for any reason, this silently falls back to
+  // the old behavior (run in place) rather than failing the whole check run -
+  // a check that ran in a possibly-dirty tree is still more useful than no
+  // check at all.
+  let worktree = null;
+  let pinnedHead = null;
+  const boundSha = (rec.commits || []).map((c) => (typeof c === "string" ? c : c?.sha)).filter(Boolean).at(-1);
+  if (rec.projectPath) {
+    try {
+      const sha = boundSha || currentHead(rec.projectPath)?.sha;
+      if (sha) {
+        worktree = createDetachedWorktree(rec.projectPath, sha, { deps: "junction" });
+        pinnedHead = currentHead(worktree.worktreePath);
+      }
+    } catch (err) {
+      console.error(`[reviews] Could not create an isolated worktree for ${taskId}, running checks in place instead: ${err.message}`);
+      worktree = null;
+    }
+  }
+
   const results = [];
   for (const check of checks) {
     // Where a check RUNS is part of the check. The first cut defaulted to the
@@ -5741,7 +5774,13 @@ ipcMain.handle("reviews:runChecks", async (_event, { taskId } = {}) => {
     // simply because it ran in the wrong directory - and a red gauntlet that is
     // red for that reason is worse than no gauntlet, because it looks like a real
     // failure and it can never be made green.
-    const cwd = check.cwd || rec.projectPath || null;
+    //
+    // Re-rooted into the worktree when one exists: check.cwd is normally
+    // rec.projectPath itself, but a monorepo check can declare a SUBDIRECTORY of
+    // it, so the offset (not the raw path) is what has to carry over.
+    const liveCwd = check.cwd || rec.projectPath || null;
+    const cwd =
+      worktree && liveCwd ? path.join(worktree.worktreePath, path.relative(rec.projectPath, liveCwd)) : liveCwd;
     const cwdProblem = !cwd
       ? "no working directory: set projectPath on the record or cwd on the check. Refusing to guess - a check run in the wrong place fails for the wrong reason."
       : !fs.existsSync(cwd)
@@ -5794,7 +5833,7 @@ ipcMain.handle("reviews:runChecks", async (_event, { taskId } = {}) => {
     // nothing: a failing check was announced once in a transient toast and then
     // vanished, and a reload showed "never run". A result that wasn't stored is not
     // a result, so it is reported as such.
-    const stamp = recordCheckRun(metaHome, taskId, { label: check.label, cmd: check.cmd, ...outcome });
+    const stamp = recordCheckRun(metaHome, taskId, { label: check.label, cmd: check.cmd, ...outcome }, { pinnedHead });
     results.push({
       label: check.label,
       exitCode: outcome.exitCode,
@@ -5804,6 +5843,16 @@ ipcMain.handle("reviews:runChecks", async (_event, { taskId } = {}) => {
     });
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send("reviews:changed");
+    }
+  }
+  // Best-effort, same reasoning as creation: a worktree left behind is disk
+  // space, not a broken review - never let cleanup failure hide the results
+  // already stamped above.
+  if (worktree) {
+    try {
+      removeWorktree(rec.projectPath, worktree.worktreePath, { force: true, ignoreBookkeeping: true });
+    } catch (err) {
+      console.error(`[reviews] Could not remove the isolated worktree for ${taskId}: ${err.message}`);
     }
   }
   const unstored = results.filter((r) => !r.stored);

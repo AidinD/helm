@@ -1748,47 +1748,47 @@ body.advanced .row-jot {
 /* ---- Structure the renderer used to drop on the floor (task c6094e4f) ----
    Headings, numbered lists, quotes and rules. A chat bubble is not a document, so the
    hierarchy is compressed - but it IS a hierarchy, which is what the eye comes back to. */
-.turn-bubble .md-h {
+:is(.turn-bubble, .rev-independent-note) .md-h {
   font-weight: 640;
   letter-spacing: -0.012em;
   line-height: 1.35;
   text-wrap: balance;
   margin: 1.15em 0 0.35em;
 }
-.turn-bubble .md-h:first-child {
+:is(.turn-bubble, .rev-independent-note) .md-h:first-child {
   margin-top: 0;
 }
 /* Measured 18.6 / 16.5px at the first attempt - 13% apart at the same weight and colour,
    which an independent review called what it is: not a hierarchy. Now 1.36 / 1.1 (20.4 /
    16.5px, 24% apart) with the top level heavier. */
-.turn-bubble .md-h1 {
+:is(.turn-bubble, .rev-independent-note) .md-h1 {
   font-size: 1.36em;
   font-weight: 680;
 }
-.turn-bubble .md-h2 {
+:is(.turn-bubble, .rev-independent-note) .md-h2 {
   font-size: 1.1em;
 }
 /* The third level stops competing on size and becomes a label instead - at this scale a
    fourth size would be indistinguishable from bold body text. */
-.turn-bubble .md-h3 {
+:is(.turn-bubble, .rev-independent-note) .md-h3 {
   font-size: 0.82em;
   text-transform: uppercase;
   letter-spacing: 0.07em;
   color: var(--accent);
   font-weight: 650;
 }
-.turn-bubble .md-marker {
+:is(.turn-bubble, .rev-independent-note) .md-marker {
   display: inline-block;
   min-width: 1.4em;
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;
 }
-.turn-bubble .md-oli > .md-marker {
+:is(.turn-bubble, .rev-independent-note) .md-oli > .md-marker {
   color: var(--accent);
   font-weight: 600;
   font-size: 0.9em;
 }
-.turn-bubble .md-quote {
+:is(.turn-bubble, .rev-independent-note) .md-quote {
   display: block;
   padding: 0.1em 0 0.1em 0.9em;
   border-left: 2px solid color-mix(in srgb, var(--accent) 50%, transparent);
@@ -1797,21 +1797,21 @@ body.advanced .row-jot {
 }
 /* Consecutive quote lines are separate rows in the source; the negative margin joins
    them so a multi-line quote reads as ONE quote rather than several. */
-.turn-bubble .md-quote + .md-quote {
+:is(.turn-bubble, .rev-independent-note) .md-quote + .md-quote {
   margin-top: -0.1em;
 }
-.turn-bubble .md-hr {
+:is(.turn-bubble, .rev-independent-note) .md-hr {
   border-top: 1px solid var(--border);
   margin: 1.1em 0;
   height: 0;
 }
-.turn-bubble .md-link {
+:is(.turn-bubble, .rev-independent-note) .md-link {
   color: var(--active);
   text-decoration-color: color-mix(in srgb, var(--active) 45%, transparent);
 }
 /* A non-http target is not clickable, and says so by being underlined-but-quiet rather
    than looking like a link that does nothing. */
-.turn-bubble .md-link-plain {
+:is(.turn-bubble, .rev-independent-note) .md-link-plain {
   color: var(--text);
   border-bottom: 1px dotted var(--text-faint);
   cursor: help;
@@ -1917,7 +1917,7 @@ body.advanced .row-jot {
   margin-bottom: 4px;
 }
 
-.turn-bubble .md-code-block {
+:is(.turn-bubble, .rev-independent-note) .md-code-block {
   background: var(--bg-inset);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -1939,20 +1939,20 @@ body.advanced .row-jot {
 /* The fence's language, which used to be thrown away. In a header row ABOVE the code, not
    floated over it: pinned to the corner it sat on top of the first line (caught in a
    screenshot). The wrapper carries the frame so the header and the code read as one block. */
-.turn-bubble .md-code-wrap.has-lang {
+:is(.turn-bubble, .rev-independent-note) .md-code-wrap.has-lang {
   background: var(--bg-inset);
   border: 1px solid var(--border);
   border-radius: 8px;
   margin: 0.7em 0;
   overflow: hidden;
 }
-.turn-bubble .md-code-wrap.has-lang .md-code-block {
+:is(.turn-bubble, .rev-independent-note) .md-code-wrap.has-lang .md-code-block {
   border: 0;
   border-radius: 0;
   margin: 0;
   background: transparent;
 }
-.turn-bubble .md-code-head {
+:is(.turn-bubble, .rev-independent-note) .md-code-head {
   display: flex;
   align-items: center;
   /* Room for the copy button, which is pinned to the wrapper's top-right. */
@@ -1960,7 +1960,7 @@ body.advanced .row-jot {
   border-bottom: 1px solid var(--border);
   background: color-mix(in srgb, var(--bg-card) 70%, transparent);
 }
-.turn-bubble .md-code-lang {
+:is(.turn-bubble, .rev-independent-note) .md-code-lang {
   font-family: "Segoe UI", system-ui, sans-serif;
   font-size: 9.5px;
   text-transform: uppercase;
@@ -1998,24 +1998,24 @@ body.advanced .row-jot {
   --tok-prop: #2a4f66;
   --tok-tag: #8a4a1c;
 }
-.turn-bubble .md-code-block .tok-kw { color: var(--tok-kw); }
-.turn-bubble .md-code-block .tok-str { color: var(--tok-str); }
-.turn-bubble .md-code-block .tok-com { color: var(--tok-com); font-style: italic; }
-.turn-bubble .md-code-block .tok-num { color: var(--tok-num); }
-.turn-bubble .md-code-block .tok-fn { color: var(--tok-fn); }
-.turn-bubble .md-code-block .tok-prop { color: var(--tok-prop); }
-.turn-bubble .md-code-block .tok-tag { color: var(--tok-tag); }
+:is(.turn-bubble, .rev-independent-note) .md-code-block .tok-kw { color: var(--tok-kw); }
+:is(.turn-bubble, .rev-independent-note) .md-code-block .tok-str { color: var(--tok-str); }
+:is(.turn-bubble, .rev-independent-note) .md-code-block .tok-com { color: var(--tok-com); font-style: italic; }
+:is(.turn-bubble, .rev-independent-note) .md-code-block .tok-num { color: var(--tok-num); }
+:is(.turn-bubble, .rev-independent-note) .md-code-block .tok-fn { color: var(--tok-fn); }
+:is(.turn-bubble, .rev-independent-note) .md-code-block .tok-prop { color: var(--tok-prop); }
+:is(.turn-bubble, .rev-independent-note) .md-code-block .tok-tag { color: var(--tok-tag); }
 /* A diff inside a code fence is coloured by line, like the review page's diff. */
-.turn-bubble .md-code-block .tok-add { color: var(--good-bright); }
-.turn-bubble .md-code-block .tok-del { color: var(--danger-hover); }
-.turn-bubble .md-code-block .tok-hunk { color: var(--active); }
-.turn-bubble .md-code-block .tok-file { color: var(--text); font-weight: 600; }
+:is(.turn-bubble, .rev-independent-note) .md-code-block .tok-add { color: var(--good-bright); }
+:is(.turn-bubble, .rev-independent-note) .md-code-block .tok-del { color: var(--danger-hover); }
+:is(.turn-bubble, .rev-independent-note) .md-code-block .tok-hunk { color: var(--active); }
+:is(.turn-bubble, .rev-independent-note) .md-code-block .tok-file { color: var(--text); font-weight: 600; }
 
 /* A code block carries its own copy button (task 0a8afe16), positioned against
    this wrapper rather than the <pre>: the pre scrolls horizontally, and a button
    inside a scrolling box slides away with the content. The wrapper does not
    scroll, so the button stays pinned to the visible corner. */
-.turn-bubble .md-code-wrap {
+:is(.turn-bubble, .rev-independent-note) .md-code-wrap {
   position: relative;
 }
 
@@ -2044,7 +2044,7 @@ body.advanced .row-jot {
    visible, reads as noise. Shown on hover of the block, and on keyboard focus so
    it is reachable without a mouse. Unlike that button it has a background and a
    border, because it sits ON the code rather than beside the bubble. */
-.turn-bubble .md-code-wrap:hover .code-copy-btn,
+:is(.turn-bubble, .rev-independent-note) .md-code-wrap:hover .code-copy-btn,
 .code-copy-btn:focus-visible {
   opacity: 1;
   pointer-events: auto;
@@ -2066,7 +2066,7 @@ body.advanced .row-jot {
    had the same 10px and read as too tall. Each list line is a standalone
    sibling div (no <ul> wrapper), so ".md-li + .md-li" is what "the item
    right after another item" actually means here. */
-.turn-bubble .md-li {
+:is(.turn-bubble, .rev-independent-note) .md-li {
   /* A flex row, so the marker sits beside the text and a wrapped line lines up under the
      TEXT rather than under the bullet. The first attempt used a negative text-indent,
      which at the bubble's padding pulled every marker outside the bubble and clipped it. */
@@ -2075,7 +2075,7 @@ body.advanced .row-jot {
   padding-left: 0.1em;
   margin-top: 10px;
 }
-.turn-bubble .md-li-body {
+:is(.turn-bubble, .rev-independent-note) .md-li-body {
   flex: 1;
   min-width: 0;
 }
@@ -2083,12 +2083,12 @@ body.advanced .row-jot {
 /* The paragraph margin the card asks for ("generöst radavstånd + stycke-marginaler").
    A blank line used to render as an empty span and a <br> - a gap made of line-height,
    with no margin anywhere - so a paragraph break looked the same as a wrapped line. */
-.turn-bubble .md-para {
+:is(.turn-bubble, .rev-independent-note) .md-para {
   display: inline-block;
   margin-top: 0.85em;
 }
 
-.turn-bubble .md-li + .md-li {
+:is(.turn-bubble, .rev-independent-note) .md-li + .md-li {
   margin-top: 4px;
 }
 
@@ -2097,31 +2097,31 @@ body.advanced .row-jot {
    right after the LAST bullet sat flush against it with nothing but
    line-height between them — inconsistent next to every other spaced
    transition in the same bubble. */
-.turn-bubble .md-after-list {
+:is(.turn-bubble, .rev-independent-note) .md-after-list {
   display: inline-block;
   margin-top: 10px;
 }
 
-.turn-bubble .md-table {
+:is(.turn-bubble, .rev-independent-note) .md-table {
   border-collapse: collapse;
   margin: 6px 0;
   font-size: 11.5px;
   width: 100%;
 }
 
-.turn-bubble .md-table th,
-.turn-bubble .md-table td {
+:is(.turn-bubble, .rev-independent-note) .md-table th,
+:is(.turn-bubble, .rev-independent-note) .md-table td {
   border: 1px solid var(--border);
   padding: 4px 8px;
   text-align: left;
 }
 
-.turn-bubble .md-table th {
+:is(.turn-bubble, .rev-independent-note) .md-table th {
   background: var(--bg-sidebar);
   font-weight: 600;
 }
 
-.turn-bubble code {
+:is(.turn-bubble, .rev-independent-note) code {
   background: rgba(0, 0, 0, 0.25);
   border-radius: 4px;
   padding: 1px 4px;
@@ -6655,9 +6655,23 @@ button.primary {
 .rev-list-independent .rev-list-label {
   color: var(--active);
 }
+/* white-space:pre-wrap was right when this was plain text; now that the verdict
+   renders as real markdown (task 76790f23: "jag vill kunna se verdict lättläst"),
+   the renderer emits its own <br>/block elements, so keeping pre-wrap would
+   double every line break. Long unbroken tokens (a file path, a sha) still need
+   somewhere to wrap, hence overflow-wrap. */
 .rev-independent-note {
   font-size: 13px;
   line-height: 1.6;
-  white-space: pre-wrap;
   color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+/* The three things you can do with a verdict once you've read it: open it big,
+   get a second opinion, or send it to a session that can act on it. */
+.rev-independent-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
 }
