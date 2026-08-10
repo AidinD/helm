@@ -253,6 +253,60 @@ const PHASE_PROMPTS = {
   ].join("\n"),
 };
 
+/**
+ * The argv for one crew iteration's `claude -p` spawn. The PROMPT is deliberately NOT
+ * here - it goes on stdin (see the --input-format note below). Pulled out as a pure
+ * function so the flag set, especially the MCP stripping, is unit-testable without
+ * spawning a real subprocess (task 07cd4fc9).
+ */
+export function buildIterationArgs({ schema, systemPrompt, model, effort }) {
+  const args = [
+    "-p",
+    // The prompt goes on STDIN, not here as an argv value. It accumulates the goal, prior
+    // iterations' notes, the plan and the contract, so by a few iterations in it grew past
+    // Windows' ~32 KB total command-line limit and every spawn failed with ENAMETOOLONG -
+    // exactly how a real run's last iterations died (task e5273837: iterations 4-5 "Failed
+    // to spawn claude: spawn ENAMETOOLONG"). --input-format text (the default, stated
+    // explicitly) makes `claude -p` read the prompt from stdin. The bounded flags (schema,
+    // system prompt) stay as args - only the unbounded prompt moves off the line.
+    "--input-format",
+    "text",
+    "--output-format",
+    "json",
+    "--json-schema",
+    schema,
+    "--system-prompt",
+    systemPrompt,
+    // Without an explicit permission mode, a real goal that edits files / runs a build /
+    // touches git hits a permission prompt the headless child has no TTY to answer, so it
+    // hangs until ITERATION_TIMEOUT_MS, fails, and after two such iterations the whole run
+    // aborts for zero progress. Bypassing is SAFE precisely because every iteration runs
+    // inside the isolated, never-pushed worktree - that isolation is what earns the bypass.
+    "--permission-mode",
+    "bypassPermissions",
+    // Strip MCP servers from this crew iteration. Without this it inherits the user's
+    // globally-configured MCP servers (router, home-assistant, hevy, ...) from the ambient
+    // config - exactly the leak first-mate sessions avoid with --strict-mcp-config
+    // (main.js:2321). A crew iteration does autonomous code work (Edit/Bash/git - built-in
+    // tools) inside an isolated worktree; it needs none of those MCP tools, and inheriting
+    // them both adds tool name-listing/schema tokens and hands a bypassPermissions run
+    // access to unrelated tools it could invoke. Empty config + strict = zero MCP, the same
+    // no-MCP pattern the model-fit judge uses (judge.js:73-75). This also strips a project
+    // .mcp.json; a goal that genuinely needs a project MCP would have to thread it in
+    // explicitly. Task 07cd4fc9.
+    "--mcp-config",
+    '{"mcpServers":{}}',
+    "--strict-mcp-config",
+  ];
+  if (model) {
+    args.push("--model", model);
+  }
+  if (effort) {
+    args.push("--effort", effort);
+  }
+  return args;
+}
+
 function runGit(cwd, args) {
   return execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8", windowsHide: true });
 }
@@ -534,44 +588,10 @@ function runIteration({ worktreePath, goal, notesContent, planContent, repoMapCo
     const systemPrompt = PHASE_PROMPTS[phase] || PHASE_PROMPTS.implement;
 
     const claudePath = resolveClaudeBinary();
-    const args = [
-      "-p",
-      // The prompt goes on STDIN, not here as an argv value. It accumulates the
-      // goal, prior iterations' notes, the plan and the contract, so by a few
-      // iterations in it grew past Windows' ~32 KB total command-line limit and
-      // every spawn failed with ENAMETOOLONG - which is exactly how a real run's
-      // last iterations died (the captain, task e5273837: iterations 4-5 "Failed to
-      // spawn claude: spawn ENAMETOOLONG"). --input-format text (the default,
-      // stated explicitly) makes `claude -p` read the prompt from stdin; verified
-      // it returns a normal result that way. The bounded flags (schema, system
-      // prompt) stay as args - only the unbounded prompt moves off the line.
-      "--input-format",
-      "text",
-      "--output-format",
-      "json",
-      "--json-schema",
-      ITERATION_SCHEMA,
-      "--system-prompt",
-      systemPrompt,
-      // Without an explicit permission mode, a real goal that edits files /
-      // runs a build / touches git hits a permission prompt the headless
-      // child has no TTY to answer, so it hangs until ITERATION_TIMEOUT_MS,
-      // fails, and after two such iterations the whole run aborts for zero
-      // progress (review finding: the feature is dead-on-arrival for real
-      // goals without this; the trivial spike only squeaked by). Bypassing is
-      // SAFE precisely because every iteration runs inside the isolated,
-      // never-pushed worktree - that isolation is what earns the bypass. (If
-      // a tighter posture is wanted, "acceptEdits" is the alternative, but it
-      // can still stall on non-edit tool prompts.)
-      "--permission-mode",
-      "bypassPermissions",
-    ];
-    if (model) {
-      args.push("--model", model);
-    }
-    if (effort) {
-      args.push("--effort", effort);
-    }
+    // Argv built by a pure helper (buildIterationArgs) so the flag set - including the
+    // MCP stripping that keeps a crew iteration from inheriting the global servers - is
+    // unit-testable without a real spawn. The prompt is fed on stdin below, not in argv.
+    const args = buildIterationArgs({ schema: ITERATION_SCHEMA, systemPrompt, model, effort });
 
     // Spawn WITHOUT a shell: the prompt, JSON schema, and system prompt all go
     // as discrete argv elements. runGoal guarantees claudePath is a native .exe
