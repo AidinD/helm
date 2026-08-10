@@ -517,7 +517,7 @@ export function signedOffWithoutRecord(jotConfig = {}, hasRecord, { withinMs = 1
   if (!data) {
     return { ok: false, error: `Couldn't read the Jot board at ${jotPath}`, tasks: [] };
   }
-  const catName = new Map((Array.isArray(data.categories) ? data.categories : []).map((c) => [c.id, c.name]));
+  const catById = new Map((Array.isArray(data.categories) ? data.categories : []).map((c) => [c.id, c]));
   const tasks = (Array.isArray(data.todos) ? data.todos : [])
     .filter((t) => {
       if (!t || t.status !== "done") {
@@ -535,7 +535,14 @@ export function signedOffWithoutRecord(jotConfig = {}, hasRecord, { withinMs = 1
     .map((t) => ({
       id: t.id,
       title: t.text || "",
-      category: catName.get(t.categoryId) || null,
+      category: catById.get(t.categoryId)?.name || null,
+      // Same Work/Private classification as the review queue rows (Category.domain), so
+      // the Review page's domain focus applies here too - this list was rendered
+      // unfiltered, showing Private tasks while looking at Work and vice versa.
+      domain: (() => {
+        const cat = catById.get(t.categoryId);
+        return cat && (cat.domain === "work" || cat.domain === "private") ? cat.domain : null;
+      })(),
       completedAt: typeof t.completedAt === "number" ? t.completedAt : null,
     }))
     .sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0));

@@ -2446,7 +2446,14 @@ async function renderReviewPage() {
   // from here - only detected - so it has to appear on the page he actually reads.
   // Otherwise "I only look at the Review page" is safe only while every agent
   // voluntarily stops at `review`.
-  const skipped = res?.doneWithoutRecord || [];
+  // Same Work/Private focus and project chip the rows above obey - this list was
+  // rendered from the unfiltered backend payload, so switching to "Work" still showed
+  // Private tasks here (task 41f73e59: "Dessa filtreras inte på work och private").
+  const skipped = (res?.doneWithoutRecord || []).filter(
+    (t) =>
+      (reviewDomainFilter === "all" || t.domain === reviewDomainFilter) &&
+      (!reviewProjectFilter || t.category === reviewProjectFilter)
+  );
   if (skipped.length > 0) {
     const h = document.createElement("h3");
     h.className = "rev-group";
