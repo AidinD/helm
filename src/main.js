@@ -12,7 +12,7 @@ import crypto from "node:crypto";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { readAllSessions, enrichWithJot, setSessionArchived, forkTranscriptAtUserMessage, switchSessionRootFolder } from "./lib/sessions.js";
-import { loadJot, loadGoals, addSubtask, formatJotSummaryForClassifier, projectBoardSummary, reviewTasks, signedOffWithoutRecord, setTaskStatus, setTaskTags, readJotState, ensureTagsExist } from "./lib/jot.js";
+import { loadJot, loadGoals, addSubtask, formatJotSummaryForClassifier, projectBoardSummary, reviewTasks, allTaskShortIds, signedOffWithoutRecord, setTaskStatus, setTaskTags, readJotState, ensureTagsExist } from "./lib/jot.js";
 import { resolveJotDataDir } from "./lib/jotDataDir.js";
 import { loadConfig, writeConfig } from "./lib/config.js";
 import { startSession, resolveClaudeBinary } from "./lib/launcher.js";
@@ -44,7 +44,7 @@ import {
 } from "./lib/scheduledPrompts.js";
 import { buildReviewQueue, listReviewRecords, reviewQueueTally, readReviewRecord, recordCheckRun, gauntletStatus, currentHead, codeChangedBetween } from "./lib/reviewRecords.js";
 import { resolveTaskCommits, diffForCommits, shippedVersionForCommits } from "./lib/reviewDiff.js";
-import { listUnboundCommits, initialWatermark, makeIsBound } from "./lib/commitReview.js";
+import { listUnboundCommits, initialWatermark, makeIsBound, projectKey } from "./lib/commitReview.js";
 import { recommendReviewer, diffStats, REVIEWER_MODELS } from "./lib/reviewerModel.js";
 import { listHandoffCategories, writeHandoff, readHandoff, planHandoffFiling, handoffPath } from "./lib/handoffStore.js";
 import { classifySessionStatus, classifyHandoffCategory, expectsUserInputHeuristic, estimateSessionContextTokens, compactSession, getTranscriptSize, triageAutoTask } from "./lib/orchestratorHelper.js";
@@ -5645,7 +5645,7 @@ ipcMain.handle("reviews:list", (_e, opts = {}) => {
  * equality. Being too generous here shows an extra row; being too strict HIDES work
  * that needed reviewing, and that is the expensive mistake.
  */
-function repoRootedCategories(records = []) {
+function repoRootedCategories(records = [], sessions = null) {
   const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
   const repos = new Map(); // normalized folder name -> absolute path
 
@@ -5662,7 +5662,7 @@ function repoRootedCategories(records = []) {
   const candidates = [
     ...records.map((r) => r.projectPath),
     ...loadGoalRunHistory().map((r) => r.projectPath),
-    ...(readAllSessions()?.sessions || []).map((s) => s.cwd),
+    ...((sessions || readAllSessions()?.sessions || []).map((s) => s.cwd)),
   ];
   for (const cwd of new Set(candidates.filter(Boolean))) {
     try {
@@ -5704,18 +5704,21 @@ function repoRootedCategories(records = []) {
 // per project by a stored watermark - only commits after it surface - which is initialized
 // to the mainline/upstream baseline on first sight (so un-integrated work shows immediately
 // without flooding the whole history) and advanced by acknowledging a commit.
-function collectUnboundCommits({ records, boardTasks, rows }) {
+function collectUnboundCommits({ records, rows, sessions, jotConfig }) {
   try {
     const cfg = loadConfig();
     const watermarks = { ...(cfg.commitReviewWatermarks || {}) };
     let changed = false;
-    // Known git projects: the same sources repo-rooting uses, plus the explicit Jot
-    // category bindings already resolved onto the rows.
-    const projects = new Set();
+    // Known git projects: the same sources repo-rooting uses, plus the explicit Jot category
+    // bindings already resolved onto the rows. Keyed by projectKey so a repo referenced under
+    // two path spellings is ONE project with one watermark (not two duplicate sections).
+    // Sessions are passed in (already loaded once by the caller) so this doesn't re-tail every
+    // transcript a second time per payload build.
+    const byKey = new Map(); // projectKey -> display path (first spelling seen)
     for (const p of [
       ...records.map((r) => r.projectPath),
       ...loadGoalRunHistory().map((r) => r.projectPath),
-      ...(readAllSessions()?.sessions || []).map((s) => s.cwd),
+      ...(sessions || []).map((s) => s.cwd),
       ...rows.map((r) => r.repoPath),
     ]) {
       if (!p) {
@@ -5727,30 +5730,36 @@ function collectUnboundCommits({ records, boardTasks, rows }) {
       } catch {
         continue;
       }
+      const key = projectKey(abs);
+      if (byKey.has(key)) {
+        continue;
+      }
       try {
         if (fs.existsSync(path.join(abs, ".git"))) {
-          projects.add(abs);
+          byKey.set(key, abs);
         }
       } catch {
         // unreadable path - skip
       }
     }
-    if (projects.size === 0) {
+    if (byKey.size === 0) {
       return [];
     }
     const recordCommitShas = records.flatMap((r) =>
       (r.commits || []).map((c) => (typeof c === "string" ? c : c?.sha)).filter(Boolean)
     );
-    const taskShortIds = (boardTasks || []).map((t) => String(t.id || "").slice(0, 8)).filter(Boolean);
+    // ALL task ids (any status), so a commit naming a task that is still in-progress/open is
+    // recognised as bound rather than mislabelled "no task" (ship-review finding).
+    const taskShortIds = allTaskShortIds(jotConfig || {});
     const isBound = makeIsBound({ recordCommitShas, taskShortIds });
     const out = [];
-    for (const projectPath of projects) {
-      let watermark = watermarks[projectPath];
+    for (const [key, projectPath] of byKey) {
+      let watermark = watermarks[key];
       if (watermark === undefined) {
         // First sight: stamp the baseline. Stored even when null (a small repo with no
         // mainline) so it is not recomputed on every payload build.
         watermark = initialWatermark(projectPath);
-        watermarks[projectPath] = watermark;
+        watermarks[key] = watermark;
         changed = true;
       }
       const commits = listUnboundCommits(projectPath, { watermark, isBound });
@@ -5784,7 +5793,10 @@ function buildReviewsPayload() {
   // many it is holding back. Dropping them in the main process would make the count
   // unknowable, and a queue that silently omits work is the failure this whole surface
   // exists to prevent.
-  const roots = repoRootedCategories(records);
+  // Read the session index ONCE and thread it to both consumers (repo-rooting and the
+  // unbound-commit scan), rather than each tailing every transcript separately.
+  const allSessions = readAllSessions()?.sessions || [];
+  const roots = repoRootedCategories(records, allSessions);
   for (const row of rows) {
     // Jot's explicit per-board folder binding (Category.repoPath) is authoritative when
     // set; the fuzzy category-name-to-cwd guess is only a fallback. That guess reliably
@@ -5816,7 +5828,7 @@ function buildReviewsPayload() {
     tally: reviewQueueTally(rows),
     doneWithoutRecord: unrecordedDone.ok ? unrecordedDone.tasks : [],
     // Commits per project not tied to any Jot task, so review works even without a Jot board.
-    unboundCommits: collectUnboundCommits({ records, boardTasks: board.tasks || [], rows }),
+    unboundCommits: collectUnboundCommits({ records, rows, sessions: allSessions, jotConfig: config.jot || {} }),
   };
 }
 
@@ -5906,10 +5918,17 @@ ipcMain.handle("reviews:acknowledgeCommit", (_event, { projectPath, sha } = {}) 
   if (!projectPath || !sha) {
     return { ok: false, error: "Need a project and a commit to acknowledge." };
   }
+  // Validate the sha: a malformed watermark makes listUnboundCommits fall back to listing
+  // from the root (the OPPOSITE of "reviewed"), so reject it rather than store it.
+  if (!/^[0-9a-f]{7,40}$/i.test(String(sha).trim())) {
+    return { ok: false, error: "That doesn't look like a commit id." };
+  }
   try {
     const cfg = loadConfig();
     const watermarks = { ...(cfg.commitReviewWatermarks || {}) };
-    watermarks[path.resolve(projectPath)] = sha;
+    // Same canonical key the scan uses, so acknowledging actually advances the watermark the
+    // section reads (not a differently-spelled duplicate).
+    watermarks[projectKey(projectPath)] = String(sha).trim();
     writeConfig({ ...cfg, commitReviewWatermarks: watermarks });
     return { ok: true };
   } catch (err) {
