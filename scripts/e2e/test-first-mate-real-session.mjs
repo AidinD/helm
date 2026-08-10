@@ -52,6 +52,21 @@ try {
 
   // App watches the temp meta-home (isolated from any dev instance).
   process.env.HELM_META_HOME_OVERRIDE = metaHome;
+  // Register the dispatching mate as OWNED by this instance, in an ISOLATED mate store.
+  // The dispatch watcher skips any request whose dispatchedBy is not one of its own mates
+  // (isForeignDispatch - the 2026-07-12 guard so two Helm instances sharing a meta-home
+  // don't double-run the same dispatch). A REAL first mate is always in the mate store;
+  // this synthetic "mate-real" (HELM_MATE_ID below) must be too, or the dispatched run is
+  // left in the queue and NEVER reports back - which is exactly how this test silently
+  // regressed once that guard landed. HELM_MATES_PATH isolates it so the test neither
+  // reads nor mutates the real dev mates.json.
+  const matesPath = path.join(tmp, "mates.json");
+  fs.writeFileSync(
+    matesPath,
+    JSON.stringify({ mates: [{ mateId: "mate-real", slot: 0, name: "Real Mate", root: metaHome, status: "active", persona: null, createdAt: 1, retiredAt: null }] }),
+    "utf8"
+  );
+  process.env.HELM_MATES_PATH = matesPath;
   app = await launch();
   await app.waitForSelector("#pageToggle", 30000, { visible: true });
 
@@ -130,5 +145,6 @@ try {
   try { execSync("git worktree prune", { cwd: scratch }); } catch {}
   try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}
   delete process.env.HELM_META_HOME_OVERRIDE;
+  delete process.env.HELM_MATES_PATH;
 }
 process.exit(exitCode);
