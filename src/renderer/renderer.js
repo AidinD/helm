@@ -1339,6 +1339,27 @@ function reviewRowEl(row, band = null) {
     );
     head.append(chip);
   }
+  // Which released version this fix is out in, on the COLLAPSED head so it is visible
+  // without opening the row - task 860b4661 came back "kan inte se versionen" because the
+  // first version put it as a chip buried among the commit shas in the expanded body. Only
+  // when the record pins commits and did not name a release by hand; filled in async and
+  // revealed only if the fix is actually in a tagged release, so unreleased work shows
+  // nothing. (Needs a build that HAS this feature; an older running app has no such IPC.)
+  if (row.record && !row.record.release && (row.record.commits || []).length > 0 && window.helm?.getShippedVersion) {
+    const shipped = reviewChip("", "rel");
+    shipped.hidden = true;
+    head.append(shipped);
+    window.helm
+      .getShippedVersion(row.taskId)
+      .then((res) => {
+        if (res && res.version) {
+          shipped.textContent = `shipped in ${res.version}`;
+          shipped.title = `This fix is released in ${res.version}.`;
+          shipped.hidden = false;
+        }
+      })
+      .catch(() => {});
+  }
   el.append(head);
 
   // Everything below the head lives in one collapsible body, so a row is a HEADLINE
@@ -1615,24 +1636,6 @@ function reviewRowEl(row, band = null) {
   }
   for (const c of rec.commits || []) {
     chips.append(reviewChip(c, "commit"));
-  }
-  // Which released version the fix is out in, resolved from git tags on the record's own
-  // repo (task 860b4661). Only when the record didn't already name one by hand (rec.release)
-  // and it pins commits to locate. Filled in async - a hidden chip that reveals itself only
-  // if the fix is actually in a tagged release, so unreleased work shows nothing.
-  if (rec.taskId && !rec.release && (rec.commits || []).length > 0 && window.helm?.getShippedVersion) {
-    const shipped = reviewChip("", "rel");
-    shipped.hidden = true;
-    chips.append(shipped);
-    window.helm
-      .getShippedVersion(rec.taskId)
-      .then((res) => {
-        if (res && res.version) {
-          shipped.textContent = `shipped in ${res.version}`;
-          shipped.hidden = false;
-        }
-      })
-      .catch(() => {});
   }
   if (chips.children.length > 0) {
     body.append(chips);
@@ -1942,7 +1945,12 @@ function sendBackImageZone() {
   });
   el.append(input);
 
-  el.addEventListener("paste", async (e) => {
+  // Paste an image straight in - the same gesture as the chat composer and Jot. A plain
+  // div is not focusable, so a paste listener on the box alone never fired: task 1116b7ef
+  // came back "ska gå att klistra in på samma sätt som i jot eller i chattfönstret". Fix:
+  // make the box focusable AND let the caller wire the dialog's note textarea (where the
+  // cursor actually is) through attachPasteTo, so pasting while typing the note works.
+  const handlePaste = async (e) => {
     const items = Array.from(e.clipboardData?.items || []).filter((it) => it.type && it.type.startsWith("image/"));
     if (!items.length) {
       return;
@@ -1951,7 +1959,14 @@ function sendBackImageZone() {
     for (const it of items) {
       await addImage(it.getAsFile());
     }
-  });
+  };
+  const attachPasteTo = (target) => {
+    if (target && typeof target.addEventListener === "function") {
+      target.addEventListener("paste", handlePaste);
+    }
+  };
+  el.setAttribute("tabindex", "0");
+  attachPasteTo(el);
   el.addEventListener("dragover", (e) => {
     e.preventDefault();
     el.classList.add("sendback-images-drag");
@@ -1965,7 +1980,7 @@ function sendBackImageZone() {
     }
   });
 
-  return { el, images };
+  return { el, images, attachPasteTo };
 }
 
 function reviewActionsEl(row) {
@@ -2080,6 +2095,8 @@ function reviewActionsEl(row) {
         confirmLabel: "Send back",
         placeholder: "What needs changing, and why - this lands on the Jot card.",
         extraEl: imgZone.el,
+        // Paste a screenshot straight into the note, like the chat composer / Jot.
+        onField: (field) => imgZone.attachPasteTo(field),
       }
     );
   });
@@ -9000,7 +9017,7 @@ function customConfirm(message, confirmLabel, onConfirm, { deliberate = false, o
  * Calls onSubmit(text) with a trimmed, non-empty string, or onCancel() - never both,
  * and never with an empty string, since every caller so far needs a real reason.
  */
-function customPrompt(message, onSubmit, { confirmLabel = "Save", placeholder = "", multiline = true, onCancel = null, extraEl = null } = {}) {
+function customPrompt(message, onSubmit, { confirmLabel = "Save", placeholder = "", multiline = true, onCancel = null, extraEl = null, onField = null } = {}) {
   const overlay = document.createElement("div");
   overlay.className = "confirm-overlay";
   const box = document.createElement("div");
@@ -9086,6 +9103,10 @@ function customPrompt(message, onSubmit, { confirmLabel = "Save", placeholder = 
   overlay.append(box);
   document.body.append(overlay);
   field.focus();
+  // Hand the field to the caller so it can wire behaviour that belongs to the focused
+  // input - e.g. the Send back dialog attaches its image-paste handler here, so a pasted
+  // screenshot lands while typing the note (task 1116b7ef), exactly like the composer.
+  onField?.(field);
 }
 
 // Second mates are DERIVED from run history (main.js), which only surfaces

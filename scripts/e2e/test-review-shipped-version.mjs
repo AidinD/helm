@@ -93,7 +93,7 @@ try {
   ok(/ipcMain\.handle\("reviews:shippedVersion"/.test(mainSrc), "main exposes the reviews:shippedVersion IPC");
   ok(/shippedVersionForCommits/.test(mainSrc), "and it uses the tag helper");
   ok(/getShippedVersion:\s*\(taskId\)\s*=>\s*ipcRenderer\.invoke\("reviews:shippedVersion"/.test(preloadSrc), "preload bridges getShippedVersion");
-  ok(/getShippedVersion\(rec\.taskId\)/.test(rendererSrc), "the review record renders the shipped-version chip from the IPC");
+  ok(/getShippedVersion\(row\.taskId\)/.test(rendererSrc), "the review ROW (collapsed head) renders the shipped-version chip from the IPC, so it is visible without expanding");
 } catch (e) {
   exit = 1;
   console.error("ERR", e.stack || e.message);
