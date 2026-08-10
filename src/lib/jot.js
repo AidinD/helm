@@ -739,6 +739,23 @@ function priorityBoost(priority, maxWeight) {
 }
 
 /**
+ * The 8-char short ids of ALL todos on the board, any status. Used to recognise a commit
+ * whose message names a task ("...for task 07cd4fc9"). Reads the board file directly
+ * (loadJot is a category index and carries no todos). Any status on purpose: a commit can
+ * reference a task that is still open/in-progress or already done, not only one in review -
+ * limiting to the review column mislabels tracked in-progress work as "no task".
+ */
+export function allTaskShortIds(jotConfig = {}) {
+  if (jotConfig.enabled === false) {
+    return [];
+  }
+  const jotPath = jotConfig.path || resolveJotTodosPath();
+  const data = readJotFile(jotPath);
+  const todos = data && Array.isArray(data.todos) ? data.todos : [];
+  return todos.map((t) => String(t?.id || "").slice(0, 8)).filter(Boolean);
+}
+
+/**
  * Loads Jot and returns the user's active GOALS, ranked by attention/priority
  * score (highest first). A "goal" is a top-level todo (parentId === null) whose
  * status is open or in-progress — the things actually worth choosing between

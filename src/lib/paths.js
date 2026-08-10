@@ -43,7 +43,11 @@ function resolveClaudeRoot() {
 const CLAUDE_ROOT = resolveClaudeRoot();
 
 export const desktopConfigPath = path.join(CLAUDE_ROOT, "claude_desktop_config.json");
-export const sessionsRoot = path.join(CLAUDE_ROOT, "claude-code-sessions");
+// HELM_SESSIONS_ROOT lets a test point the session index at an isolated temp dir (the same
+// seam projectsRoot already offers via HELM_PROJECTS_ROOT). Without it, a test that overrides
+// only the meta-home still reads the machine's real sessions - so it scans every real repo
+// and its result varies per machine (ship-review finding, 2026-08-10).
+export const sessionsRoot = process.env.HELM_SESSIONS_ROOT || path.join(CLAUDE_ROOT, "claude-code-sessions");
 // Transcripts live at the REAL ~/.claude/projects (written by the CLI, not the
 // MSIX desktop app), which a standalone process can read directly - no
 // virtualization fallback needed here (verified 2026-07-11).

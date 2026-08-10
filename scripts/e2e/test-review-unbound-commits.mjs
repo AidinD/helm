@@ -89,6 +89,10 @@ process.env.HELM_META_HOME_OVERRIDE = metaHome;
 process.env.HELM_CONFIG_PATH = path.join(tmp, "config.json");
 process.env.JOT_DATA_DIR = jotDir;
 process.env.HELM_GOAL_RUN_HISTORY_PATH = path.join(tmp, "history.json");
+// Isolate the session index (it's outside the meta-home) to an empty path, so the scan sees
+// ONLY this test's scratch repo - not the machine's real repos, which made the set of
+// surfaced projects non-deterministic across machines and slow (ship-review finding).
+process.env.HELM_SESSIONS_ROOT = path.join(tmp, "no-sessions");
 process.env.HELM_E2E_PORT = process.env.HELM_E2E_PORT || "9584";
 
 try {
@@ -147,6 +151,7 @@ try {
   delete process.env.HELM_META_HOME_OVERRIDE;
   delete process.env.JOT_DATA_DIR;
   delete process.env.HELM_GOAL_RUN_HISTORY_PATH;
+  delete process.env.HELM_SESSIONS_ROOT;
 }
 
 console.log(

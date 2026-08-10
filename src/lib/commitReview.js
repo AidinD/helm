@@ -14,10 +14,24 @@
 // shell string); every sha is validated as hex before it reaches a command.
 
 import fs from "node:fs";
+import path from "node:path";
 import { execFileSync } from "node:child_process";
 
 const SHA_RE = /^[0-9a-f]{7,40}$/i;
 const DEFAULT_LIMIT = 50;
+
+/**
+ * Canonical key for a project path, used for de-duplication AND as the watermark/ack key so
+ * the same repo referenced under different spellings resolves to ONE entry. On Windows the
+ * filesystem is case-insensitive but path.resolve does not normalize drive-letter case or
+ * spelling, so "d:\Repo\X" and "D:\Repo\X" would otherwise become two projects with
+ * independent watermarks - two identical review sections, and acknowledging in one leaves the
+ * other showing the commit (ship-review finding, 2026-08-10).
+ */
+export function projectKey(p) {
+  const abs = path.resolve(p);
+  return process.platform === "win32" ? abs.toLowerCase() : abs;
+}
 
 function git(projectPath, args) {
   return execFileSync("git", ["-C", projectPath, ...args], {

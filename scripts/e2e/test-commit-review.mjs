@@ -27,7 +27,13 @@ const here = os.tmpdir(); // exists, so the fs guard passes
   ok(isBound("a9bf76a0000000000000000000000000000000a", "x"), "the sha token is taken from a 'sha subject' record entry");
   ok(isBound("deadbeef1234567890", "Fix the thing for task 07cd4fc9 today"), "a commit whose subject names a task short id is BOUND");
   ok(!isBound("cafebabe1234567890", "an unrelated commit with no task and no record"), "a commit with neither is UNBOUND");
-  ok(!isBound("cafebabe1234567890", "mentions 07cd4 partial"), "a too-short partial id does not falsely bind");
+
+  // The >=6 length guard is what stops a tiny id from matching everything - exercise the
+  // boundary directly, or reverting the guard would go unnoticed.
+  const shortId = makeIsBound({ taskShortIds: ["abcde"] }); // 5 chars, below the guard
+  ok(!shortId("deadbeef1234", "a commit mentioning abcde in passing"), "a task id shorter than 6 chars never binds (the length guard holds)");
+  const sixId = makeIsBound({ taskShortIds: ["abcdef"] }); // 6 chars, at the guard
+  ok(sixId("deadbeef1234", "a commit mentioning abcdef here"), "a 6-char id whose full string is in the subject DOES bind");
 }
 
 // --- listUnboundCommits ----------------------------------------------------
