@@ -2546,7 +2546,84 @@ async function renderReviewPage() {
     }
   }
 
-  if (tally.total === 0 && skipped.length === 0) {
+  // Commits with no Jot task (the commit-centric source): work not tracked on a Jot board
+  // still needs reviewing - a session against a project that uses a GitHub board instead of
+  // Jot (the captain's Halyard case) produced commits nothing here could show. Grouped per
+  // project; each commit can be diffed and acknowledged (which advances the project's
+  // watermark so it drops off). Deliberately NOT tied to the Work/Private or project chips:
+  // those filter Jot categories, and these rows are keyed by repo, so they always show,
+  // clearly labelled by project.
+  const unboundGroups = res?.unboundCommits || [];
+  for (const group of unboundGroups) {
+    const h = document.createElement("h3");
+    h.className = "rev-group";
+    h.textContent = `Commits without a task — ${group.projectName}`;
+    const hint = document.createElement("span");
+    hint.className = "rev-group-hint";
+    hint.textContent = `— ${group.commits.length} commit${group.commits.length === 1 ? "" : "s"} not tied to any Jot task`;
+    h.append(hint);
+    frag.append(h);
+    for (const c of group.commits) {
+      const el = document.createElement("section");
+      el.className = "rev-item unbound-commit";
+      const line = document.createElement("div");
+      line.className = "rev-head";
+      const title = document.createElement("span");
+      title.className = "rev-title";
+      title.textContent = c.subject || "(no subject)";
+      line.append(title);
+      const shaChip = reviewChip(c.shortSha, "commit");
+      shaChip.title = c.sha;
+      line.append(shaChip);
+      const noTask = reviewChip("no task", "gap");
+      noTask.title = "This commit isn't tied to any Jot task - it's shown so the work still gets reviewed.";
+      line.append(noTask);
+
+      const diffBtn = document.createElement("button");
+      diffBtn.type = "button";
+      diffBtn.className = "text-btn";
+      diffBtn.textContent = "See the diff";
+      diffBtn.addEventListener("click", async () => {
+        diffBtn.disabled = true;
+        const was = diffBtn.textContent;
+        diffBtn.textContent = "Reading…";
+        try {
+          const r = await window.helm.getCommitDiff(group.projectPath, c.sha);
+          if (!r?.ok) {
+            showNotice(`No diff for ${c.shortSha}: ${r?.error || "unknown reason"}`);
+            return;
+          }
+          openDiffViewer({ taskId: c.shortSha, title: c.subject || c.shortSha }, { commits: [{ sha: c.sha }], text: r.text, truncated: r.truncated });
+        } finally {
+          diffBtn.disabled = false;
+          diffBtn.textContent = was;
+        }
+      });
+      line.append(diffBtn);
+
+      const ackBtn = document.createElement("button");
+      ackBtn.type = "button";
+      ackBtn.className = "text-btn";
+      ackBtn.textContent = "Reviewed";
+      ackBtn.title = "Mark reviewed up to this commit. It and older commits drop off; newer ones stay.";
+      ackBtn.addEventListener("click", async () => {
+        ackBtn.disabled = true;
+        const r = await window.helm.acknowledgeCommit(group.projectPath, c.sha);
+        if (!r?.ok) {
+          ackBtn.disabled = false;
+          showToast(r?.error || "Couldn't acknowledge that.");
+          return;
+        }
+        renderReviewPage();
+      });
+      line.append(ackBtn);
+
+      el.append(line);
+      frag.append(el);
+    }
+  }
+
+  if (tally.total === 0 && skipped.length === 0 && unboundGroups.length === 0) {
     const empty = document.createElement("div");
     empty.className = "pane-empty";
     empty.textContent = "When something moves to review on the Jot board, it lands here with its evidence and test steps.";

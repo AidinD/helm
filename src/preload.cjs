@@ -100,6 +100,10 @@ contextBridge.exposeInMainWorld("helm", {
   getReviewDiff: (taskId) => ipcRenderer.invoke("reviews:diff", { taskId }),
   // The released app version a fix is out in (null if not yet in a tagged release).
   getShippedVersion: (taskId) => ipcRenderer.invoke("reviews:shippedVersion", { taskId }),
+  // Commit-centric review (work with no Jot task): a single commit's patch, and
+  // acknowledging a commit (advances the project's review watermark past it).
+  getCommitDiff: (projectPath, sha) => ipcRenderer.invoke("reviews:commitDiff", { projectPath, sha }),
+  acknowledgeCommit: (projectPath, sha) => ipcRenderer.invoke("reviews:acknowledgeCommit", { projectPath, sha }),
   // What an independent reviewer would be sent in on, recommended from the change.
   getReviewerPlan: (taskId) => ipcRenderer.invoke("reviews:reviewerPlan", { taskId }),
   // The reviewer's own verdict, once it has written one.
