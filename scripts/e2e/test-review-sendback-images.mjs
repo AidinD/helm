@@ -53,6 +53,44 @@ try {
   ok(dialog.hasEl && dialog.hasBar, "the Send back dialog builds an image-attach zone");
   ok(dialog.startsEmpty, "which starts with no images attached");
 
+  // Task 1116b7ef came back: paste must work "på samma sätt som i jot eller i chattfönstret".
+  // A plain div never receives paste, so the zone now exposes attachPasteTo (the dialog wires
+  // it onto the focused note textarea) and makes the box itself focusable. Drive a REAL paste
+  // event carrying a PNG onto the wired field and confirm the image is attached.
+  const paste = await app.eval(`(async () => {
+    const z = sendBackImageZone();
+    const field = document.createElement("textarea");
+    document.body.append(field);
+    z.attachPasteTo(field);
+    const bin = atob(${JSON.stringify(PNG_B64)});
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) { arr[i] = bin.charCodeAt(i); }
+    const file = new File([arr], "pasted.png", { type: "image/png" });
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    const ev = new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true });
+    field.dispatchEvent(ev);
+    await new Promise((r) => setTimeout(r, 250));
+    const out = {
+      hasAttach: typeof z.attachPasteTo === "function",
+      focusable: z.el.getAttribute("tabindex") === "0",
+      images: z.images.length,
+      thumbs: z.el.querySelectorAll(".sendback-thumb").length,
+    };
+    field.remove();
+    return out;
+  })()`);
+  ok(paste.hasAttach, "the zone exposes attachPasteTo, so the dialog can wire the focused note field");
+  ok(paste.focusable, "the box itself is focusable (tabindex=0), so a paste onto the box works too");
+  ok(paste.images === 1 && paste.thumbs === 1, `pasting an image into the wired note field attaches it (images=${paste.images}, thumbs=${paste.thumbs})`);
+
+  // And the dialog actually wires it: customPrompt hands its field to onField, and the Send
+  // back call site passes onField -> imgZone.attachPasteTo. Source-checked because the real
+  // dialog's field is created inside customPrompt.
+  const rsrc = fs.readFileSync(new URL("../../src/renderer/renderer.js", import.meta.url), "utf8");
+  ok(/onField\?\.\(field\)/.test(rsrc), "customPrompt hands its focused field to onField");
+  ok(/onField:\s*\(field\)\s*=>\s*imgZone\.attachPasteTo\(field\)/.test(rsrc), "the Send back dialog wires the note field's paste into the image zone");
+
   // The real IPC: send back with one image.
   const res = await app.eval(`window.helm.sendReviewBack(${JSON.stringify(TASK)}, "[Aidin 2026-08-09] please fix the wrap", [{ base64: ${JSON.stringify(PNG_B64)}, ext: "png" }])`);
   ok(res?.ok === true, `reviews:sendBack succeeded (${JSON.stringify(res?.error || "")})`);
