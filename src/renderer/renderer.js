@@ -1271,6 +1271,16 @@ function independentVerdictFixBrief(row, verdictText) {
  */
 const reviewExpanded = new Set();
 
+/**
+ * Which manual test steps Aidin has personally walked through, per task.
+ *
+ * taskId -> Set of step indices. In memory only, like `reviewExpanded` above - ticking
+ * a box records that HE walked through it, not evidence for the record, so it must
+ * never survive a restart pretending to be something checked into the record itself
+ * (Aidin, task 978f876f: wanted the checkboxes back that used to sit on these steps).
+ */
+const reviewCheckedSteps = new Map();
+
 /** One review item: what changed, the evidence, the gaps, and how to check it. */
 function reviewRowEl(row, band = null) {
   const el = document.createElement("section");
@@ -1662,17 +1672,50 @@ function reviewRowEl(row, band = null) {
   }
 
   if (Array.isArray(rec.testSteps) && rec.testSteps.length > 0) {
+    const checkedForRow = reviewCheckedSteps.get(row.taskId) || new Set();
+    reviewCheckedSteps.set(row.taskId, checkedForRow);
+
+    const label = document.createElement("div");
+    label.className = "rev-steps-label";
+    const updateLabel = () => {
+      label.textContent = `Manual steps — walk through each and tick it off (${checkedForRow.size}/${rec.testSteps.length})`;
+    };
+    updateLabel();
+    body.append(label);
+
     const steps = document.createElement("ol");
     steps.className = "rev-steps";
-    for (const s of rec.testSteps) {
+    rec.testSteps.forEach((s, i) => {
       const li = document.createElement("li");
+      li.className = "rev-step" + (checkedForRow.has(i) ? " is-checked" : "");
+      const stepLabel = document.createElement("label");
+      stepLabel.className = "rev-step-label";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.className = "rev-step-checkbox";
+      cb.checked = checkedForRow.has(i);
+      // Only a note to himself that he personally walked through it - it writes
+      // nothing to the record and proves nothing to anyone reading it later.
+      cb.addEventListener("change", () => {
+        if (cb.checked) {
+          checkedForRow.add(i);
+        } else {
+          checkedForRow.delete(i);
+        }
+        li.classList.toggle("is-checked", cb.checked);
+        updateLabel();
+      });
+      const text = document.createElement("span");
+      text.className = "rev-step-text";
       const what = document.createElement("span");
       what.className = "rev-step-do";
       what.textContent = s.step;
       const exp = document.createElement("span");
       exp.className = "rev-step-expect";
       exp.textContent = s.expect;
-      li.append(what, exp);
+      text.append(what, exp);
+      stepLabel.append(cb, text);
+      li.append(stepLabel);
       // Which agreed criterion this step is answering - the explicit link is what
       // makes coverage checkable instead of a matter of opinion.
       if (s.ac !== undefined && s.ac !== null) {
@@ -1683,7 +1726,7 @@ function reviewRowEl(row, band = null) {
         li.append(ref);
       }
       steps.append(li);
-    }
+    });
     body.append(steps);
   }
 
