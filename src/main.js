@@ -44,6 +44,7 @@ import {
 } from "./lib/scheduledPrompts.js";
 import { buildReviewQueue, listReviewRecords, reviewQueueTally, readReviewRecord, recordCheckRun, gauntletStatus, currentHead, codeChangedBetween } from "./lib/reviewRecords.js";
 import { resolveTaskCommits, diffForCommits, shippedVersionForCommits } from "./lib/reviewDiff.js";
+import { listUnboundCommits, initialWatermark, makeIsBound } from "./lib/commitReview.js";
 import { recommendReviewer, diffStats, REVIEWER_MODELS } from "./lib/reviewerModel.js";
 import { listHandoffCategories, writeHandoff, readHandoff, planHandoffFiling, handoffPath } from "./lib/handoffStore.js";
 import { classifySessionStatus, classifyHandoffCategory, expectsUserInputHeuristic, estimateSessionContextTokens, compactSession, getTranscriptSize, triageAutoTask } from "./lib/orchestratorHelper.js";
@@ -5696,6 +5697,81 @@ function repoRootedCategories(records = []) {
   };
 }
 
+// Commit-centric review source: for every git project Helm knows, the commits NOT bound to
+// a Jot task, so work done in a project without a Jot board (a session against Reinmaker
+// with a GitHub board) still lands in review. Bound commits (sha in a record's `commits`, or
+// a task short id in the subject) roll up under their task's row and are excluded. Bounded
+// per project by a stored watermark - only commits after it surface - which is initialized
+// to the mainline/upstream baseline on first sight (so un-integrated work shows immediately
+// without flooding the whole history) and advanced by acknowledging a commit.
+function collectUnboundCommits({ records, boardTasks, rows }) {
+  try {
+    const cfg = loadConfig();
+    const watermarks = { ...(cfg.commitReviewWatermarks || {}) };
+    let changed = false;
+    // Known git projects: the same sources repo-rooting uses, plus the explicit Jot
+    // category bindings already resolved onto the rows.
+    const projects = new Set();
+    for (const p of [
+      ...records.map((r) => r.projectPath),
+      ...loadGoalRunHistory().map((r) => r.projectPath),
+      ...(readAllSessions()?.sessions || []).map((s) => s.cwd),
+      ...rows.map((r) => r.repoPath),
+    ]) {
+      if (!p) {
+        continue;
+      }
+      let abs;
+      try {
+        abs = path.resolve(p);
+      } catch {
+        continue;
+      }
+      try {
+        if (fs.existsSync(path.join(abs, ".git"))) {
+          projects.add(abs);
+        }
+      } catch {
+        // unreadable path - skip
+      }
+    }
+    if (projects.size === 0) {
+      return [];
+    }
+    const recordCommitShas = records.flatMap((r) =>
+      (r.commits || []).map((c) => (typeof c === "string" ? c : c?.sha)).filter(Boolean)
+    );
+    const taskShortIds = (boardTasks || []).map((t) => String(t.id || "").slice(0, 8)).filter(Boolean);
+    const isBound = makeIsBound({ recordCommitShas, taskShortIds });
+    const out = [];
+    for (const projectPath of projects) {
+      let watermark = watermarks[projectPath];
+      if (watermark === undefined) {
+        // First sight: stamp the baseline. Stored even when null (a small repo with no
+        // mainline) so it is not recomputed on every payload build.
+        watermark = initialWatermark(projectPath);
+        watermarks[projectPath] = watermark;
+        changed = true;
+      }
+      const commits = listUnboundCommits(projectPath, { watermark, isBound });
+      if (commits.length > 0) {
+        out.push({ projectPath, projectName: path.basename(projectPath), commits });
+      }
+    }
+    if (changed) {
+      try {
+        writeConfig({ ...cfg, commitReviewWatermarks: watermarks });
+      } catch (err) {
+        console.error("[helm] could not persist commit-review watermarks:", err);
+      }
+    }
+    return out;
+  } catch (err) {
+    console.error("[helm] collectUnboundCommits failed:", err);
+    return [];
+  }
+}
+
 function buildReviewsPayload() {
   const config = loadConfig();
   const board = reviewTasks(config.jot || {});
@@ -5739,6 +5815,8 @@ function buildReviewsPayload() {
     rows,
     tally: reviewQueueTally(rows),
     doneWithoutRecord: unrecordedDone.ok ? unrecordedDone.tasks : [],
+    // Commits per project not tied to any Jot task, so review works even without a Jot board.
+    unboundCommits: collectUnboundCommits({ records, boardTasks: board.tasks || [], rows }),
   };
 }
 
@@ -5819,6 +5897,34 @@ ipcMain.handle("reviews:acknowledgeNoRecord", (_event, { taskId } = {}) => {
   } catch (err) {
     return { ok: false, error: err?.message || String(err) };
   }
+});
+
+// Acknowledge an unbound commit: advance the project's review watermark to it, so it (and
+// its ancestors) drop out of the unbound-commits list - "I have reviewed up to here". The
+// watermark is EXCLUSIVE (watermark..HEAD), so newer commits stay listed.
+ipcMain.handle("reviews:acknowledgeCommit", (_event, { projectPath, sha } = {}) => {
+  if (!projectPath || !sha) {
+    return { ok: false, error: "Need a project and a commit to acknowledge." };
+  }
+  try {
+    const cfg = loadConfig();
+    const watermarks = { ...(cfg.commitReviewWatermarks || {}) };
+    watermarks[path.resolve(projectPath)] = sha;
+    writeConfig({ ...cfg, commitReviewWatermarks: watermarks });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err) };
+  }
+});
+
+// The patch for a single unbound commit (the commit-centric analogue of reviews:diff, which
+// is keyed by a task). Read-only.
+ipcMain.handle("reviews:commitDiff", (_event, { projectPath, sha } = {}) => {
+  if (!projectPath || !sha) {
+    return { ok: false, error: "Need a project and a commit." };
+  }
+  const diff = diffForCommits(projectPath, [sha]);
+  return diff.ok ? { ok: true, projectPath, sha, text: diff.text, truncated: diff.truncated } : { ok: false, error: diff.error };
 });
 
 // The CHANGE behind a review item, so reviewing does not mean taking the record's word
