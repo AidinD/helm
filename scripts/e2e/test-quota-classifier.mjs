@@ -50,6 +50,15 @@ const notResumable = [
   "Iteration timed out after 600000ms",
   "TypeError: Cannot read properties of undefined (reading 'map')",
   "Verify command failed: exit code 1",
+  // Independent-review false positives (2026-08-12): now that runIteration
+  // surfaces arbitrary SDK/stdout text, bare English words must NOT trip the
+  // classifier. A genuine hard failure whose text merely CONTAINS "insufficient"
+  // or "limit reached" must stay a real failure - otherwise its broken worktree
+  // is kept and it auto-resumes in a loop.
+  "Iteration errored: insufficient permissions to write file",
+  "Iteration errored: I have insufficient information to complete the task",
+  "Iteration errored: recursion limit reached",
+  "Iteration errored: memory limit reached",
   "",
   null,
   undefined,
