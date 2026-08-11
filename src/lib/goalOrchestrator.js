@@ -671,9 +671,16 @@ function runIteration({ worktreePath, goal, notesContent, planContent, repoMapCo
       try {
         parsed = JSON.parse(out);
       } catch {
+        // Include a STDOUT tail, not just stderr: when `claude -p` can't run the
+        // turn (usage/rate limit, overload), it prints that banner to stdout and
+        // exits, leaving stdout unparseable as JSON. Without the stdout tail here
+        // the downstream quota classifier never sees the "usage limit" text, so a
+        // token-exhaustion is miscounted as a plain iteration failure - which then
+        // marks the run non-resumable AND deletes its worktree (it cost the user
+        // two auto runs on 2026-08-11). See isResumableQuotaError + runGoal.
         finish({
           ok: false,
-          error: `Could not parse iteration output as JSON (exit code ${code}). stderr: ${truncate(stderrText, 500)}`,
+          error: `Could not parse iteration output as JSON (exit code ${code}). stdout: ${truncate(out, 500)} | stderr: ${truncate(stderrText, 500)}`,
         });
         return;
       }
@@ -685,12 +692,47 @@ function runIteration({ worktreePath, goal, notesContent, planContent, repoMapCo
         !Array.isArray(result.keyChanges) ||
         !Array.isArray(result.keyLearnings)
       ) {
-        finish({ ok: false, error: "Iteration response did not match the expected schema." });
+        // A well-formed SDK envelope that ISN'T our structured output is most often
+        // the SDK reporting its OWN error - usage limit hit, overloaded, execution
+        // error. Surface that text verbatim instead of a generic "schema mismatch",
+        // so isResumableQuotaError can recognise a resumable stop; otherwise every
+        // such stop reads as an opaque failure and is auto-cleaned (2026-08-11).
+        const sdkError =
+          parsed.is_error === true ||
+          parsed.subtype === "error_during_execution" ||
+          parsed.subtype === "error_max_turns" ||
+          typeof parsed.error === "string"
+            ? String(parsed.error || parsed.result || parsed.subtype || "")
+            : "";
+        finish({
+          ok: false,
+          error: sdkError
+            ? `Iteration errored: ${truncate(sdkError, 500)}`
+            : "Iteration response did not match the expected schema.",
+        });
         return;
       }
       finish({ ok: true, result, costUsd: parsed.total_cost_usd || 0, usage: extractUsage(parsed) });
     });
   });
+}
+
+/**
+ * True when an iteration's error text is a RESUMABLE stop - a rate limit, a
+ * subscription/usage-limit exhaustion ("out of tokens"), a transient overload -
+ * rather than a real code failure. A resumable stop keeps its worktree and is
+ * picked up by "fortsätt"/Resume once the limit resets; a real failure counts
+ * toward the two-consecutive-failures abort and (with zero commits) has its
+ * worktree cleaned up. This is why runIteration surfaces the SDK's own error
+ * result and a stdout tail rather than a generic message: the classification is
+ * only as good as the text it sees. Includes Anthropic's 529 overloaded_error
+ * (the transient-capacity signal most like a rate limit) and the Claude
+ * subscription usage-limit phrasing ("usage limit reached", "resets at …").
+ */
+export function isResumableQuotaError(errorText) {
+  return /rate.?limit|quota|usage limit|limit reached|resets? (at|in)|claude ai usage|too many requests|overloaded|insufficient|credit balance|\b429\b|\b529\b/i.test(
+    String(errorText || "")
+  );
 }
 
 /**
@@ -1413,13 +1455,12 @@ export async function runGoal({
       appendNotes(worktreePath, i, syntheticResult);
       record = { iteration: i, phase: iterationPhase, ok: false, error: outcome.error, committed: false };
       consecutiveFailures += 1;
-      // A rate-limit/quota/overload error is a RESUMABLE stop, not a real failure
-      // - flag it so the loop stops with stoppedReason "quota_exhausted" (below).
-      // Includes Anthropic's 529 overloaded_error: it's the transient-capacity
-      // signal most like a rate limit, and "fortsätt" is exactly how it should
-      // recover - without this it's a plain failure and gets auto-cleaned
-      // (ship-review).
-      if (/rate.?limit|quota|usage limit|too many requests|overloaded|\b429\b|\b529\b/i.test(String(outcome.error || ""))) {
+      // A rate-limit/quota/overload/token-exhaustion error is a RESUMABLE stop,
+      // not a real failure - flag it so the loop stops with stoppedReason
+      // "quota_exhausted" (below), which keeps the worktree and lets "fortsätt"/
+      // Resume pick it up once the limit resets. Without this it's a plain failure
+      // and (with zero commits) gets auto-cleaned. See isResumableQuotaError.
+      if (isResumableQuotaError(outcome.error)) {
         quotaExhausted = true;
       }
     } else if (outcome.result.success === false) {

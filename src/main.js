@@ -1642,7 +1642,7 @@ function resolveDispatchProject(project) {
 // it has no live channel to answer a permission prompt (verified: without this,
 // a real first-mate session replies "TOOL-BLOCKED" and never dispatches - review M3).
 const FIRST_MATE_MCP_SERVER = "helm-dispatch";
-const FIRST_MATE_ALLOWED_TOOLS = ["helm_dispatch", "helm_collect_reports", "helm_list_projects", "helm_fleet_state", "helm_report_up", "helm_create_second_mate", "helm_relay_to_second_mate", "helm_resume_fleet"].map(
+const FIRST_MATE_ALLOWED_TOOLS = ["helm_dispatch", "helm_collect_reports", "helm_list_projects", "helm_fleet_state", "helm_report_up", "helm_create_second_mate", "helm_relay_to_second_mate", "helm_resume_fleet", "helm_resume_crew"].map(
   (t) => `mcp__${FIRST_MATE_MCP_SERVER}__${t}`
 );
 
@@ -3389,6 +3389,40 @@ function resumeFleet(ownerMateId) {
 }
 ipcMain.handle("orchestration:resumeFleet", (_event, { mateId }) => {
   return { ok: true, ...resumeFleet(mateId || null) };
+});
+
+// A SECOND MATE resumes ITS OWN crew's resumable runs (quota-stopped / escalated).
+// This is the narrower twin of resumeFleet: a first mate's "fortsätt" cascades
+// across its whole tree (its crew + all its second mates' crew), whereas a second
+// mate owns only the runs IT dispatched (dispatchedBy === its id) and should be
+// able to pick those back up itself - the dispatcher-owns-its-crew case Aidin
+// flagged (2026-08-11: "the 2nd mate owns the autopilots, why can't it resume
+// them?"). No guardrail changes: each resume still goes through resumeGoalRunById
+// (resumable-once, worktree-on-disk, kill switch, budget, per-mate width cap), so
+// this only changes WHO may ask, never WHAT is allowed. A null/empty id is a
+// no-op (never a wildcard "resume everyone's crew").
+function resumeCrew(secondMateId) {
+  if (!secondMateId) {
+    return { resumed: 0, total: 0 };
+  }
+  const history = loadGoalRunHistory();
+  const mine = history.filter(
+    (r) =>
+      r.resumable &&
+      !liveGoalRuns.has(r.goalRunId) && // running now, not resumable-now
+      !isForeignLiveRun(r) && // owned+driven by another Helm instance - leave it
+      r.dispatchedBy === secondMateId
+  );
+  let resumed = 0;
+  for (const r of mine) {
+    if (resumeGoalRunById(r.goalRunId).ok) {
+      resumed += 1;
+    }
+  }
+  return { resumed, total: mine.length };
+}
+ipcMain.handle("orchestration:resumeCrew", (_event, { secondMateId }) => {
+  return { ok: true, ...resumeCrew(secondMateId || null) };
 });
 
 // Phase-2 guardrail (Slice 0): the KILL SWITCH. Stops the whole orchestration
@@ -5159,6 +5193,15 @@ function processDispatchRequests(metaHome) {
       // this first mate's tree. Each resume is individually guardrail-gated.
       if (request.kind === "resume-fleet") {
         const res = resumeFleet(request.dispatchedBy || null);
+        writeAck(metaHome, dispatchId, { status: "accepted", resumed: res.resumed, total: res.total });
+        continue;
+      }
+
+      // A second mate resumes ITS OWN crew (narrower than the first mate's fleet
+      // cascade above). dispatchedBy is the second mate's own id; each resume is
+      // individually guardrail-gated by resumeGoalRunById, so no cap is bypassed.
+      if (request.kind === "resume-crew") {
+        const res = resumeCrew(request.dispatchedBy || null);
         writeAck(metaHome, dispatchId, { status: "accepted", resumed: res.resumed, total: res.total });
         continue;
       }
