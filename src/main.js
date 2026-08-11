@@ -87,7 +87,7 @@ import { listSlashItems } from "./lib/slashCommands.js";
 import { trackHelmUsage, summarizeHelmUsage, summarizeReviewActions } from "./lib/helmUsage.js";
 import { mcpAllowedToolsFromConfig } from "./lib/userMcp.js";
 import { initAutoUpdate } from "./lib/autoUpdate.js";
-import { deriveSecondMates, bindSecondMateSession, renameSecondMate, readBindings, proposeSecondMate, markSecondMateCreated, secondMateIdForSession, secondMateId, removeSecondMates } from "./lib/secondMates.js";
+import { deriveSecondMates, bindSecondMateSession, renameSecondMate, readBindings, proposeSecondMate, markSecondMateCreated, secondMateIdForSession, secondMateId, removeSecondMates, AUTO_CAPTAIN } from "./lib/secondMates.js";
 import {
   AUTO_WIDTH_CAP,
   AUTO_CAPTAIN_TAGS,
@@ -2350,7 +2350,9 @@ ipcMain.handle(
         // for it (review PLAUSIBLE: "direct" is top-of-chain, don't dead-letter).
         const derivedSm = deriveSecondMates(loadGoalRunHistory()).find((s) => s.secondMateId === effectiveSecondMateId);
         const parentFirstMate = derivedSm?.firstMateId;
-        const parentMateId = parentFirstMate && parentFirstMate !== "direct" ? parentFirstMate : null;
+        // "direct" AND "auto" (the auto-captain) are top-of-chain: they report to the captain,
+        // not up to a first mate, so neither becomes a report-up parent (would dead-letter).
+        const parentMateId = parentFirstMate && parentFirstMate !== "direct" && parentFirstMate !== AUTO_CAPTAIN ? parentFirstMate : null;
         mcpConfig = buildDispatchMcpConfig(metaHome, effectiveSecondMateId, "second-mate", parentMateId);
         // helm_* crew tools + the user's OWN MCP servers pre-approved, so the
         // "keeps the user's full MCP set" intent actually holds in headless -p
@@ -3832,7 +3834,10 @@ async function autoCaptainTick({ force = false } = {}) {
       // own run record, so parallelism is free and needs no special cleanup rules.
       // The second mate is then what it should be: the place you jump into to be
       // walked through what its runs did.
-      const smId = secondMateId("direct", where.projectPath);
+      // AUTO_CAPTAIN, not "direct": the auto-captain gets its OWN per-project node so it
+      // never collides with a MANUAL captain second mate on the same project (which used to
+      // pull the manual one into the Auto lane - the reported bug).
+      const smId = secondMateId(AUTO_CAPTAIN, where.projectPath);
       try {
         // Named after the PROJECT, because that is what this row now represents.
         // The task titles belong on the crew rows underneath it. Idempotent -
@@ -3841,7 +3846,7 @@ async function autoCaptainTick({ force = false } = {}) {
         // unarchiveSecondMateForNewWork. Without it an archived project row swallowed
         // every later auto run for that project, silently.
         unarchiveSecondMateForNewWork(smId);
-        proposeSecondMate("direct", where.projectPath, {
+        proposeSecondMate(AUTO_CAPTAIN, where.projectPath, {
           brief: `Auto-started tasks for ${path.basename(where.projectPath)}. Each one runs as its own autopilot below.`,
         });
       } catch (err) {
@@ -4927,7 +4932,9 @@ function runRelayTurn(metaHome, { secondMateId: smId, projectPath, message, allo
   // up to, so a relay to one is refused (a relay only makes sense mate->mate).
   const derivedSm = deriveSecondMates(loadGoalRunHistory()).find((s) => s.secondMateId === smId);
   const parentFirstMate = derivedSm?.firstMateId;
-  const parentMateId = parentFirstMate && parentFirstMate !== "direct" ? parentFirstMate : null;
+  // "direct" and "auto" (the auto-captain) are top-of-chain - a relay only makes sense
+  // first-mate -> second-mate, so neither is a valid relay parent.
+  const parentMateId = parentFirstMate && parentFirstMate !== "direct" && parentFirstMate !== AUTO_CAPTAIN ? parentFirstMate : null;
   if (!parentMateId && !allowDirect) {
     return { ok: false, error: "No parent first mate for this second mate - relay only works first-mate -> second-mate." };
   }
@@ -5812,6 +5819,15 @@ function buildReviewsPayload() {
     // no repoPath and dropped from the default repo-rooted view (task 75a01d5d: "Review
     // verkar bara göra ordentliga reviews för helm").
     row.repoPath = row.categoryRepoPath || roots.repoFor(row.category);
+    // Whether ANY commit is tied to this task - from the record, or (failing that) a
+    // log search for its short id. Cards are meant to be bound to commits (the captain:
+    // "har ingen commit gjorts så behövs inget kort"); this is the fact the page
+    // filters on, computed here rather than the renderer because it needs git.
+    // Annotated, not dropped - same reasoning as the comment above: the count of
+    // what a filter hides must stay knowable, so the page can say so.
+    const recCommits = row.record?.commits || [];
+    row.hasCommits =
+      recCommits.length > 0 || (row.repoPath ? resolveTaskCommits(row.repoPath, row.taskId, []).commits.length > 0 : false);
   }
   // The audit half: work that reached done without ever being recorded. A direct
   // board write cannot be prevented from here, only detected - and it has to surface
