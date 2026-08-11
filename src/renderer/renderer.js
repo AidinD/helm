@@ -5329,7 +5329,10 @@ async function saveSecondMateHandoffsFor(mate, busy = null) {
       if (summary && summary.text) {
         const saved = await saveHandoffResolvingTopic(session, summary.text.trim(), { ask: false });
         if (saved?.guessedTopic) {
-          showToast(`Couldn't tell which topic "${session.title}" belongs to - filed under "${saved.category}".`);
+          // A caveat, not a success: route it through the persistent right-side
+          // notice (default warn tone) so it stays until dismissed and names the
+          // topic file it was filed under, rather than fading away unseen.
+          showNotice(`Couldn't tell which topic "${session.title}" belongs to - filed under "${saved.category}".`);
         }
       }
     } catch {
