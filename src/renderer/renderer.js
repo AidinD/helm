@@ -3856,10 +3856,14 @@ async function archiveWithHandoff(session) {
   // the fleet fingerprint).
   refreshDashboardIfVisible({ force: true });
   if (saved) {
-    showToast(
+    // A save is an EVENT worth confirming - which file it landed in, especially for
+    // topic saves - so it slides in from the side and waits to be dismissed rather
+    // than fading. tone "good" marks it a success, not a warning.
+    showNotice(
       savedTopic
         ? `Handoff filed under "${savedTopic}"${savedTopicIsNew ? " (new topic)" : ""}; archiving "${session.title}".`
-        : `Handoff saved to HANDOFF.md; archiving "${session.title}".`
+        : `Handoff saved to HANDOFF.md; archiving "${session.title}".`,
+      { tone: "good" }
     );
   }
   archiveSession(session);
@@ -4048,13 +4052,16 @@ function showToast(text, opts = {}) {
  *
  * @param {string} text
  * @param {object} [opts]
- * @param {"warn"|"info"} [opts.tone] warn (default) draws the accent stripe.
+ * @param {"warn"|"info"|"good"} [opts.tone] warn (default) draws the accent stripe;
+ *   good marks a success (e.g. a handoff that saved).
  * @param {Array<{label: string, onClick: Function}>} [opts.actions] buttons on the card.
  *   An action dismisses the notice after running, since it has been dealt with.
  */
 function showNotice(text, opts = {}) {
   const entry = { text, opts };
-  if (noticeHost().querySelectorAll(".notice").length >= NOTICE_VISIBLE_MAX) {
+  // A card animating out (.notice-leaving) no longer occupies a slot, so it must not
+  // count toward the visible max or a new notice would be wrongly queued behind it.
+  if (noticeHost().querySelectorAll(".notice:not(.notice-leaving)").length >= NOTICE_VISIBLE_MAX) {
     noticeQueue.push(entry);
     paintNoticeQueueCount();
     return { dismiss: () => {
@@ -4071,7 +4078,9 @@ function showNotice(text, opts = {}) {
 function mountNotice({ text, opts }) {
   const host = noticeHost();
   const el = document.createElement("div");
-  el.className = `notice notice-${opts.tone === "info" ? "info" : "warn"}`;
+  el.className = `notice notice-${
+    opts.tone === "good" ? "good" : opts.tone === "info" ? "info" : "warn"
+  }`;
 
   const body = document.createElement("div");
   body.className = "notice-text";
@@ -4084,14 +4093,24 @@ function mountNotice({ text, opts }) {
   close.title = "Dismiss";
 
   const dismiss = () => {
-    el.remove();
-    // Free slot: take the oldest waiting notice, so the queue drains in order.
+    if (el.classList.contains("notice-leaving")) {
+      return; // already flying out; don't drain the queue twice
+    }
+    // Free slot and drain the queue SYNCHRONOUSLY so the next notice appears at
+    // once - only the old card's physical removal waits for its exit animation.
     const next = noticeQueue.shift();
     paintNoticeQueueCount();
     if (next) {
       mountNotice(next);
     }
     paintNoticeDismissAll();
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      el.remove();
+      return;
+    }
+    // Fly the card back out to the right, then remove it once the animation ends.
+    el.classList.add("notice-leaving");
+    el.addEventListener("animationend", () => el.remove(), { once: true });
   };
   close.addEventListener("click", dismiss);
 
@@ -4144,7 +4163,7 @@ function paintNoticeQueueCount() {
 /** One button to clear a pile, added only once there IS a pile. */
 function paintNoticeDismissAll() {
   const host = noticeHost();
-  const shown = host.querySelectorAll(".notice").length;
+  const shown = host.querySelectorAll(".notice:not(.notice-leaving)").length;
   let el = host.querySelector(".notice-clear");
   if (shown < 2) {
     el?.remove();

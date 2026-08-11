@@ -1121,6 +1121,9 @@ body.advanced .row-jot {
 .notice-info {
   border-left-color: var(--active);
 }
+.notice-good {
+  border-left-color: var(--good);
+}
 .notice-head {
   display: flex;
   align-items: flex-start;
@@ -1158,6 +1161,39 @@ body.advanced .row-jot {
 }
 .notice-clear {
   cursor: pointer;
+}
+
+/* Slide a notice in from the right so a save/event is seen arriving, and fly it
+   back out on dismiss (task: "Handoff saved" should prompt in from the side and
+   leave again). Gated on prefers-reduced-motion so it's motion-free when asked. */
+@media (prefers-reduced-motion: no-preference) {
+  .notice {
+    animation: notice-in 0.18s ease-out;
+  }
+  .notice-leaving {
+    animation: notice-out 0.18s ease-in forwards;
+    pointer-events: none;
+  }
+}
+@keyframes notice-in {
+  from {
+    transform: translateX(360px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+@keyframes notice-out {
+  from {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(360px);
+    opacity: 0;
+  }
 }
 
 /* Persistent busy toast (a long op like a handoff summarize) - a spinner so a
