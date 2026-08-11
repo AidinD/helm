@@ -137,11 +137,51 @@ try {
     const had = !!btn;
     btn?.click();
     await new Promise((r) => setTimeout(r, 120));
-    return { had, ran: window.__ranAction === true, left: document.querySelectorAll("#noticeHost .notice").length };
+    // A dismissed card flies out (.notice-leaving) before it is removed, so it still
+    // matches ".notice" for ~180ms - count only the cards still occupying a slot.
+    return { had, ran: window.__ranAction === true, left: document.querySelectorAll("#noticeHost .notice:not(.notice-leaving)").length };
   })()`);
   ok(acted.had, "a notice can carry an action button");
   ok(acted.ran, "clicking it runs the action");
   ok(acted.left === 0, `and the notice is gone once it has been dealt with (${acted.left} left)`);
+
+  // A notice slides in from the side and carries a "good" success tone - the point of
+  // the task was to SEE a save (e.g. a handoff) arrive, not have it fade like an ordinary
+  // toast. Assert the enter animation is wired and the good tone paints its own stripe.
+  const arriving = await app.eval(`(async () => {
+    document.getElementById("noticeHost")?.remove();
+    noticeQueue.length = 0;
+    const { dismiss } = showNotice("Handoff saved to HANDOFF.md", { tone: "good" });
+    await new Promise((r) => setTimeout(r, 20));
+    const el = document.querySelector("#noticeHost .notice");
+    const style = getComputedStyle(el);
+    const result = {
+      animates: style.animationName && style.animationName !== "none",
+      goodTone: el.classList.contains("notice-good"),
+    };
+    // Dismissing adds .notice-leaving and defers removal until the exit animation ends.
+    dismiss();
+    result.leaving = !!document.querySelector("#noticeHost .notice.notice-leaving");
+    return result;
+  })()`);
+  ok(arriving.animates, `a fresh notice slides in (animation-name ${JSON.stringify(arriving.animates)})`);
+  ok(arriving.goodTone, "a good-tone notice carries the success stripe class");
+  ok(arriving.leaving, "dismissing flies the card out before removing it");
+
+  // The handoff-saved SUCCESS path must land in the notice column with the good tone, not
+  // the fading bottom toast - that is the actual behaviour the task asked for. Reproducing
+  // a real archive-with-handoff needs a live run, so check the wiring at the source.
+  const rendererSrc = fs.readFileSync(new URL("../../src/renderer/renderer.js", import.meta.url), "utf8");
+  const archiveFn = rendererSrc.slice(
+    rendererSrc.indexOf("async function archiveWithHandoff"),
+    rendererSrc.indexOf("async function archiveWithHandoff") + 4000
+  );
+  const savedBlock = archiveFn.slice(archiveFn.indexOf("if (saved) {"));
+  ok(
+    /showNotice\(/.test(savedBlock) && /tone:\s*"good"/.test(savedBlock),
+    "archiveWithHandoff's success path routes the save to showNotice with tone good"
+  );
+  ok(!/showToast\(/.test(savedBlock.slice(0, savedBlock.indexOf("archiveSession"))), "and no longer uses the fading showToast for it");
 
   // "Dismiss all" clears the queue too, not just what is on screen - otherwise the
   // pile would refill itself and look like the button did nothing.
