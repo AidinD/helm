@@ -171,15 +171,20 @@ try {
   const src = fs.readFileSync(new URL("../../src/renderer/renderer.js", import.meta.url), "utf8");
   ok(/text: prompt, pending: true/.test(src), "source: the sent prompt is pushed as pending");
   ok(/text: evt\.text, pending: true/.test(src), "source: streamed reply text is pending too");
-  // Four push sites create turns locally: the sent prompt, streamed reply text, an error
-  // turn and the "Stopped." turn. Every one has to be marked, or a reload can still delete
-  // it - counted rather than eyeballed, because "I fixed the one he reported" is how this
-  // class of bug survives.
   const marked = (src.match(/pending: true/g) || []).filter(() => true).length;
-  ok(marked >= 5, `source: all four locally pushed turns are marked, plus the flag's own docs (${marked} mentions)`);
-  ok(/text: "⚠ " \+ evt\.message, pending: true/.test(src), "source: an error turn is marked too");
-  ok(/text: "⏹ Stopped\.", pending: true/.test(src), "source: and the stopped turn");
+  ok(marked >= 2, `source: the two turns a reload must never delete are marked (${marked} mentions)`);
+  // The "Stopped." / CLI-failure / no-result turns are deliberately NOT pending: each of
+  // those is pushed only after a plain reload has reconciled pane.turns AND the per-session
+  // pendingTurnsBySession buffer has been cleared for that session - see the "output ibland
+  // dupliceras och återkommer längst ner" fix. Marking them pending would put them right back
+  // into rememberPendingTurn's resurrection path on the very next reopen.
+  ok(!/text: "⏹ Stopped\.", pending: true/.test(src), "source: the stopped turn is pushed AFTER the reload, not carried as pending");
+  ok(/text: "⏹ Stopped\."\s*\}\)/.test(src), "source: the stopped turn is still pushed, just without pending: true");
   ok((src.match(/rememberPendingTurn\(/g) || []).length >= 3, `source: the per-session buffer is written to, not just the pane (${(src.match(/rememberPendingTurn\(/g) || []).length} sites)`);
+  ok(
+    (src.match(/pendingTurnsBySession\.delete\(pane\.sessionId\)/g) || []).length >= 3,
+    `source: every terminal done branch (stopped, CLI failure, no-result) drops the per-session buffer once the run is actually over (${(src.match(/pendingTurnsBySession\.delete\(pane\.sessionId\)/g) || []).length} sites)`
+  );
   ok(res.nulls.every(Boolean), "missing inputs return an array rather than throwing");
   ok(res.identity, "a kept turn stays the same object, so the incremental renderer's identity check is undisturbed");
 
