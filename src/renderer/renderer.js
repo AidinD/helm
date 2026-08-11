@@ -2562,12 +2562,43 @@ async function renderReviewPage() {
     hint.className = "rev-group-hint";
     hint.textContent = `— ${group.commits.length} commit${group.commits.length === 1 ? "" : "s"} not tied to any Jot task`;
     h.append(hint);
+    // Clear a whole project at once: advance the watermark to the newest shown commit (git
+    // log is newest-first), so a burst of a project's own commits (helm's handoff/bump/etc.)
+    // doesn't have to be acknowledged one by one. Chosen over auto-advancing on every build,
+    // which would silently hide commits before you'd looked at them.
+    if (group.commits.length > 1) {
+      const ackAll = document.createElement("button");
+      ackAll.type = "button";
+      ackAll.className = "text-btn rev-group-action";
+      ackAll.textContent = "Reviewed all";
+      ackAll.title = `Mark all ${group.commits.length} shown ${group.projectName} commits reviewed (advances the watermark to the newest).`;
+      ackAll.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        ackAll.disabled = true;
+        const r = await window.helm.acknowledgeCommit(group.projectPath, group.commits[0].sha);
+        if (!r?.ok) {
+          ackAll.disabled = false;
+          showToast(r?.error || "Couldn't acknowledge those.");
+          return;
+        }
+        renderReviewPage();
+      });
+      h.append(ackAll);
+    }
     frag.append(h);
     for (const c of group.commits) {
       const el = document.createElement("section");
       el.className = "rev-item unbound-commit";
+      // Namespaced so a commit's expanded-state key can never collide with a task's id.
+      const key = "commit:" + c.sha;
       const line = document.createElement("div");
       line.className = "rev-head";
+      line.tabIndex = 0;
+      line.setAttribute("role", "button");
+      const chev = document.createElement("span");
+      chev.className = "rev-chev";
+      chev.textContent = "▸";
+      line.append(chev);
       const title = document.createElement("span");
       title.className = "rev-title";
       title.textContent = c.subject || "(no subject)";
@@ -2579,34 +2610,13 @@ async function renderReviewPage() {
       noTask.title = "This commit isn't tied to any Jot task - it's shown so the work still gets reviewed.";
       line.append(noTask);
 
-      const diffBtn = document.createElement("button");
-      diffBtn.type = "button";
-      diffBtn.className = "text-btn";
-      diffBtn.textContent = "See the diff";
-      diffBtn.addEventListener("click", async () => {
-        diffBtn.disabled = true;
-        const was = diffBtn.textContent;
-        diffBtn.textContent = "Reading…";
-        try {
-          const r = await window.helm.getCommitDiff(group.projectPath, c.sha);
-          if (!r?.ok) {
-            showNotice(`No diff for ${c.shortSha}: ${r?.error || "unknown reason"}`);
-            return;
-          }
-          openDiffViewer({ taskId: c.shortSha, title: c.subject || c.shortSha }, { commits: [{ sha: c.sha }], text: r.text, truncated: r.truncated });
-        } finally {
-          diffBtn.disabled = false;
-          diffBtn.textContent = was;
-        }
-      });
-      line.append(diffBtn);
-
       const ackBtn = document.createElement("button");
       ackBtn.type = "button";
       ackBtn.className = "text-btn";
       ackBtn.textContent = "Reviewed";
       ackBtn.title = "Mark reviewed up to this commit. It and older commits drop off; newer ones stay.";
-      ackBtn.addEventListener("click", async () => {
+      ackBtn.addEventListener("click", async (e) => {
+        e.stopPropagation(); // the head is the expand toggle; the button is not
         ackBtn.disabled = true;
         const r = await window.helm.acknowledgeCommit(group.projectPath, c.sha);
         if (!r?.ok) {
@@ -2617,8 +2627,70 @@ async function renderReviewPage() {
         renderReviewPage();
       });
       line.append(ackBtn);
-
       el.append(line);
+
+      // The body a commit row was missing (task feedback: "ingen body på reviews"): click the
+      // row to expand its own diff inline, rendered side-by-side with the SAME renderer a
+      // task's "See the diff" uses. Lazily loaded on first open so a screen of collapsed rows
+      // costs no git.
+      const body = document.createElement("div");
+      body.className = "rev-body";
+      const expanded = reviewExpanded.has(key);
+      el.classList.toggle("rev-open", expanded);
+      body.hidden = !expanded;
+      let loaded = false;
+      const loadDiff = async () => {
+        if (loaded) {
+          return;
+        }
+        loaded = true;
+        const note = document.createElement("div");
+        note.className = "rev-commit-note";
+        note.textContent = "Loading the diff…";
+        body.append(note);
+        try {
+          const r = await window.helm.getCommitDiff(group.projectPath, c.sha);
+          note.remove();
+          if (!r?.ok) {
+            const err = document.createElement("div");
+            err.className = "rev-warn";
+            err.textContent = `Couldn't load the diff: ${r?.error || "unknown reason"}`;
+            body.append(err);
+            return;
+          }
+          renderDiffFiles(body, parseUnifiedDiffFiles(r.text));
+          if (r.truncated) {
+            const t = document.createElement("div");
+            t.className = "rev-commit-note";
+            t.textContent = "(diff truncated)";
+            body.append(t);
+          }
+        } catch {
+          note.remove();
+        }
+      };
+      if (expanded) {
+        loadDiff();
+      }
+      const toggle = () => {
+        const open = reviewExpanded.has(key);
+        if (open) {
+          reviewExpanded.delete(key);
+        } else {
+          reviewExpanded.add(key);
+          loadDiff();
+        }
+        body.hidden = open;
+        el.classList.toggle("rev-open", !open);
+      };
+      line.addEventListener("click", toggle);
+      line.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          toggle();
+        }
+      });
+      el.append(body);
       frag.append(el);
     }
   }

@@ -6389,6 +6389,11 @@ button.primary {
   margin: 26px 0 10px;
 }
 .rev-group-hint { text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--text-faint); margin-left: 8px; }
+/* "Reviewed all" on an unbound-commits group header: reset the h3's uppercase/spacing. */
+.rev-group-action { text-transform: none; letter-spacing: 0; font-weight: 500; font-size: 12px; margin-left: 12px; }
+/* An unbound commit's inline diff body: bounded so a large commit doesn't blow up the page. */
+.unbound-commit .rev-body { max-height: 520px; overflow: auto; margin-top: 10px; }
+.rev-commit-note { color: var(--text-faint); font-size: 12px; padding: 6px 2px; }
 .rev-item {
   background: var(--bg-card);
   border: 1px solid var(--border);

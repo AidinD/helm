@@ -126,6 +126,37 @@ try {
   ok(rendered.hasSubject, "with the unbound commit's subject");
   ok(rendered.hasNoTaskChip, "and a 'no task' chip on the row");
 
+  // The row is EXPANDABLE and its body shows the commit's diff inline (the "ingen body" fix):
+  // c2 added b.txt, so its diff must name it and render the side-by-side file block. Also the
+  // group header offers a "Reviewed all" button (2 unbound commits: Initial + Genuinely).
+  const expanded = await app.eval(`(async () => {
+    navigateToPage("review");
+    await new Promise((r) => setTimeout(r, 200));
+    const rows = [...document.querySelectorAll(".unbound-commit")];
+    const row = rows.find((el) => /Genuinely unbound work/.test(el.textContent));
+    if (!row) { return { found: false }; }
+    row.querySelector(".rev-head").click();
+    let bodyText = "";
+    let hasBlock = false;
+    for (let i = 0; i < 60; i++) {
+      const body = row.querySelector(".rev-body");
+      bodyText = body ? body.textContent : "";
+      hasBlock = !!row.querySelector(".rev-body .diff-file-block");
+      if (/b\\.txt/.test(bodyText) && hasBlock) { break; }
+      await new Promise((r) => setTimeout(r, 80));
+    }
+    return {
+      found: true,
+      notHidden: !row.querySelector(".rev-body").hidden,
+      bodyHasDiff: /b\\.txt/.test(bodyText),
+      hasBlock,
+      hasReviewedAll: [...document.querySelectorAll(".rev-group-action")].some((b) => /Reviewed all/.test(b.textContent)),
+    };
+  })()`);
+  ok(expanded.found && expanded.notHidden, "clicking an unbound-commit row expands its body");
+  ok(expanded.bodyHasDiff && expanded.hasBlock, `the body shows the commit's diff inline, side-by-side (b.txt block: ${expanded.hasBlock})`);
+  ok(expanded.hasReviewedAll, "the group header offers a 'Reviewed all' button");
+
   // Acknowledge the unbound commit: it advances the watermark past it, so it drops off.
   const ackRes = await app.eval(`window.helm.acknowledgeCommit(${JSON.stringify(scratch)}, ${JSON.stringify(c2)})`);
   ok(ackRes?.ok === true, `acknowledgeCommit succeeded (${JSON.stringify(ackRes?.error || "")})`);
