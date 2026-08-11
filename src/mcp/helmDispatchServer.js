@@ -158,6 +158,12 @@ const TOOLS = [
     inputSchema: { type: "object", properties: {} },
   },
   {
+    name: "helm_resume_crew",
+    description:
+      "SECOND MATES ONLY: resume YOUR OWN crew's resumable runs (autopilot runs YOU dispatched that stopped on a quota/token limit or paused/escalated), picking up where each left off in its kept worktree. Use this when your autopilots ran out of tokens and you want to continue them once the limit resets - you own those runs, so you can resume them yourself without going up to a first mate. Each run resumes only if the budget/kill switch/concurrency cap allow it. Returns how many were resumed.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
     name: "helm_report_up",
     description:
       "SECOND MATES ONLY: roll up your project's outcome and report it UP to your first mate (who aggregates across projects for the captain). Call this once your assignment is done or needs to pause - after you've validated your crew's work. Give a compact synthesis, not a transcript. This is how the chain closes: first-mate <- you <- crew.",
@@ -385,6 +391,29 @@ async function toolResumeFleet() {
   return { ok: true, resumed: ack.resumed || 0, total: ack.total || 0 };
 }
 
+// Second mate resumes ITS OWN crew's resumable runs (quota-stopped / escalated).
+// The narrower twin of helm_resume_fleet: a first mate cascades across its whole
+// tree, a second mate owns only the runs it dispatched. The app scopes the resume
+// to dispatchedBy === this second mate's id and gates each run individually.
+async function toolResumeCrew() {
+  if (CALLER_TIER !== "second-mate") {
+    return { error: "Only a second mate resumes its own crew (a first mate uses helm_resume_fleet)." };
+  }
+  if (!META_HOME) {
+    return { error: "HELM_META_HOME not configured; cannot reach the dispatch queue." };
+  }
+  ensureDispatchDirs(META_HOME);
+  const dispatchId = writeRequest(META_HOME, { kind: "resume-crew", dispatchedBy: MATE_ID, callerTier: CALLER_TIER });
+  const ack = await waitForAck(dispatchId);
+  if (!ack) {
+    return { status: "pending", note: "Resume queued; the app has not acknowledged it yet." };
+  }
+  if (ack.status === "rejected") {
+    return { status: "rejected", reason: ack.reason || "rejected by Helm" };
+  }
+  return { ok: true, resumed: ack.resumed || 0, total: ack.total || 0 };
+}
+
 function callTool(name, args) {
   switch (name) {
     case "helm_dispatch":
@@ -395,6 +424,8 @@ function callTool(name, args) {
       return toolRelay(args || {});
     case "helm_resume_fleet":
       return toolResumeFleet();
+    case "helm_resume_crew":
+      return toolResumeCrew();
     case "helm_collect_reports":
       return toolCollectReports(args || {});
     case "helm_list_projects":

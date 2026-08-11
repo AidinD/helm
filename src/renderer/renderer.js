@@ -13979,6 +13979,23 @@ function goalRunDetailEl(run) {
     resumeRow.append(goalResumeButton(run.goalRunId));
     progress.append(resumeRow);
   }
+  // A run that ran OUT OF TOKENS (or hit a rate limit) finishes as "done" +
+  // resumable, not "interrupted" - it kept its worktree and can be picked up once
+  // the limit resets. Give it the same one-click Resume the interrupted case has,
+  // so the user doesn't have to reach for the fleet-wide "fortsätt" from a first
+  // mate (task b67107c8: "Autopilots fortsätt-knapp om något blir fel"). Escalated
+  // (paused) runs get their Resume from the escalation card below, so exclude them
+  // here to avoid showing two.
+  if (run.status !== "interrupted" && run.result?.resumable && !run.escalation) {
+    const resumeRow = document.createElement("div");
+    resumeRow.className = "goal-summary-actions goal-resumable-actions";
+    const why = document.createElement("div");
+    why.className = "goal-status-line goal-fresh-context-note";
+    why.textContent =
+      "This run stopped on a token/quota limit. Resume to continue in its kept worktree once your limit resets.";
+    resumeRow.append(goalResumeButton(run.goalRunId), why);
+    progress.append(resumeRow);
+  }
 
   // Fresh-context honesty label: each iteration is a separate `claude -p` with
   // no accumulated context - continuity between iterations is carried only via
