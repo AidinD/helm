@@ -5,7 +5,18 @@ context flow, and (later) orchestration — without removing any Claude feature.
 Built by wrapping the real `claude` binary headlessly (stream-json), so all
 skills, CLAUDE.md, settings, permissions, and MCP are preserved.
 
-## Current status (2026-08-05)
+## Current status (2026-08-10)
+
+Phase 2 (tiered orchestration) is built and in real daily use; the review pipe and the dashboard are the active surfaces, both mid-hardening. Version 0.2.0 (a milestone marker, not a stability claim - see DECISIONS.md 2026-08-10).
+
+What landed 2026-08-09/10 (see DECISIONS.md for the reasoning behind each):
+- **The classic dashboard is gone.** Widgets are now the only dashboard layout - the "Classic layout" / "Widget layout" toggle no longer exists, and ~460 lines of classic-only rendering code were deleted after a behaviour-then-deletion two-step.
+- **Review-pipe hardening continued:** a "shipped in vX" chip resolves the earliest release tag containing a task's commits (order-independent, only positive results cached so a mid-session release shows up without an app restart); review rooting now trusts Jot's explicit `Category.repoPath` so non-helm projects' reviews actually surface instead of relying on a fuzzy guess; a transcript-duplication bug (tool-heavy turns rendering twice) is fixed by making a completed turn's file-reload authoritative; review now also surfaces unbound commits per project (not just Jot-tracked tasks), with inline diff bodies and a per-project "Reviewed all".
+- **Crew iterations now strip MCP** the same way first-mate sessions already did, closing a gap where crew could see/pay for unrelated global MCP servers.
+- **Full-suite E2E fallout fixed at the root**, not muted: FSM-blind status filters, stale cwd-based orchestrator-detection tests, and an ungated live test were each real latent bugs, not artifacts of the classic-dashboard removal that surfaced them.
+- See `docs/review-pipe-status.md` for the review pipe's current standing in detail - it should be re-checked against the three review changes above, since PLAN.md and DECISIONS.md don't duplicate that doc's day-to-day accuracy.
+
+### (superseded) Prior status (2026-08-05)
 
 Phase 2 (tiered orchestration) is built and in real daily use; the review pipe and chat rendering are the active surfaces, both mid-hardening. Installer past 0.1.586.
 
