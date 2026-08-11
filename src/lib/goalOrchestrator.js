@@ -680,7 +680,11 @@ function runIteration({ worktreePath, goal, notesContent, planContent, repoMapCo
         // two auto runs on 2026-08-11). See isResumableQuotaError + runGoal.
         finish({
           ok: false,
-          error: `Could not parse iteration output as JSON (exit code ${code}). stdout: ${truncate(out, 500)} | stderr: ${truncate(stderrText, 500)}`,
+          // TAIL of stdout, not head: a usage-limit banner is printed AFTER any
+          // partial output the turn already produced, so slicing the first 500
+          // chars could miss it (independent review, 2026-08-12) - the very
+          // false-negative this surfacing exists to prevent.
+          error: `Could not parse iteration output as JSON (exit code ${code}). stdout(tail): ${out.length > 500 ? "…" + out.slice(-500) : out} | stderr: ${truncate(stderrText, 500)}`,
         });
         return;
       }
@@ -730,7 +734,15 @@ function runIteration({ worktreePath, goal, notesContent, planContent, repoMapCo
  * subscription usage-limit phrasing ("usage limit reached", "resets at …").
  */
 export function isResumableQuotaError(errorText) {
-  return /rate.?limit|quota|usage limit|limit reached|resets? (at|in)|claude ai usage|too many requests|overloaded|insufficient|credit balance|\b429\b|\b529\b/i.test(
+  // Since runIteration now surfaces the SDK's OWN error text and a stdout tail
+  // (arbitrary tool/model output), this classifier is the sole gate deciding
+  // quota-vs-real-failure for every execution error - so the terms must be
+  // SPECIFIC. Bare English words like "insufficient" or "limit reached" would
+  // mislabel a genuine failure ("insufficient permissions", "recursion limit
+  // reached") as a resumable quota stop, which would keep a broken run's worktree
+  // and let it auto-resume in a loop (independent review, 2026-08-12). Each term
+  // below is anchored to real rate-limit / subscription-limit phrasing.
+  return /rate.?limit|\bquota\b|usage limit|\d+-hour limit|resets? (at|in)|claude ai usage|too many requests|overloaded|insufficient (quota|credit|balance|funds|tokens)|credit balance|\b429\b|\b529\b/i.test(
     String(errorText || "")
   );
 }
