@@ -1,5 +1,7 @@
-// Unit test: parseLiveSubAgents detects in-flight Task sub-agents (tool_use with
-// no matching tool_result) from a transcript.
+// Unit test: parseLiveSubAgents detects in-flight sub-agents (tool_use with no
+// matching tool_result) from a transcript. Covers both tool names: "Agent" is
+// the current CLI name; "Task" was the old one and stayed unmatched in the
+// wild for a while after the rename, which is exactly the bug this guards.
 //
 // Run:  node scripts/e2e/test-sub-agents.mjs
 import { parseLiveSubAgents } from "../../src/lib/subAgents.js";
@@ -40,6 +42,15 @@ const allDone = [
 ].join("\n");
 assert(parseLiveSubAgents(allDone).length === 0, "all-completed -> no live sub-agents");
 assert(parseLiveSubAgents("").length === 0 && parseLiveSubAgents("garbage\n{bad").length === 0, "empty/garbage transcript -> [] (tolerant)");
+
+// The current CLI tool name ("Agent"), not the old "Task" - a real skiff
+// transcript logs its Agent-tool dispatch this way, and a scan that only
+// matched "Task" found it invisible (the bug this test was added to catch).
+const agentNamed = [
+  line({ type: "assistant", message: { content: [{ type: "tool_use", id: "a1", name: "Agent", input: { description: "Review test coverage", subagent_type: "Explore" } }] } }),
+].join("\n");
+const agentLive = parseLiveSubAgents(agentNamed);
+assert(agentLive.length === 1 && agentLive[0].id === "a1", "an 'Agent'-named tool_use (current CLI name) is detected as a live sub-agent");
 
 log(exitCode === 0 ? "VERIFY OK: live sub-agent detection from transcript." : "VERIFY FAILED.");
 process.exit(exitCode);
