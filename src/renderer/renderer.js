@@ -1058,7 +1058,9 @@ async function openIndependentReview(row, priorVerdict = null) {
     showNotice(`"${row.title}" has no project folder on its record, so there is nowhere to root a reviewer. Add projectPath to the record.`);
     return;
   }
-  const plan = await window.helm.getReviewerPlan(row.taskId);
+  // The task's own prose goes with the request: main decides from it which language
+  // the verdict must be written in (task 7bd1e2df), and only the row has it.
+  const plan = await window.helm.getReviewerPlan(row.taskId, `${row.title || ""}\n${row.description || ""}`);
   if (!plan?.ok) {
     showNotice(`Could not work out what to send at "${row.title}": ${plan?.error || "unknown reason"}`);
     return;
@@ -1137,6 +1139,90 @@ async function openIndependentReview(row, priorVerdict = null) {
   );
 }
 
+/**
+ * Send an independent reviewer at a COMMIT with no Jot task (task cb249577).
+ *
+ * Same shape as openIndependentReview - recommended model/effort, shown with its
+ * reasoning, confirmed before a token is spent - but built from the commit's own size
+ * rather than from a record, because there isn't one. Kept as its own function rather
+ * than a mode flag on the task version: the two briefs genuinely differ (one tests
+ * declared claims, the other has none to test), and a flag would have made every line
+ * of both read as conditional.
+ */
+async function openCommitIndependentReview(projectPath, commitRow) {
+  const plan = await window.helm.getCommitReviewerPlan(projectPath, commitRow.sha);
+  if (!plan?.ok) {
+    showNotice(`Could not work out what to send at ${commitRow.shortSha}: ${plan?.error || "unknown reason"}`);
+    return;
+  }
+  const rc = plan.recommendation;
+  const extra = document.createElement("div");
+  extra.className = "reviewer-pick";
+  const why = document.createElement("div");
+  why.className = "reviewer-why";
+  why.textContent = rc.why;
+  const facts = document.createElement("div");
+  facts.className = "suggest-hint";
+  facts.textContent = `${plan.stats.files} file(s), +${plan.stats.added}/-${plan.stats.removed} lines. No record exists, so the recommendation is based on the change's size alone - and the reviewer is asked to set the criticality itself.`;
+  extra.append(why, facts);
+
+  const modelRow = document.createElement("label");
+  modelRow.className = "reviewer-field";
+  modelRow.append(document.createTextNode("Model"));
+  const modelSel = document.createElement("select");
+  for (const m of plan.models) {
+    const opt = document.createElement("option");
+    opt.value = m.value;
+    opt.textContent = m.value === rc.model ? `${m.label} (recommended)` : m.label;
+    modelSel.append(opt);
+  }
+  modelSel.value = rc.model;
+  modelRow.append(modelSel);
+
+  const effortRow = document.createElement("label");
+  effortRow.className = "reviewer-field";
+  effortRow.append(document.createTextNode("Effort"));
+  const effortSel = document.createElement("select");
+  for (const e of ["low", "medium", "high"]) {
+    const opt = document.createElement("option");
+    opt.value = e;
+    opt.textContent = e === rc.effort ? `${e} (recommended)` : e;
+    effortSel.append(opt);
+  }
+  effortSel.value = rc.effort;
+  effortRow.append(effortSel);
+  extra.append(modelRow, effortRow);
+
+  customConfirm(
+    `Send an independent reviewer at commit ${commitRow.shortSha} ("${commitRow.subject}")?\n\nIt starts a real session and sends the brief immediately, so this spends tokens.`,
+    "Send it",
+    async () => {
+      const model = modelSel.value;
+      const effort = effortSel.value;
+      const res = await window.helm.startSession({
+        cwd: projectPath,
+        prompt: commitReviewBrief(plan.commit, plan.notePath, plan.writingBrief || []),
+        model,
+        effort,
+        // Exactly the one file the brief tells it to write, for the same reason the
+        // task-keyed dispatch pre-approves its own: the verdict lands outside the
+        // project, and a headless launch has nobody to answer a permission prompt.
+        allowedTools: [`Write(${plan.notePath})`],
+      });
+      if (!res?.ok) {
+        showNotice(`The reviewer did not start: ${res?.error || "unknown error"}`);
+        return;
+      }
+      window.helm.trackUsage({ type: "action", action: "review_independent_dispatched", taskId: commitRow.sha, model, effort });
+      showNotice(
+        `An independent reviewer is running on ${reviewerModelLabelInRenderer(model)} (${effort} effort) for ${commitRow.shortSha}. Reopen this row to read its verdict.`,
+        { actions: [{ label: "Watch it", onClick: () => navigateToPage("chat") }] }
+      );
+    },
+    { extraEl: extra }
+  );
+}
+
 /** Label for a model id, mirroring src/lib/reviewerModel.js for the renderer's own use. */
 function reviewerModelLabelInRenderer(value) {
   return (
@@ -1154,7 +1240,7 @@ function reviewerModelLabelInRenderer(value) {
  * an independent pass that is not told what is being claimed just re-reads the code and
  * agrees with it.
  */
-function independentReviewBrief(row, rec, notePath, priorVerdict = null) {
+function independentReviewBrief(row, rec, notePath, priorVerdict = null, writingBrief = []) {
   const short = row.taskId.slice(0, 8);
   const lines = [
     `You are an INDEPENDENT reviewer. You did not write this work, and your job is not to agree with it.`,
@@ -1203,6 +1289,14 @@ function independentReviewBrief(row, rec, notePath, priorVerdict = null) {
           ``,
         ]
       : []),
+    // Language and register, placed HERE rather than at the top: this is the point
+    // where the model turns findings into prose, and instructions given a page earlier
+    // are the ones it has already stopped applying (task 7bd1e2df). The lines come
+    // from the plan because deciding them needs src/lib/reviewLanguage.js, which this
+    // classic script cannot import - main computes them from the sample sent with the
+    // plan request.
+    ...(writingBrief || []),
+    ``,
     `WRITE YOUR VERDICT TO A FILE, as your last action, so it reaches the review page and not`,
     `only this chat:`,
     ``,
@@ -1215,6 +1309,51 @@ function independentReviewBrief(row, rec, notePath, priorVerdict = null) {
     `Do not change anything else. This is a review.`,
   ];
   return lines.join("\n");
+}
+
+/**
+ * The brief for an independent reviewer sent at a COMMIT with no Jot task.
+ *
+ * Deliberately not the task brief with the record parts blanked out: half that brief
+ * is "confirm or refute the author's claims one by one", and there are no claims here
+ * - nobody wrote a record. What replaces them is the commit message, which is the
+ * only statement of intent that exists, and an explicit instruction to judge the
+ * change against it rather than against an imagined spec.
+ */
+function commitReviewBrief(commit, notePath, writingBrief = []) {
+  return [
+    `You are an INDEPENDENT reviewer. You did not write this work, and your job is not to agree with it.`,
+    ``,
+    `Commit ${commit.shortSha} in this repository: ${commit.subject}`,
+    `By ${commit.author || "unknown"}${commit.date ? ` on ${commit.date}` : ""}.`,
+    ``,
+    `There is NO review record for this commit - it is not tied to any task, so nobody`,
+    `wrote down what it was meant to do, what was checked, or what was left unverified.`,
+    `The commit message below is the only stated intent that exists:`,
+    ``,
+    commit.body?.trim() ? commit.body.trim() : "(the commit message has no body - only the subject line above)",
+    ``,
+    `Start with: git show ${commit.shortSha}`,
+    `Then, in order:`,
+    `1. Say what this change actually does, in your own words, and whether that matches`,
+    `   the message. A message that describes something other than the diff is itself a finding.`,
+    `2. Decide how critical it is yourself - security, data, money or anything irreversible`,
+    `   is the top tier - and say which, since nobody has classified it.`,
+    `3. Name which commands would catch a regression here, and run the ones that exist.`,
+    `4. Report: what is wrong, what is unproven, and what you ran to find out. Cite file:line.`,
+    ``,
+    ...(writingBrief || []),
+    ``,
+    `WRITE YOUR VERDICT TO A FILE, as your last action, so it reaches the review page and not`,
+    `only this chat:`,
+    ``,
+    `  ${notePath}`,
+    ``,
+    `Plain text or light markdown. Start with one line that is either CONFIRMED or NOT`,
+    `CONFIRMED and why, then the findings, then what you ran. Overwrite the file if it exists.`,
+    ``,
+    `Do not change anything else. This is a review.`,
+  ].join("\n");
 }
 
 /**
@@ -1237,7 +1376,7 @@ function independentReviewBrief(row, rec, notePath, priorVerdict = null) {
 function independentReviewSessionArgs(row, rec, plan, model, effort, priorVerdict = null) {
   return {
     cwd: rec.projectPath,
-    prompt: independentReviewBrief(row, rec, plan.notePath, priorVerdict),
+    prompt: independentReviewBrief(row, rec, plan.notePath, priorVerdict, plan.writingBrief || []),
     model,
     effort,
     allowedTools: [`Write(${plan.notePath})`],
@@ -2068,6 +2207,34 @@ function reviewActionsEl(row) {
     });
     actions.append(diffBtn);
 
+    // The whole card, as a full-width page in the OS browser. It used to render only
+    // the diff, which was the wrong half (the captain, task ccbf82e2: "Jag vill inte
+    // presentera diffen i en html likt summary page - jag vill presentera hela
+    // reviewn så den blir mer lättläst"): the diff already has a viewer, and the part
+    // that is cramped in this panel is everything above it - warnings, evidence,
+    // gaps, checks, steps, the independent verdict. The page carries all of that, with
+    // the diff as its last section.
+    const presentBtn = document.createElement("button");
+    presentBtn.type = "button";
+    presentBtn.className = "text-btn";
+    presentBtn.textContent = "Present review";
+    presentBtn.title = "Opens the whole review - evidence, gaps, checks, steps, the verdict, and the diff - as one readable page in your browser.";
+    presentBtn.addEventListener("click", async () => {
+      presentBtn.disabled = true;
+      const was = presentBtn.textContent;
+      presentBtn.textContent = "Rendering…";
+      try {
+        const res = await window.helm.presentReview(row.taskId);
+        if (!res?.ok) {
+          showNotice(`Couldn't present the review for "${row.title}": ${res?.error || "unknown reason"}`);
+        }
+      } finally {
+        presentBtn.disabled = false;
+        presentBtn.textContent = was;
+      }
+    });
+    actions.append(presentBtn);
+
     const reviewBtn = document.createElement("button");
     reviewBtn.type = "button";
     reviewBtn.className = "text-btn";
@@ -2637,21 +2804,122 @@ async function renderReviewPage() {
       line.append(ackBtn);
       el.append(line);
 
-      // The body a commit row was missing (task feedback: "ingen body på reviews"): click the
-      // row to expand its own diff inline, rendered side-by-side with the SAME renderer a
-      // task's "See the diff" uses. Lazily loaded on first open so a screen of collapsed rows
-      // costs no git.
+      // The body a commit row was missing. It used to be the diff and NOTHING else, which
+      // is why these rows read as second-class next to a task's card (the captain, task cb249577:
+      // "Varför får inte reviews i Commits without a task t.ex samma body som andra med
+      // tasks?"). The answer is that a task's body comes from a review record and a commit
+      // has none - so the honest version is not to fabricate one, but to say that plainly
+      // and then show everything that IS knowable: who wrote it and when, the FULL commit
+      // message (usually where the author did explain themselves, and previously never
+      // displayed at all), the size of the change, an independent reviewer's verdict if one
+      // has been written, and the same actions a task row offers. Lazily loaded on first
+      // open so a screen of collapsed rows costs no git.
       const body = document.createElement("div");
       body.className = "rev-body";
       const expanded = reviewExpanded.has(key);
       el.classList.toggle("rev-open", expanded);
       body.hidden = !expanded;
       let loaded = false;
-      const loadDiff = async () => {
+      const loadBody = async () => {
         if (loaded) {
           return;
         }
         loaded = true;
+
+        // The absence, stated first - the same thing an unrecorded task row says, and for
+        // the same reason: a card that opens straight into content reads as reviewed.
+        const warn = document.createElement("div");
+        warn.className = "rev-warn";
+        warn.textContent =
+          "No Jot task, so no review record: nobody wrote down what this was meant to do, what was checked, or what was left unverified. Everything below is read straight out of git - treat it as unreviewed.";
+        body.append(warn);
+
+        const factsBox = document.createElement("div");
+        factsBox.className = "rev-chips";
+        body.append(factsBox);
+
+        // The commit's own prose and facts.
+        let detail = null;
+        try {
+          const d = await window.helm.getCommitDetail(group.projectPath, c.sha);
+          if (d?.ok) {
+            detail = d.commit;
+            if (detail.author) {
+              factsBox.append(reviewChip(detail.author, "neutral"));
+            }
+            if (detail.date) {
+              factsBox.append(reviewChip(detail.date, "neutral"));
+            }
+            if (detail.shortstat) {
+              factsBox.append(reviewChip(detail.shortstat, "neutral"));
+            }
+            if (detail.body) {
+              const msg = document.createElement("p");
+              msg.className = "rev-summary";
+              msg.textContent = detail.body;
+              body.append(msg);
+            }
+          }
+        } catch {
+          // A row that cannot read its commit's metadata still shows the diff below.
+        }
+
+        // A verdict, if an independent reviewer has already been sent at this commit. Keyed
+        // by the full sha, which is why getIndependentNote - written for task ids - works
+        // unchanged here.
+        try {
+          const noteRes = await window.helm.getIndependentNote(c.sha);
+          if (noteRes?.ok && noteRes.present) {
+            const box = document.createElement("div");
+            box.className = "rev-list rev-list-independent";
+            const lab = document.createElement("div");
+            lab.className = "rev-list-label";
+            lab.textContent = `Independent reviewer · written ${new Date(noteRes.writtenAt).toLocaleString()}`;
+            lab.title = noteRes.path;
+            const text = document.createElement("div");
+            text.className = "rev-independent-note";
+            renderMarkdownInto(text, noteRes.text.trim());
+            box.append(lab, text);
+            body.append(box);
+          }
+        } catch {
+          // no verdict is the ordinary case
+        }
+
+        // The same two things a task row offers before a decision: read it properly, or
+        // have somebody else read it.
+        const actions = document.createElement("div");
+        actions.className = "rev-actions";
+        const presentBtn = document.createElement("button");
+        presentBtn.type = "button";
+        presentBtn.className = "text-btn";
+        presentBtn.textContent = "Present review";
+        presentBtn.title = "Opens this commit - its message, its size, any verdict, and the diff - as one readable page in your browser.";
+        presentBtn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          presentBtn.disabled = true;
+          try {
+            const r = await window.helm.presentCommitReview(group.projectPath, c.sha);
+            if (!r?.ok) {
+              showNotice(`Couldn't present ${c.shortSha}: ${r?.error || "unknown reason"}`);
+            }
+          } finally {
+            presentBtn.disabled = false;
+          }
+        });
+        actions.append(presentBtn);
+        const revBtn = document.createElement("button");
+        revBtn.type = "button";
+        revBtn.className = "text-btn";
+        revBtn.textContent = "Independent reviewer";
+        revBtn.title = "Sends a fresh session at this commit with a review brief. It starts immediately, so this spends tokens.";
+        revBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          openCommitIndependentReview(group.projectPath, c);
+        });
+        actions.append(revBtn);
+        body.append(actions);
+
         const note = document.createElement("div");
         note.className = "rev-commit-note";
         note.textContent = "Loading the diff…";
@@ -2678,7 +2946,7 @@ async function renderReviewPage() {
         }
       };
       if (expanded) {
-        loadDiff();
+        loadBody();
       }
       const toggle = () => {
         const open = reviewExpanded.has(key);
@@ -2686,7 +2954,7 @@ async function renderReviewPage() {
           reviewExpanded.delete(key);
         } else {
           reviewExpanded.add(key);
-          loadDiff();
+          loadBody();
         }
         body.hidden = open;
         el.classList.toggle("rev-open", !open);

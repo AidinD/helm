@@ -98,14 +98,25 @@ contextBridge.exposeInMainWorld("helm", {
   runReviewChecks: (taskId) => ipcRenderer.invoke("reviews:runChecks", { taskId }),
   // The change behind a review item: its commits' patch, read-only.
   getReviewDiff: (taskId) => ipcRenderer.invoke("reviews:diff", { taskId }),
+  // Renders the WHOLE review as a standalone HTML page and opens it in the OS browser.
+  presentReview: (taskId) => ipcRenderer.invoke("reviews:presentReview", { taskId }),
+  // The same page for a commit with no Jot task - git's facts, and a plain statement
+  // that no record exists.
+  presentCommitReview: (projectPath, sha) => ipcRenderer.invoke("reviews:presentCommit", { projectPath, sha }),
   // The released app version a fix is out in (null if not yet in a tagged release).
   getShippedVersion: (taskId) => ipcRenderer.invoke("reviews:shippedVersion", { taskId }),
   // Commit-centric review (work with no Jot task): a single commit's patch, and
   // acknowledging a commit (advances the project's review watermark past it).
   getCommitDiff: (projectPath, sha) => ipcRenderer.invoke("reviews:commitDiff", { projectPath, sha }),
   acknowledgeCommit: (projectPath, sha) => ipcRenderer.invoke("reviews:acknowledgeCommit", { projectPath, sha }),
+  // Author, date, the full commit message and the change's size - the body a commit
+  // row has instead of a review record.
+  getCommitDetail: (projectPath, sha) => ipcRenderer.invoke("reviews:commitDetail", { projectPath, sha }),
   // What an independent reviewer would be sent in on, recommended from the change.
-  getReviewerPlan: (taskId) => ipcRenderer.invoke("reviews:reviewerPlan", { taskId }),
+  // `sample` is the task's own prose - main reads the review's language off it.
+  getReviewerPlan: (taskId, sample) => ipcRenderer.invoke("reviews:reviewerPlan", { taskId, sample }),
+  // The same, for a commit with no task (no record to start from, so size only).
+  getCommitReviewerPlan: (projectPath, sha) => ipcRenderer.invoke("reviews:commitReviewerPlan", { projectPath, sha }),
   // The reviewer's own verdict, once it has written one.
   getIndependentNote: (taskId) => ipcRenderer.invoke("reviews:independentNote", { taskId }),
   onReviewsChanged: (cb) => {
