@@ -273,6 +273,27 @@ try {
   ok(fp.added !== fp.changed, "so does a status change on an existing one");
   ok(fp.before === fp.restored, "and an unchanged board fingerprints identically, so idle ticks do nothing");
 
+  // ...and it must MOVE when a live goal run gains an iteration, even though its
+  // status stays "running". Otherwise the crew row's `iter N` label sits frozen
+  // until an unrelated repaint (the captain, 2026-08-11: "den här renderas inte om
+  // förän jag byter vy och tillbaka"). goalRuns is a module-level Map, so save it,
+  // seed a run, mutate, and restore it just like state.sessions above.
+  const fpRuns = await app.eval(`(() => {
+    const saved = new Map(goalRuns);
+    goalRuns.set("probe-run-1", { goalRunId: "probe-run-1", status: "running", iterations: [] });
+    const seeded = widgetDashboardFingerprint();
+    goalRuns.get("probe-run-1").iterations.push({ n: 1 });
+    const iterated = widgetDashboardFingerprint();
+    goalRuns.get("probe-run-1").status = "done";
+    const doneStatus = widgetDashboardFingerprint();
+    goalRuns.clear();
+    for (const [k, v] of saved) goalRuns.set(k, v);
+    const restored = widgetDashboardFingerprint();
+    return { seeded, iterated, doneStatus, restored };
+  })()`);
+  ok(fpRuns.seeded !== fpRuns.iterated, "a new iteration on a still-running run changes the fingerprint - the iter N repaint bug");
+  ok(fpRuns.iterated !== fpRuns.doneStatus, "and a status change on the run still moves it too (regression guard)");
+
   // --- 5. AND THE AUTO WIDGET HAS TO SHOW THE RUN --------------------------
   // the captain, 2026-08-03, after the liveness fixes above shipped: "ramen fungerar
   // men den hamnar fortfarande inte i auto captenens widget". The dashboard was
