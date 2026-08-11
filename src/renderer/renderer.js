@@ -5087,7 +5087,7 @@ function setPaneBusyUIRaw(index, statusText) {
 
 // paneIndex is always 0 since split view was removed; the 3rd param is a vestige
 // of the old forceSplit and is ignored.
-function openSessionInPane(session, paneIndex, _ignored) {
+function openSessionInPane(session, paneIndex, { secondMateId: secondMateIdOverride } = {}) {
   focusedPaneIndex = paneIndex;
   selectedSessionId = session.sessionId;
   // Re-opening the session ALREADY showing in this exact pane (e.g. navigating
@@ -5117,7 +5117,12 @@ function openSessionInPane(session, paneIndex, _ignored) {
       // Jones to make second mates, they showed up under LeChuck" (bug 2a5e6196).
       // The fresh-draft path already set mateId; this fixes the resume path.
       mateId: fm ? fm.mateId : undefined,
-      secondMateId: sm ? sm.secondMateId : undefined,
+      // Prefer the resolved binding, but fall back to an explicit override from the caller.
+      // A DIRECT/derived second mate's session was never bound, so secondMateForSession
+      // returns null for it - without the override, resuming it here dropped the second-mate
+      // id and the turn launched as a PLAIN session (no helm_dispatch, no delegate manual),
+      // so it did every task itself instead of dispatching autopilots (jumpIntoSecondMate).
+      secondMateId: fm ? undefined : sm ? sm.secondMateId : secondMateIdOverride,
       loading: true,
       // If a turn is currently running for this session, reopen it as busy so it
       // shows "working" (stop icon + status), not a hung-looking idle. Live
@@ -10836,7 +10841,16 @@ function jumpIntoSecondMate(sm) {
   const bound = sm.sessionId ? state.sessions.find((s) => (s.cliSessionId || s.sessionId) === sm.sessionId) : null;
   const existing = bound || mostRecentSessionForCwd(sm.projectPath);
   if (existing) {
-    openSessionInPane(existing, 0);
+    // Thread the second-mate id through the RESUME path too. A direct/derived second mate's
+    // session was never bound, so openSessionInPane can't recover its id on its own - without
+    // this it resumed as a PLAIN session (no helm_dispatch, no delegate manual) and did every
+    // task itself instead of dispatching autopilots. Bind it now so future resolves (and a
+    // later pane rebuild) recognise the session as this second mate.
+    const resumeId = existing.cliSessionId || existing.sessionId;
+    if (sm.secondMateId && resumeId) {
+      window.helm.bindSecondMateSession(sm.secondMateId, resumeId);
+    }
+    openSessionInPane(existing, 0, { secondMateId: sm.secondMateId });
   } else {
     openFreshDraftInPane(sm.projectPath, pendingSecondMateReviewNudge(sm), {
       forceIndex: 0,
