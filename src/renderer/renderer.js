@@ -27,6 +27,14 @@ let secondMateBySessionId = new Map();
 // navigating away and reopening. Lets a reopened pane show "working" for a live
 // turn instead of a hung-looking idle (bug a39286b7).
 let runningSessions = new Set();
+// cliSessionId -> queued follow-up prompt text, tracked independently of any
+// pane for the exact same reason as runningSessions: the queue's whole point
+// (see paneComposerEl) is "step away and it still fires when the current run
+// finishes" - but it lived only on the pane object, which openSessionInPane
+// discards on ANY navigation away and back (bug: Aidin, "message queues
+// verkar inte funka ... försvinner när jag lämnar sessionen" - confirmed by
+// reading the code, not just suspected).
+let queuedPromptBySession = new Map();
 // App-level view history (Dashboard/Analysis/Archive/Chat/...), driven by the
 // mouse side buttons so back/forward navigate across the WHOLE app.
 // navigateToPage pushes here; appNavigateView walks it.
@@ -5117,12 +5125,21 @@ function openSessionInPane(session, paneIndex, _ignored) {
       // (a39286b7). freshPane() defaults busy:false for a session with no live turn.
       busy: runningSessions.has(session.cliSessionId || session.sessionId),
       isOrchestrator: isOrchestratorSession(session),
+      // Restores a prompt queued before navigating away (see queuedPromptBySession) -
+      // the pane object itself was just discarded above, so without this the queue
+      // silently vanished on ANY trip away from the session, not just a slow one.
+      queuedPrompt: queuedPromptBySession.get(session.cliSessionId || session.sessionId) || null,
     };
   }
   renderSinglePane(paneIndex);
   loadTranscriptInto(paneIndex);
   if (panes[paneIndex]?.busy) {
     setPaneBusyUI(paneIndex, "Working…");
+  } else if (panes[paneIndex]?.queuedPrompt) {
+    // The run it was waiting on already finished while this pane was closed -
+    // the live "done" event had nowhere to deliver it (fireQueuedPromptIfAny
+    // needs a live pane), so fire it now instead of leaving it queued forever.
+    fireQueuedPromptIfAny(paneIndex, panes[paneIndex]);
   }
   // Clicking into a session is an intent to write in it — put the cursor in
   // the composer so you can type immediately without a second click (Aidin's
@@ -7581,6 +7598,9 @@ function paneComposerEl(index) {
     cancel.title = "Cancel queued prompt";
     cancel.addEventListener("click", () => {
       pane.queuedPrompt = null;
+      if (pane.cliSessionId) {
+        queuedPromptBySession.delete(pane.cliSessionId);
+      }
       renderQueuedPrompt();
     });
     queuedEl.append(label, cancel);
@@ -8117,6 +8137,9 @@ function paneComposerEl(index) {
       const text = promptEl.value.trim();
       if (text) {
         pane.queuedPrompt = text;
+        if (pane.cliSessionId) {
+          queuedPromptBySession.set(pane.cliSessionId, text);
+        }
         promptEl.value = "";
         renderQueuedPrompt();
       }
@@ -8409,6 +8432,9 @@ function fireQueuedPromptIfAny(index, pane) {
   }
   const queued = pane.queuedPrompt;
   pane.queuedPrompt = null;
+  if (pane.cliSessionId) {
+    queuedPromptBySession.delete(pane.cliSessionId);
+  }
   pane.els.renderQueuedPrompt();
   pane.els.promptEl.value = queued;
   sendFromPane(index, pane.els);
