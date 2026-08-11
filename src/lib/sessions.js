@@ -331,7 +331,7 @@ export function forkTranscriptAtUserMessage(cliSessionId, userMsgIndex) {
     return trimmed !== "" && !trimmed.startsWith("<task-notification>");
   };
   let userIdx = -1;
-  let cutAt = lines.length;
+  let cutAt = -1;
   for (let i = 0; i < lines.length; i++) {
     let obj;
     try {
@@ -346,6 +346,16 @@ export function forkTranscriptAtUserMessage(cliSessionId, userMsgIndex) {
         break;
       }
     }
+  }
+  // The caller counts against the RENDERED turns it has on screen, which can include
+  // a message sent moments ago that this file has not been written to yet (marked
+  // `pending` in the renderer - see wireEditableUserTurns). Forking on a message
+  // that isn't on disk here found no match above (cutAt never set) - silently
+  // "succeeding" with the untouched whole file used to look like rewind quietly did
+  // nothing, rather than the real reason (Jot 19096e2c). Fail loudly instead so it
+  // surfaces as a toast, not a no-op.
+  if (cutAt < 0) {
+    return { ok: false, error: "That message hasn't been written to the transcript yet - try again in a moment." };
   }
   const truncated = lines.slice(0, cutAt);
   const forkId = crypto.randomUUID();
