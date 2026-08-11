@@ -1006,6 +1006,10 @@ export function buildReviewQueue(reviewTasks, records, metaHome = null) {
     return {
       taskId: t.id,
       title: t.title || t.text || "(untitled)",
+      // The task's own prose, carried through so a brief can be written in the language
+      // Aidin actually wrote the task in (task 7bd1e2df). Title alone is often too short
+      // a sample to tell Swedish from English.
+      description: t.description || null,
       category: t.category || null,
       priority: typeof t.priority === "number" ? t.priority : null,
       // Subtasks are in the queue now, so a row needs to say what it belongs to.

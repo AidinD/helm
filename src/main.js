@@ -46,6 +46,8 @@ import { buildReviewQueue, listReviewRecords, reviewQueueTally, readReviewRecord
 import { resolveTaskCommits, diffForCommits, shippedVersionForCommits } from "./lib/reviewDiff.js";
 import { listUnboundCommits, initialWatermark, makeIsBound, projectKey } from "./lib/commitReview.js";
 import { recommendReviewer, diffStats, REVIEWER_MODELS } from "./lib/reviewerModel.js";
+import { buildReviewHtml, buildCommitReviewHtml } from "./lib/reviewHtml.js";
+import { reviewWritingBriefLines } from "./lib/reviewLanguage.js";
 import { listHandoffCategories, writeHandoff, readHandoff, planHandoffFiling, handoffPath } from "./lib/handoffStore.js";
 import { classifySessionStatus, classifyHandoffCategory, expectsUserInputHeuristic, estimateSessionContextTokens, compactSession, getTranscriptSize, triageAutoTask } from "./lib/orchestratorHelper.js";
 import { savePastedImage, prunePastedImages } from "./lib/images.js";
@@ -5951,6 +5953,97 @@ ipcMain.handle("reviews:commitDiff", (_event, { projectPath, sha } = {}) => {
   return diff.ok ? { ok: true, projectPath, sha, text: diff.text, truncated: diff.truncated } : { ok: false, error: diff.error };
 });
 
+/**
+ * Everything git knows about one commit: who, when, the FULL message (not just the
+ * subject the list already shows), and how big the change is.
+ *
+ * This is the body a commit row was missing (Aidin, task cb249577: "Varför får inte
+ * reviews i Commits without a task t.ex samma body som andra med tasks?"). A task's
+ * row gets its body from a review record; a commit has none, and the honest answer is
+ * not to invent one but to show everything that IS knowable and say plainly that
+ * nobody wrote down what to check. The message body in particular is usually where
+ * the author DID explain themselves - it was simply never displayed.
+ */
+function commitDetail(projectPath, sha) {
+  if (!projectPath || !sha) {
+    return { ok: false, error: "Need a project and a commit." };
+  }
+  if (!/^[0-9a-f]{7,40}$/i.test(String(sha).trim())) {
+    return { ok: false, error: "That doesn't look like a commit id." };
+  }
+  const id = String(sha).trim();
+  try {
+    // A unit-separator between fields and a record separator at the end: a commit
+    // message body contains newlines and can contain anything else, so splitting on a
+    // character that cannot appear in git's own output is the only safe parse.
+    const out = execFileSync(
+      "git",
+      ["-C", projectPath, "show", "--no-patch", "--format=%H%x1f%an%x1f%aI%x1f%s%x1f%b%x1e", id],
+      { encoding: "utf8", windowsHide: true, maxBuffer: 8 * 1024 * 1024 }
+    );
+    const [full, author, isoDate, subject, body] = String(out).split("\x1e")[0].split("\x1f");
+    const stat = execFileSync("git", ["-C", projectPath, "show", "--no-patch", "--shortstat", "--format=", id], {
+      encoding: "utf8",
+      windowsHide: true,
+    }).trim();
+    return {
+      ok: true,
+      commit: {
+        sha: full,
+        shortSha: String(full).slice(0, 8),
+        author,
+        date: isoDate ? new Date(isoDate).toLocaleString() : "",
+        subject,
+        body: (body || "").trim(),
+        shortstat: stat,
+      },
+    };
+  } catch (err) {
+    return { ok: false, error: String(err?.stderr || err?.message || err).split(/\r?\n/)[0].slice(0, 200) };
+  }
+}
+
+ipcMain.handle("reviews:commitDetail", (_event, { projectPath, sha } = {}) => commitDetail(projectPath, sha));
+
+/**
+ * What to send an independent reviewer at a commit that has no task.
+ *
+ * The task-keyed reviewerPlan cannot serve this: it starts from a review record, and
+ * the whole point of these rows is that there isn't one. The recommendation therefore
+ * has only the change's own size to go on, and criticality is left unstated rather
+ * than guessed - a fabricated tier on a row whose defining property is that nobody
+ * classified it would be exactly the false confidence this page exists to avoid.
+ */
+ipcMain.handle("reviews:commitReviewerPlan", (_event, { projectPath, sha } = {}) => {
+  const detail = commitDetail(projectPath, sha);
+  if (!detail.ok) {
+    return detail;
+  }
+  const diff = diffForCommits(projectPath, [sha]);
+  const stats = diff.ok ? diffStats(diff.text) : { files: 0, added: 0, removed: 0, changedLines: 0, paths: [] };
+  const recommendation = recommendReviewer({
+    criticality: null,
+    files: stats.files,
+    changedLines: stats.changedLines,
+    commits: 1,
+    paths: stats.paths,
+  });
+  return {
+    ok: true,
+    projectPath,
+    commit: detail.commit,
+    stats: { files: stats.files, added: stats.added, removed: stats.removed, changedLines: stats.changedLines },
+    recommendation,
+    models: REVIEWER_MODELS.map(({ value, label }) => ({ value, label })),
+    // Keyed by the FULL sha, so the verdict lands in the same reviews folder a task's
+    // does and the row can read it back with the existing getIndependentNote.
+    notePath: independentNotePath(resolveMetaHome(), detail.commit.sha),
+    // The commit message is the only prose a commit has, so it is also the only sample
+    // of the language its review should be written in.
+    writingBrief: reviewWritingBriefLines(`${detail.commit.subject}\n${detail.commit.body || ""}`),
+  };
+});
+
 // The CHANGE behind a review item, so reviewing does not mean taking the record's word
 // for what it says was done (task c3dfbb42, "Kunna se diff"). Read-only: it resolves the
 // task's commits (from the record, else by searching the log for the task's short id) and
@@ -5982,6 +6075,93 @@ ipcMain.handle("reviews:diff", (_event, { taskId } = {}) => {
     total: diff.total,
   };
 });
+
+// The WHOLE review, rendered as a standalone HTML page and opened in the OS browser.
+//
+// The first version of this rendered only the diff, which was the wrong artifact
+// (Aidin, task ccbf82e2: "Jag vill inte presentera diffen i en html likt summary page
+// - jag vill presentera hela reviewn så den blir mer lättläst"). The diff was already
+// readable in the in-app viewer; the part that is hard to read on a narrow panel is
+// the card body, so the page is now the record - warnings, evidence, gaps, checks and
+// their real outcomes, the manual steps, the independent verdict - with the diff last.
+//
+// The row is taken from buildReviewsPayload rather than recomputed here so the page
+// and the card cannot disagree: band, caveats, drift and the gauntlet all have exactly
+// one implementation, and a second one written for this page is how the two would
+// drift apart silently. A missing diff is NOT an error any more either - a record with
+// no commits still has a body worth reading, which is precisely the case (a cosmetic
+// stamp with test steps and no commit) the page exists for.
+//
+// Fixed filename per task, overwritten each time - same reasoning as the summary-page
+// skill's fixed path: nothing accumulates in the temp dir.
+ipcMain.handle("reviews:presentReview", (_event, { taskId } = {}) => {
+  const metaHome = resolveMetaHome();
+  const rec = readReviewRecord(metaHome, taskId);
+  const payload = buildReviewsPayload();
+  const row = (payload.rows || []).find((r) => String(r.taskId).toLowerCase() === String(taskId || "").toLowerCase()) || null;
+  if (!rec && !row) {
+    return { ok: false, error: "Nothing on the board or in the records matches that task." };
+  }
+  const projectPath = rec?.projectPath || row?.repoPath || null;
+  const resolved = projectPath
+    ? resolveTaskCommits(projectPath, taskId, rec?.commits || [])
+    : { source: "none", commits: [], error: "No project folder is known for this task." };
+  let diff = { ok: false, text: "", truncated: false };
+  if (resolved.commits.length > 0) {
+    diff = diffForCommits(projectPath, resolved.commits);
+  }
+  const diffText = diff.ok ? diff.text : "";
+  const shipped = resolved.commits.length > 0 ? shippedVersionForCommits(projectPath, resolved.commits) : null;
+  const note = readIndependentNote(metaHome, taskId);
+  const html = buildReviewHtml({
+    row: row || { taskId, title: taskId, verdict: rec?.verdict || null, criticality: rec?.criticality || null, gauntlet: { declared: 0, state: "none", perCheck: [] } },
+    record: rec || {},
+    commits: resolved.commits,
+    commitSource: resolved.source,
+    diffText,
+    stats: diffText ? diffStats(diffText) : null,
+    truncated: diff.truncated === true,
+    independentNote: note.present ? note.text : null,
+    independentNoteAt: note.present ? note.writtenAt : null,
+    release: rec?.release || shipped?.version || null,
+  });
+  return writeAndOpenReviewPage(`helm-review-${String(taskId).slice(0, 8)}.html`, html);
+});
+
+// The same page for a commit with no Jot task (task cb249577: "Varför får inte reviews
+// i Commits without a task t.ex samma body som andra med tasks?"). There is no record
+// to render, so the page says so and shows what git alone knows.
+ipcMain.handle("reviews:presentCommit", (_event, { projectPath, sha } = {}) => {
+  const detail = commitDetail(projectPath, sha);
+  if (!detail.ok) {
+    return detail;
+  }
+  const diff = diffForCommits(projectPath, [sha]);
+  const diffText = diff.ok ? diff.text : "";
+  const note = readIndependentNote(resolveMetaHome(), String(sha).slice(0, 40));
+  const html = buildCommitReviewHtml({
+    commit: detail.commit,
+    projectName: path.basename(projectPath),
+    diffText,
+    stats: diffText ? diffStats(diffText) : null,
+    truncated: diff.truncated === true,
+    independentNote: note.present ? note.text : null,
+    independentNoteAt: note.present ? note.writtenAt : null,
+  });
+  return writeAndOpenReviewPage(`helm-review-commit-${String(sha).slice(0, 8)}.html`, html);
+});
+
+/** Write a rendered review page to the temp dir and hand it to the OS browser. */
+function writeAndOpenReviewPage(name, html) {
+  const file = path.join(os.tmpdir(), name);
+  try {
+    fs.writeFileSync(file, html, "utf8");
+    shell.openPath(file);
+    return { ok: true, file };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
 
 // The released app version a task's fix is out in, shown as a chip on the review record
 // (task 860b4661). Resolved lazily per row rather than in buildReviewsPayload so the
@@ -6044,7 +6224,7 @@ ipcMain.handle("reviews:shippedVersion", (_event, { taskId } = {}) => {
 // (Aidin, 2026-08-05: "en rekommendation baserat på dess komplexitet men att man själv kan
 // välja"). Computed here rather than in the renderer so there is one implementation and so
 // the whole diff does not have to cross IPC just to be counted.
-ipcMain.handle("reviews:reviewerPlan", (_event, { taskId } = {}) => {
+ipcMain.handle("reviews:reviewerPlan", (_event, { taskId, sample } = {}) => {
   const metaHome = resolveMetaHome();
   const rec = readReviewRecord(metaHome, taskId);
   if (!rec) {
@@ -6081,14 +6261,30 @@ ipcMain.handle("reviews:reviewerPlan", (_event, { taskId } = {}) => {
     // renderer: the meta-home is main's to know (and a test overrides it), and two
     // spellings of one path is how a feature comes to silently do nothing.
     notePath: independentNotePath(metaHome, taskId),
+    // How the verdict must be WRITTEN - which language, and in what register (task
+    // 7bd1e2df). Computed here, not in the renderer, only because the renderer is a
+    // classic script and cannot import the module; the sample it must judge the
+    // language from (the task's own title and description) is the renderer's to supply,
+    // since the record does not carry it.
+    writingBrief: reviewWritingBriefLines(sample || ""),
   };
 });
 
 // The reviewer's own verdict, read back. It writes a file rather than calling into Helm -
 // an agent can always write a file, and this is the same files-as-memory shape the rest of
 // the app uses. Read-only, and guarded to the reviews directory.
-ipcMain.handle("reviews:independentNote", (_event, { taskId } = {}) => {
-  const file = independentNotePath(resolveMetaHome(), taskId);
+ipcMain.handle("reviews:independentNote", (_event, { taskId } = {}) => readIndependentNote(resolveMetaHome(), taskId));
+
+/**
+ * The independent reviewer's verdict for a task (or a bare commit sha - the note path
+ * accepts either, and a commit-centric review writes to the same folder).
+ *
+ * Pulled out of the IPC handler so the presented HTML page reads the verdict through
+ * exactly the same path the card does. Two spellings of "where the verdict lives" is
+ * how one surface comes to show a verdict the other cannot find.
+ */
+function readIndependentNote(metaHome, taskId) {
+  const file = independentNotePath(metaHome, taskId);
   if (!file || !fs.existsSync(file)) {
     return { ok: true, present: false };
   }
@@ -6097,9 +6293,9 @@ ipcMain.handle("reviews:independentNote", (_event, { taskId } = {}) => {
     const text = fs.readFileSync(file, "utf8").slice(0, 200 * 1024);
     return { ok: true, present: true, text, writtenAt: stat.mtimeMs, path: file };
   } catch (err) {
-    return { ok: false, error: err?.message || String(err) };
+    return { ok: false, present: false, error: err?.message || String(err) };
   }
-});
+}
 
 /** `<meta-home>/.helm/reviews/<taskId>.independent.md`, or null for a bad id. */
 function independentNotePath(metaHome, taskId) {
