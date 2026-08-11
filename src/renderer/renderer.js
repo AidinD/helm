@@ -9397,7 +9397,17 @@ function widgetDashboardFingerprint() {
     .map((s) => `${s.sessionId}:${s.status}:${s.startedBy || "-"}:${s.lastActivityAt || 0}`)
     .sort()
     .join("|");
-  const runs = [...goalRuns.values()].map((r) => `${r.goalRunId}:${r.status}`).sort().join("|");
+  // Iteration count, for the same reason. A new iteration on a still-"running"
+  // run does not change its status, so keying runs on `goalRunId:status` alone
+  // made the fingerprint byte-identical before/after onGoalEvent pushed the new
+  // record - the repaint gate skipped, and the crew row's `iter N` label sat
+  // frozen until an unrelated repaint (e.g. switching views and back) happened
+  // (the captain, 2026-08-11: "den här renderas inte om förän jag byter vy och
+  // tillbaka"). Keyed on the in-memory length only - cheap and synchronous, no IPC.
+  const runs = [...goalRuns.values()]
+    .map((r) => `${r.goalRunId}:${r.status}:${r.iterations?.length || 0}`)
+    .sort()
+    .join("|");
   const layout = (state.config?.dashboardWidgets?.layout || []).map((w) => `${w.id}:${w.span}`).join("|");
   // VIEW state, not just data. The fingerprint's job is "would the rendered
   // output differ", and an expand/collapse toggle changes the output without
