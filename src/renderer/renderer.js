@@ -6421,8 +6421,15 @@ function wireEditableUserTurns(index, scroll) {
     // offer rewind on a real (resumable) session AND when the FULL transcript
     // is loaded from turn 0 — on a truncated (tail-capped) view the rendered
     // index wouldn't match the fork's absolute count, so it'd cut at the
-    // wrong message.
-    if (pane.cliSessionId && !pane.transcriptTruncated) {
+    // wrong message. `turn.pending` rules out a message sent seconds ago that
+    // the transcript FILE has not caught up with yet: forkTranscriptAtUserMessage
+    // counts user messages straight off disk, so rewinding to one that is not
+    // written there yet finds no match and silently forks the whole file
+    // untouched instead of truncating - a no-op that reads as "rewind doesn't
+    // work" (Jot 19096e2c: "iaf inte om man lämnar sessionen efter att ha
+    // skickat men innan svar" - leaving right after sending is exactly the
+    // window where the just-sent message is still pending, not yet on disk).
+    if (pane.cliSessionId && !pane.transcriptTruncated && !turn.pending) {
       const rewindBtn = document.createElement("button");
       rewindBtn.className = "copy-btn rewind-btn";
       rewindBtn.title = "Rewind to here - go back to this point, dropping everything after it";
@@ -8060,6 +8067,37 @@ function paneComposerEl(index) {
           pane.currentLaunchId = null;
           stopLiveStatsTicker(index);
           setPaneBusyUI(index, "");
+        } else if (res.ok) {
+          // The kill signal landed (killChildTree's forceful taskkill /T /F on
+          // Windows), but that alone doesn't guarantee this pane ever hears back:
+          // Node's "close" event - which is what the main process waits on before
+          // sending "done" - only fires once the child's stdio pipes actually
+          // close, and a descendant that inherited those pipes without itself
+          // being tracked in the killed process tree (some shapes of a spawned
+          // tool subprocess, e.g. Bash) can keep them open indefinitely even
+          // after the tree above it is dead. That left the pane stuck on
+          // "Stopping…" forever - "Stop knappen på en prompt verkar inte alltid
+          // fungera... kan ha att göra med när något tool körs, typ bash" (Jot
+          // 93835691). The kill was already issued as forcefully as this app
+          // can issue it, so if nothing terminal arrives within a few seconds,
+          // there is nothing more waiting to accomplish - treat it as stopped.
+          // A genuine "done" that does still show up later clears this same
+          // timer first and is handled completely normally either way.
+          clearTimeout(pane.stopWatchdogTimer);
+          const launchId = pane.currentLaunchId;
+          pane.stopWatchdogTimer = setTimeout(() => {
+            if (panes[index] !== pane || pane.currentLaunchId !== launchId || !pane.busy) {
+              return; // a real "done" (or a fresh launch in this pane) already resolved this
+            }
+            pane.busy = false;
+            pane.stopRequested = false;
+            pane.currentLaunchId = null;
+            stopLiveStatsTicker(index);
+            setPaneBusyUI(index, "");
+            pane.turns.push({ role: "assistant", kind: "text", text: "⏹ Stopped (still shutting down in the background)." });
+            bumpSessionActivity(pane.sessionId);
+            renderPane(index);
+          }, 6000);
         }
       }
     } else {
@@ -16818,6 +16856,10 @@ window.helm.onSessionEvent((evt) => {
       pulsePaneStatusIcon(index);
       break;
     case "error":
+      // A genuine terminal event for this launch — the Stop-button watchdog's
+      // fallback (see handleSendOrStop) exists only for the case where NOTHING
+      // terminal ever arrives, so cancel it the moment one does.
+      clearTimeout(pane.stopWatchdogTimer);
       pane.busy = false;
       pane.currentLaunchId = null;
       stopLiveStatsTicker(index);
@@ -16828,6 +16870,7 @@ window.helm.onSessionEvent((evt) => {
       renderPane(index);
       break;
     case "done":
+      clearTimeout(pane.stopWatchdogTimer);
       pane.busy = false;
       pane.currentLaunchId = null;
       stopLiveStatsTicker(index);
