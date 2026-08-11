@@ -1,43 +1,34 @@
 # Handoff - latest session state
 
 _Overwritten on each handoff (latest-only); prior handoffs are in git history._
-_Saved 2026-08-11 15:55. For durable rationale see DECISIONS.md; for the roadmap, PLAN.md._
+_Saved 2026-08-11 16:43. For durable rationale see DECISIONS.md; for the roadmap, PLAN.md._
 
-## Handoff: Review page decluttering (2026-08-11)
+## Handoff: Helm session-duplication + review-record fixes
 
-**Context:** Aidin said the Review page had become "plottrig" (cluttered) and most cards lacked detail — a regression from the version he liked (full cards: info, teststeg with checkboxes, buttons). He asked for three things, confirmed the plan for all three, and I implemented and verified them this session:
+### State
+Three commits pushed to `master` this session (all in `D:\Repo\Tools\helm`):
+- `bffc56a` — fixed session turns resurrecting on reopen after a run stops without a result
+- `0b6f0bf` — fixed Stop button hanging + rewind silently no-op'ing on a fresh message
+- `cb778b5` — documented the Jot review-record requirement in `CLAUDE.md`
 
-1. A "Present diff" button that opens the diff as a standalone HTML page (browser, not the in-app viewer) — like the `summary-page` skill's aesthetic.
-2. Cards bound to commits — no commit, no card (declutter the "no review record" noise).
-3. Jot-task binding on cards — already existed (parentTitle chip, Send back writes to the Jot card); no change made.
+Working tree still has **pre-existing, unrelated in-progress work** untouched by this session: a "Present diff" feature + review-filter work spanning `src/main.js`, `src/preload.cjs`, `src/renderer/renderer.js`, `src/lib/diffHtml.js`, `scripts/e2e/test-review-badge-and-widget.mjs`, and an untracked `scripts/e2e/test-second-mate-resume-dispatch.mjs`. Do not commit or discard these without asking — they belong to a separate, still-open task.
 
-### What shipped
+### What was fixed and why (see the three commits above for full diffs/rationale)
+1. **Message duplication/resurrection bug** (Aidin: "output ibland dupliceras och återkommer längst ner"). Root cause: three terminal branches of the `done` event handler in `src/renderer/renderer.js` (Stop, CLI failure, no-result) never reconciled or cleared the per-session `pendingTurnsBySession` buffer, so streamed turns that didn't re-match the transcript file on a later reload stayed forever and got re-appended every time a session was reopened.
+2. **Stop button hanging** (Jot task 93835691). A killed process's stdio pipes can stay open (e.g. some Bash-tool subprocess shapes), so Node's `close` event — and therefore the app's `done` event — never fires, leaving the pane stuck on "Stopping…" forever. Fixed with a client-side 6s watchdog in `handleSendOrStop` that forces the pane idle if nothing terminal arrives.
+3. **Rewind silently doing nothing** (Jot task 19096e2c), specifically when leaving a session right after sending but before the reply. `forkTranscriptAtUserMessage` (`src/lib/sessions.js`) counts user messages off the transcript file on disk; the rewind button counted off in-memory `pane.turns`, which can include a not-yet-flushed pending message. Fixed by withholding the rewind button on a `pending` turn, and making the fork function fail loudly instead of silently forking the whole untouched file on a miss.
+4. **Process discovery detour**: spent significant effort locating the *actual* live Jot data file. `%APPDATA%\jot\todos.json` (the naive default) was stale since June; the real, live data directory is set via the `JOT_DATA_DIR` env var (`D:\Dropbox\jot` on this machine). The `jot-task-tracking` skill (`C:\Users\aidin\.claude\skills\jot-task-tracking\SKILL.md`) documents this — read it before assuming a Jot path.
+5. **Process/meta-home discovery**: `metaHome` (where Helm's review records and run-signing key live) resolves via `resolveMetaHome()` in `src/main.js` — currently `D:\Dropbox\Mina Dokument\Claude`.
 
-- **`src/lib/diffHtml.js`** (new) — `buildDiffHtml()`, pure string builder, splits a unified diff into per-file `<details>` blocks, dark theme matching the summary-page skill style.
-- **`src/main.js`** — new `reviews:presentDiff` IPC handler: resolves the task's commits (record or log search), builds the diff, writes it to `%TEMP%/helm-diff-<taskId8>.html`, opens via `shell.openPath`. Also: `buildReviewsPayload` now stamps `row.hasCommits` per row (from `rec.commits` or a `resolveTaskCommits` log search) — annotated, not filtered server-side, matching this codebase's existing "never silently drop, always count what's held back" convention (see comments in that function).
-- **`src/preload.cjs`** — bridges `presentReviewDiff(taskId, title)`.
-- **`src/renderer/renderer.js`**:
-  - New "Present diff" button next to "See the diff" in `reviewActionsEl`.
-  - New module state `reviewHideNoCommits` (default `true`) + `rowNeedsNoCommitsCard(r)` predicate, applied inside `visibleReviewRows`.
-  - New filter-bar chip "Bound to commits · N hidden" (same reversible pattern as the existing "Code only" chip) in `reviewFilterBarEl`, wired via a new `noCommitsCount` computed in `renderReviewPage`.
+### Key process decision: review records
+Discovered mid-session that moving a Jot task's `status` to `"review"` alone leaves the Review page's card body empty ("No review record… treat it as unreviewed") — Aidin flagged this as a recurring trust problem with the review pipe. Fix applied both as code-adjacent process and durable documentation:
+- Wrote proper, legitimately-signed review records for both fixed tasks via `src/lib/reviewRecords.js`'s `writeReviewRecord` + `recordCheckRun` (real test output, real exit codes, pinned to a clean commit — briefly `git stash push -u` / `git stash pop`'d the unrelated WIP so the commit pin wasn't marked dirty).
+- Documented the full required sequence in `D:\Repo\Tools\helm\CLAUDE.md` under "Moving a Jot task to review" (commit `cb778b5`) — read that section for the exact API calls before closing out any future Helm task.
+- Also saved as a durable feedback memory: `C:\Users\aidin\.claude\projects\D--Repo-Tools-helm\memory\feedback_jot_review_record_required.md` (indexed in that folder's `MEMORY.md`).
 
-### Key decision — the filter had to be narrower than first planned
+Both Jot tasks (93835691, 19096e2c) are now in Jot status `"review"` **with** proper review records — ready for Aidin to read and stamp on the Review page.
 
-First pass hid any row with `hasCommits === false` and no declared checks and no critical/core criticality. This broke `test-acceptance-gate.mjs`: a real, fully-documented "stamp" record (cosmetic, evidence, acceptance criteria, test steps) with no git commit tied to it got hidden — but that's exactly the case the review-pipe's hardened tests protect (a record IS the evidence; hiding a real record is the failure class this whole surface exists to prevent, per `docs/review-pipe-status.md`).
-
-**Final rule**, in `rowNeedsNoCommitsCard`:
-```js
-const rowNeedsNoCommitsCard = (r) => r.verdict !== "unrecorded" || r.hasCommits !== false;
-```
-Only hides rows that are BOTH `verdict === "unrecorded"` (no record was ever written) AND confirmed to have zero commits. Any row with an actual record — however it fares (stamp/judgment/incomplete) — is never hidden by this rule, commit or not. Also: `hasCommits === false` is a *positive* claim ("git was asked, found nothing"); `undefined` (older payloads, hand-built test fixtures) is treated as "has commits" so old test fixtures without the new field aren't silently affected.
-
-### Verification
-
-All 15+ review-related e2e suites pass, including `test-review-row-readable.mjs` (confirms "Present diff" renders alongside "See the diff", "Independent reviewer", "Mark done", "Send back") and `test-acceptance-gate.mjs` (confirms the acceptance-criteria/drift/test-step cards are NOT hidden despite having no commits). One test sandbox (`scripts/e2e/test-review-badge-and-widget.mjs`) needed its hand-built `new Function(...)` fixture updated to declare `reviewHideNoCommits` and `rowNeedsNoCommitsCard` — done.
-
-### State / next steps
-
-- Nothing is committed yet — all changes are uncommitted working-tree edits (new file `src/lib/diffHtml.js` untracked; modified: `src/main.js`, `src/preload.cjs`, `src/renderer/renderer.js`, `scripts/e2e/test-review-badge-and-widget.mjs`). There was also a pre-existing uncommitted `diffHtml.js`-adjacent state and other unrelated modified files noted in git status at session start (`scripts/e2e/test-review-badge-and-widget.mjs`, `src/main.js`, `src/preload.cjs`, `src/renderer/renderer.js` were already modified before this session per the initial gitStatus — verify with `git diff` before committing to avoid bundling unrelated prior work).
-- Not yet done: no entry was added to `DECISIONS.md` or `PLAN.md` for this change, and `docs/review-pipe-status.md` was not updated — worth a short addition there since it touches the review queue's filtering behavior (the "annotate, don't drop" invariant was preserved but a new user-facing default-on filter was added).
-- Not yet asked/decided: whether Aidin wants this committed as-is, split into two commits (diff-HTML feature vs. the commit-binding filter), or reviewed further first.
-- Worth double-checking live: open the real Review page and confirm the "Bound to commits · N hidden" chip count matches expectations on his actual board, and that "Present diff" opens cleanly in his default browser.
+### Next steps
+- Nothing outstanding from this session's own work — both Jot tasks are fixed, tested, committed, pushed, and properly recorded for review.
+- If resuming other work: the unrelated "Present diff" / review-filter feature sitting uncommitted in the working tree is a separate, still-open task — check with Aidin before touching it.
+- New regression tests added this session (all passing): `scripts/e2e/test-stop-watchdog.mjs`, `scripts/e2e/test-rewind-unflushed-message.mjs`; `scripts/e2e/test-reload-keeps-sent-prompt.mjs` was updated for the new pending-turn-clearing behavior.
