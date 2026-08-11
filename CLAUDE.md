@@ -17,6 +17,45 @@ chronological reasoning but does not say where things stand.
 (captain / first mate / second mate / crew tiers; ephemeral by tier; the
 first-mate capability gap) - read it before any orchestration/dispatch work.
 
+## Moving a Jot task to review (do not skip the record)
+
+Flipping a Jot task's `status` to `"review"` is NOT enough - the captain's Review page
+reads its card body (summary, evidence, test steps, checks) from a SEPARATE file,
+`<metaHome>/.helm/reviews/<taskId>.json`, written via `src/lib/reviewRecords.js`.
+Moving status alone with no record produces a technically-in-review card whose
+body just says "No review record: ... treat it as unreviewed" - which reads as
+the review pipe having gotten worse, when really nothing was ever written
+(hit live 2026-08-11: two Helm tasks moved to review via Jot's own status field,
+with no record, before this rule existed).
+
+For every Helm task you move to review:
+
+1. Do the work, run real checks, and capture their actual output/exit codes.
+2. Import `writeReviewRecord` from `src/lib/reviewRecords.js` and write a record:
+   `taskId`, `criticality` (`critical`/`core`/`cosmetic` - see the tier table in
+   that file), `verdict` (`stamp` or `judgment`), `summary`, `testSteps`
+   (`{step, expect}`), `checks` (`{label, cmd}`), `evidence`, `notVerified`.
+   `reviewRecordProblems` refuses an incomplete record rather than silently
+   storing a hollow one - read the error if it's rejected.
+3. For each declared check, call `recordCheckRun(metaHome, taskId, {label,
+   exitCode, tail}, {pinnedHead})` with the check's REAL exit code from a run you
+   actually did - never a hand-written `{ok: true}` (unsigned/forged runs render
+   as `unverified`, never a pass, by design). `pinnedHead = currentHead(projectPath)`;
+   if the working tree has unrelated uncommitted changes at the time (someone
+   else's WIP sitting in the repo), `git stash push -u`, capture the run + head
+   there, write the record, then `git stash pop` - a record pinned to a `dirty`
+   head reads as permanently stale for no reason tied to the work being reviewed.
+4. Only THEN set the Jot task's `status` to `"review"` (jot-task-tracking skill's
+   `jot-edit.mjs`). Jot still owns WHETHER something is under review; the record
+   only supplies the evidence - the two are written in this order so a status
+   flip never briefly outruns its evidence.
+
+`metaHome` is the directory containing the CLAUDE.md that
+`C:\Users\<you>\.claude\CLAUDE.md` `@`-imports (see `resolveMetaHome()` in
+`src/main.js`) - currently `<your-claude-home>`. Read
+`docs/review-pipe-status.md` for the full schema/design reasoning before writing
+a record for anything above `cosmetic` criticality.
+
 ## Restarting during dev
 
 Never `taskkill /IM electron.exe` directly - it matches by image name only,
