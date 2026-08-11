@@ -1,14 +1,20 @@
 import fs from "node:fs";
 
-// Detects a session's IN-FLIGHT sub-agents (Claude Code's Task tool) from its
+// Detects a session's IN-FLIGHT sub-agents (Claude Code's Agent tool) from its
 // transcript, so the Fleet can show them as crew under the session that spawned
 // them (the crew tier for interactive sessions, alongside dispatched Autopilot
-// runs). A sub-agent is launched as an assistant `tool_use` with name "Task"
-// and completes as a `tool_result` carrying the same id - so a Task tool_use
+// runs). A sub-agent is launched as an assistant `tool_use` with name "Agent"
+// and completes as a `tool_result` carrying the same id - so an Agent tool_use
 // with no matching tool_result yet is a live sub-agent.
 //
+// The tool was named "Task" in older CLI builds; both names are accepted so a
+// transcript spanning a CLI upgrade still parses (bug: the rename to "Agent"
+// silently made every live sub-agent invisible in the Fleet - found by reading
+// a real crewline transcript where the review dispatch logged as `name:"Agent"`
+// and this scan, which only matched "Task", found zero pending sub-agents).
+//
 // Transcript line shapes (see transcript.js):
-//   assistant: { message: { content: [ { type:"tool_use", id, name:"Task", input:{ description, subagent_type, ... } } ] } }
+//   assistant: { message: { content: [ { type:"tool_use", id, name:"Agent", input:{ description, subagent_type, ... } } ] } }
 //   result:    { message: { content: [ { type:"tool_result", tool_use_id, ... } ] } }
 
 const MAX_READ_BYTES = 2 * 1024 * 1024; // tail is enough - live sub-agents are recent
@@ -40,7 +46,7 @@ export function parseLiveSubAgents(text) {
       if (!block || typeof block !== "object") {
         continue;
       }
-      if (block.type === "tool_use" && block.name === "Task" && block.id) {
+      if (block.type === "tool_use" && (block.name === "Agent" || block.name === "Task") && block.id) {
         tasks.set(block.id, {
           id: block.id,
           description: (block.input?.description || "sub-agent").toString(),

@@ -1648,10 +1648,15 @@ const FIRST_MATE_ALLOWED_TOOLS = ["helm_dispatch", "helm_collect_reports", "helm
 // do hands-on project work or fan out its own workers - it dispatches via the
 // helm_* tools above. Denying Edit/Write/NotebookEdit makes file mutation
 // structurally impossible (the beatdrop runaway did 23 Edits in the coordinator
-// seat); denying Task removes the sub-agent fan-out multiplier. Read/Grep/Glob/
+// seat); denying Agent removes the sub-agent fan-out multiplier. Read/Grep/Glob/
 // Bash stay so it can still survey (git state, Jot, file reads). The rare
 // legitimate write (a Jot status tick) can still go via Bash.
-const FIRST_MATE_DISALLOWED_TOOLS = ["Edit", "Write", "NotebookEdit", "Task"];
+//
+// Both names are listed because the CLI renamed this tool from "Task" to
+// "Agent" - denying only the old name made this guard a silent no-op (found
+// while chasing why a first mate's sub-agents never showed up in the Fleet
+// tree either, src/lib/subAgents.js - same stale-name bug in two places).
+const FIRST_MATE_DISALLOWED_TOOLS = ["Edit", "Write", "NotebookEdit", "Agent", "Task"];
 
 // The user's OWN configured MCP servers, as `mcp__<key>` allowedTools entries,
 // so a second-mate session can actually USE them in headless -p (see
