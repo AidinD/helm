@@ -11140,7 +11140,11 @@ function pendingSecondMateReviewNudge(sm) {
     .filter(isTerminalRun)
     .filter((r) => !isGoalRunAcknowledged(r.goalRunId))
     .filter((r) => samePath(r.projectPath, sm.projectPath))
-    .filter((r) => (sm.firstMateId && sm.firstMateId !== "direct" ? r.dispatchedBy === sm.firstMateId : true))
+    // "direct" AND "auto" are top-of-chain project nodes: their crew is ALL the project's
+    // dispatched runs (the auto crew is dispatched under the auto second mate's own sm_ id,
+    // never the literal "auto"), so scoping by dispatchedBy === firstMateId would filter every
+    // auto run out and open the auto second mate BLANK. Only a real first-mate parent scopes.
+    .filter((r) => (sm.firstMateId && sm.firstMateId !== "direct" && sm.firstMateId !== "auto" ? r.dispatchedBy === sm.firstMateId : true))
     .sort((a, b) => (b.ordinal || 0) - (a.ordinal || 0));
   if (runs.length === 0) {
     return "";
