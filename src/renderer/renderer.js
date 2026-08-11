@@ -5485,6 +5485,11 @@ const turnKey = (t) => `${t?.role}|${t?.kind}|${String(t?.text ?? "")}`;
  * Entries are dropped as soon as a reloaded transcript contains them, so this never grows
  * into a second source of truth - and it is capped per session as a backstop in case a
  * session somehow never sees its own turns land.
+ *
+ * They also have a hard LIFETIME: everything here expires when the next run starts (see
+ * expirePendingTurnsFromEarlierRuns). Text matching alone is not enough to empty this -
+ * a turn that scrolls out of the file's tail window can never match again - and that is
+ * what left one old reply riding along at the bottom of the pane forever.
  */
 const pendingTurnsBySession = new Map();
 
@@ -5495,6 +5500,55 @@ function rememberPendingTurn(sessionId, turn) {
   const list = pendingTurnsBySession.get(sessionId) || [];
   list.push(turn);
   pendingTurnsBySession.set(sessionId, list.slice(-PENDING_PER_SESSION_CAP));
+}
+
+/**
+ * Everything still pending from an EARLIER run stops being pending the moment a new
+ * run starts. Called from exactly one place: the send path, just before the new
+ * prompt is remembered.
+ *
+ * This is the LIFETIME the pending buffer never had, and its absence is the bug
+ * (Aidin, task 6bdbcde7: "En output följer hela tiden med och hamnar sist" - his
+ * screenshots show the session's FIRST reply re-appended below the newest turn, over
+ * and over). A pending entry is only ever meant to cover the window between "sent"
+ * and "the file caught up". Nothing bounded it, so it was dropped by only two things:
+ *
+ *   1. a role+kind+text match against the last RELOAD_MATCH_WINDOW turns of the file.
+ *      Once the conversation grows past that window, an early pending turn can never
+ *      match again - it is permanently unmatchable, so every later reload re-appends
+ *      it at the tail. That is exactly what his screenshots show: the text sits at
+ *      entry 34 of 411 in the transcript file, far outside a 60-turn tail.
+ *   2. three hand-written deletes, one in each terminal branch of the "done" handler.
+ *
+ * (2) is the part worth naming: this same symptom has now been fixed three times by
+ * adding a delete to whichever branch was found to leak, and it came back because
+ * some path still reaches a new run without passing any of them. A rule enforced at
+ * N call sites is a rule that a new N+1th call site silently opts out of. Expiring on
+ * the NEXT RUN instead is one place that every path must go through to produce more
+ * output at all, so no future branch can miss it.
+ *
+ * Safe against the failure the buffer exists to prevent - losing a just-sent turn the
+ * file has not written yet - because by the time a new run starts, the previous run's
+ * process has exited and the CLI flushed its transcript before it did. Anything still
+ * unmatched at that point is not "the file is behind"; it is a turn the file is never
+ * going to grow.
+ *
+ * Clears the flag on the pane's own turns too, not just the per-session buffer: the
+ * merge keeps `prev.filter((x) => x.pending)` as well, so leaving the flag on would
+ * re-add them from the other side.
+ */
+function expirePendingTurnsFromEarlierRuns(pane) {
+  if (!pane) {
+    return;
+  }
+  if (pane.sessionId) {
+    pendingTurnsBySession.delete(pane.sessionId);
+  }
+  for (const turn of pane.turns || []) {
+    if (turn?.pending) {
+      delete turn.pending;
+    }
+  }
 }
 
 function mergeReloadedTurns(previous, fromFile, sessionId = null, { authoritative = false } = {}) {
@@ -8602,6 +8656,11 @@ async function sendFromPane(index, els) {
   els.renderAttachments();
   pane.cwd = cwd;
   updatePaneSubText(index, cwd);
+  // A new run starts here, so nothing left pending from an EARLIER run can still be
+  // legitimate - that run's process has exited and flushed its transcript. Expiring
+  // them at this one choke point is what stops a permanently-unmatchable turn riding
+  // along at the bottom of the pane forever (task 6bdbcde7); see the function.
+  expirePendingTurnsFromEarlierRuns(pane);
   // pending: this turn exists only in memory until the CLI writes it to the transcript, and
   // a reload landing in that window used to delete it (task 20009fdc). The flag is what lets
   // mergeReloadedTurns tell "the file has not caught up yet" apart from "these turns were
