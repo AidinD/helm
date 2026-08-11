@@ -35,7 +35,7 @@ process.env.HELM_SECOND_MATES_PATH = path.join(tmp, "second-mates.json");
 // import time - so a static import here read the ambient env and this test wrote two
 // stray entries into the DEV repo's real second-mates.json before I noticed
 // (2026-08-03). Any test seam that is a module-level constant has this shape.
-const { secondMateId, deriveSecondMates, proposeSecondMate } = await import("../../src/lib/secondMates.js");
+const { secondMateId, deriveSecondMates, proposeSecondMate, AUTO_CAPTAIN } = await import("../../src/lib/secondMates.js");
 const repo = path.join(tmp, "repo");
 const git = (...args) => execFileSync("git", ["-C", repo, ...args], { encoding: "utf8", windowsHide: true });
 
@@ -51,25 +51,25 @@ try {
   fs.mkdirSync(path.join(repo, "node_modules", "pkg"), { recursive: true });
   fs.writeFileSync(path.join(repo, "node_modules", "pkg", "index.js"), "1\n");
 
-  // --- ONE second mate for the project -------------------------------------
-  const smId = secondMateId("direct", repo);
-  ok(secondMateId("direct", repo) === smId, "the project resolves to one stable second mate");
-  proposeSecondMate("direct", repo, { brief: "Auto-started tasks for repo" });
+  // --- ONE second mate for the project (the auto-captain's own node) --------
+  const smId = secondMateId(AUTO_CAPTAIN, repo);
+  ok(secondMateId(AUTO_CAPTAIN, repo) === smId, "the project resolves to one stable auto second mate");
+  proposeSecondMate(AUTO_CAPTAIN, repo, { brief: "Auto-started tasks for repo" });
 
   // --- both tasks become autopilot runs UNDER it ---------------------------
   // Shaped exactly as the auto dispatch records them: crew runs whose dispatchedBy
-  // is the project's second mate.
+  // is the project's second mate, started BY the auto-captain.
   const runs = [
-    { goalRunId: "run-a", projectPath: repo, dispatchedBy: smId, tier: "crew", status: "running", goal: "Task from the board: A" },
-    { goalRunId: "run-b", projectPath: repo, dispatchedBy: smId, tier: "crew", status: "running", goal: "Task from the board: B" },
+    { goalRunId: "run-a", projectPath: repo, dispatchedBy: smId, tier: "crew", status: "running", startedBy: "auto", goal: "Task from the board: A" },
+    { goalRunId: "run-b", projectPath: repo, dispatchedBy: smId, tier: "crew", status: "running", startedBy: "auto", goal: "Task from the board: B" },
   ];
   const derived = deriveSecondMates(runs);
   const mine = derived.filter((s) => s.secondMateId === smId);
   ok(mine.length === 1, `both runs attach to the SAME second mate - one project row, not two (${mine.length})`);
   ok(mine[0]?.crew?.length === 2, `with both tasks as crew underneath it (${mine[0]?.crew?.length})`);
   ok(
-    derived.filter((s) => s.firstMateId === "direct").length === 1,
-    "and there is exactly one Direct-level node for the project, not one per task"
+    derived.filter((s) => s.firstMateId === AUTO_CAPTAIN).length === 1,
+    "and there is exactly one auto-captain node for the project, not one per task"
   );
   ok(
     mine[0].crew.map((r) => r.goalRunId).sort().join(",") === "run-a,run-b",
@@ -105,8 +105,8 @@ try {
       .join("\n");
   const mainSrc = stripComments(fs.readFileSync(new URL("../../src/main.js", import.meta.url), "utf8"));
   ok(
-    /const smId = secondMateId\("direct", where\.projectPath\)/.test(mainSrc),
-    "the dispatch derives the second mate from the PROJECT, so tasks in one repo share it"
+    /const smId = secondMateId\(AUTO_CAPTAIN, where\.projectPath\)/.test(mainSrc),
+    "the dispatch derives the second mate from the PROJECT (under the auto-captain), so tasks in one repo share it"
   );
   ok(/dispatchedBy: smId/.test(mainSrc), "and hangs each task's run underneath it");
   ok(/tier: "crew"/.test(mainSrc), "as crew, which is what the fleet renders under a second mate");

@@ -83,10 +83,11 @@ console.log("\n-- an auto run reaches the Auto widget, from real inputs --");
   process.env.HELM_SECOND_MATES_PATH = path.join(tmp, "second-mates.json");
   // Dynamic import AFTER the env var: this module resolves its path at import time,
   // and a static import here once wrote stray entries into the real dev data file.
-  const { deriveSecondMates, secondMateId, proposeSecondMate } = await import("../../src/lib/secondMates.js");
+  const { deriveSecondMates, secondMateId, proposeSecondMate, AUTO_CAPTAIN } = await import("../../src/lib/secondMates.js");
   const project = path.join(tmp, "someproject");
-  const smId = secondMateId("direct", project);
-  proposeSecondMate("direct", project, { brief: "Auto-started tasks" });
+  // The auto-captain's own node identity (not the manual "direct" one).
+  const smId = secondMateId(AUTO_CAPTAIN, project);
+  proposeSecondMate(AUTO_CAPTAIN, project, { brief: "Auto-started tasks" });
   const runs = [
     {
       goalRunId: "run-a",
@@ -131,7 +132,9 @@ console.log("\n-- an auto run reaches the Auto widget, from real inputs --");
   const handRuns = [{ goalRunId: "run-h", projectPath: project, status: "running", goal: "by hand" }];
   const handNodes = deriveSecondMates(handRuns).map((n) => ({ ...n, sessionId: "sess-1" }));
   ok(
-    handNodes.filter((s) => filters.isLive(s) && !filters.isAuto(s)).length === 1,
+    // Same filter the Captain widget uses (firstMateId === "direct" too), so the auto-captain's
+    // own node - proposed earlier in this shared temp store - never counts as a captain row.
+    handNodes.filter((s) => s.firstMateId === "direct" && filters.isLive(s) && !filters.isAuto(s)).length === 1,
     "a hand-started run still belongs to the captain's column"
   );
   ok(handNodes.filter((s) => filters.isAuto(s)).length === 0, "and never to the Auto column");

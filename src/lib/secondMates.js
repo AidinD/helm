@@ -25,6 +25,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const bindingsPath = process.env.HELM_SECOND_MATES_PATH || path.join(__dirname, "..", "..", "second-mates.json");
 
 export const DIRECT_FIRST_MATE = "direct";
+// The auto-captain is its OWN dispatcher identity, distinct from the manual captain's
+// "direct". Without this, an auto run and a MANUAL second mate on the same project hashed to
+// the same node (secondMateId("direct", project)) and collapsed into one - and the sticky
+// startedBy:"auto" flag then yanked the manual second mate (and its session) out of the
+// Captain widget into the Auto lane. A separate identity keeps them as two nodes, one per
+// lane. Like "direct", it is top-of-chain (reports to the captain, not up to a first mate).
+export const AUTO_CAPTAIN = "auto";
 
 function normPath(p) {
   return path.resolve(p).replace(/[\\/]+$/, "").toLowerCase();
@@ -103,14 +110,29 @@ export function deriveSecondMates(runHistory, bindings = readBindings()) {
     // (ship-review). Second-mate ids are "sm_<hash>"; first mates are
     // "mate_<uuid>" or the synthetic "direct".
     const dispatchedBySecondMate = typeof dispatcher === "string" && dispatcher.startsWith("sm_");
-    const id = dispatchedBySecondMate ? dispatcher : secondMateId(dispatcher, r.projectPath);
+    // An AUTO-started run always belongs to the project's AUTO node - even a LEGACY one
+    // dispatched under the old shared "direct" second-mate id. Without this, one auto run
+    // landed on a MANUAL second mate that happened to share the project and flipped it into
+    // the Auto lane (the reported bug). Routing by startedBy, not just the dispatcher id, also
+    // migrates existing runs so the collision clears without rewriting history.
+    const isAuto = r.startedBy === "auto";
+    const id = isAuto
+      ? secondMateId(AUTO_CAPTAIN, r.projectPath)
+      : dispatchedBySecondMate
+        ? dispatcher
+        : secondMateId(dispatcher, r.projectPath);
     let sm = byId.get(id);
     if (!sm) {
       sm = {
         secondMateId: id,
-        // A first-mate-dispatched run names its own parent (the dispatcher). A
-        // second-mate-dispatched one gets its parent from the binding below.
-        firstMateId: dispatchedBySecondMate ? bindings[id]?.firstMateId || DIRECT_FIRST_MATE : dispatcher,
+        // The auto node is top-of-chain under the auto-captain. Otherwise: a first-mate-
+        // dispatched run names its own parent (the dispatcher); a second-mate-dispatched one
+        // gets its parent from the binding below.
+        firstMateId: isAuto
+          ? AUTO_CAPTAIN
+          : dispatchedBySecondMate
+            ? bindings[id]?.firstMateId || DIRECT_FIRST_MATE
+            : dispatcher,
         projectPath: r.projectPath,
         name: path.basename(r.projectPath) || r.projectPath,
         sessionId: null,
