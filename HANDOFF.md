@@ -1,33 +1,43 @@
 # Handoff - latest session state
 
 _Overwritten on each handoff (latest-only); prior handoffs are in git history._
-_Saved 2026-08-11 12:46. For durable rationale see DECISIONS.md; for the roadmap, PLAN.md._
+_Saved 2026-08-11 15:55. For durable rationale see DECISIONS.md; for the roadmap, PLAN.md._
 
-## Handoff: Fleet sub-agent tree + queued-prompt fixes
+## Handoff: Review page decluttering (2026-08-11)
 
-**State:** Two bugs diagnosed and fixed, both committed and pushed to `origin/master` (personal remote, `AidinD/helm`), and both included in a freshly built local dist (v0.2.11, commit `1511f80`) at `dist/Helm Setup 0.2.11.exe` / `dist/Helm 0.2.11.exe`. Aidin has **not yet installed** this new build — he was still running an older installed version as of the last message. Don't assume the fixes are live in his running app until he confirms he installed/relaunched from the new dist.
+**Context:** Aidin said the Review page had become "plottrig" (cluttered) and most cards lacked detail — a regression from the version he liked (full cards: info, teststeg with checkboxes, buttons). He asked for three things, confirmed the plan for all three, and I implemented and verified them this session:
 
-### Bug 1 — Fleet tree never showed live sub-agents/reviewers
-Root cause: `src/lib/subAgents.js` scanned session transcripts for `tool_use` blocks named `"Task"` to detect in-flight sub-agents for the Fleet crew-tree display. The CLI renamed that tool to `"Agent"` at some point, so the scan silently matched nothing, ever — for any session, not just the one Aidin flagged. Verified by reading a real transcript (`tgs-crewline` project, session `3f1c390b-...`) where a dispatched reviewer logged as `name: "Agent"`.
+1. A "Present diff" button that opens the diff as a standalone HTML page (browser, not the in-app viewer) — like the `summary-page` skill's aesthetic.
+2. Cards bound to commits — no commit, no card (declutter the "no review record" noise).
+3. Jot-task binding on cards — already existed (parentTitle chip, Send back writes to the Jot card); no change made.
 
-Same stale name was also silently defeating a security-relevant guard: `src/main.js` `FIRST_MATE_DISALLOWED_TOOLS` denied `"Task"` to stop a first-mate session from fanning out its own sub-agents (tier-discipline rule, see `docs/orchestration-model.md`) — that denial was a no-op for the same reason.
+### What shipped
 
-Fix: both places now accept/deny `"Agent"` (keeping `"Task"` too, for old transcripts / backward compat). Added a regression test case in `scripts/e2e/test-sub-agents.mjs` pinning the `"Agent"` name specifically, so a future rename can't silently regress this again. Commit: `b568bcf`.
+- **`src/lib/diffHtml.js`** (new) — `buildDiffHtml()`, pure string builder, splits a unified diff into per-file `<details>` blocks, dark theme matching the summary-page skill style.
+- **`src/main.js`** — new `reviews:presentDiff` IPC handler: resolves the task's commits (record or log search), builds the diff, writes it to `%TEMP%/helm-diff-<taskId8>.html`, opens via `shell.openPath`. Also: `buildReviewsPayload` now stamps `row.hasCommits` per row (from `rec.commits` or a `resolveTaskCommits` log search) — annotated, not filtered server-side, matching this codebase's existing "never silently drop, always count what's held back" convention (see comments in that function).
+- **`src/preload.cjs`** — bridges `presentReviewDiff(taskId, title)`.
+- **`src/renderer/renderer.js`**:
+  - New "Present diff" button next to "See the diff" in `reviewActionsEl`.
+  - New module state `reviewHideNoCommits` (default `true`) + `rowNeedsNoCommitsCard(r)` predicate, applied inside `visibleReviewRows`.
+  - New filter-bar chip "Bound to commits · N hidden" (same reversible pattern as the existing "Code only" chip) in `reviewFilterBarEl`, wired via a new `noCommitsCount` computed in `renderReviewPage`.
 
-### Bug 2 — Queued follow-up prompts vanished when leaving a session
-Aidin's report: typing a follow-up while a session is busy, hitting Enter to queue it (shows as "⏭ Queued: ..." above the composer), then navigating away — the queue disappears. Confirmed by code reading, not just reproduced.
+### Key decision — the filter had to be narrower than first planned
 
-Root cause: `pane.queuedPrompt` lived only on the renderer's in-memory `pane` object. `openSessionInPane` (`src/renderer/renderer.js`) fully discards and rebuilds that object (`{...freshPane(), ...}`) on *any* navigation away from a session and back — which is precisely "leaving the session." The queue was never actually broken as a queue; it just didn't survive the exact use case its own code comment describes ("for when you're stepping away").
+First pass hid any row with `hasCommits === false` and no declared checks and no critical/core criticality. This broke `test-acceptance-gate.mjs`: a real, fully-documented "stamp" record (cosmetic, evidence, acceptance criteria, test steps) with no git commit tied to it got hidden — but that's exactly the case the review-pipe's hardened tests protect (a record IS the evidence; hiding a real record is the failure class this whole surface exists to prevent, per `docs/review-pipe-status.md`).
 
-Fix: added a session-keyed module-level map `queuedPromptBySession` (mirrors the existing `runningSessions` pattern), synced on queue/cancel/fire. `openSessionInPane` now restores `queuedPrompt` from that map when rebuilding a pane, and if the run already finished while the pane was closed (queued but no longer busy), fires it immediately on reopen instead of leaving it stranded. Commit: `1511f80`.
+**Final rule**, in `rowNeedsNoCommitsCard`:
+```js
+const rowNeedsNoCommitsCard = (r) => r.verdict !== "unrecorded" || r.hasCommits !== false;
+```
+Only hides rows that are BOTH `verdict === "unrecorded"` (no record was ever written) AND confirmed to have zero commits. Any row with an actual record — however it fares (stamp/judgment/incomplete) — is never hidden by this rule, commit or not. Also: `hasCommits === false` is a *positive* claim ("git was asked, found nothing"); `undefined` (older payloads, hand-built test fixtures) is treated as "has commits" so old test fixtures without the new field aren't silently affected.
 
-### Verification done
-- `node --check src/renderer/renderer.js` (syntax)
-- `npm run test:fast` — 71/71 passed, no regressions
-- `node scripts/e2e/test-sub-agents.mjs` — including new "Agent"-name case
-- Root-caused both bugs by reading actual on-disk state (`~/.helm/*.json`, real session transcripts under `~/.claude/projects/`), not just by reading the display code in isolation — worth repeating that pattern for future "X doesn't work in the app" reports from Aidin, since both bugs here were invisible from the renderer code alone without cross-checking real transcript/state shape.
+### Verification
 
-### Next steps
-1. Confirm with Aidin whether he's installed the new dist (0.2.11) yet — the fixes aren't live in his app until then.
-2. If he still sees either issue after installing, re-check: for the sub-agent tree, verify the CLI's current tool name hasn't drifted again (`grep -io '"name":"Agent"' <transcript.jsonl>`); for the queue, confirm which navigation path he's using (switching sessions in the same pane vs. closing the app entirely — the fix covers the former; full app-restart persistence was explicitly not built, since `queuedPromptBySession` is memory-only).
-3. No corresponding DECISIONS.md entries were written for either fix — consider adding short entries there if these turn out to be recurring bug classes worth the durable record (per `CLAUDE.md`'s "proper fixes over patches" principle, both were root-caused rather than patched, but the *why* isn't yet captured outside this conversation and the commit messages).
+All 15+ review-related e2e suites pass, including `test-review-row-readable.mjs` (confirms "Present diff" renders alongside "See the diff", "Independent reviewer", "Mark done", "Send back") and `test-acceptance-gate.mjs` (confirms the acceptance-criteria/drift/test-step cards are NOT hidden despite having no commits). One test sandbox (`scripts/e2e/test-review-badge-and-widget.mjs`) needed its hand-built `new Function(...)` fixture updated to declare `reviewHideNoCommits` and `rowNeedsNoCommitsCard` — done.
+
+### State / next steps
+
+- Nothing is committed yet — all changes are uncommitted working-tree edits (new file `src/lib/diffHtml.js` untracked; modified: `src/main.js`, `src/preload.cjs`, `src/renderer/renderer.js`, `scripts/e2e/test-review-badge-and-widget.mjs`). There was also a pre-existing uncommitted `diffHtml.js`-adjacent state and other unrelated modified files noted in git status at session start (`scripts/e2e/test-review-badge-and-widget.mjs`, `src/main.js`, `src/preload.cjs`, `src/renderer/renderer.js` were already modified before this session per the initial gitStatus — verify with `git diff` before committing to avoid bundling unrelated prior work).
+- Not yet done: no entry was added to `DECISIONS.md` or `PLAN.md` for this change, and `docs/review-pipe-status.md` was not updated — worth a short addition there since it touches the review queue's filtering behavior (the "annotate, don't drop" invariant was preserved but a new user-facing default-on filter was added).
+- Not yet asked/decided: whether Aidin wants this committed as-is, split into two commits (diff-HTML feature vs. the commit-binding filter), or reviewed further first.
+- Worth double-checking live: open the real Review page and confirm the "Bound to commits · N hidden" chip count matches expectations on his actual board, and that "Present diff" opens cleanly in his default browser.
