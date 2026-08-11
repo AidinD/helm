@@ -16839,13 +16839,27 @@ window.helm.onSessionEvent((evt) => {
       // reflects whether the CLI itself produced a genuine result — only
       // treat this as a stop if it did NOT.
       if (pane.stopRequested && !evt.summary?.sawResult) {
-        // A killed process may not have flushed its in-progress turn to disk
-        // yet — reloading the transcript here would silently drop whatever
-        // text already streamed live. Keep what's on screen instead.
+        // Reconcile against the file with a plain (non-authoritative) reload first -
+        // that merge is additive-only (mergeReloadedTurns), so it can only ADD
+        // whatever the killed process DID manage to flush; it can never drop a
+        // just-streamed chunk the file hasn't caught up with yet, which is what
+        // reloading here used to risk before this merge existed. Once the process
+        // has actually exited, though, nothing more is EVER going to land in the
+        // file for this run - so the per-session pending buffer (rememberPendingTurn,
+        // fed by every streamed chunk of this run) is cleared right after. Leaving
+        // it live past this point is exactly what let old streamed turns resurrect on
+        // every future reopen of this session whenever the reload's tail-match window
+        // missed them (Aidin: "output ibland dupliceras och återkommer längst ner").
         pane.stopRequested = false;
-        pane.turns.push({ role: "assistant", kind: "text", text: "⏹ Stopped.", pending: true });
-        bumpSessionActivity(pane.sessionId);
-        renderPane(index);
+        loadTranscriptInto(index).then(() => {
+          if (panes[index] !== pane) {
+            return; // pane was reused for a different session while this awaited
+          }
+          pendingTurnsBySession.delete(pane.sessionId);
+          pane.turns.push({ role: "assistant", kind: "text", text: "⏹ Stopped." });
+          bumpSessionActivity(pane.sessionId);
+          renderPane(index);
+        });
         // A queued prompt is deliberately NOT fired after an explicit stop —
         // you stopped this run for a reason, most likely to intervene, not
         // to have something else auto-fire right after.
@@ -16857,8 +16871,13 @@ window.helm.onSessionEvent((evt) => {
         // prompt just silently disappeared with the pane going back to idle
         // (caught via Aidin's "vad innebär pick repo folder på en befintlig
         // session" question). Surface it as a visible error turn instead of
-        // reloading a transcript that never got the failed turn appended.
+        // reloading a transcript that never got the failed turn appended. The run is
+        // still fully over, though - drop any leftover per-session pending buffer so a
+        // stray streamed turn from an EARLIER run in this same session can't keep
+        // resurrecting on future reopens (see the "stopped" branch above for the
+        // mechanism this closes).
         pane.stopRequested = false;
+        pendingTurnsBySession.delete(pane.sessionId);
         const cleaned = (evt.summary?.stderrText || "")
           .split("\n")
           .filter((l) => l.trim() && !l.startsWith("Warning: no stdin data received"))
@@ -16892,13 +16911,25 @@ window.helm.onSessionEvent((evt) => {
           totalTokens: evt.summary?.outputTokens ?? evt.summary?.totalTokens ?? null,
           costUsd: evt.summary?.costUsd ?? null,
         };
-        pane.turns.push({
-          role: "assistant",
-          kind: "text",
-          text: "⚠ The run ended without finishing (no result was produced) - it may have hit a limit or been interrupted. Press ⏎ to continue and resume it.",
+        // Same reconcile-then-drop-the-buffer treatment as the "stopped" branch above:
+        // a plain reload can only ADD whatever this run did manage to flush before
+        // ending without a result, never drop the not-yet-flushed tail - and since the
+        // process has already exited, nothing more is coming, so the per-session
+        // pending buffer is cleared right after instead of resurrecting stale streamed
+        // turns on every future reopen.
+        loadTranscriptInto(index).then(() => {
+          if (panes[index] !== pane) {
+            return; // pane was reused for a different session while this awaited
+          }
+          pendingTurnsBySession.delete(pane.sessionId);
+          pane.turns.push({
+            role: "assistant",
+            kind: "text",
+            text: "⚠ The run ended without finishing (no result was produced) - it may have hit a limit or been interrupted. Press ⏎ to continue and resume it.",
+          });
+          bumpSessionActivity(pane.sessionId);
+          renderPane(index);
         });
-        bumpSessionActivity(pane.sessionId);
-        renderPane(index);
       } else {
         pane.stopRequested = false;
         // Feeds wireTurnStatsOnLastReply's "12.3s · 1.2k tokens" readout on
