@@ -22,7 +22,44 @@ const BUDGET_FILE = "budget.json";
 // (wired to config in main.js).
 export const DEFAULT_CEILING_USD = 25;
 
+/** True only for a non-empty, absolute path string. */
+function isAbsoluteMetaHome(metaHome) {
+  return typeof metaHome === "string" && metaHome.trim() !== "" && path.isAbsolute(metaHome);
+}
+
+/**
+ * The guardrail's load-bearing invariant: the budget/kill-switch file must live
+ * at a fixed ABSOLUTE location (one per meta-home), never a relative one.
+ *
+ * A metaHome whose separators got stripped - `<your-claude-home>`
+ * mangled to `DropboxDocumentsClaude` (drive + all backslashes gone) via a
+ * bash heredoc / shell interpolation of a Windows path, then handed to
+ * resolveMetaHome() (HELM_META_HOME_OVERRIDE) or persisted as dispatchMetaHome -
+ * would `path.join` into a RELATIVE path and silently create a SECOND
+ * budget.json under whatever the process cwd happens to be (the repo, in dev).
+ * Seen live 2026-08-12: a stray `DropboxDocumentsClaude/.helm-dispatch/
+ * budget.json` inside the repo, default contents, ignored by the real guardrail.
+ *
+ * That is not a cosmetic stray file: if a mangled metaHome ever also reached the
+ * READ path, isKilled/isOverBudget would consult the wrong (usually missing)
+ * file, read a fresh zero-spend/not-killed state, and silently disable the
+ * ceiling + kill switch - the exact runaway the guardrail exists to prevent. So
+ * we refuse a non-absolute metaHome outright rather than paper over it.
+ */
+function assertAbsoluteMetaHome(metaHome) {
+  if (!isAbsoluteMetaHome(metaHome)) {
+    const msg =
+      `orchestrationBudget: refusing a non-absolute metaHome (${JSON.stringify(metaHome)}). ` +
+      `A mangled/relative metaHome would silently create a second, ignored budget/kill-switch ` +
+      `file under the process cwd and defeat the guardrail. Fix the source (likely a ` +
+      `bash-heredoc/shell-mangled HELM_META_HOME_OVERRIDE or a persisted dispatchMetaHome).`;
+    console.error(`[helm] ${msg}`);
+    throw new Error(msg);
+  }
+}
+
 export function budgetPath(metaHome) {
+  assertAbsoluteMetaHome(metaHome);
   return path.join(metaHome, DISPATCH_DIRNAME, BUDGET_FILE);
 }
 
@@ -56,7 +93,16 @@ function writeJsonAtomic(filePath, value) {
  * and clears it.
  */
 export function readBudget(metaHome) {
-  const p = budgetPath(metaHome);
+  let p;
+  try {
+    p = budgetPath(metaHome);
+  } catch {
+    // Non-absolute metaHome: we can't trust WHERE we'd read. The wrong/missing
+    // location reads as fresh zero-spend + not-killed, which would silently
+    // disable the ceiling and kill switch - so fail CLOSED (killed), exactly like
+    // a corrupt file. Callers on the write path fail LOUD instead (see update()).
+    return { ...freshState(), killed: true, corrupt: true };
+  }
   if (!fs.existsSync(p)) {
     return freshState();
   }
@@ -72,11 +118,20 @@ export function readBudget(metaHome) {
 }
 
 function update(metaHome, patch) {
+  // Fail LOUD on a non-absolute metaHome, BEFORE the best-effort write below - a
+  // throw from inside the try would be swallowed as a "transient write failure"
+  // and we'd lose the signal. A mangled/relative metaHome on the write path is a
+  // real bug (never a normal condition: resolveMetaHome always yields an absolute
+  // path in production), and silently writing a stray relative budget file is the
+  // one outcome the guardrail must never allow (see assertAbsoluteMetaHome).
+  assertAbsoluteMetaHome(metaHome);
   const next = { ...readBudget(metaHome), ...patch, updatedAt: Date.now() };
   try {
     writeJsonAtomic(budgetPath(metaHome), next);
   } catch {
-    // best-effort persistence; the in-memory value still governs this call
+    // best-effort persistence (transient FS/EPERM); the in-memory value still
+    // governs this call. Note: a non-absolute metaHome is NOT swallowed here - it
+    // was already rejected loudly above.
   }
   return next;
 }
