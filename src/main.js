@@ -128,6 +128,49 @@ import { isAvailable as whisperStreamAvailable, startStream as startWhisperStrea
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// Say when an IPC handler blocks the main process for too long.
+//
+// This exists because the app got slow twice in the same way, and nobody could see it. On
+// 2026-08-03 a review-queue build was measured blocking an unrelated IPC for 421ms and the
+// fix was a cache; by 2026-08-12 the same build was blocking for 2.2 seconds again, once a
+// minute, because the cache was keyed on the wrong thing. Both times the symptom the captain
+// reported was "helm är lite långsamt ibland" - the vaguest possible bug report, because
+// there was nothing anywhere that named the actual culprit.
+//
+// So the culprit names itself now. Every handler is timed, and any that holds the main
+// process past the threshold prints what it was and for how long. It is the cheap standing
+// guard that the last two point fixes did not leave behind.
+//
+// Roughly a frame and a half of a 60Hz window: below that a stall is not felt, above it
+// the app is visibly not answering. Only SYNCHRONOUS blocking is reported - an async
+// handler that awaits the worker for two seconds is not holding anything up, which is the
+// entire point of having moved that work off this thread.
+//
+// Verified to actually fire by lowering this to 0 and watching it name 33 handlers in one
+// launch - a guard nobody has seen trip is indistinguishable from one that is broken. That
+// run also happens to be the clearest single proof of the phase-2 work: 'sessions:get',
+// which used to block for 93-212ms on every 30-second poll, reported 1ms.
+//
+// It writes to console.warn, which is stderr. The E2E harness captures stdout and stderr
+// separately, so a check looking for these must read app.stderr.
+const SLOW_IPC_MS = 25;
+const originalHandle = ipcMain.handle.bind(ipcMain);
+ipcMain.handle = (channel, listener) => {
+  return originalHandle(channel, (...args) => {
+    const started = performance.now();
+    try {
+      return listener(...args);
+    } finally {
+      // Measured around the SYNCHRONOUS part only: for an async handler this returns at
+      // its first await, which is exactly the span that blocks everything else.
+      const blocked = performance.now() - started;
+      if (blocked > SLOW_IPC_MS) {
+        console.warn(`[helm] slow IPC: '${channel}' blocked the main process for ${Math.round(blocked)}ms`);
+      }
+    }
+  });
+};
+
 let mainWindow = null;
 let latestQuota = null;
 // When latestQuota actually arrived. Kept beside it because the refresh payload
