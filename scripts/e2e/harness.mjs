@@ -545,8 +545,13 @@ function killByDebugPort(port) {
   }
   const pattern = `*--remote-debugging-port=${port}*`;
   const ps = [
-    `$procs = Get-CimInstance Win32_Process -Filter "Name='electron.exe'" |`,
-    `  Where-Object { $_.CommandLine -like '${pattern}' }`,
+    // electron.exe OR Helm.exe: a PACKAGED build runs under the product name, so a filter on
+    // electron.exe alone silently matched nothing and left the instance running (found while
+    // adding the packaged-build check, 2026-08-12). Both names stay narrow, and the debug
+    // port - unique per launch - is still what actually identifies the instance, so this
+    // cannot reach Aidin's own installed Helm, which carries no such flag.
+    `$procs = Get-CimInstance Win32_Process |`,
+    `  Where-Object { ($_.Name -eq 'electron.exe' -or $_.Name -eq 'Helm.exe') -and $_.CommandLine -like '${pattern}' }`,
     `if (-not $procs) { Write-Output '(no matching instance)'; exit 0 }`,
     `foreach ($p in $procs) {`,
     `  Write-Output "Killing E2E electron.exe tree PID $($p.ProcessId)"`,
