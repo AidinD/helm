@@ -5447,6 +5447,32 @@ async function retireMateWithCarryOver(mate, persona = undefined) {
       // fall through - retire without a handoff rather than blocking
     }
     setPaneBusyUIRaw(focusedPaneIndex, "");
+    // The first mate's OWN summary, saved as a durable document too - not only as the
+    // one-shot pendingHandoff that seeds its successor's composer.
+    //
+    // Its second mates have had this since task 663ab4b6 (saveSecondMateHandoffsFor, just
+    // below); the coordinating mate above them did not, which is backwards - it holds the
+    // thread the others hang off. handoffStore.js says exactly why the mate record is not
+    // enough: pendingHandoff "is consumed once and is a message to the next instance, not a
+    // durable document you can open and read later". So a first mate's knowledge lived
+    // exactly one successor deep and then was gone (the captain, 2026-08-12: "det vore även bra om
+    // samma handoff mekanik som finns hos 2nd mates också finns hos 1st mates").
+    //
+    // A first mate is rooted at the meta-home, which is not a repo, so this files by TOPIC -
+    // the case handoffStore was built for. ask:false for the same reason the child batch uses
+    // it: a menu here would block a multi-second retire that is already in progress. A
+    // guessed topic is surfaced rather than swallowed.
+    if (handoff) {
+      try {
+        const saved = await saveHandoffResolvingTopic({ cwd: mate.root || state.orchestratorHome, title: mate.name }, handoff, { ask: false });
+        if (saved?.guessedTopic) {
+          showNotice(`Couldn't tell which topic "${mate.name}" belongs to - filed its handoff under "${saved.category}".`);
+        }
+      } catch {
+        // The carry-over into the successor still happens; a failed durable write must not
+        // cost the retire itself.
+      }
+    }
   }
   await saveSecondMateHandoffsFor(mate, busy);
   busy.update(`Retiring ${mate.name} - archiving…`);

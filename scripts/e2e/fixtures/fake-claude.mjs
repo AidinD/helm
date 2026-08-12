@@ -16,7 +16,13 @@
  * dual-mode check: a relay and a jump-in must end up on the SAME id.
  *
  * FAKE_CLAUDE_HOLD_MS makes the turn last long enough to observe the lock it holds while it
- * runs. Reached only via HELM_CLAUDE_BIN, which nothing but a test sets.
+ * runs. FAKE_CLAUDE_REPLY sets the reply text, which matters more than it looks: the
+ * carry-over path runs the answer through validateSummary, and anything under
+ * MIN_SUMMARY_CHARS is rejected as "too short to be a summary" - so a stub reply of a few
+ * words produces a retire that looks exactly like one whose summary turn never ran. Being
+ * able to set it is also what makes that rejection path testable on purpose later.
+ *
+ * Reached only via HELM_CLAUDE_BIN, which nothing but a test sets.
  */
 const args = process.argv.slice(2);
 const resumeAt = args.indexOf("--resume");
@@ -28,7 +34,12 @@ say({ type: "system", subtype: "init", session_id: sessionId, cwd: process.cwd()
 
 const hold = Number(process.env.FAKE_CLAUDE_HOLD_MS || 0);
 setTimeout(() => {
-  say({ type: "assistant", session_id: sessionId, message: { content: [{ type: "text", text: "fake-claude reply" }] } });
+  const reply =
+    process.env.FAKE_CLAUDE_REPLY ||
+    "fake-claude reply. This stands in for a real carry-over summary and is deliberately long " +
+      "enough to clear MIN_SUMMARY_CHARS, so the retire path treats it as a genuine summary " +
+      "rather than rejecting it as too short and behaving exactly as if no turn had run at all.";
+  say({ type: "assistant", session_id: sessionId, message: { content: [{ type: "text", text: reply }] } });
   say({
     type: "result",
     subtype: "success",
