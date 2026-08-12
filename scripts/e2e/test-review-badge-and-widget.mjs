@@ -91,8 +91,9 @@ ok(/if \(n === 0\) \{\s*continue;/.test(widget), "zero-value bands are skipped -
 // the badge printed the backend's tally of the WHOLE queue. Two counts of two different
 // things, presented as the same number.
 const filterFns = new Function(
-  `let reviewOnlyRepoRooted = true, reviewProjectFilter = null, reviewDomainFilter = "all";
+  `let reviewOnlyRepoRooted = true, reviewProjectFilter = null, reviewDomainFilter = "all", reviewHideNoCommits = true;
    const bandOf = (r) => r.band || r.verdict;
+   const rowNeedsNoCommitsCard = (r) => r.verdict !== "unrecorded" || r.hasCommits !== false;
    ${grab("visibleReviewRows")}
    ${grab("reviewTallyFromRows")}
    return {
