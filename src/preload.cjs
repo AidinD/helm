@@ -163,6 +163,7 @@ contextBridge.exposeInMainWorld("helm", {
   // result (see runModelFreshnessCheck in main.js); onModelFreshnessUpdate
   // fires only when the set of newly-seen model ids actually changes.
   getModelFreshness: () => ipcRenderer.invoke("models:freshnessStatus"),
+  getHeavyWorkerStatus: () => ipcRenderer.invoke("heavyWorker:status"),
   onModelFreshnessUpdate: (handler) => {
     const listener = (_event, payload) => handler(payload);
     ipcRenderer.on("models:freshnessUpdate", listener);
