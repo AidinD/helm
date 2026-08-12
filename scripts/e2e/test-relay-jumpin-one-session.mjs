@@ -14,6 +14,10 @@
 // It runs for free: HELM_CLAUDE_BIN points the launcher at a stub that emits the stream-json
 // shape and holds the turn open. No model, no tokens.
 //
+// LIVE-EXEMPT: it does start a session, but HELM_CLAUDE_BIN points the launcher at
+// fixtures/fake-claude, so no model is reached and nothing is spent - the whole reason these
+// three transitions never got a test is that the real binary costs tokens on every run.
+//
 // It launches the app, so it runs in the SLOW lane.
 // Run:  node scripts/e2e/test-relay-jumpin-one-session.mjs
 import fs from "node:fs";
