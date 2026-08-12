@@ -3166,6 +3166,11 @@ function startGoalRun({
         // in the run's transcript.
         plan: typeof result?.plan === "string" ? result.plan.slice(0, 20000) : null,
         notes: typeof result?.notes === "string" ? result.notes.slice(0, 20000) : null,
+        // The model the CLI actually resolved to for this run (distinct from the
+        // `model` field, which is what was requested - null for Auto/auto-captain
+        // runs). Surfaces "which model did the autopilot use" even when nothing
+        // was explicitly picked. See goalOrchestrator.js's runGoal/extractUsage.
+        resolvedModel: result?.resolvedModel || null,
         // Release the cross-instance claim: the run is no longer live here.
         livePid: null,
         liveHeartbeatAt: null,

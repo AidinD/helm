@@ -53,7 +53,7 @@ let archiveSearchTerm = ""; // filters the Archive page's two lists by title/fol
 // page can launch and watch more than one at a time. Each entry:
 // { goalRunId, ordinal, goal, projectPath, maxIterations, model, effort,
 //   verifyCommand, escalationConfig, status, iterations: [...], result, error,
-//   escalation, latestPlan }. `escalation` (Point 12 Phase-0, opt-in) is set
+//   escalation, latestPlan, latestModel }. `escalation` (Point 12 Phase-0, opt-in) is set
 // when a run pauses on a signal instead of finishing - see goalOrchestrator.js.
 let goalRuns = new Map();
 // Monotonic label counter so concurrent runs are tellable apart ("Run 1", …).
@@ -9185,12 +9185,19 @@ async function rehydrateGoalRuns() {
               // independent review, 2026-08-03, on a fix I had called done).
               plan: record.plan || null,
               notes: record.notes || null,
+              // The model the CLI actually resolved to, distinct from the
+              // requested `model` field above (which stays undefined here -
+              // model/effort aren't persisted on rehydration at all, a
+              // pre-existing gap out of scope for this fix). `resolvedModel`
+              // IS persisted (see main.js startGoalRun), so it survives.
+              resolvedModel: record.resolvedModel || null,
             }
           : null,
       error: record.error || null,
       escalation: record.escalation || null,
       latestPlan: record.plan || null,
       latestNotes: record.notes || null,
+      latestModel: record.resolvedModel || null,
       persisted: true,
     });
   }
@@ -13720,6 +13727,7 @@ function renderGoalPage() {
         error: null,
         escalation: null,
         latestPlan: null,
+        latestModel: null,
       });
       // Clear only the goal field so the launcher is ready for the next run;
       // folder / verify / model picks usually carry over between runs.
@@ -13849,8 +13857,20 @@ function openGoalRun(goalRunId) {
 // model menu so the label matches the picker ("Opus 4.8" not "claude-opus-4-8");
 // "Auto model" when the run left the choice to the CLI.
 function goalModelEffortLabel(run) {
-  const opt = run.model ? flattenModelOptions(MODEL_MENU_OPTIONS).find((o) => o.value === run.model) : null;
-  const modelLabel = run.model ? opt?.label || run.model.replace(/^claude-/, "") : "Auto model";
+  const labelFor = (id) => flattenModelOptions(MODEL_MENU_OPTIONS).find((o) => o.value === id)?.label || id.replace(/^claude-/, "");
+  let modelLabel;
+  if (run.model) {
+    modelLabel = labelFor(run.model);
+  } else {
+    // Auto run: no --model was requested, so show the model the CLI ACTUALLY
+    // resolved to (captured from the run's usage - see resolvedModel in
+    // goalOrchestrator.js), which is the point of task a3ff4a06 ("see which model
+    // the autopilot used"). run.latestModel is the live-mirrored/rehydrated value;
+    // run.result.resolvedModel is the finished run's. "Auto model" until the first
+    // iteration reports one.
+    const resolved = run.latestModel || run.result?.resolvedModel || null;
+    modelLabel = resolved ? `Auto -> ${labelFor(resolved)}` : "Auto model";
+  }
   return run.effort ? `${modelLabel} · ${run.effort} effort` : modelLabel;
 }
 
@@ -14542,6 +14562,7 @@ window.helm.onGoalEvent((evt) => {
         error: null,
         escalation: null,
         latestPlan: null,
+        latestModel: null,
       };
       goalRuns.set(evt.goalRunId, run);
     } else {
@@ -14555,6 +14576,12 @@ window.helm.onGoalEvent((evt) => {
     // once the run finishes and its final `result.plan` is available.
     if (evt.record.plan) {
       run.latestPlan = evt.record.plan;
+    }
+    // Same live-mirror treatment for the resolved model (see
+    // goalOrchestrator.js record.resolvedModel) - lets the Goal page and
+    // Fleet crew row show which model actually ran before the run finishes.
+    if (evt.record.resolvedModel) {
+      run.latestModel = evt.record.resolvedModel;
     }
   } else if (evt.kind === "done") {
     run.status = "done";
