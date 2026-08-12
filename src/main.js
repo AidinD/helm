@@ -42,7 +42,7 @@ import {
   pruneScheduledPrompts,
   quotaResetFireAt,
 } from "./lib/scheduledPrompts.js";
-import { buildReviewQueue, listReviewRecords, reviewQueueTally, readReviewRecord, recordCheckRun, gauntletStatus, currentHead, codeChangedBetween } from "./lib/reviewRecords.js";
+import { buildReviewQueue, listReviewRecords, reviewQueueTally, readReviewRecord, writeReviewRecord, buildAutoReviewRecord, recordCheckRun, gauntletStatus, currentHead, codeChangedBetween } from "./lib/reviewRecords.js";
 import { resolveTaskCommits, diffForCommits, shippedVersionForCommits } from "./lib/reviewDiff.js";
 import { listUnboundCommits, initialWatermark, makeIsBound, projectKey } from "./lib/commitReview.js";
 import { recommendReviewer, diffStats, REVIEWER_MODELS } from "./lib/reviewerModel.js";
@@ -116,6 +116,7 @@ import {
   writeReport,
   readReports,
   writeFleetState,
+  pruneDispatchQueue,
 } from "./lib/dispatchQueue.js";
 import { recordsNeedingReport, buildReportFromRecord } from "./lib/dispatchReconcile.js";
 import { assembleFleetState } from "./lib/fleetState.js";
@@ -3668,6 +3669,37 @@ function finishAutoRun(taskId, result = null, meta = null) {
   if (!res.ok) {
     console.error("[helm] auto-captain finished a run but could not move the card:", res.error);
   }
+  // Write a review record so the card is not BLANK in review (Aidin, 2026-08-12:
+  // "varfor dessa inte har en beskrivning over vad som gjorts?"). The autopilot has
+  // the context the review card needs - what it did, where, the commits - and it is
+  // lost the moment the run ends unless captured here. This is deliberately a
+  // `judgment` record, never a stamp: autonomous output is the machine's own claim,
+  // not a verified result, so it still needs the human's decision - but now the card
+  // shows what happened and offers the diff / a reviewer instead of a dead end. Only
+  // for a run that actually produced commits: a zero-commit run has nothing to review
+  // and the Jot note already says so. Best-effort - never fail the card move over it.
+  if (typeof commits === "number" && commits > 0) {
+    try {
+      const lastSummary = [...(result?.iterations || [])].reverse().find((it) => it?.result?.summary)?.result?.summary || null;
+      writeReviewRecord(
+        resolveMetaHome(),
+        buildAutoReviewRecord({
+          taskId,
+          projectPath: run.projectPath,
+          outcome,
+          where,
+          branch,
+          worktreePath: wt,
+          commits,
+          lastSummary,
+          verifyCommand: result?.verifyCommand || run.verifyCommand || null,
+          stoppedReason: result?.stoppedReason || null,
+        })
+      );
+    } catch (err) {
+      console.error("[helm] auto-captain could not write a review record for the finished run:", err?.message || err);
+    }
+  }
 }
 
 /**
@@ -5880,6 +5912,16 @@ function buildReviewsPayload() {
   // unbound-commit scan), rather than each tailing every transcript separately.
   const allSessions = readAllSessions()?.sessions || [];
   const roots = repoRootedCategories(records, allSessions);
+  // An auto-completed task with no record still knows its project: the goal run that
+  // produced it recorded projectPath against its autoTaskId. This is the most reliable
+  // repo source for exactly the cards that would otherwise be a dead end (no record, no
+  // category binding), so the diff / independent-reviewer actions can still root.
+  const autoRunProject = new Map();
+  for (const r of loadGoalRunHistory()) {
+    if (r?.autoTaskId && r.projectPath && !autoRunProject.has(r.autoTaskId)) {
+      autoRunProject.set(r.autoTaskId, r.projectPath);
+    }
+  }
   for (const row of rows) {
     // Jot's explicit per-board folder binding (Category.repoPath) is authoritative when
     // set; the fuzzy category-name-to-cwd guess is only a fallback. That guess reliably
@@ -5887,7 +5929,7 @@ function buildReviewsPayload() {
     // so it was backfilled from review records - which left every other board's rows with
     // no repoPath and dropped from the default repo-rooted view (task 75a01d5d: "Review
     // verkar bara göra ordentliga reviews för helm").
-    row.repoPath = row.categoryRepoPath || roots.repoFor(row.category);
+    row.repoPath = row.categoryRepoPath || roots.repoFor(row.category) || autoRunProject.get(row.taskId) || null;
     // Whether ANY commit is tied to this task - from the record, or (failing that) a
     // log search for its short id. Cards are meant to be bound to commits (Aidin:
     // "har ingen commit gjorts så behövs inget kort"); this is the fact the page
@@ -6146,14 +6188,18 @@ ipcMain.handle("reviews:commitReviewerPlan", (_event, { projectPath, sha } = {})
 // task's commits (from the record, else by searching the log for the task's short id) and
 // returns their patch. The answer says WHICH source was used, because a diff attributed
 // by search must not look like one attributed by record.
-ipcMain.handle("reviews:diff", (_event, { taskId } = {}) => {
+ipcMain.handle("reviews:diff", (_event, { taskId, projectPath: fallbackProject } = {}) => {
   const metaHome = resolveMetaHome();
   const rec = readReviewRecord(metaHome, taskId);
-  if (!rec) {
-    return { ok: false, error: "No review record for that task, so nothing says where its code lives." };
+  // Fall back to a caller-supplied project (the review row's resolved repoPath) so an
+  // UNRECORDED task can still show its diff - resolveTaskCommits finds commits by the
+  // task's short id, no record needed (Aidin, 2026-08-12: a record-less card was a dead
+  // end with no way to see what was done).
+  const projectPath = rec?.projectPath || fallbackProject || null;
+  if (!projectPath) {
+    return { ok: false, error: "No project folder is known for that task, so nothing says where its code lives." };
   }
-  const projectPath = rec.projectPath || null;
-  const resolved = resolveTaskCommits(projectPath, taskId, rec.commits || []);
+  const resolved = resolveTaskCommits(projectPath, taskId, rec?.commits || []);
   if (resolved.commits.length === 0) {
     return { ok: false, error: resolved.error || "No commits found for this task.", source: resolved.source };
   }
@@ -6321,14 +6367,18 @@ ipcMain.handle("reviews:shippedVersion", (_event, { taskId } = {}) => {
 // (Aidin, 2026-08-05: "en rekommendation baserat på dess komplexitet men att man själv kan
 // välja"). Computed here rather than in the renderer so there is one implementation and so
 // the whole diff does not have to cross IPC just to be counted.
-ipcMain.handle("reviews:reviewerPlan", (_event, { taskId, sample } = {}) => {
+ipcMain.handle("reviews:reviewerPlan", (_event, { taskId, sample, projectPath: fallbackProject } = {}) => {
   const metaHome = resolveMetaHome();
   const rec = readReviewRecord(metaHome, taskId);
-  if (!rec) {
-    return { ok: false, error: "No review record for that task." };
+  // Fall back to a caller-supplied project (the review row's repoPath) so a reviewer can
+  // be sent at an UNRECORDED task - the whole point being that the reviewer WRITES the
+  // missing record. Everything the plan returns (commit stats, note path, writing brief,
+  // model recommendation) is derivable from the task + project without a record.
+  const projectPath = rec?.projectPath || fallbackProject || null;
+  if (!projectPath) {
+    return { ok: false, error: "No project folder is known for that task, so there is nowhere to root a reviewer." };
   }
-  const projectPath = rec.projectPath || null;
-  const resolved = resolveTaskCommits(projectPath, taskId, rec.commits || []);
+  const resolved = resolveTaskCommits(projectPath, taskId, rec?.commits || []);
   // No commits is not a refusal: a reviewer can still read the record and the working
   // tree. It just means the recommendation has less to go on, and says so.
   let stats = { files: 0, added: 0, removed: 0, changedLines: 0, commits: 0, paths: [] };
@@ -6339,7 +6389,8 @@ ipcMain.handle("reviews:reviewerPlan", (_event, { taskId, sample } = {}) => {
     }
   }
   const recommendation = recommendReviewer({
-    criticality: rec.criticality,
+    // No record -> treat as core so the reviewer isn't under-scoped for unseen work.
+    criticality: rec?.criticality || "core",
     files: stats.files,
     changedLines: stats.changedLines,
     commits: resolved.commits.length,
@@ -6348,7 +6399,7 @@ ipcMain.handle("reviews:reviewerPlan", (_event, { taskId, sample } = {}) => {
   return {
     ok: true,
     projectPath,
-    criticality: rec.criticality || null,
+    criticality: rec?.criticality || null,
     commitSource: resolved.source,
     commits: resolved.commits.length,
     stats: { files: stats.files, added: stats.added, removed: stats.removed, changedLines: stats.changedLines },
@@ -6634,6 +6685,12 @@ app.whenReady().then(() => {
   pruneScheduledPrompts();
   runDueScheduledPrompts();
   setInterval(runDueScheduledPrompts, 60 * 1000);
+  // Dispatch queue (dispatchQueue.js's acks/reports): found live 2026-08-12 with
+  // 44/24 files dating back to 2026-07-16 - nothing ever removed them. A catch-up
+  // prune now, then once a day; these are an inert inbox (not time-sensitive like
+  // a scheduled prompt), so a daily cadence is plenty.
+  pruneDispatchQueue(resolveMetaHome());
+  setInterval(() => pruneDispatchQueue(resolveMetaHome()), 24 * 60 * 60 * 1000);
   // Auto-captain (ea0546d1). The timer always runs; the TICK is what checks the
   // toggle, so turning it on takes effect without a restart. Deliberately no
   // catch-up pass at startup: unlike a scheduled prompt, which the user queued

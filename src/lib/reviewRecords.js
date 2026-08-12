@@ -867,6 +867,44 @@ export function listReviewRecords(metaHome) {
 }
 
 /**
+ * Build the review record an autopilot run leaves behind when it moves a task to
+ * review, so the card is not a blank "no record" dead end (Aidin, 2026-08-12). It is
+ * deliberately a `judgment`, never a stamp: autonomous output is the machine's own
+ * claim, not a verified result, so it still needs the human's decision - but now the
+ * card shows what happened and can offer the diff / a reviewer. The check is the run's
+ * own verify gate when it had one, else a commits-present check (honest about the
+ * absence); `notVerified` states plainly that nothing here is verified. Kept pure and
+ * exported so its VALIDITY (it must pass reviewRecordProblems, or writeReviewRecord
+ * refuses it and the card stays blank) is directly testable.
+ */
+export function buildAutoReviewRecord({ taskId, projectPath, outcome, where, branch, worktreePath, commits, lastSummary = null, verifyCommand = null, stoppedReason = null }) {
+  const runCwd = worktreePath || projectPath;
+  return {
+    taskId,
+    summary: `Autopilot run - ${outcome}. ${lastSummary ? `${lastSummary} ` : ""}The work is ${where}.`,
+    verdict: "judgment",
+    ask: "An autopilot produced this autonomously and did NOT verify it end to end. Review the worktree/branch, then decide: merge, send back, or discard.",
+    criticality: "core",
+    projectPath,
+    testSteps: [
+      { step: `Check out branch ${branch || "(the run's branch)"} (worktree: ${worktreePath || projectPath}).`, expect: "The autopilot's commits are present." },
+      { step: "Verify the task's own acceptance by hand, or run the project's tests.", expect: "The task's stated outcome actually holds." },
+    ],
+    checks: [
+      verifyCommand
+        ? { label: "the run's own verify gate", cmd: verifyCommand, cwd: runCwd }
+        : { label: "commits present on the branch (no verify gate was configured)", cmd: `git log --oneline -${commits}`, cwd: runCwd },
+    ],
+    evidence: [`${outcome}. ${where}.`, `Stopped because: ${stoppedReason || "unknown"}.`],
+    notVerified: [
+      "Produced AUTONOMOUSLY by an autopilot and NOT verified end to end - the summary is the machine's own claim, not a checked result.",
+      "The work lives in an isolated worktree/branch and is NOT merged.",
+      "No human or independent reviewer has looked at it yet - use 'Independent reviewer' on the card for that.",
+    ],
+  };
+}
+
+/**
  * Write (replace) the record for a task. Refuses an incomplete record rather
  * than storing something that renders as a hollow card - the failure this whole
  * feature exists to prevent is a review item that looks reviewed and is not.
