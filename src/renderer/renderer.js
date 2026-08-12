@@ -2593,9 +2593,14 @@ let reviewRenderToken = 0;
  *
  * A cached-then-corrected review page needs care rather than enthusiasm, because "stale
  * review state is exactly the kind of thing that should not be quietly out of date" - this
- * file's own words about the cache. Two things make it honest: the refresh is always
- * issued (never skipped because the cache looked recent), and while it is in flight the
- * page SAYS it is checking. Nothing is quiet about it.
+ * file's own words about the cache. Two things make it honest: whenever a CACHED payload is
+ * painted a refresh always follows (never skipped because the cache looked recent), and
+ * while it is in flight the page SAYS it is checking. Nothing is quiet about it.
+ *
+ * The one case with no refresh is a cold cache, where the first call built the queue itself -
+ * that payload is already as fresh as a second call could make it. An earlier version of this
+ * comment claimed the refresh was unconditional, which stopped being true the moment that
+ * double build was fixed (second review, 2026-08-12).
  */
 async function renderReviewPage() {
   const page = document.getElementById("reviewPage");

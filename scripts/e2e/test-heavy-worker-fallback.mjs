@@ -52,6 +52,21 @@ try {
     `heavyWorkerStatus reports alive:false when the worker never completed its handshake (${JSON.stringify(status)}) - it said TRUE before this fix, so the one field meant to reveal a silent fallback was itself silent`
   );
   ok(typeof status.lastError === "string" && status.lastError.length > 0, `and it carries why (${status.lastError})`);
+
+  // The COST of being honest, pinned. The first version of this fix killed the never-ready
+  // worker but let the next call spawn another, so a packaged build whose module graph will
+  // not load paid the full 10-second ready timeout on each of the user's first four heavy
+  // operations - roughly 40 seconds of stalls, where the bug it replaced cost 10 (measured by
+  // the second review, 2026-08-12). One timeout must now be enough to give up.
+  ok(
+    status.disabled === true,
+    `one failed handshake disables the worker for the session (${JSON.stringify(status)}) - without this each later call respawns and waits out the 10s timeout again, which made the honest version four times slower than the lie it replaced`
+  );
+  ok(
+    status.restarts <= 1,
+    `and it stopped after a single attempt (restarts: ${status.restarts}), rather than burning through MAX_RESTARTS at ten seconds each`
+  );
+  ok(/did not report ready|exited/i.test(status.lastError), `and the reason survives rather than being overwritten by a bare exit code (${status.lastError})`);
 } finally {
   await app.close();
 }

@@ -53,15 +53,23 @@ function stripNonCode(text) {
     .replace(/([=(,:[!&|?{};+\-*%^~<>]|^|return|typeof)\s*\/(?![*/])(?:\\.|\[(?:\\.|[^\]\\])*\]|[^/\\\n])+\/[gimsuy]*/g, "$1 //RE ");
 }
 
-/** Every function name src/lib/*.js exports. */
+/**
+ * Every function name src/lib/*.js exports.
+ *
+ * Both syntaxes. Matching only `export function` left a whole export style invisible -
+ * sessionState.js exports three arrow functions, and a call to one of them with no import
+ * would have gone unnoticed (second review, 2026-08-12).
+ */
 const libExports = new Map(); // name -> [module basenames that export it]
 for (const file of fs.readdirSync(libDir).filter((f) => f.endsWith(".js"))) {
   const text = fs.readFileSync(path.join(libDir, file), "utf8");
-  for (const m of text.matchAll(/^export\s+(?:async\s+)?function\s*\*?\s*(\w+)/gm)) {
-    if (!libExports.has(m[1])) {
-      libExports.set(m[1], []);
+  for (const re of [/^export\s+(?:async\s+)?function\s*\*?\s*(\w+)/gm, /^export\s+const\s+(\w+)\s*=\s*(?:async\s*)?(?:\([^)]*\)|\w+)\s*=>/gm]) {
+    for (const m of text.matchAll(re)) {
+      if (!libExports.has(m[1])) {
+        libExports.set(m[1], []);
+      }
+      libExports.get(m[1]).push(file);
     }
-    libExports.get(m[1]).push(file);
   }
 }
 
@@ -90,6 +98,34 @@ for (const file of targets) {
   for (const re of [/\b(?:async\s+)?function\s*\*?\s*(\w+)/g, /\b(?:const|let|var)\s+(\w+)\s*=/g, /\bclass\s+(\w+)/g]) {
     for (const m of code.matchAll(re)) {
       available.add(m[1]);
+    }
+  }
+  // Every name a BINDING can introduce, not just a declaration: a parameter, a destructured
+  // field, a catch binding, a for-of variable. Without these the guard cried wolf on correct
+  // code - `export function probe(currentHead) { return currentHead(); }` went red purely
+  // because some lib happens to export a function of that name, and there are 290 such names
+  // including ordinary ones like `readAck` and `nextRun` (second review, 2026-08-12).
+  //
+  // This deliberately over-collects: a name bound ANYWHERE in the file counts as available
+  // everywhere in it. That is the right direction to be wrong in. The guard exists to catch
+  // an import that was deleted while its call site stayed, and no plausible version of that
+  // bug also has the same name bound as a parameter somewhere in the same file - whereas a
+  // false positive costs trust in the check, which is the one thing it cannot afford.
+  for (const re of [
+    /\(([^()]*)\)\s*=>/g, // arrow parameters
+    /\b(?:async\s+)?function\s*\*?\s*\w*\s*\(([^()]*)\)/g, // function parameters
+    /\bcatch\s*\(\s*(\w+)\s*\)/g, // catch binding
+    /\bfor\s*\(\s*(?:const|let|var)\s+(\w+)\s+of\b/g, // for-of binding
+    /\{([^{}]*)\}\s*=/g, // destructuring, in a declaration or a parameter
+  ]) {
+    for (const m of code.matchAll(re)) {
+      for (const part of String(m[1]).split(",")) {
+        // `a`, `a = 1`, `...rest`, `{ b: c }` -> the bound name is the last segment.
+        const name = part.split(":").pop().trim().replace(/^\.{3}/, "").split("=")[0].trim();
+        if (/^[A-Za-z_$][\w$]*$/.test(name)) {
+          available.add(name);
+        }
+      }
     }
   }
 

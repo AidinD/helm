@@ -29,6 +29,20 @@ function readJotFile(jotPath) {
 }
 
 /**
+ * WHERE the board is. `config.jot.path` wins over the default location.
+ *
+ * One exported definition because it had nine identical copies in this file, and a tenth
+ * caller got it wrong in a way nothing could catch: the review-queue cache fingerprinted the
+ * DEFAULT path while the queue was built from the configured one, so with a custom board set
+ * it would have watched a file that never moves and pinned a stale queue forever with no age
+ * escape hatch (second review, 2026-08-12). A shared function makes that class of drift
+ * impossible rather than merely unlikely.
+ */
+export function boardPath(jotConfig = {}) {
+  return jotConfig.path || resolveJotTodosPath();
+}
+
+/**
  * Loads Jot data and builds a per-category work index plus a matcher that
  * associates a session (by title) with a Jot category. All read-only.
  *
@@ -39,7 +53,7 @@ export function loadJot(jotConfig = {}) {
   if (jotConfig.enabled === false) {
     return emptyIndex(null);
   }
-  const jotPath = jotConfig.path || resolveJotTodosPath();
+  const jotPath = boardPath(jotConfig);
   const data = readJotFile(jotPath);
   if (!data) {
     return emptyIndex(jotPath);
@@ -321,7 +335,7 @@ export function readJotState(jotConfig = {}) {
   if (jotConfig.enabled === false) {
     return { ok: false, todos: [], tags: [], categories: [] };
   }
-  const jotPath = jotConfig.path || resolveJotTodosPath();
+  const jotPath = boardPath(jotConfig);
   const data = readJotFile(jotPath);
   if (!data) {
     return { ok: false, path: jotPath, todos: [], tags: [], categories: [] };
@@ -416,7 +430,7 @@ export function setTaskTags(jotConfig, taskId, { add = [], remove = [], note = "
   if (status && !JOT_STATUSES.includes(status)) {
     return { ok: false, error: `Unknown status "${status}".` };
   }
-  const jotPath = jotConfig.path || resolveJotTodosPath();
+  const jotPath = boardPath(jotConfig);
   return mutateJotFile(jotPath, (data) => {
     const todo = data.todos.find((t) => t.id === taskId);
     if (!todo) {
@@ -469,7 +483,7 @@ export function setTaskStatus(jotConfig, taskId, status, note = "", images = [])
   if (!JOT_STATUSES.includes(status)) {
     return { ok: false, error: `Unknown status "${status}".` };
   }
-  const jotPath = jotConfig.path || resolveJotTodosPath();
+  const jotPath = boardPath(jotConfig);
   return mutateJotFile(jotPath, (data) => {
     const todo = data.todos.find((t) => t.id === taskId);
     if (!todo) {
@@ -513,7 +527,7 @@ export function signedOffWithoutRecord(jotConfig = {}, hasRecord, { withinMs = 1
   if (jotConfig.enabled === false) {
     return { ok: false, error: "Jot is disabled in config", tasks: [] };
   }
-  const jotPath = jotConfig.path || resolveJotTodosPath();
+  const jotPath = boardPath(jotConfig);
   const data = readJotFile(jotPath);
   if (!data) {
     return { ok: false, error: `Couldn't read the Jot board at ${jotPath}`, tasks: [] };
@@ -557,7 +571,7 @@ export function reviewTasks(jotConfig = {}) {
   if (jotConfig.enabled === false) {
     return { ok: false, error: "Jot is disabled in config", tasks: [] };
   }
-  const jotPath = jotConfig.path || resolveJotTodosPath();
+  const jotPath = boardPath(jotConfig);
   const data = readJotFile(jotPath);
   if (!data) {
     return { ok: false, error: `Couldn't read the Jot board at ${jotPath}`, tasks: [] };
@@ -740,7 +754,7 @@ export function allTaskShortIds(jotConfig = {}) {
   if (jotConfig.enabled === false) {
     return [];
   }
-  const jotPath = jotConfig.path || resolveJotTodosPath();
+  const jotPath = boardPath(jotConfig);
   const data = readJotFile(jotPath);
   const todos = data && Array.isArray(data.todos) ? data.todos : [];
   return todos.map((t) => String(t?.id || "").slice(0, 8)).filter(Boolean);
@@ -761,7 +775,7 @@ export function loadGoals(jotConfig = {}) {
   if (jotConfig.enabled === false) {
     return { ok: false, path: null, goals: [] };
   }
-  const jotPath = jotConfig.path || resolveJotTodosPath();
+  const jotPath = boardPath(jotConfig);
   const data = readJotFile(jotPath);
   if (!data) {
     return { ok: false, path: jotPath, goals: [] };
@@ -891,7 +905,7 @@ export function addSubtask(jotConfig, parentId, text) {
   if (!parentId) {
     return { ok: false, error: "Missing parent goal id." };
   }
-  const jotPath = jotConfig.path || resolveJotTodosPath();
+  const jotPath = boardPath(jotConfig);
   let newId = null;
   const res = mutateJotFile(jotPath, (data) => {
     const parent = data.todos.find((t) => t.id === parentId);
