@@ -13,7 +13,7 @@ import { execFile, execFileSync, spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { readAllSessions, enrichWithJot, setSessionArchived, forkTranscriptAtUserMessage, switchSessionRootFolder } from "./lib/sessions.js";
 import { loadJot, loadGoals, addSubtask, formatJotSummaryForClassifier, projectBoardSummary, reviewTasks, allTaskShortIds, signedOffWithoutRecord, setTaskStatus, setTaskTags, readJotState, ensureTagsExist } from "./lib/jot.js";
-import { resolveJotDataDir } from "./lib/jotDataDir.js";
+import { resolveJotDataDir, resolveJotTodosPath } from "./lib/jotDataDir.js";
 import { loadConfig, writeConfig } from "./lib/config.js";
 import { startSession, resolveClaudeBinary } from "./lib/launcher.js";
 import { createLiveSessionRegistry } from "./lib/liveSessions.js";
@@ -42,8 +42,9 @@ import {
   pruneScheduledPrompts,
   quotaResetFireAt,
 } from "./lib/scheduledPrompts.js";
-import { buildReviewQueue, listReviewRecords, reviewQueueTally, readReviewRecord, writeReviewRecord, buildAutoReviewRecord, recordCheckRun, gauntletStatus, currentHead, codeChangedBetween } from "./lib/reviewRecords.js";
-import { resolveTaskCommits, diffForCommits, shippedVersionForCommits } from "./lib/reviewDiff.js";
+import { buildReviewQueue, listReviewRecords, reviewQueueInputsFingerprint, reviewQueueTally, readReviewRecord, writeReviewRecord, buildAutoReviewRecord, recordCheckRun, gauntletStatus, currentHead, codeChangedBetween } from "./lib/reviewRecords.js";
+import { resolveTaskCommits, resolveTaskCommitsBatch, diffForCommits, shippedVersionForCommits } from "./lib/reviewDiff.js";
+import { normalizeFsPath as normalizeRepoKey } from "./lib/fsPath.js";
 import { listUnboundCommits, initialWatermark, makeIsBound, projectKey } from "./lib/commitReview.js";
 import { recommendReviewer, diffStats, REVIEWER_MODELS } from "./lib/reviewerModel.js";
 import { buildReviewHtml, buildCommitReviewHtml } from "./lib/reviewHtml.js";
@@ -5729,18 +5730,48 @@ function runDueScheduledPrompts() {
 // So: one computation, shared. Callers that only need a number (the badge, the widget)
 // pass maxAgeMs and get the last result when it is recent enough; the page passes
 // nothing and always gets a fresh one, because that is the surface where being current
-// matters. Deliberately NOT a longer-lived cache: stale review state is exactly the kind
-// of thing that should not be quietly out of date.
-let reviewQueueCache = null; // { at, payload }
+// matters.
+//
+// That age gate was not enough, and the numbers say why (measured 2026-08-12). The badge
+// ticks every 60s but the age allowance was 20s, so EVERY tick missed the cache and paid
+// the full build - about 2.2 seconds of blocked main process, once a minute, forever, on
+// a board the captain was not even looking at. An age gate answers "how old is this?" when the
+// question that decides correctness is "has anything it was computed FROM changed?".
+//
+// So the cache is now keyed on its INPUTS, not the clock: Jot's todos.json (what is in
+// review) and the review-records folder (the evidence). While neither has moved, the
+// cached payload is not stale - it is the same answer the rebuild would produce - and
+// callers who only want a number get it for free. The page still forces a fresh build,
+// because git state (a new commit) is an input this fingerprint deliberately does NOT
+// cover, and being current is the whole point of that surface.
+let reviewQueueCache = null; // { at, payload, inputs }
 const REVIEW_QUEUE_DEFAULT_MAX_AGE_MS = 20_000;
 
+// See reviewQueueInputsFingerprint in reviewRecords.js for what this covers and, more
+// importantly, what it deliberately does not (git state).
+const reviewQueueInputs = () => reviewQueueInputsFingerprint(resolveMetaHome(), resolveJotTodosPath());
+
 ipcMain.handle("reviews:list", (_e, opts = {}) => {
+  // maxAgeMs marks a caller that only needs a number and can accept a cached answer.
+  // The VALUE is kept as a ceiling (a caller asking for 20s never gets a 10-minute-old
+  // payload if the clock somehow outruns the fingerprint), but the fingerprint is what
+  // normally decides, and it is why the badge no longer rebuilds once a minute.
   const maxAge = typeof opts?.maxAgeMs === "number" ? opts.maxAgeMs : 0;
-  if (maxAge > 0 && reviewQueueCache && Date.now() - reviewQueueCache.at <= maxAge) {
-    return { ...reviewQueueCache.payload, cached: true };
+  if (maxAge > 0 && reviewQueueCache) {
+    const inputs = reviewQueueInputs();
+    if (inputs !== null && inputs === reviewQueueCache.inputs) {
+      return { ...reviewQueueCache.payload, cached: true };
+    }
+    if (Date.now() - reviewQueueCache.at <= maxAge) {
+      return { ...reviewQueueCache.payload, cached: true };
+    }
   }
+  // Fingerprint BEFORE the build, not after: a board edit that lands while the build is
+  // running must invalidate the result it was not included in, rather than being stamped
+  // as already accounted for.
+  const inputs = reviewQueueInputs();
   const payload = buildReviewsPayload();
-  reviewQueueCache = { at: Date.now(), payload };
+  reviewQueueCache = { at: Date.now(), payload, inputs };
   return payload;
 });
 
@@ -5930,15 +5961,40 @@ function buildReviewsPayload() {
     // no repoPath and dropped from the default repo-rooted view (task 75a01d5d: "Review
     // verkar bara göra ordentliga reviews för helm").
     row.repoPath = row.categoryRepoPath || roots.repoFor(row.category) || autoRunProject.get(row.taskId) || null;
-    // Whether ANY commit is tied to this task - from the record, or (failing that) a
-    // log search for its short id. Cards are meant to be bound to commits (the captain:
-    // "har ingen commit gjorts så behövs inget kort"); this is the fact the page
-    // filters on, computed here rather than the renderer because it needs git.
-    // Annotated, not dropped - same reasoning as the comment above: the count of
-    // what a filter hides must stay knowable, so the page can say so.
+  }
+  // Whether ANY commit is tied to each task - from the record, or (failing that) a log
+  // search for its short id. Cards are meant to be bound to commits (the captain: "har ingen
+  // commit gjorts så behövs inget kort"); this is the fact the page filters on, computed
+  // here rather than the renderer because it needs git. Annotated, not dropped - same
+  // reasoning as the comment above: the count of what a filter hides must stay knowable.
+  //
+  // ONE git call per repo, not one per row. This loop used to spawn a git process for
+  // every row that had no recorded commit, and a git process costs ~70ms of startup on
+  // Windows before doing any work: 20 rows measured at 2194ms of blocked main process on
+  // 2026-08-12, which is the app-wide freeze this file's cache comment already described
+  // in 2026-08-03 and never actually fixed. Batched: 237ms for the same rows, identical
+  // results. Grouped on the NORMALIZED path so the same repo spelled `D:\Repo\...` by one
+  // source and `D:/Repo/...` by another is one group and not two (both spellings were
+  // live on his board).
+  const rowsNeedingSearch = rows.filter((row) => row.repoPath && (row.record?.commits || []).length === 0);
+  const searchByRepo = new Map();
+  for (const row of rowsNeedingSearch) {
+    const key = normalizeRepoKey(row.repoPath);
+    if (searchByRepo.has(key)) {
+      searchByRepo.get(key).taskIds.push(row.taskId);
+    } else {
+      searchByRepo.set(key, { projectPath: row.repoPath, taskIds: [row.taskId] });
+    }
+  }
+  const searchResults = new Map();
+  for (const { projectPath, taskIds } of searchByRepo.values()) {
+    for (const [taskId, result] of resolveTaskCommitsBatch(projectPath, taskIds)) {
+      searchResults.set(taskId, result);
+    }
+  }
+  for (const row of rows) {
     const recCommits = row.record?.commits || [];
-    row.hasCommits =
-      recCommits.length > 0 || (row.repoPath ? resolveTaskCommits(row.repoPath, row.taskId, []).commits.length > 0 : false);
+    row.hasCommits = recCommits.length > 0 || (searchResults.get(row.taskId)?.commits.length || 0) > 0;
   }
   // The audit half: work that reached done without ever being recorded. A direct
   // board write cannot be prevented from here, only detected - and it has to surface

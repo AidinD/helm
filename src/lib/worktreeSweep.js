@@ -1,3 +1,5 @@
+import { normalizeFsPath as normalizePath } from "./fsPath.js";
+
 /**
  * Housekeeping for the worktrees and branches an autonomous goal run leaves
  * behind.
@@ -78,15 +80,12 @@ export function isHelmBranch(branchName) {
 // rules below already cover it. A second set of cleanup rules keyed on a branch-name
 // convention was a duplicate to keep in sync.
 
-function normalizePath(p) {
-  // Windows gives back a mix of separators and cases between `git worktree
-  // list` and a stored record; comparing raw strings silently fails to match a
-  // worktree with its own run, which would make a LIVE run look orphaned.
-  return String(p || "")
-    .replace(/[\\/]+/g, "/")
-    .replace(/\/+$/, "")
-    .toLowerCase();
-}
+// Windows gives back a mix of separators and cases between `git worktree list` and a
+// stored record; comparing raw strings silently fails to match a worktree with its own
+// run, which would make a LIVE run look orphaned. The canonicalization is shared (see
+// fsPath.js) rather than kept private here, so this file and jot.js and the review queue
+// cannot drift on what "the same folder" means. fsPath.js has no imports of its own, so
+// this module stays as pure and as cheap to load as its header promises.
 
 /**
  * Decide what to clean in one repo.

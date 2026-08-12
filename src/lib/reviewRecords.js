@@ -36,6 +36,56 @@ export function reviewsDir(metaHome) {
   return path.join(metaHome, DIR);
 }
 
+/**
+ * A cheap fingerprint of everything the review queue is derived from, EXCEPT git.
+ *
+ * The review queue is expensive to build - about 2.2 seconds of blocked main process on
+ * the captain's real board, measured 2026-08-12 - and it was being rebuilt once a minute by a
+ * badge, because the cache guarding it was keyed on AGE (20s) while the badge ticked
+ * every 60s, so every single tick missed. An age gate answers "how old is this?" when the
+ * question that decides correctness is "has anything it was computed FROM changed?".
+ *
+ * These are those inputs: Jot's todos.json decides what is in review, the review-records
+ * folder carries the evidence. Two stat() calls, so this is safe to run on every tick -
+ * about 0.1ms against the 2.2 seconds it guards.
+ *
+ * The folder is stat'ed rather than walked, and that rests on ONE property: records are
+ * written atomically (writeJsonAtomicSync = write a temp file, then rename it into place),
+ * and a rename changes the directory's mtime while an in-place rewrite does NOT. Verified
+ * on Windows 2026-08-12, both ways. If a record were ever written with a plain
+ * writeFileSync the fingerprint would stop noticing edits and the badge would quietly
+ * freeze - so test-review-queue-cache-inputs pins it by writing a record the way the app
+ * does and asserting the fingerprint moves. Walking the folder instead would cost 20ms
+ * per tick on his Dropbox-backed meta-home, measured, for a property the write path
+ * already guarantees.
+ *
+ * git state is deliberately NOT covered. A new commit can change a row's hasCommits, and
+ * no cheap stat says so; the surface where that must be current (the Review page) forces
+ * a fresh build instead of consulting this. Claiming to cover git here would turn a known
+ * limit into a silent wrong answer.
+ *
+ * Returns null when NEITHER input can be read, which callers must treat as "cannot tell"
+ * and rebuild - never as "unchanged", which would pin a stale queue forever.
+ *
+ * @param {string} metaHome
+ * @param {string} todosPath
+ * @returns {string|null}
+ */
+export function reviewQueueInputsFingerprint(metaHome, todosPath) {
+  const parts = [];
+  let readable = 0;
+  for (const p of [todosPath, reviewsDir(metaHome)]) {
+    try {
+      const st = fs.statSync(p);
+      parts.push(`${p}:${st.mtimeMs}:${st.size}`);
+      readable++;
+    } catch {
+      parts.push(`${p}:-`);
+    }
+  }
+  return readable === 0 ? null : parts.join("|");
+}
+
 /** Jot ids are uuids; keep the filename to that shape so nothing can escape. */
 function safeId(taskId) {
   const id = String(taskId || "").trim().toLowerCase();

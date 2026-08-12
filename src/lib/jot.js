@@ -3,6 +3,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { resolveJotTodosPath } from "./jotDataDir.js";
 import { writeFileAtomicSync } from "./atomicWrite.js";
+import { normalizeFsPath as normalizePath } from "./fsPath.js";
 
 /**
  * Reads and parses Jot's todos.json, tolerating a leading UTF-8 BOM.
@@ -660,20 +661,10 @@ function normalize(str) {
     .replace(/[^a-z0-9åäö]/g, "");
 }
 
-// Canonicalizes a filesystem path for comparison: forward slashes, no trailing
-// slash, lowercased. Windows paths are case-insensitive and mix separators
-// (D:\Repo vs D:/repo), so both must fold to one form before comparing a
-// session's cwd against a category's repoPath. Returns "" for empty input.
-function normalizePath(p) {
-  const s = String(p || "").trim();
-  if (!s) {
-    return "";
-  }
-  return s
-    .replace(/[\\/]+/g, "/") // backslashes and doubled slashes -> single forward slash
-    .replace(/\/+$/, "") // drop any trailing slash
-    .toLowerCase();
-}
+// Path canonicalization (forward slashes, no trailing slash, lowercased) lives in
+// paths.js as normalizeFsPath, imported above under its old local name. It had been
+// written privately here AND in worktreeSweep.js; a third caller made one shared copy
+// the only way to keep them from drifting.
 
 // ============================ Goal focus (Point 8) ============================
 // A goal-to-tasks focus view, backed by Jot (not a second task system). This

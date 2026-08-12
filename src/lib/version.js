@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.join(__dirname, "..", "..");
@@ -98,6 +98,76 @@ export function computeVersionString() {
 }
 
 /**
+ * A cheap "could HEAD have moved since last time?" stamp, or null when it cannot be
+ * determined without git.
+ *
+ * This exists because readGitHeadShort below runs on a 45-second timer for the life of
+ * the app, and starting a git process costs about 70ms on Windows before it does any
+ * work at all (measured 2026-08-12) - paid forever, by every user, to answer a question
+ * whose answer almost never changes. In a PACKAGED build it was worse than pointless:
+ * there is no .git there, so every tick started git only to have it fail.
+ *
+ * Deliberately a change DETECTOR, not a resolver. The reasoning in readGitHeadShort's
+ * own comment still stands - hand-parsing refs gets complicated fast - so git remains the
+ * authority for what HEAD actually is; these reads only decide whether it is worth asking.
+ * Being wrong in the "changed" direction costs one extra git call; the stamp therefore
+ * errs that way whenever it is unsure.
+ *
+ *   - .git missing entirely  -> "none", and the caller skips git completely.
+ *   - .git is a FILE (worktree/submodule) -> null, meaning "cannot tell", so the caller
+ *     falls back to asking git every time. Correctness over speed for the rare shape.
+ *   - otherwise the content of .git/HEAD (catches a branch switch and a detached HEAD),
+ *     the content+mtime of the ref it names (catches a new commit on the current branch),
+ *     and packed-refs' mtime (catches a repack).
+ *
+ * Exported, and taking the root as a parameter, ONLY so the test can drive it against
+ * throwaway repos in every one of those shapes. A change detector that silently stopped
+ * detecting would make the stale-build pill quietly wrong, which is worse than the cost
+ * it was added to remove - so it is tested by mutation (make a commit, switch branch,
+ * detach, repack) rather than by argument. Callers in this file pass nothing.
+ */
+export function gitHeadStamp(root = repoRoot) {
+  const gitPath = path.join(root, ".git");
+  let gitStat;
+  try {
+    gitStat = statSync(gitPath);
+  } catch {
+    return "none"; // not a checkout at all - a packaged build
+  }
+  if (!gitStat.isDirectory()) {
+    return null; // a .git FILE: let git resolve it, every time
+  }
+  const parts = [];
+  let head;
+  try {
+    head = readFileSync(path.join(gitPath, "HEAD"), "utf8").trim();
+  } catch {
+    return null; // a .git dir with no readable HEAD is odd enough to hand to git
+  }
+  parts.push(head);
+  const ref = /^ref:\s*(.+)$/.exec(head)?.[1];
+  if (ref) {
+    // The loose ref, when it exists. Absent means the ref is packed, which packed-refs'
+    // own stamp below covers.
+    try {
+      const refPath = path.join(gitPath, ...ref.split("/"));
+      parts.push(readFileSync(refPath, "utf8").trim());
+    } catch {
+      parts.push("-");
+    }
+  }
+  try {
+    const st = statSync(path.join(gitPath, "packed-refs"));
+    parts.push(`${st.mtimeMs}`);
+  } catch {
+    parts.push("-");
+  }
+  return parts.join("|");
+}
+
+let headShortCache = null; // { stamp, sha }
+
+/**
  * Reads the current on-disk git HEAD short hash. Shells out to `git`
  * (same pattern as computeVersionString above) rather than hand-parsing
  * .git/HEAD / refs / packed-refs — those get complicated fast (detached
@@ -106,16 +176,31 @@ export function computeVersionString() {
  * git isn't available or this isn't a git checkout (e.g. a packaged build
  * with no .git folder at all) — callers treat null as "can't tell, skip
  * the stale-build check."
+ *
+ * The git call is skipped when gitHeadStamp says nothing that could move HEAD has
+ * changed since the last answer, which is what makes this safe to leave on a timer.
  */
 function readGitHeadShort() {
+  const stamp = gitHeadStamp();
+  if (stamp === "none") {
+    return null; // no repo: nothing to ask git about
+  }
+  if (stamp !== null && headShortCache && headShortCache.stamp === stamp) {
+    return headShortCache.sha;
+  }
+  let sha;
   try {
-    return execFileSync("git", ["rev-parse", "--short", "HEAD"], {
+    sha = execFileSync("git", ["rev-parse", "--short", "HEAD"], {
       cwd: repoRoot,
       encoding: "utf8",
     }).trim();
   } catch {
-    return null;
+    sha = null;
   }
+  if (stamp !== null) {
+    headShortCache = { stamp, sha };
+  }
+  return sha;
 }
 
 /**

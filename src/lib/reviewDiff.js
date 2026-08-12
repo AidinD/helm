@@ -88,6 +88,120 @@ export function resolveTaskCommits(projectPath, taskId, recorded = [], { run = g
 }
 
 /**
+ * The same log search as resolveTaskCommits step 2, for MANY tasks in ONE git call.
+ *
+ * Why this exists: the review queue asked git once per row, and a git process costs
+ * ~70ms of pure startup on Windows before it does any work. Measured on the captain's real
+ * board on 2026-08-12: 20 rows = 20 processes = 2194ms of main-process time, during
+ * which the whole app is unresponsive. That is his "helm är lite långsamt ibland" and
+ * the same 2042ms this file's caller already recorded on 2026-08-03. Batched, the same
+ * 20 rows cost 237ms - and the results are identical, verified against the per-row
+ * answers before this replaced them (9.5x, same shas for all 10 probe ids).
+ *
+ * `git log` ORs multiple --grep terms, so one pass finds every task's commits at once.
+ * Attribution back to a task is done here rather than by git: a commit message can name
+ * the id anywhere, so the SUBJECT alone is not enough to say which task a matched commit
+ * belongs to - the body is read too, which is why the format carries it.
+ *
+ * Deliberately NO --max-count. Per task the cap is applied below, in memory; a total cap
+ * across all terms would let one busy task's commits push another task's out of the
+ * window entirely, turning a bounded-per-task search into a silently incomplete one.
+ * git still scans the same history the per-row calls each scanned on their own, so this
+ * is cheaper in every case, not only this one.
+ *
+ * @param {string} projectPath
+ * @param {Array<string>} taskIds
+ * @param {object} [deps] injectable git runner, for tests without a repo.
+ * @returns {Map<string, {source: "log"|"none", commits: Array<{sha,subject}>, error: string|null}>}
+ *          keyed by the taskId exactly as passed in.
+ */
+export function resolveTaskCommitsBatch(projectPath, taskIds, { run = git, maxPerTask = 40 } = {}) {
+  const out = new Map();
+  const ids = Array.isArray(taskIds) ? taskIds : [];
+  if (!projectPath || !fs.existsSync(projectPath)) {
+    for (const taskId of ids) {
+      out.set(taskId, { source: "none", commits: [], error: "This record names no project folder that exists, so there is nothing to diff." });
+    }
+    return out;
+  }
+  // short8 -> the taskIds that reduce to it. A Map of lists, not a plain key: two
+  // different task ids CAN share an 8-char prefix, and silently dropping one of them
+  // would hide a real card's commits.
+  const byShort = new Map();
+  for (const taskId of ids) {
+    const short8 = taskShortId(taskId);
+    if (!short8) {
+      out.set(taskId, { source: "none", commits: [], error: "Not a task id, so there is nothing to search for." });
+      continue;
+    }
+    if (byShort.has(short8)) {
+      byShort.get(short8).push(taskId);
+    } else {
+      byShort.set(short8, [taskId]);
+    }
+  }
+  if (byShort.size === 0) {
+    return out;
+  }
+  const shorts = [...byShort.keys()];
+  let raw;
+  try {
+    raw = run(projectPath, [
+      "log",
+      "--all",
+      "--regexp-ignore-case",
+      // %x1f separates the fields, %x1e the records - neither can occur in a commit
+      // message, unlike a newline, which a body is full of.
+      "--format=%H%x1f%s%x1f%b%x1e",
+      ...shorts.map((s) => `--grep=${s}`),
+    ]);
+  } catch (err) {
+    for (const taskId of ids) {
+      if (!out.has(taskId)) {
+        out.set(taskId, { source: "none", commits: [], error: `Could not search the log: ${short(err)}` });
+      }
+    }
+    return out;
+  }
+  const found = new Map(shorts.map((s) => [s, []]));
+  for (const record of String(raw || "").split("\x1e")) {
+    const trimmed = record.trim();
+    if (!trimmed) {
+      continue;
+    }
+    const [sha, subject = "", body = ""] = trimmed.split("\x1f");
+    if (!SHA_RE.test(String(sha || "").trim())) {
+      continue;
+    }
+    // Case-insensitively, because the search was --regexp-ignore-case.
+    const haystack = `${subject}\n${body}`.toLowerCase();
+    for (const s of shorts) {
+      if (haystack.includes(s)) {
+        found.get(s).push({ sha: sha.trim(), subject: subject.trim() });
+      }
+    }
+  }
+  for (const [short8, taskIdsForShort] of byShort) {
+    // git log is newest-first, so the per-task cap keeps the newest N - the same ones
+    // the per-row `--max-count` call kept.
+    const commits = found.get(short8).slice(0, maxPerTask);
+    for (const taskId of taskIdsForShort) {
+      out.set(
+        taskId,
+        commits.length > 0
+          ? { source: "log", commits, error: null }
+          : {
+              source: "none",
+              commits: [],
+              error: `No commit in this repo names ${short8}, and the record lists none. Either the work is not committed yet, or nothing ties it to this task - add the commits to the record to make this exact.`,
+            }
+      );
+    }
+  }
+  return out;
+}
+
+/**
  * The released app version a task's fix is out in, or null if it is not in any
  * released tag yet (task 860b4661: "review - borde visa vilken version fixen finns ute
  * i om versionerad").
