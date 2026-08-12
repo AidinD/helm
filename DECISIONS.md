@@ -6440,3 +6440,32 @@ While applying the stash above, a SEPARATE live session turned out to be activel
 `acks`/`reports` in `.helm-dispatch` had accumulated 44/24 files dating back to 2026-07-16 with no code path ever removing one - `readRequests`/`readAck`/`readReports` only ever add readers, never writers-of-less. Same unbounded-accumulation shape as the `.tmp`-file leak fixed earlier this week (2026-08-12, atomic writer), and the same gap `pruneScheduledPrompts` already closes for the scheduled-prompt queue. Added `pruneDispatchQueue(metaHome)`, ageing off ack/report files past 14 days (their own `ackedAt`/`reportedAt`, falling back to the file's mtime for a corrupt record rather than skipping it forever), wired into the startup catch-up plus a daily interval next to `pruneScheduledPrompts`. Acks and reports are terminal, one-shot facts - written exactly once, never updated - so unlike `pruneScheduledPrompts` there is no "pending" case to protect from being pruned. REQUESTS are deliberately excluded from this sweep: the claim/remove handshake already deletes its own files on the happy path, so a request file still present at sweep time means a stuck/orphaned claim worth surfacing, not routine turnover to silently clear - pruning it would hide the exact signal worth noticing.
 
 While writing the prune test, found `writeAck` unconditionally stamped `ackedAt: Date.now()`, discarding any caller-supplied `ackedAt` - unlike its sibling `writeReport`, which already honors a caller-supplied `reportedAt`. Harmless in production today (no call site passes one), but fixed for consistency between the two nearly-identical functions rather than left as a trap for the next caller - or the next test - that assumes both behave the same way.
+
+## 2026-08-12 - The app-wide lag is measured before it is fixed, and two of the plan's obvious fixes are rejected on that evidence
+
+The captain: "jag tycker helm är lite långsamt ibland, att byta mellan vyer och sessioner och ibland laggar input till".
+The same complaint had been recorded and partly addressed twice before (2026-08-03's "hela appen laggar faktiskt till ibland", answered with a cache), so this pass started by measuring rather than by fixing.
+
+What the measurements found, on his own machine and board.
+A git process costs ~70ms of pure startup on Windows before it does any work at all, and the review queue was starting one PER REVIEW ROW: 21 rows = 21 processes = 2193ms with the main process blocked outright.
+Worse, the review badge ticked every 60 seconds against a cache that only allowed 20, so every single tick missed and paid that full build - once a minute, forever, for a page he was not looking at.
+The session poll cost 93-212ms every 30 seconds, tail-reading 96KB of every transcript including the 80 of 90 that are archived and whose status can never depend on it.
+The stale-build pill started a git process every 45 seconds, and in a packaged build (no `.git`) it started git only to have it fail.
+
+Four changes, in the order they were made: batch the per-row git searches into one `git log` with many `--grep` terms (2193ms -> 114ms, results verified identical sha-for-sha against the per-row answers); key the review cache on its INPUTS rather than on age; move the whole review build and the session read into an Electron `utilityProcess`; and stop re-reading transcripts that have not changed.
+The worker is the structural half: everything else is a point fix, and point fixes on this exact problem had already been made twice and regressed twice.
+Two rules keep it safe - the worker never writes (it returns the commit-review watermarks it discovers and main persists them, so `config.json` keeps exactly one writer), and every call carries an in-process fallback so a child process that fails to spawn makes the app slower, never broken.
+
+Rejected, both on measurement rather than taste, and both had been in the plan the captain approved.
+CSS containment on the transcript: `contain: layout` on the turns moved a keystroke from 2.84ms to 2.79ms, `contain: layout style paint` to 2.70ms, and `content-visibility: auto` made it 6.03ms - more than twice as SLOW, because it forces repeated visibility work on 600 elements.
+Coalescing the composer's auto-resize into `requestAnimationFrame`: it changed nothing measurable, and rAF pauses for a non-visible window (the same hazard `scheduleRenderPane` already documents in the streaming path) - it hung the very check written to prove it worked.
+What did fix the input lag was narrower than either: `autoSizeComposer` measured the whole pane with `getBoundingClientRect()` on every keystroke, which forces a synchronous layout of the entire transcript. A `ResizeObserver` tracks the pane's height instead. Counted rather than timed: 30 keystrokes measured the pane 60 times before, 0 times after.
+
+The last change is the one that should outlive the others: every `ipcMain` handler is now timed, and any that blocks the main process past 25ms names itself in the log.
+The reason the same regression could land twice is that nothing anywhere could say which handler was responsible - "helm är lite långsamt ibland" is the vaguest possible bug report, and it was the most precise one available.
+
+A methodological note worth keeping, because three separate checks in this pass passed while measuring nothing.
+A pane has NO LAYOUT until its page is visible, so a hidden pane's `getBoundingClientRect` is free and an early version of the input check reported 0.00ms for the UNFIXED code.
+`performance.now()` is clamped to 0.1ms in the renderer, so a single keystroke is below the clock and must be measured in a batch.
+And a tight loop of keystrokes stops modelling typing at all - in that shape, setting `.value` alone timed SLOWER than setting it AND dispatching the event, which cannot be true, and was measurement ordering.
+Every performance check added here was mutation-tested against the unfixed code before its green result was believed; the head-stamp one caught a weak assertion of its own that way (a packed-refs baseline taken before the repack rather than after, so it was passing for the wrong reason).
