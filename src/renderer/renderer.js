@@ -11207,7 +11207,7 @@ function pendingSecondMateReviewNudge(sm) {
 // mates, whose sessionId was never bound - they used to always open fresh);
 // else start a fresh one rooted in the project (Opus, tagged so it binds back),
 // seeded with a crew-review nudge so it opens with the work to do, not blank.
-function jumpIntoSecondMate(sm) {
+async function jumpIntoSecondMate(sm) {
   // Navigate to chat FIRST (see jumpIntoFirstMate) - the composer focus in
   // openSessionInPane / openFreshDraftInPane no-ops while chat is hidden.
   navigateToPage("chat");
@@ -11220,7 +11220,34 @@ function jumpIntoSecondMate(sm) {
   // of starting fresh (the captain, 2026-08-12). main.js clears the binding on archive too,
   // but this also covers a session archived in another Helm instance or mid-session.
   const bound = boundRaw && !boundRaw.isArchived && !isHiddenFromHelm(boundRaw) ? boundRaw : null;
-  const existing = bound || mostRecentSessionForCwd(sm.projectPath);
+  // The fallback reconnects a second mate to its OWN previously-unbound session, but
+  // mostRecentSessionForCwd picks the most recent session for the PROJECT - which may
+  // belong to ANOTHER node: a Captain "direct" second mate, or a different first
+  // mate's second mate for the same repo. Adopting it binds it here, and
+  // bindSecondMateSession then clears it from the other node - i.e. it STEALS an
+  // active Captain/other-mate session (the captain, 2026-08-12: "kommer den ta över en
+  // annan session ... under captain?"). So only adopt a session NOT already claimed
+  // by another second mate. If we can't tell (the lookup failed), start FRESH rather
+  // than risk a steal - a fresh draft is still a proper second-mate session.
+  // (Auto runs live in worktrees with a different cwd, so they never match here.)
+  let fallback = null;
+  if (!bound) {
+    const recent = mostRecentSessionForCwd(sm.projectPath);
+    if (recent) {
+      const recentIds = [recent.cliSessionId, recent.sessionId].filter(Boolean);
+      let claimedElsewhere = true;
+      try {
+        const res = await window.helm.listSecondMates();
+        claimedElsewhere = (res?.secondMates || []).some(
+          (o) => o.secondMateId !== sm.secondMateId && o.sessionId && recentIds.includes(o.sessionId)
+        );
+      } catch {
+        claimedElsewhere = true; // safe default: don't adopt a session we can't prove is loose
+      }
+      fallback = claimedElsewhere ? null : recent;
+    }
+  }
+  const existing = bound || fallback;
   if (existing) {
     // Thread the second-mate id through the RESUME path too. A direct/derived second mate's
     // session was never bound, so openSessionInPane can't recover its id on its own - without
