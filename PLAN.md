@@ -5,7 +5,19 @@ context flow, and (later) orchestration — without removing any Claude feature.
 Built by wrapping the real `claude` binary headlessly (stream-json), so all
 skills, CLAUDE.md, settings, permissions, and MCP are preserved.
 
-## Current status (2026-08-10)
+## Current status (2026-08-12)
+
+Phase 2 (tiered orchestration) is built and in real daily use; the review pipe, the auto-captain lane, and autopilot durability (quota-stop recovery) are the active surfaces, all mid-hardening. Version 0.2.0 (a milestone marker, not a stability claim - see DECISIONS.md 2026-08-10).
+
+What landed 2026-08-11/12 (see DECISIONS.md for the reasoning behind each):
+- **Autopilot survives a quota/token stop.** A run that stops because Aidin's own tokens ran out now classifies as resumable (`quota_exhausted`) instead of being misread as a real failure and having its worktree deleted - the incident that forced this. Comes with a same-lane resume path (`helm_resume_crew`, second mate resumes its own crew without escalating), a same-day ship-review that tightened the classifier's regex to stop real failures from masquerading as quota stops, and a fix so an Auto run's card shows which model the CLI actually picked instead of just "Auto model".
+- **The auto-captain lane is now structurally separate from the manual second mate.** Both used to collide on one per-project node; auto now dispatches under its own identity (`AUTO_CAPTAIN`), so a manual captain session and an Auto pass on the same project no longer fight over - or silently reassign - the same node.
+- **Two guardrail hardening fixes,** both triggered by stray artifacts found on disk 2026-08-12: the budget/kill-switch path now fails loud (write) / fails closed (read) if `metaHome` isn't absolute, and the atomic writer retries temp-file cleanup instead of one silent unlink (was leaking `.tmp` files on Windows+Dropbox lock contention).
+- **Review page hardening continued:** "Present review" now renders the whole record (not just the diff), a commit with no Jot task gets a real body instead of being refused, and verdicts are written in the task's own language (named explicitly, not just "the same language") rather than defaulting to English.
+- **Several session/pane-state bugs closed**, one via a real architectural fix rather than another patch: the pending-turn buffer that re-appended old replies at the bottom of long sessions now expires at the single choke point where a new run starts, replacing three prior attempts to patch it call-site-by-call-site; a resumed direct/derived second mate now re-binds its dispatch identity explicitly instead of relying on (unreliable) recovery from the session; queued follow-up prompts, rewind-vs-not-yet-flushed-disk, and a Stop button that could hang on an untracked descendant process were each fixed.
+- See `docs/review-pipe-status.md` for the review pipe's current standing in detail.
+
+### (superseded) Prior status (2026-08-10)
 
 Phase 2 (tiered orchestration) is built and in real daily use; the review pipe and the dashboard are the active surfaces, both mid-hardening. Version 0.2.0 (a milestone marker, not a stability claim - see DECISIONS.md 2026-08-10).
 
