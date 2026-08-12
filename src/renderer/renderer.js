@@ -1052,15 +1052,20 @@ function openDiffViewer(row, res) {
  * all) - a fresh one, briefed on the disagreement.
  */
 async function openIndependentReview(row, priorVerdict = null) {
-  const rec = row.record || {};
+  // Synthesize a project-only record when the task has none, so an UNRECORDED card can
+  // still send a reviewer - the reviewer's job is precisely to WRITE the missing record
+  // (the captain, 2026-08-12). row.repoPath is resolved by the payload builder (category
+  // binding, or the auto-run's own project), which is the reliable source here.
+  const rec = row.record || { projectPath: row.repoPath || null };
   const cwdCheck = rec.projectPath || "";
   if (!cwdCheck) {
-    showNotice(`"${row.title}" has no project folder on its record, so there is nowhere to root a reviewer. Add projectPath to the record.`);
+    showNotice(`"${row.title}" has no project folder yet, so there is nowhere to root a reviewer. Bind the board to a repo folder in Jot, or add projectPath to a record.`);
     return;
   }
   // The task's own prose goes with the request: main decides from it which language
-  // the verdict must be written in (task 7bd1e2df), and only the row has it.
-  const plan = await window.helm.getReviewerPlan(row.taskId, `${row.title || ""}\n${row.description || ""}`);
+  // the verdict must be written in (task 7bd1e2df), and only the row has it. Pass the
+  // resolved project so a record-less task still resolves a reviewer plan.
+  const plan = await window.helm.getReviewerPlan(row.taskId, `${row.title || ""}\n${row.description || ""}`, rec.projectPath);
   if (!plan?.ok) {
     showNotice(`Could not work out what to send at "${row.title}": ${plan?.error || "unknown reason"}`);
     return;
@@ -1552,6 +1557,24 @@ function reviewRowEl(row, band = null) {
     warn.className = "rev-warn";
     warn.textContent = `No review record: ${row.problems.join("; ")}. Nothing here has been verified for you - treat it as unreviewed.`;
     body.append(warn);
+    // Show what IS knowable instead of nothing at all: the task's own prose. For an
+    // autopilot-completed task this is exactly where the machine wrote what it did and
+    // where the work lives (finishAutoRun's Jot note) - previously invisible on the
+    // card, which is why a record-less card read as a total blank (the captain, 2026-08-12:
+    // "varfor dessa inte har en beskrivning over vad som gjorts?"). The diff and the
+    // reviewer sit in the actions below.
+    if (row.description && row.description.trim()) {
+      const note = document.createElement("div");
+      note.className = "rev-unrecorded-note";
+      const lab = document.createElement("div");
+      lab.className = "rev-list-label";
+      lab.textContent = "What the task says (no verified record - read as context, not evidence):";
+      const txt = document.createElement("div");
+      txt.className = "rev-independent-note";
+      renderMarkdownInto(txt, row.description.trim());
+      note.append(lab, txt);
+      body.append(note);
+    }
     // The actions come along even here. They used to be built AFTER this return, so
     // this band had no controls at all and could never be cleared (f2ab6a5a). Marking
     // one done still costs a deliberate confirm - a row with no record has, by
@@ -2181,7 +2204,15 @@ function reviewActionsEl(row) {
   // The two things reviewing actually needs and did not have (task c3dfbb42: "Kunna se
   // diff. Kunna skicka oberoende agent på granskning"). Both come FIRST, because they are
   // what you do before deciding, and Mark done / Send back are the decision.
-  if (row.record) {
+  // A record-less card (an autopilot moved it to review, or a hand board-move) used to
+  // get NONE of these - no diff, no reviewer - which made it a dead end: no way to see
+  // what was done or to ask someone to check it (the captain, 2026-08-12). The diff and the
+  // reviewer do not actually need a record - they work off the task's commits and its
+  // project (row.repoPath, resolved by the payload builder) - so offer them whenever
+  // that project is known. Only "Present review" genuinely needs a record to render.
+  const canDiff = !!(row.record || (row.repoPath && row.hasCommits));
+  const canReview = !!(row.record || row.repoPath);
+  if (canDiff) {
     const diffBtn = document.createElement("button");
     diffBtn.type = "button";
     diffBtn.className = "text-btn";
@@ -2192,7 +2223,7 @@ function reviewActionsEl(row) {
       const was = diffBtn.textContent;
       diffBtn.textContent = "Reading…";
       try {
-        const res = await window.helm.getReviewDiff(row.taskId);
+        const res = await window.helm.getReviewDiff(row.taskId, row.repoPath);
         if (!res?.ok) {
           // A notice, not a toast: this is usually "nothing ties a commit to this task",
           // which is a sentence worth reading rather than one worth catching.
@@ -2206,6 +2237,8 @@ function reviewActionsEl(row) {
       }
     });
     actions.append(diffBtn);
+  }
+  if (row.record) {
 
     // The whole card, as a full-width page in the OS browser. It used to render only
     // the diff, which was the wrong half (the captain, task ccbf82e2: "Jag vill inte
@@ -2234,12 +2267,15 @@ function reviewActionsEl(row) {
       }
     });
     actions.append(presentBtn);
-
+  }
+  if (canReview) {
     const reviewBtn = document.createElement("button");
     reviewBtn.type = "button";
     reviewBtn.className = "text-btn";
     reviewBtn.textContent = "Independent reviewer";
-    reviewBtn.title = "Opens a fresh session in this project with a review brief prepared. It does NOT send it - you press Enter, so nothing is spent until you do.";
+    reviewBtn.title = row.record
+      ? "Opens a fresh session in this project with a review brief prepared. It does NOT send it - you press Enter, so nothing is spent until you do."
+      : "No record was written for this task. Send a fresh reviewer to read what was done and WRITE the missing review record. It does NOT send until you press Enter.";
     reviewBtn.addEventListener("click", () => openIndependentReview(row));
     actions.append(reviewBtn);
   }

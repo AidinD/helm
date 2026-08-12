@@ -57,7 +57,7 @@ ok(
   "both the task brief and the commit brief splice the writing instructions in"
 );
 ok(
-  /getReviewerPlan\(row\.taskId, `\$\{row\.title \|\| ""\}\\n\$\{row\.description \|\| ""\}`\)/.test(rSrc),
+  /getReviewerPlan\(row\.taskId, `\$\{row\.title \|\| ""\}\\n\$\{row\.description \|\| ""\}`[,)]/.test(rSrc),
   "the task's own prose is what the language is judged from - title alone is often too short a sample"
 );
 const mSrc = read("src", "main.js");

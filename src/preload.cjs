@@ -97,7 +97,7 @@ contextBridge.exposeInMainWorld("helm", {
   sendReviewBack: (taskId, note, images) => ipcRenderer.invoke("reviews:sendBack", { taskId, note, images }),
   runReviewChecks: (taskId) => ipcRenderer.invoke("reviews:runChecks", { taskId }),
   // The change behind a review item: its commits' patch, read-only.
-  getReviewDiff: (taskId) => ipcRenderer.invoke("reviews:diff", { taskId }),
+  getReviewDiff: (taskId, projectPath) => ipcRenderer.invoke("reviews:diff", { taskId, projectPath }),
   // Renders the WHOLE review as a standalone HTML page and opens it in the OS browser.
   presentReview: (taskId) => ipcRenderer.invoke("reviews:presentReview", { taskId }),
   // The same page for a commit with no Jot task - git's facts, and a plain statement
@@ -114,7 +114,7 @@ contextBridge.exposeInMainWorld("helm", {
   getCommitDetail: (projectPath, sha) => ipcRenderer.invoke("reviews:commitDetail", { projectPath, sha }),
   // What an independent reviewer would be sent in on, recommended from the change.
   // `sample` is the task's own prose - main reads the review's language off it.
-  getReviewerPlan: (taskId, sample) => ipcRenderer.invoke("reviews:reviewerPlan", { taskId, sample }),
+  getReviewerPlan: (taskId, sample, projectPath) => ipcRenderer.invoke("reviews:reviewerPlan", { taskId, sample, projectPath }),
   // The same, for a commit with no task (no record to start from, so size only).
   getCommitReviewerPlan: (projectPath, sha) => ipcRenderer.invoke("reviews:commitReviewerPlan", { projectPath, sha }),
   // The reviewer's own verdict, once it has written one.
