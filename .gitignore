@@ -26,6 +26,15 @@ pasted-images/
 # Ad-hoc flow-review inspection screenshots (see inspect-flow.mjs)
 scripts/e2e/screenshots/flow-review/
 
+# The orchestration dispatch queue + budget/kill-switch live at
+# <metaHome>/.helm-dispatch/. That's an ABSOLUTE meta-home dir, never inside the
+# repo - but a metaHome mangled to a relative path (e.g. a bash-heredoc-stripped
+# Windows path, `D:\Dropbox\...` -> `DropboxDocumentsClaude`) once landed a
+# stray `.helm-dispatch/budget.json` under the repo cwd (2026-08-12). The code
+# guard in src/lib/orchestrationBudget.js now refuses that; this line is the
+# belt-and-suspenders so such an artifact can never be committed if one recurs.
+.helm-dispatch/
+
 # The goal orchestrator's own scratch files, written INSIDE the worktree it runs
 # in (notes.md = its research, plan.md = its plan, phase.json = where it is).
 # Not ignored until 2026-08-03, so every autonomous run committed 50-250 lines of
