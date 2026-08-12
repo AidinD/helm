@@ -10,6 +10,20 @@ export function resolveClaudeBinary() {
   if (resolvedClaudePath) {
     return resolvedClaudePath;
   }
+  // Test seam. The three transitions in the daily loop that have never had a test - a relay
+  // and a jump-in resolving to ONE session, a relay actually reaching its second mate, and a
+  // retiring mate really running its carry-over turn - all need a TURN to happen. Two of them
+  // can lose data silently, so "probably fine" is not good enough, but running them for real
+  // spends tokens on every suite run. Pointing this at a stub lets the surrounding machinery
+  // (locks, bindings, session minting, carry-over) be exercised end to end for free.
+  //
+  // Honoured before `where claude` and never in production use: nothing sets it but a test.
+  // It is NOT a HELM_*_PATH name on purpose - that suffix means "a data store" here, and
+  // test-packaged-store-paths would then demand a packaged redirect for a binary path.
+  if (process.env.HELM_CLAUDE_BIN) {
+    resolvedClaudePath = process.env.HELM_CLAUDE_BIN;
+    return resolvedClaudePath;
+  }
   try {
     const out = execSync(process.platform === "win32" ? "where claude" : "which claude", {
       encoding: "utf8",
