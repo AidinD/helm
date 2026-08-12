@@ -4,6 +4,14 @@
 //
 // RETIRE WITH CARRY-OVER: the outgoing first mate must really run its final summary turn.
 //
+// SIBLING, and read this before adding to either: test-retire-carryover.mjs already asserts
+// the same thing against the REAL CLI. I did not find it before writing this one, which was a
+// miss - the task said the transition had never been tested, and I took that at face value
+// instead of looking. The two now split deliberately by cost: that one proves the real binary
+// behaves and costs two live turns, so it only runs under --live and in practice never ran at
+// all; this one proves the machinery around the turn and costs nothing, so it runs in every
+// sweep. The names are one hyphen apart, hence the -stubbed suffix.
+//
 // The third and last of the "honest remaining gaps" from the Helm flow review (task 2ef31b5c),
 // and the second of the two that lose data SILENTLY: if the summary is skipped, the retire
 // still looks like it worked - the mate is gone, a fresh one is there - and the handoff is
