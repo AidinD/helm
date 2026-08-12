@@ -126,9 +126,11 @@ try {
   ok(rendered.hasSubject, "with the unbound commit's subject");
   ok(rendered.hasNoTaskChip, "and a 'no task' chip on the row");
 
-  // The row is EXPANDABLE and its body shows the commit's diff inline (the "ingen body" fix):
-  // c2 added b.txt, so its diff must name it and render the side-by-side file block. Also the
-  // group header offers a "Reviewed all" button (2 unbound commits: Initial + Genuinely).
+  // The row is EXPANDABLE, and what its body holds changed on 2026-08-12: the diff is no
+  // longer poured into the card ("Diffen bör aldrig läggas direkt i kortet ... jag är sällan
+  // intresserad av diffen på det sättet"). It now sits behind a See diff button that opens
+  // the same viewer a task's card uses. So the body must carry the four actions and NOT a
+  // diff block. The group header offers "Seen all" (2 unbound commits: Initial + Genuinely).
   const expanded = await app.eval(`(async () => {
     navigateToPage("review");
     await new Promise((r) => setTimeout(r, 200));
@@ -136,26 +138,32 @@ try {
     const row = rows.find((el) => /Genuinely unbound work/.test(el.textContent));
     if (!row) { return { found: false }; }
     row.querySelector(".rev-head").click();
-    let bodyText = "";
-    let hasBlock = false;
+    let labels = [];
     for (let i = 0; i < 60; i++) {
-      const body = row.querySelector(".rev-body");
-      bodyText = body ? body.textContent : "";
-      hasBlock = !!row.querySelector(".rev-body .diff-file-block");
-      if (/b\\.txt/.test(bodyText) && hasBlock) { break; }
+      labels = [...row.querySelectorAll(".rev-commit-footer button")].map((b) => b.textContent);
+      if (labels.length >= 4) { break; }
       await new Promise((r) => setTimeout(r, 80));
     }
     return {
       found: true,
       notHidden: !row.querySelector(".rev-body").hidden,
-      bodyHasDiff: /b\\.txt/.test(bodyText),
-      hasBlock,
-      hasReviewedAll: [...document.querySelectorAll(".rev-group-action")].some((b) => /Reviewed all/.test(b.textContent)),
+      labels,
+      hasFooter: !!row.querySelector(".rev-commit-footer"),
+      inlineDiffBlocks: row.querySelectorAll(".rev-body .diff-file-block").length,
+      hasSeenAll: [...document.querySelectorAll(".rev-group-action")].some((b) => /Seen all/.test(b.textContent)),
     };
   })()`);
   ok(expanded.found && expanded.notHidden, "clicking an unbound-commit row expands its body");
-  ok(expanded.bodyHasDiff && expanded.hasBlock, `the body shows the commit's diff inline, side-by-side (b.txt block: ${expanded.hasBlock})`);
-  ok(expanded.hasReviewedAll, "the group header offers a 'Reviewed all' button");
+  ok(expanded.hasFooter, "the body has an action footer");
+  ok(
+    ["Present review", "Independent reviewer", "See diff", "Seen"].every((l) => expanded.labels.includes(l)),
+    `the footer carries every action: ${JSON.stringify(expanded.labels)}`
+  );
+  ok(
+    expanded.inlineDiffBlocks === 0,
+    `and the diff is NOT poured into the card (${expanded.inlineDiffBlocks} inline blocks) - it belongs behind See diff, in the viewer`
+  );
+  ok(expanded.hasSeenAll, "the group header offers a 'Seen all' button");
 
   // Acknowledge the unbound commit: it advances the watermark past it, so it drops off.
   const ackRes = await app.eval(`window.helm.acknowledgeCommit(${JSON.stringify(scratch)}, ${JSON.stringify(c2)})`);

@@ -194,7 +194,11 @@ ok(/No Jot task, so no review record/.test(commitBody), "the in-app commit row l
 ok(/getCommitDetail/.test(commitBody), "then the commit's author, date, size and message");
 ok(/getIndependentNote\(c\.sha\)/.test(commitBody), "reads back a verdict written against the commit's sha");
 ok(/presentCommitReview/.test(commitBody) && /openCommitIndependentReview/.test(commitBody), "and offers the same two actions a task row does");
-ok(/getCommitDiff/.test(commitBody), "the diff it always had is still there, after all of it");
+ok(/getCommitDiff/.test(commitBody), "the diff is still reachable from the row");
+ok(
+  /openDiffViewer\(/.test(commitBody) && !/renderDiffFiles\(/.test(commitBody),
+  "but it opens the shared VIEWER rather than being rendered into the card - a commit row was the last place pouring a diff inline (2026-08-12)"
+);
 ok(!/presentReviewDiff/.test(rSrc) && !/reviews:presentDiff/.test(mSrc), "the diff-only presenter is gone, not left as a second door to the old behaviour");
 
 process.exit(exit);
