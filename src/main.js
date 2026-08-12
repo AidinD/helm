@@ -12,7 +12,7 @@ import crypto from "node:crypto";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { readAllSessions, enrichWithJot, setSessionArchived, forkTranscriptAtUserMessage, switchSessionRootFolder } from "./lib/sessions.js";
-import { loadJot, loadGoals, addSubtask, formatJotSummaryForClassifier, projectBoardSummary, setTaskStatus, setTaskTags, readJotState, ensureTagsExist } from "./lib/jot.js";
+import { loadJot, loadGoals, addSubtask, formatJotSummaryForClassifier, projectBoardSummary, setTaskStatus, setTaskTags, readJotState, ensureTagsExist, boardPath } from "./lib/jot.js";
 import { resolveJotDataDir, resolveJotTodosPath } from "./lib/jotDataDir.js";
 import { loadConfig, writeConfig } from "./lib/config.js";
 import { startSession, resolveClaudeBinary } from "./lib/launcher.js";
@@ -5806,17 +5806,18 @@ let reviewQueueCache = null; // { at, payload, inputs }
 // counter on the payload is the one honest observable, and it is what pins the first
 // Review visit to a single build (scripts/e2e/test-view-switch-cost.mjs).
 let reviewQueueBuilds = 0;
+// The build currently running, so concurrent callers join it instead of starting a second.
+let reviewQueueInFlight = null;
 const REVIEW_QUEUE_DEFAULT_MAX_AGE_MS = 20_000;
 
 // See reviewQueueInputsFingerprint in reviewRecords.js for what this covers and, more
 // importantly, what it deliberately does not (git state).
-// `config.jot.path` WINS over the default location - jot.js resolves the board as
-// `jotConfig.path || resolveJotTodosPath()`, and that setting is honoured elsewhere in this
-// file. Fingerprinting the default path while the queue was built from a configured one
-// would watch a file that never moves: the cached payload would then be returned forever
-// with no age escape hatch, and a badge frozen at a wrong number looks exactly like a badge
-// that is right. Found by review, 2026-08-12.
-const reviewQueueInputs = () => reviewQueueInputsFingerprint(resolveMetaHome(), loadConfig().jot?.path || resolveJotTodosPath());
+// Through jot.js's OWN resolver, not a copy of its rule. Fingerprinting the default path
+// while the queue was built from a configured one would watch a file that never moves: the
+// cached payload would be returned forever with no age escape hatch, and a badge frozen at a
+// wrong number looks exactly like a badge that is right. Found by review, 2026-08-12; the
+// rule had nine copies in jot.js at the time, which is how a tenth caller got it wrong.
+const reviewQueueInputs = () => reviewQueueInputsFingerprint(resolveMetaHome(), boardPath(loadConfig().jot || {}));
 
 /**
  * Drop the cached queue because something it depends on changed that the fingerprint cannot
@@ -5847,14 +5848,32 @@ ipcMain.handle("reviews:list", async (_e, opts = {}) => {
       return { ...reviewQueueCache.payload, cached: true, builds: reviewQueueBuilds };
     }
   }
+  // One build at a time. Two callers arriving on a cold cache each started their own -
+  // there was no cache to hit yet and nothing else to stop them - so the single most
+  // expensive thing Helm does could run twice concurrently for one answer. The badge tick
+  // and a Review-page visit landing together is exactly that (second review, 2026-08-12),
+  // and it also made the cold-build counter genuinely racy rather than only theoretically.
+  //
+  // Joining an in-flight build rather than queueing behind it: both callers want the same
+  // payload, and the fingerprint taken before it started is the one that governs it.
+  if (reviewQueueInFlight) {
+    return reviewQueueInFlight;
+  }
   // Fingerprint BEFORE the build, not after: a board edit that lands while the build is
   // running must invalidate the result it was not included in, rather than being stamped
   // as already accounted for.
   const inputs = reviewQueueInputs();
-  const payload = await buildReviewsPayload();
-  reviewQueueBuilds += 1;
-  reviewQueueCache = { at: Date.now(), payload, inputs };
-  return { ...payload, builds: reviewQueueBuilds };
+  reviewQueueInFlight = (async () => {
+    try {
+      const payload = await buildReviewsPayload();
+      reviewQueueBuilds += 1;
+      reviewQueueCache = { at: Date.now(), payload, inputs };
+      return { ...payload, builds: reviewQueueBuilds };
+    } finally {
+      reviewQueueInFlight = null;
+    }
+  })();
+  return reviewQueueInFlight;
 });
 
 /**

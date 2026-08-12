@@ -85,6 +85,11 @@ function spawn() {
     function onReady(message) {
       if (message && message.ready) {
         ready = true;
+        // A successful handshake clears the death count. Without this, four slow-but-HEALTHY
+        // starts over a long session would permanently disable a worker that works fine -
+        // the counter only ever went up, so it measured "deaths ever" rather than "deaths in
+        // a row" (second review, 2026-08-12).
+        restarts = 0;
         settle(resolve, true);
       }
     }
@@ -99,6 +104,22 @@ function spawn() {
     // heavyWorkerStatus still reported as healthy. Killing it makes the exit path run, which
     // clears the child and counts the failure toward MAX_RESTARTS like any other death.
     timer = setTimeout(() => {
+      // Give up on the worker ENTIRELY, do not just kill this one and let the next caller
+      // spawn another. Killing alone made the honesty fix four times more expensive than the
+      // bug it replaced: measured against a never-ready worker, the first four heavy calls
+      // went from 10s/0/0/0 to 10s/10s/10s/10s, because each death nulled `child` and the
+      // next call paid the full ready timeout again until MAX_RESTARTS was passed. So a
+      // packaged build whose module graph will not load cost ~40s of stalls spread over the
+      // user's first operations instead of 10 (found by the second review, 2026-08-12).
+      //
+      // One timeout is enough to decide, because this failure is deterministic: a module
+      // graph that cannot load in ten seconds will not load on the next attempt either. The
+      // cost of being wrong (a genuinely slow start on a loaded machine) is that Helm runs
+      // at its old speed for the session, which is exactly what the fallback is for - and
+      // heavyWorkerStatus now says so out loud instead of claiming a healthy worker.
+      disabled = true;
+      lastError = "worker did not report ready within 10s; running heavy jobs on the main process for this session";
+      console.error(`[helm] ${lastError}`);
       settle(reject, new Error("worker did not report ready"));
       try {
         spawned.kill();
@@ -131,7 +152,12 @@ function spawn() {
   });
 
   child.once("exit", (code) => {
-    lastError = `worker exited (code ${code})`;
+    // Do not clobber a more specific reason. When the ready timeout disabled the worker it
+    // recorded WHY, and this handler then fires because that timeout killed the child -
+    // overwriting it with a bare exit code threw away the only useful part of the diagnostic.
+    if (!disabled) {
+      lastError = `worker exited (code ${code})`;
+    }
     child = null;
     ready = false;
     readyPromise = null;
