@@ -2569,12 +2569,73 @@ function reviewFilterBarEl(allRows, nonRepoCount, noCommitsCount) {
   return bar;
 }
 
+// Bumped by every render so a slow fresh build cannot repaint a page the user has already
+// navigated away from, or overwrite a newer render's output.
+let reviewRenderToken = 0;
+
+/**
+ * Show the review queue at once, then correct it.
+ *
+ * This page used to await a FULL queue build before painting a single pixel. Measured in
+ * the running app on 2026-08-12: 2770ms from the click to anything appearing, during which
+ * the old page just sat there - it is the "att byta mellan vyer ... är långsamt" the captain
+ * reported, and no amount of making the build cheaper fixes a view that refuses to draw
+ * until it finishes.
+ *
+ * So: paint from the last known payload immediately (the main process keeps one, and it is
+ * valid unless the board or the records have actually changed), and ask for a fresh build
+ * in the background. When it arrives the page is repainted.
+ *
+ * A cached-then-corrected review page needs care rather than enthusiasm, because "stale
+ * review state is exactly the kind of thing that should not be quietly out of date" - this
+ * file's own words about the cache. Two things make it honest: the refresh is always
+ * issued (never skipped because the cache looked recent), and while it is in flight the
+ * page SAYS it is checking. Nothing is quiet about it.
+ */
 async function renderReviewPage() {
   const page = document.getElementById("reviewPage");
   if (!page) {
     return;
   }
-  const res = await window.helm.listReviews();
+  const token = ++reviewRenderToken;
+  // Something on screen BEFORE the first await. On the very first visit there is no cached
+  // payload to paint, and the build genuinely takes seconds - measured at 10.9s in a fresh
+  // profile, where every project's commit baseline has to be established for the first
+  // time. Without this the page is simply blank for all of it, which reads as broken
+  // rather than as busy.
+  if (page.childElementCount === 0) {
+    const heading = document.createElement("h2");
+    heading.textContent = "Review";
+    const waiting = document.createElement("div");
+    waiting.className = "analysis-totals";
+    waiting.textContent = "Building the review queue…";
+    page.replaceChildren(heading, waiting);
+  }
+  // A cached payload of any age is worth painting - it is replaced moments later, and the
+  // alternative is showing nothing at all for seconds.
+  try {
+    const cached = await window.helm.listReviews({ maxAgeMs: 24 * 60 * 60 * 1000 });
+    if (token !== reviewRenderToken) {
+      return; // navigated away, or a newer render started
+    }
+    if (cached?.cached) {
+      paintReviewPage(cached, { refreshing: true });
+    }
+  } catch {
+    // No cached payload to show - fall through to the fresh build, same as before.
+  }
+  const fresh = await window.helm.listReviews();
+  if (token !== reviewRenderToken) {
+    return;
+  }
+  paintReviewPage(fresh, { refreshing: false });
+}
+
+function paintReviewPage(res, { refreshing = false } = {}) {
+  const page = document.getElementById("reviewPage");
+  if (!page) {
+    return;
+  }
   const allRows = res?.rows || [];
   const nonRepoCount = allRows.filter((r) => !r.repoPath).length;
   // Repo-rooted rows this filter would hold back - counted before it is applied, same
@@ -2602,6 +2663,17 @@ async function renderReviewPage() {
       ? "Nothing is waiting on your review."
       : `${tally.judgment} need your judgment · ${tally.stamp} ready to stamp${tally.unconfirmed > 0 ? ` · ${tally.unconfirmed} claimed but unconfirmed` : ""}${tally.incomplete > 0 ? ` · ${tally.incomplete} below the bar` : ""}${tally.unrecorded > 0 ? ` · ${tally.unrecorded} with no record` : ""}`;
   heading.append(h2, sub);
+  // Said out loud, not implied. This is the last-known queue, drawn at once so the page is
+  // not blank for seconds; the real one is being built right now and will replace it. A
+  // review board that might be out of date has to admit it.
+  if (refreshing) {
+    const checking = document.createElement("div");
+    checking.className = "analysis-totals";
+    checking.style.marginBottom = "0";
+    checking.style.opacity = "0.7";
+    checking.textContent = "Showing the last known queue - checking for changes…";
+    heading.append(checking);
+  }
   topbar.append(heading);
 
   // "Re-run everything unconfirmed", so a board that went stale after a commit can be
@@ -7632,13 +7704,74 @@ function listIndentStep(value, caret, caretEnd = caret, { outdent = false } = {}
   return { from: lineStart, to: lineStart + indent.length + marker.length, text: nextIndent + nextMarker };
 }
 
+// How tall each pane is, kept current by a ResizeObserver instead of measured on demand.
+//
+// autoSizeComposer runs on EVERY keystroke, and it used to start by calling
+// getBoundingClientRect() on the whole pane. That is a forced synchronous layout: the
+// browser must lay out everything dirty before it can answer, and .pane contains the
+// entire transcript. A pane's height changes when the window resizes, not when a letter is
+// typed, so it is observed once and read from here for free.
+//
+// What this does and does not claim, because the measuring was more interesting than the
+// fix (all numbers from the running app on a 600-turn transcript, 2026-08-12):
+//
+//   - It removes one forced full-transcript layout per keystroke. Verified by counting:
+//     the pane is now measured ONCE per 20 keystrokes instead of 20 times, and
+//     autoSizeComposer's own cost fell to 0.024ms and no longer grows with the transcript.
+//   - It did NOT make a synthetic type-200-characters-in-a-tight-loop benchmark faster.
+//     That benchmark turned out not to model typing: with no frame between keystrokes the
+//     browser batches work differently, and the numbers contradicted each other outright
+//     (setting .value alone timed SLOWER than setting it and dispatching the event, which
+//     cannot be true - it was measurement ordering, the first benchmark paying for the
+//     transcript's initial layout). No claim is made from it.
+//   - CSS containment was tried and rejected on evidence, not taste: `contain: layout` on
+//     the turns moved 2.84ms to 2.79ms, `contain: layout style paint` to 2.70ms, and
+//     `content-visibility: auto` made it 6.03ms - more than twice as slow. Containment on
+//     .pane-scroll was worse again (4.3ms). None of it shipped.
+//   - Coalescing the resize into requestAnimationFrame was tried and reverted: it changed
+//     nothing measurable, and rAF pauses for a non-visible window (the same hazard
+//     scheduleRenderPane documents) - it hung the check that was meant to prove it.
+//
+// A WeakMap because panes are torn down and rebuilt, and this must not keep dead elements
+// alive.
+const paneHeights = new WeakMap(); // .pane element -> last observed height in px
+const paneHeightObserver =
+  typeof ResizeObserver === "function"
+    ? new ResizeObserver((entries) => {
+        for (const entry of entries) {
+          // borderBoxSize is the modern read; contentRect is the fallback for older
+          // engines. Either way this fires OFF the typing path.
+          const h = entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect?.height ?? 0;
+          if (h > 0) {
+            paneHeights.set(entry.target, h);
+          }
+        }
+      })
+    : null;
+
+/** Start tracking a pane's height. Safe to call again for an already-observed pane. */
+function observePaneHeight(paneEl) {
+  if (paneEl && paneHeightObserver) {
+    paneHeightObserver.observe(paneEl);
+  }
+}
+
 function autoSizeComposer(promptEl) {
   if (!promptEl) {
     return;
   }
   const paneEl = promptEl.closest(".pane");
   const pane = paneEl ? panes[Number(paneEl.dataset.pane)] : null;
-  const paneHeight = paneEl?.getBoundingClientRect().height || 0;
+  // The observed height when we have one. The measure below is only for the first call on
+  // a freshly built pane, before the observer's first callback has run - after that this
+  // never forces a layout again.
+  let paneHeight = paneEl ? paneHeights.get(paneEl) : 0;
+  if (!paneHeight && paneEl) {
+    paneHeight = paneEl.getBoundingClientRect().height || 0;
+    if (paneHeight > 0) {
+      paneHeights.set(paneEl, paneHeight);
+    }
+  }
   const basis = paneHeight || 600;
   const autoMax = Math.max(120, Math.round(basis * COMPOSER_MAX_SHARE));
   const hardMax = Math.max(autoMax, Math.round(basis * COMPOSER_DRAG_MAX_SHARE));
@@ -8929,6 +9062,8 @@ function renderWorkspace() {
   paneEl.className = "pane";
   paneEl.dataset.pane = "0";
   workspace.append(paneEl);
+  // Track its height from here on, so the composer never has to measure it mid-keystroke.
+  observePaneHeight(paneEl);
   focusedPaneIndex = 0;
   renderSinglePane(0);
 }
