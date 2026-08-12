@@ -455,7 +455,11 @@ function buildSession(meta, attentionWindowMs) {
   // The transcript file is named by cliSessionId; fall back to the bare
   // sessionId (true for early sessions where the two coincided).
   const transcriptIds = [meta.cliSessionId, meta.sessionId];
-  const lastRole = readLastMessageRole(transcriptIds);
+  // An ARCHIVED session's transcript is not read at all. deriveStatus returns "archived"
+  // before it looks at lastRole, and nothing outside this file reads the field - so every
+  // byte of that read was already being thrown away. It is not a rounding error: 80 of the
+  // 90 sessions on Aidin's machine are archived, and this ran on the 30-second poll.
+  const lastRole = meta.isArchived ? null : readLastMessageRole(transcriptIds);
   const lastActivityAt = meta.lastActivityAt || meta.lastFocusedAt || meta.createdAt || 0;
   const status = deriveStatus({
     lastRole,
@@ -510,6 +514,25 @@ function deriveStatus({ lastRole, lastActivityAt, isArchived, attentionWindowMs 
 }
 
 /**
+ * The last answer per transcript file, keyed on the file's own mtime+size.
+ *
+ * A transcript only gains a last message when it is WRITTEN to, so an unchanged file has
+ * an unchanged answer - and re-deriving it means reading and UTF-8-decoding 96KB from
+ * disk. On the 30-second poll that was 2.4MB of reading per tick to learn nothing, and
+ * the sessions it was learning nothing about are the overwhelming majority: 85 of Aidin's
+ * 90 had no activity in 24 hours.
+ *
+ * Keyed on mtime AND size, not mtime alone: a filesystem timestamp can have coarse
+ * resolution, and two writes inside the same tick would otherwise look identical. Both
+ * changing is what the append this cares about always does.
+ *
+ * Bounded by the number of transcript files that exist, which is the same set the caller
+ * is iterating anyway, and entries are replaced rather than accumulated per session - so
+ * this cannot grow without bound in the long-lived worker process it now runs in.
+ */
+const lastRoleCache = new Map(); // transcriptPath -> { mtimeMs, size, role }
+
+/**
  * Reads only the tail of the transcript and returns the role ("user" |
  * "assistant") of the last real message line, ignoring metadata event lines.
  */
@@ -523,12 +546,20 @@ function readLastMessageRole(transcriptIds) {
     fd = fs.openSync(transcriptPath, "r");
     const stat = fs.fstatSync(fd);
     const size = stat.size;
+    const cached = lastRoleCache.get(transcriptPath);
+    if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === size) {
+      // The fstat already cost us the open; the 96KB read and decode is what this skips.
+      fs.closeSync(fd);
+      fd = undefined;
+      return cached.role;
+    }
     const start = Math.max(0, size - TAIL_BYTES);
     const length = size - start;
     const buffer = Buffer.alloc(length);
     fs.readSync(fd, buffer, 0, length, start);
     const text = buffer.toString("utf8");
     const lines = text.split("\n");
+    let role = null;
     for (let i = lines.length - 1; i >= 0; i--) {
       const line = lines[i].trim();
       if (!line) {
@@ -542,10 +573,16 @@ function readLastMessageRole(transcriptIds) {
         continue;
       }
       if (obj && (obj.type === "user" || obj.type === "assistant")) {
-        return obj.type;
+        role = obj.type;
+        break;
       }
     }
-    return null;
+    // A null answer is cached too. "This transcript's tail holds no user/assistant line"
+    // is just as expensive to work out as a positive answer and just as stable, and NOT
+    // caching it would leave exactly the oldest, least interesting files being re-read in
+    // full on every single poll.
+    lastRoleCache.set(transcriptPath, { mtimeMs: stat.mtimeMs, size, role });
+    return role;
   } catch {
     return null;
   } finally {
