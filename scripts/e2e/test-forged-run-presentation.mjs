@@ -69,6 +69,21 @@ fs.writeFileSync(
 
 process.env.HELM_CONFIG_PATH = configPath;
 process.env.HELM_META_HOME_OVERRIDE = metaHome;
+// The SESSIONS too, not just the records. This test isolated its config and meta-home but
+// left the app reading the captain's real session files - and the review page derives its "commits
+// without a task" sections from the git projects those sessions point at. So a page that was
+// supposed to render exactly ONE item rendered thirteen extra project sections, and grew a
+// new one every time he opened a session in another repo. The check was not wrong; it was
+// looking at his machine (2026-08-12, first full sweep since 08-02).
+const emptyRoot = path.join(tmp, "no-sessions");
+fs.mkdirSync(path.join(emptyRoot, "projects"), { recursive: true });
+fs.mkdirSync(path.join(emptyRoot, "sessions"), { recursive: true });
+process.env.HELM_SESSIONS_ROOT = path.join(emptyRoot, "sessions");
+process.env.HELM_PROJECTS_ROOT = path.join(emptyRoot, "projects");
+// And the goal-run history, which is the OTHER source of "projects Helm knows" - it was
+// still handing the scan every repo an autopilot has ever touched.
+process.env.HELM_GOAL_RUN_HISTORY_PATH = path.join(tmp, "goal-run-history.json");
+fs.writeFileSync(process.env.HELM_GOAL_RUN_HISTORY_PATH, "[]", "utf8");
 process.env.HELM_E2E_PORT = "9353";
 
 try {

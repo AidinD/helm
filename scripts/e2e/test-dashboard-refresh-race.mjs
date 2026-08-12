@@ -14,6 +14,14 @@
 // Run:  node scripts/e2e/test-dashboard-refresh-race.mjs
 import { launch } from "./harness.mjs";
 
+// Its OWN debug port. This file passes on its own and failed in the full sweep - the class
+// the suite's own notes call "interference between tests, not a real failure". It set no env
+// at all, so it shared the default port with about 176 other app tests: if the previous
+// test's Electron has not fully exited, this one attaches to THAT instance, which is running
+// somebody else's seeded fleet, and the first assertion ("at least one first-mate card to
+// press") fails against a board that was never meant for it (2026-08-12).
+process.env.HELM_E2E_PORT = process.env.HELM_E2E_PORT || "9361";
+
 function log(...a) {
   console.log("[dash-race-e2e]", ...a);
 }

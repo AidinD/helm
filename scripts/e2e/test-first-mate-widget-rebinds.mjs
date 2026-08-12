@@ -104,10 +104,22 @@ try {
   ok(decided.changedWhenNothingToAdopt === false, "and neither does an empty slot with nobody to adopt");
 
   // --- the board, before ------------------------------------------------------
+  // POLLED, not read once. navigateToPage("dashboard") kicks off a render of its own that
+  // nothing awaits, so awaiting a second renderDashboardPage() raced it: the widget
+  // dashboard commits its DOM in an atomic swap, and the read could land between the two.
+  // Every later assertion in this file reads the same board successfully, which is what
+  // gave it away - the mates were always there, this one look was simply too early
+  // (2026-08-12; this was one of six failures in the first full sweep since 2026-08-02).
   const before = await app.eval(`(async () => {
     navigateToPage("dashboard");
     await renderDashboardPage();
-    return { titles: ${titles} };
+    let titles = [];
+    for (let i = 0; i < 60; i++) {
+      titles = ${titles};
+      if (titles.includes("First mate · Alpha") && titles.includes("First mate · Beta")) { break; }
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    return { titles };
   })()`);
   ok(
     before.titles.includes("First mate · Alpha") && before.titles.includes("First mate · Beta"),
