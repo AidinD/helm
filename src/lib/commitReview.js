@@ -94,16 +94,29 @@ export function initialWatermark(projectPath, { run = git, cap = 30 } = {}) {
  * @param {Function} [opts.run]  injectable git runner (tests).
  * @returns {Array<{sha:string, shortSha:string, subject:string}>}
  */
-export function listUnboundCommits(projectPath, { watermark = null, isBound = null, limit = DEFAULT_LIMIT, run = git } = {}) {
+export function listUnboundCommits(projectPath, { watermark = null, acks = [], isBound = null, limit = DEFAULT_LIMIT, run = git } = {}) {
   if (!projectPath || !fs.existsSync(projectPath)) {
     return [];
   }
-  const range = watermark && SHA_RE.test(watermark) ? `${watermark}..HEAD` : "HEAD";
+  // The review floor is a SET of acknowledged tips, not a single point: the initial baseline
+  // PLUS every commit the user has marked reviewed. A `<watermark>..HEAD` range assumes LINEAR
+  // history, so two unbound commits on DIVERGENT branches (each merged via its own merge
+  // commit - neither an ancestor of the other) can never both be excluded by one watermark:
+  // `A..HEAD` still contains B and `B..HEAD` still contains A, so acking one re-surfaces the
+  // other and the row toggles forever (Aidin, 2026-08-12: two chip-fix commits stuck in
+  // "commits without a task"). `git log HEAD --not A B ...` excludes everything reachable from
+  // ANY floor commit, so divergent siblings clear independently. --ignore-missing drops a
+  // floor sha a history rewrite made unresolvable instead of erroring the whole listing.
+  const excludes = [watermark, ...(acks || [])].filter((s) => s && SHA_RE.test(s));
+  const args = ["log", "HEAD", "--no-merges", "--ignore-missing", `--max-count=${limit + 1}`, "--format=%H%x09%s"];
+  if (excludes.length > 0) {
+    args.push("--not", ...excludes);
+  }
   let out;
   try {
     // --no-merges: a merge commit is not a unit of work to review on its own. Cap at
     // limit+1 so the caller could tell the window was truncated (kept internal for now).
-    out = run(projectPath, ["log", range, "--no-merges", `--max-count=${limit + 1}`, "--format=%H%x09%s"]);
+    out = run(projectPath, args);
   } catch {
     return [];
   }
