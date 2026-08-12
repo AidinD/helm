@@ -6468,6 +6468,45 @@ function renderUserTurnInto(bubble, text) {
   }
 }
 
+/**
+ * A collapsed "Thought process" row you can open (Aidin: "Jag vill kunna expandera för att se
+ * thought process - som i desktop appen").
+ *
+ * Collapsed by DEFAULT and deliberately not a chat bubble. Two reasons it is its own element
+ * rather than an assistant bubble:
+ *
+ *   - the reply is what you read; reasoning is what you go looking for. Expanded by default it
+ *     would bury every actual answer under the working that led to it.
+ *   - wireDoneButtonOnLastReply and the turn-stats/question decorations all attach to the LAST
+ *     `.turn.assistant .turn-bubble` on the page. If reasoning were a bubble, those would
+ *     start landing on the thinking block instead of the answer - the Done button would move
+ *     somewhere meaningless, silently.
+ *
+ * The text goes through the markdown renderer, so it reads as prose rather than one block.
+ */
+function thinkingTurnEl(turn) {
+  const wrap = document.createElement("div");
+  wrap.className = "turn-thinking";
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "turn-thinking-toggle";
+  const body = document.createElement("div");
+  body.className = "turn-thinking-body hidden";
+  renderMarkdownInto(body, turn.text || "");
+  const label = () => {
+    const open = !body.classList.contains("hidden");
+    toggle.textContent = `${open ? "▾" : "▸"} Thought process`;
+    toggle.setAttribute("aria-expanded", String(open));
+  };
+  toggle.addEventListener("click", () => {
+    body.classList.toggle("hidden");
+    label();
+  });
+  label();
+  wrap.append(toggle, body);
+  return wrap;
+}
+
 function turnEl(turn) {
   if (turn.kind === "tool_result") {
     const el = document.createElement("div");
@@ -6480,6 +6519,9 @@ function turnEl(turn) {
   }
   if (turn.kind === "compact_boundary") {
     return compactBoundaryEl(turn);
+  }
+  if (turn.kind === "thinking") {
+    return thinkingTurnEl(turn);
   }
   const wrap = document.createElement("div");
   wrap.className = "turn " + turn.role;

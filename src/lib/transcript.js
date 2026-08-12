@@ -164,8 +164,18 @@ function pushAssistantTurns(turns, entry) {
         toolName: block.name,
         toolInput: summarizeToolInput(block.name, block.input),
       });
+    } else if (block.type === "thinking" && (block.thinking || block.text || "").trim()) {
+      // Carried, not dropped (Aidin: "Jag vill kunna expandera för att se thought process -
+      // som i desktop appen"). It was omitted from the default view, which is still how it
+      // RENDERS - the renderer draws a collapsed row you open - but omitting it here meant
+      // the reasoning was unreachable from the app at all, even though it sits in the
+      // transcript on disk.
+      //
+      // The field is `thinking` on the block; `text` is accepted as a fallback because this
+      // parser is written against what is actually on disk rather than a published schema,
+      // and that schema has changed shape before.
+      turns.push({ role: "assistant", kind: "thinking", text: block.thinking || block.text });
     }
-    // thinking blocks are intentionally omitted from the default view
   }
 }
 
