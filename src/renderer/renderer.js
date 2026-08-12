@@ -11211,7 +11211,15 @@ function jumpIntoSecondMate(sm) {
   // Navigate to chat FIRST (see jumpIntoFirstMate) - the composer focus in
   // openSessionInPane / openFreshDraftInPane no-ops while chat is hidden.
   navigateToPage("chat");
-  const bound = sm.sessionId ? state.sessions.find((s) => (s.cliSessionId || s.sessionId) === sm.sessionId) : null;
+  const boundRaw = sm.sessionId ? state.sessions.find((s) => (s.cliSessionId || s.sessionId) === sm.sessionId) : null;
+  // Never resume a bound session the user has ARCHIVED (or that's hidden from Helm):
+  // archiving it is precisely the signal "don't continue this". Because the second
+  // mate id is deterministic per (first mate, project), a fresh second mate for a
+  // project whose prior second-mate session was archived can still carry that stale
+  // binding; without this guard, jumping in resurrects the archived session instead
+  // of starting fresh (Aidin, 2026-08-12). main.js clears the binding on archive too,
+  // but this also covers a session archived in another Helm instance or mid-session.
+  const bound = boundRaw && !boundRaw.isArchived && !isHiddenFromHelm(boundRaw) ? boundRaw : null;
   const existing = bound || mostRecentSessionForCwd(sm.projectPath);
   if (existing) {
     // Thread the second-mate id through the RESUME path too. A direct/derived second mate's

@@ -274,8 +274,12 @@ export function bindSecondMateSession(secondMateId, sessionId) {
     ...(bindings[secondMateId] || {}),
     sessionId: sessionId || null,
     // Binding a live session IS the "first engagement" that turns a proposed
-    // second mate into a created one (Phase-2 Slice 1 lazy creation).
-    status: sessionId ? "created" : bindings[secondMateId]?.status || "proposed",
+    // second mate into a created one (Phase-2 Slice 1 lazy creation). CLEARING the
+    // session (null) reverts it to "proposed": a node with no session is not
+    // "created", and leaving it "created" makes the Fleet show a session-less node
+    // as active. The only null caller is archive-clears-binding (main.js), which
+    // wants exactly this - the second mate back to a fresh, un-started seat.
+    status: sessionId ? "created" : "proposed",
   };
   writeBindings(bindings);
   return bindings[secondMateId];

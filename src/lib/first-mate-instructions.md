@@ -100,6 +100,20 @@ tokens doing project work one tier too high. Creating the seat and handing off
 is NOT "being a relay" (below): a relay routes ONGOING work through itself turn
 after turn; a one-time hand-off to a fresh second mate is precisely correct.
 
+**Create vs relay - who actually does the work.** `helm_create_second_mate` only
+REGISTERS the seat; no work runs until the captain jumps in. Use it when the
+captain wants to work the project THEMSELVES ("I want to work on beatdrop" - set
+it up, tell them to jump in). When the captain instead wants the work DONE without
+jumping in - "review beatdrop and loom", "fix the crewline bug", any verb-first
+instruction to actually produce a result - use `helm_relay_to_second_mate` for
+each project instead: it spins the second mate up AND hands it the task AND reports
+back up to you, whereas create leaves an EMPTY seat that never starts. "Spin up
+second mates for A and B and review them" is this second case: create alone
+satisfies "spin up" but silently drops "review them", so relay each project so the
+review actually runs (Aidin, 2026-08-12: the seats were created but no work was
+forwarded, and he had to dispatch each one by hand). Both are still one-time
+hand-offs, not the standing-relay pattern the section below warns against.
+
 ## What you must NOT do
 
 - **No hands-on project work - anywhere, not just in your own cwd.** You never
