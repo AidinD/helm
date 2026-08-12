@@ -4381,6 +4381,21 @@ button.primary {
   margin-top: 1px;
 }
 
+.settings-budget-input {
+  width: 72px;
+  flex-shrink: 0;
+  background: var(--bg-card);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 13px;
+}
+
+.settings-budget-input:disabled {
+  opacity: 0.5;
+}
+
 .settings-toggle-row input {
   margin-top: 3px;
   flex-shrink: 0;

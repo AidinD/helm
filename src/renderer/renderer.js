@@ -16304,13 +16304,106 @@ function renderSettingsPage() {
   themeRow.append(themeLabel, themeDD.el);
   appearanceGroup.append(themeRow);
 
+  // Guardrails: the fleet spend ceiling (Phase-2 orchestration guardrail,
+  // orchestrationBudget.js) is Helm's own estimate of what dispatched runs
+  // WOULD cost at API rates, used only to stop new dispatch once it's
+  // crossed — not a real bill. On a subscription there's nothing to cap by
+  // default (the captain, 2026-08-12: "den behövs inte så länge jag har en
+  // subscription"), so it's off by default and fully optional; the manual
+  // Stop button on the Dashboard (the `killed` flag) is a separate mechanism
+  // and keeps working regardless of this toggle.
+  const guardrailsGroup = document.createElement("div");
+  guardrailsGroup.className = "settings-group";
+  guardrailsGroup.append(settingsGroupHeading("Fleet guardrail"));
+
+  const ceilingToggleRow = document.createElement("label");
+  ceilingToggleRow.className = "settings-toggle-row";
+  const ceilingCheckbox = document.createElement("input");
+  ceilingCheckbox.type = "checkbox";
+  const ceilingText = document.createElement("div");
+  ceilingText.className = "settings-toggle-text";
+  const ceilingTitle = document.createElement("div");
+  ceilingTitle.className = "settings-toggle-title";
+  ceilingTitle.textContent = "Cap the fleet's estimated spend";
+  const ceilingDesc = document.createElement("div");
+  ceilingDesc.className = "settings-toggle-desc";
+  ceilingDesc.textContent =
+    "Helm sums what each dispatched run's tokens WOULD cost at API rates and blocks new dispatch once that estimate crosses the cap below - a guardrail against a runaway fleet, not a real charge. On a Claude subscription nothing is billed per use, so leave this off if you don't need a cap; the manual Stop button on the Dashboard still works either way.";
+  ceilingText.append(ceilingTitle, ceilingDesc);
+  ceilingToggleRow.append(ceilingCheckbox, ceilingText);
+  guardrailsGroup.append(ceilingToggleRow);
+
+  const ceilingInputRow = document.createElement("div");
+  ceilingInputRow.className = "settings-select-row";
+  const ceilingInputLabel = document.createElement("div");
+  ceilingInputLabel.className = "settings-toggle-text";
+  const ceilingInputTitle = document.createElement("div");
+  ceilingInputTitle.className = "settings-toggle-title";
+  ceilingInputTitle.textContent = "Cap ($)";
+  ceilingInputLabel.append(ceilingInputTitle);
+  const ceilingInput = document.createElement("input");
+  ceilingInput.type = "number";
+  ceilingInput.min = "1";
+  ceilingInput.step = "1";
+  ceilingInput.className = "settings-budget-input";
+  ceilingInputRow.append(ceilingInputLabel, ceilingInput);
+  guardrailsGroup.append(ceilingInputRow);
+
+  const spendNoteEl = document.createElement("div");
+  spendNoteEl.className = "settings-toggle-desc settings-sweep-status";
+  spendNoteEl.textContent = "Fleet guardrail: checking…";
+  guardrailsGroup.append(spendNoteEl);
+
+  let lastKnownCeiling = 25; // fallback shown only until the real value loads
+  ceilingCheckbox.addEventListener("change", async () => {
+    if (ceilingCheckbox.checked) {
+      ceilingInput.disabled = false;
+      const n = Number(ceilingInput.value) || lastKnownCeiling;
+      ceilingInput.value = n;
+      const res = await window.helm.setOrchestrationCeiling(n);
+      if (res?.ok) {
+        lastKnownCeiling = n;
+      }
+    } else {
+      ceilingInput.disabled = true;
+      await window.helm.setOrchestrationCeiling(null);
+    }
+  });
+  ceilingInput.addEventListener("change", async () => {
+    if (!ceilingCheckbox.checked) {
+      return;
+    }
+    const n = Number(ceilingInput.value);
+    if (!Number.isFinite(n) || n <= 0) {
+      return;
+    }
+    const res = await window.helm.setOrchestrationCeiling(n);
+    if (res?.ok) {
+      lastKnownCeiling = n;
+    }
+  });
+
+  window.helm.getOrchestrationBudget().then((res) => {
+    const budget = res && res.ok ? res.budget : null;
+    const ceiling = budget && typeof budget.ceilingUsd === "number" ? budget.ceilingUsd : null;
+    if (ceiling != null) {
+      lastKnownCeiling = ceiling;
+    }
+    ceilingCheckbox.checked = ceiling != null;
+    ceilingInput.disabled = ceiling == null;
+    ceilingInput.value = ceiling != null ? ceiling : lastKnownCeiling;
+    const spent = budget ? Number(budget.spentUsd) || 0 : 0;
+    spendNoteEl.textContent =
+      `Estimated fleet spend so far: ~$${spent.toFixed(2)}` + (budget?.killed ? " · fleet currently stopped (Dashboard Resume clears this)" : "");
+  });
+
   // Each group gets its OWN column (auto-fit grid) so every heading tops its
   // own column, instead of the shorter groups being stacked awkwardly under
   // one another. Auto-fit collapses to fewer columns on a narrow window (see
   // .settings-columns CSS).
   const columns = document.createElement("div");
   columns.className = "settings-columns";
-  columns.append(passiveGroup, activeGroup, voiceGroup, appearanceGroup);
+  columns.append(passiveGroup, activeGroup, guardrailsGroup, voiceGroup, appearanceGroup);
   block.append(columns);
 
   page.append(block);
