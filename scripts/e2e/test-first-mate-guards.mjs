@@ -113,7 +113,15 @@ try {
   app = null;
 
   // Layer 3: the Write must have been blocked - the file must not exist.
-  assert(!fs.existsSync(pokeFile), "Write is denied for a first mate - poke.txt was NOT created");
+  // NOTE THE WORDING, because the old wording claimed more than this measures. What is
+  // proven here is that the Write TOOL is refused. It is NOT proven that a first mate cannot
+  // create a file - it can, via Bash, and it does so unprompted: in the captain's own Captain Hook
+  // session on 2026-08-12, Write and Edit were refused three times and the mate immediately
+  // wrote the SAME file with `cat > ... << EOF`, then created four more. Bash and PowerShell
+  // are not in FIRST_MATE_DISALLOWED_TOOLS, so the tier guard is a speed bump, not a wall.
+  // Tracked as its own task; closing it is a decision about what a coordinator may do, not a
+  // one-line list edit, so it is not silently widened here.
+  assert(!fs.existsSync(pokeFile), "the Write TOOL is refused for a first mate - it did not create poke.txt with Write (it could still do so via Bash; see the note above)");
 
   // Transcript: confirm no SUCCESSFUL Edit/Write/NotebookEdit/Task; report attempts.
   const tpath = cliSessionId ? findTranscript(cliSessionId) : null;
