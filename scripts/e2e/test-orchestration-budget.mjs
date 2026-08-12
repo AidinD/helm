@@ -93,5 +93,37 @@ try {
   fs.rmSync(home, { recursive: true, force: true });
 }
 
+// A non-absolute metaHome (mangled via a bash heredoc / shell interpolation of a
+// Windows path - drive + backslashes stripped) must NEVER silently create a
+// second, relative budget/kill-switch file. Writes fail LOUD (throw); reads fail
+// CLOSED (killed). Seen live 2026-08-12: a stray `.helm-dispatch/budget.json`
+// under the repo cwd from exactly this mangling.
+const cwdBefore = process.cwd();
+const mangled = "DropboxMina DokumentClaude"; // D:\Dropbox\Mina Dokument\Claude with drive+`\` stripped
+for (const bad of [mangled, "relative/path", "", "  ", null, undefined]) {
+  let threw = false;
+  try {
+    addSpend(bad, 1);
+  } catch {
+    threw = true;
+  }
+  assert(threw, `addSpend refuses a non-absolute metaHome (${JSON.stringify(bad)}) instead of writing a stray file`);
+  let killedThrew = false;
+  try {
+    setKilled(bad, true);
+  } catch {
+    killedThrew = true;
+  }
+  assert(killedThrew, `setKilled refuses a non-absolute metaHome (${JSON.stringify(bad)})`);
+  // Reads must not throw - they fail CLOSED (killed) so a mangled metaHome can
+  // never read as a fresh, ceiling-disabled state.
+  const read = readBudget(bad);
+  assert(read.killed === true && read.corrupt === true, `readBudget(${JSON.stringify(bad)}) fails CLOSED (killed)`);
+  assert(isKilled(bad) === true, `isKilled(${JSON.stringify(bad)}) reports killed (fail-closed)`);
+}
+// No stray relative dir was created under the cwd by any of the above.
+assert(!fs.existsSync(path.join(cwdBefore, mangled)), "no stray relative .helm-dispatch dir was created under the cwd");
+assert(process.cwd() === cwdBefore, "cwd unchanged");
+
 console.log(exit === 0 ? "VERIFY OK: orchestration budget + kill switch behave." : "VERIFY FAILED.");
 process.exit(exit);
