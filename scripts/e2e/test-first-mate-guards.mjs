@@ -81,11 +81,20 @@ try {
 
   // Layers 3 + 2 (live): ask a first mate to WRITE a file with the Write tool only.
   const prompt = `Skapa filen poke.txt i katalogen ${metaHome} med innehållet hello. Använd ENDAST Write-verktyget for detta - inte Bash eller något annat verktyg.`;
+  // mateId is REQUIRED for the first-mate guards to apply, and leaving it out is what made
+  // this check fail on 2026-08-12. A meta-home session is a first mate only when it is
+  // actually BOUND to one - deciding by cwd alone was itself a bug (a personal chat rooted in
+  // /claude lost its MCP servers and got the first-mate manual injected). So a session with no
+  // mateId is correctly NOT a first mate, and asserting first-mate guards on it was asserting
+  // the pre-fix model. Bind a real mate and launch as one.
+  const mateId = await app.eval(`window.helm.listMates().then(r => ((r.active || [])[0] || {}).mateId || null)`);
+  log("launching as first mate:", mateId);
   const started = await app.eval(`window.helm.startSession({
     cwd: ${JSON.stringify(metaHome)},
     prompt: ${JSON.stringify(prompt)},
     model: "claude-sonnet-5",
-    effort: "low"
+    effort: "low",
+    mateId: ${JSON.stringify(mateId)}
   })`);
   log("startSession:", JSON.stringify(started));
 

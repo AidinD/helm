@@ -1,3 +1,7 @@
+// KNOWN-SOFT (2026-08-12): this asserts a MODEL JUDGEMENT - which bucket the triage puts a
+// card in. A red run ("en copy code knapp" landing in held rather than starts) means the
+// classifier read an ambiguous card differently, not that the bar is broken. Worth reading,
+// not worth blocking on.
 // Where the auto lane's bar actually sits, measured with real triage calls.
 //
 // the captain, task e4ba1807: "auto är alldeles för restriktiv. auto är lite för feg. Går till needs
