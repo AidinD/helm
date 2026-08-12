@@ -427,12 +427,16 @@ function truncate(text, max) {
  * "stream-json") shape of the identical CLI result payload, so the field
  * names are the same, just without the streaming wrapper.
  *
- * Returns `{ totalTokens, contextWindow, fillPct }`, with `contextWindow`
- * and `fillPct` as `null` when the model's context window isn't reported
- * (e.g. an unrecognized model string) — never throws, since a missing/odd
- * usage shape must not fail an otherwise-successful iteration.
+ * Returns `{ totalTokens, contextWindow, fillPct, resolvedModel }`, with
+ * `contextWindow` and `fillPct` as `null` when the model's context window
+ * isn't reported (e.g. an unrecognized model string) — never throws, since a
+ * missing/odd usage shape must not fail an otherwise-successful iteration.
+ * `resolvedModel` is the real model id the CLI actually ran (the key of
+ * `parsed.modelUsage`, e.g. "claude-haiku-4-5") — normally there is exactly
+ * one entry per single-turn batch call. This is how Helm learns which model
+ * ran when no `--model` flag was passed (e.g. every auto-captain run).
  */
-function extractUsage(parsed) {
+export function extractUsage(parsed) {
   const usage = parsed?.usage || {};
   const totalTokens =
     (usage.input_tokens || 0) +
@@ -441,8 +445,13 @@ function extractUsage(parsed) {
     (usage.cache_read_input_tokens || 0);
 
   let contextWindow = null;
+  let resolvedModel = null;
   if (parsed?.modelUsage && typeof parsed.modelUsage === "object") {
-    for (const modelUsage of Object.values(parsed.modelUsage)) {
+    const entries = Object.entries(parsed.modelUsage);
+    if (entries.length > 0) {
+      resolvedModel = entries[0][0] || null;
+    }
+    for (const [, modelUsage] of entries) {
       if (modelUsage && typeof modelUsage.contextWindow === "number" && modelUsage.contextWindow > 0) {
         contextWindow = modelUsage.contextWindow;
         break;
@@ -451,7 +460,7 @@ function extractUsage(parsed) {
   }
 
   const fillPct = contextWindow ? totalTokens / contextWindow : null;
-  return { totalTokens, contextWindow, fillPct };
+  return { totalTokens, contextWindow, fillPct, resolvedModel };
 }
 
 /**
@@ -1487,6 +1496,7 @@ export async function runGoal({
         costUsd: outcome.costUsd,
         fillPct: outcome.usage?.fillPct ?? null,
         totalTokens: outcome.usage?.totalTokens ?? null,
+        resolvedModel: outcome.usage?.resolvedModel ?? null,
       };
       consecutiveFailures += 1;
     } else if (verifyGateApplies) {
@@ -1519,6 +1529,7 @@ export async function runGoal({
           costUsd: outcome.costUsd,
           fillPct: outcome.usage?.fillPct ?? null,
           totalTokens: outcome.usage?.totalTokens ?? null,
+          resolvedModel: outcome.usage?.resolvedModel ?? null,
         };
         consecutiveFailures = 0;
         // Verify gate only applies to implement, so this branch is always the
@@ -1555,6 +1566,7 @@ export async function runGoal({
           costUsd: outcome.costUsd,
           fillPct: outcome.usage?.fillPct ?? null,
           totalTokens: outcome.usage?.totalTokens ?? null,
+          resolvedModel: outcome.usage?.resolvedModel ?? null,
         };
         consecutiveFailures += 1;
       }
@@ -1576,6 +1588,7 @@ export async function runGoal({
         costUsd: outcome.costUsd,
         fillPct: outcome.usage?.fillPct ?? null,
         totalTokens: outcome.usage?.totalTokens ?? null,
+        resolvedModel: outcome.usage?.resolvedModel ?? null,
       };
       consecutiveFailures = 0;
       // Only an implement iteration that changed nothing real is a no-op toward
@@ -1736,6 +1749,15 @@ export async function runGoal({
     }
   }
 
+  // All iterations in a run share the same --model/--effort CLI args, so the
+  // resolved model is a run-level fact, not a per-iteration one - the first
+  // iteration record that captured one (usually the first, but a hard-failed
+  // iteration has none) is the run's answer. Surfaces "what did the CLI
+  // actually pick" for Auto runs (auto-captain never passes --model), where
+  // the requested `model` field is null and previously nothing else showed
+  // which model ran.
+  const resolvedModel = iterations.find((r) => r.resolvedModel)?.resolvedModel || null;
+
   return {
     worktreePath,
     branchName,
@@ -1749,6 +1771,7 @@ export async function runGoal({
     plan: finalPlan,
     commitCount,
     iterations,
+    resolvedModel,
     stoppedReason,
     cleanedUp,
     // Baseline commit the worktree forked from - persisted so a RESUME can reuse
