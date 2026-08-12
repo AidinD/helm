@@ -951,10 +951,15 @@ function openDiffViewer(row, res) {
   // Where the commits came from. A search of the log is a GUESS, and it says so.
   const prov = document.createElement("div");
   prov.className = "suggest-hint";
+  // Three provenances, because how the commits were FOUND changes how much the diff can be
+  // trusted to be the whole change. "commit" is the unbound-commit row: there is no
+  // attribution step at all, so there is nothing to caveat - this is exactly that commit.
   prov.textContent =
-    res.source === "record"
-      ? `${res.commits.length} commit(s) named by the review record, in ${res.projectPath}`
-      : `${res.commits.length} commit(s) found by searching the log for "${row.taskId.slice(0, 8)}" - the record names none, so this is a search and could miss a commit that never mentioned the task`;
+    res.source === "commit"
+      ? `Commit ${res.commits[0]?.sha.slice(0, 8) || ""} in ${res.projectPath} - the whole of it, nothing inferred`
+      : res.source === "record"
+        ? `${res.commits.length} commit(s) named by the review record, in ${res.projectPath}`
+        : `${res.commits.length} commit(s) found by searching the log for "${row.taskId.slice(0, 8)}" - the record names none, so this is a search and could miss a commit that never mentioned the task`;
   body.append(prov);
 
   const list = document.createElement("div");
@@ -2908,8 +2913,12 @@ function paintReviewPage(res, { refreshing = false } = {}) {
       const ackAll = document.createElement("button");
       ackAll.type = "button";
       ackAll.className = "text-btn rev-group-action";
-      ackAll.textContent = "Reviewed all";
-      ackAll.title = `Mark all ${group.commits.length} shown ${group.projectName} commits reviewed (advances the watermark to the newest).`;
+      // "Seen", not "Reviewed". This writes no evidence at all - no record, no checks, no
+      // note - it only stops the row being shown. A task's "Mark done" is backed by a review
+      // record; calling both of them the same thing made a dismissal look like a verdict,
+      // which is the exact conflation the review pipe exists to prevent (the captain, 2026-08-12).
+      ackAll.textContent = "Seen all";
+      ackAll.title = `Stop showing all ${group.commits.length} listed ${group.projectName} commits. This records only that you have seen them - it does not claim anything was reviewed.`;
       ackAll.addEventListener("click", async (e) => {
         e.stopPropagation();
         ackAll.disabled = true;
@@ -2951,23 +2960,10 @@ function paintReviewPage(res, { refreshing = false } = {}) {
       noTask.title = "This commit isn't tied to any Jot task - it's shown so the work still gets reviewed.";
       line.append(noTask);
 
-      const ackBtn = document.createElement("button");
-      ackBtn.type = "button";
-      ackBtn.className = "text-btn";
-      ackBtn.textContent = "Reviewed";
-      ackBtn.title = "Mark reviewed up to this commit. It and older commits drop off; newer ones stay.";
-      ackBtn.addEventListener("click", async (e) => {
-        e.stopPropagation(); // the head is the expand toggle; the button is not
-        ackBtn.disabled = true;
-        const r = await window.helm.acknowledgeCommit(group.projectPath, c.sha);
-        if (!r?.ok) {
-          ackBtn.disabled = false;
-          showToast(r?.error || "Couldn't acknowledge that.");
-          return;
-        }
-        renderReviewPage();
-      });
-      line.append(ackBtn);
+      // The dismiss control lives in the row's FOOTER, not up here. Two reasons: a task's
+      // card keeps Mark done / Send back in its body too, so this is the same shape; and a
+      // control that hides a commit belongs next to the ones that let you look at it first,
+      // not above them where it is the easiest thing to reach without reading anything.
       el.append(line);
 
       // The body a commit row was missing. It used to be the diff and NOTHING else, which
@@ -3020,9 +3016,15 @@ function paintReviewPage(res, { refreshing = false } = {}) {
               factsBox.append(reviewChip(detail.shortstat, "neutral"));
             }
             if (detail.body) {
-              const msg = document.createElement("p");
+              // Through the markdown renderer, like the independent reviewer's note fifty
+              // lines below - which this card was ALREADY doing, while dumping the commit
+              // message into one flat paragraph. A multi-paragraph message then rendered as
+              // an unbroken wall of text (the captain, 2026-08-12: "istället för att skriva det
+              // som en oläslig blob som i bilden"), and the message is usually the only
+              // place the author explained themselves at all.
+              const msg = document.createElement("div");
               msg.className = "rev-summary";
-              msg.textContent = detail.body;
+              renderMarkdownInto(msg, detail.body);
               body.append(msg);
             }
           }
@@ -3052,10 +3054,18 @@ function paintReviewPage(res, { refreshing = false } = {}) {
           // no verdict is the ordinary case
         }
 
-        // The same two things a task row offers before a decision: read it properly, or
-        // have somebody else read it.
+        // A FOOTER, pinned to the bottom of the row rather than laid out after the message.
+        // These buttons used to sit below the commit body, so a long message pushed them off
+        // the visible area entirely - which is why "Present review" and "Independent
+        // reviewer" read as missing when they had been there all along (the captain, 2026-08-12:
+        // "varför har den inte send back, skicka granskare etc knappar?"). Sticky keeps
+        // every action reachable no matter how long the message is.
+        //
+        // "Send back" is deliberately NOT here: it moves a Jot TASK back to in-progress with
+        // a note, and this row has no task to move. Offering a button that cannot do its
+        // job is worse than not offering it.
         const actions = document.createElement("div");
-        actions.className = "rev-actions";
+        actions.className = "rev-actions rev-commit-footer";
         const presentBtn = document.createElement("button");
         presentBtn.type = "button";
         presentBtn.className = "text-btn";
@@ -3084,32 +3094,63 @@ function paintReviewPage(res, { refreshing = false } = {}) {
           openCommitIndependentReview(group.projectPath, c);
         });
         actions.append(revBtn);
-        body.append(actions);
 
-        const note = document.createElement("div");
-        note.className = "rev-commit-note";
-        note.textContent = "Loading the diff…";
-        body.append(note);
-        try {
-          const r = await window.helm.getCommitDiff(group.projectPath, c.sha);
-          note.remove();
+        // The diff is BEHIND a button, never in the card. It used to load inline and stack
+        // hundreds of lines under every expanded row (the captain, 2026-08-12: "Diffen bör aldrig
+        // läggas direkt i kortet ... jag är sällan intresserad av diffen på det sättet").
+        // This opens the same viewer a task's card uses, which also brings the changed-files
+        // column with it - so the commit row stops being the one place with a worse diff.
+        const diffBtn = document.createElement("button");
+        diffBtn.type = "button";
+        diffBtn.className = "text-btn";
+        diffBtn.textContent = "See diff";
+        diffBtn.title = "Opens this commit's diff in the viewer, with a column to pick a changed file.";
+        diffBtn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          diffBtn.disabled = true;
+          try {
+            const r = await window.helm.getCommitDiff(group.projectPath, c.sha);
+            if (!r?.ok) {
+              showToast(`Couldn't load the diff: ${r?.error || "unknown reason"}`);
+              return;
+            }
+            openDiffViewer(
+              { taskId: c.sha, title: c.subject || c.shortSha },
+              {
+                source: "commit",
+                projectPath: group.projectPath,
+                commits: [{ sha: c.sha, subject: c.subject || "" }],
+                text: r.text,
+                truncated: !!r.truncated,
+                shown: 1,
+                total: 1,
+              }
+            );
+          } finally {
+            diffBtn.disabled = false;
+          }
+        });
+        actions.append(diffBtn);
+
+        // Dismiss last, and named for what it does. See the "Seen all" comment above.
+        const ackBtn = document.createElement("button");
+        ackBtn.type = "button";
+        ackBtn.className = "text-btn";
+        ackBtn.textContent = "Seen";
+        ackBtn.title = "Stop showing this commit, and everything older than it. Records only that you have seen it - it does not claim anything was reviewed.";
+        ackBtn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          ackBtn.disabled = true;
+          const r = await window.helm.acknowledgeCommit(group.projectPath, c.sha);
           if (!r?.ok) {
-            const err = document.createElement("div");
-            err.className = "rev-warn";
-            err.textContent = `Couldn't load the diff: ${r?.error || "unknown reason"}`;
-            body.append(err);
+            ackBtn.disabled = false;
+            showToast(r?.error || "Couldn't acknowledge that.");
             return;
           }
-          renderDiffFiles(body, parseUnifiedDiffFiles(r.text));
-          if (r.truncated) {
-            const t = document.createElement("div");
-            t.className = "rev-commit-note";
-            t.textContent = "(diff truncated)";
-            body.append(t);
-          }
-        } catch {
-          note.remove();
-        }
+          renderReviewPage();
+        });
+        actions.append(ackBtn);
+        body.append(actions);
       };
       if (expanded) {
         loadBody();

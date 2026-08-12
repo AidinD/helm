@@ -6650,6 +6650,19 @@ button.primary {
 .rev-check-label { color: var(--text); }
 .rev-check-state { margin-left: auto; color: var(--text-dim); font-family: ui-monospace, Consolas, monospace; font-size: 10.5px; }
 .rev-actions { display: flex; gap: 8px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); }
+/* The unbound-commit row's action bar, pinned to the bottom of the row's own scroll area.
+   Its buttons used to be laid out after the commit message, so a long message pushed them
+   out of view and the row read as having no actions at all (the captain, 2026-08-12). Sticky
+   rather than fixed: it stays inside the row, so two expanded rows do not fight over the
+   same strip of screen. The background is opaque because the message scrolls UNDER it. */
+.rev-commit-footer {
+  position: sticky;
+  bottom: 0;
+  margin-top: 12px;
+  padding-bottom: 10px;
+  background: var(--bg-card);
+  flex-wrap: wrap;
+}
 /* The actual command a check runs. Shown, not hidden in a tooltip: the label is
    author prose, this is the fact. */
 .rev-check-cmd {
