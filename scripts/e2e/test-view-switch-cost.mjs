@@ -25,6 +25,29 @@ const PAGES = ["dashboard", "goal", "review", "routines", "analysis", "settings"
 const app = await launch();
 try {
   await app.waitForSelector("#pageToggle");
+
+  // COLD CACHE FIRST, before anything warms it. The queue cache lives in main-process
+  // memory, so a freshly launched app always has none - and that is the case the Review
+  // page's two-step render can get wrong. It asks for a cached payload, then asks for a
+  // fresh one; when the cache is cold the FIRST call builds the whole queue anyway and
+  // returns it unflagged, so an unconditional second call threw that away and built it
+  // again. The first visit after launch - the slowest one, and the entire reason the
+  // two-step render exists - paid for two full builds instead of one (found by review,
+  // 2026-08-12). Counted here rather than timed, because the count cannot be flaky.
+  // Read from the counter main carries on every payload. Two other ways were tried and do
+  // not work here, both worth recording so nobody spends the time again: window.helm cannot
+  // be stubbed (contextBridge makes it read-only, so the stub silently does nothing and the
+  // count reads zero), and the slow-IPC log does not see it either, because 'reviews:list'
+  // is async and that guard measures only a handler's synchronous span - which is now near
+  // zero precisely because the build moved to the worker.
+  await app.eval(`renderReviewPage()`);
+  const builds = await app.eval(`window.helm.listReviews({ maxAgeMs: 3600000 }).then(r => r.builds)`);
+  console.log(`      cold-cache Review render: ${builds} full queue build(s)`);
+  ok(
+    builds === 1,
+    `a first Review visit on a cold cache costs exactly ONE full queue build (${builds}) - two means the expensive first render is paying twice for the same answer, which is what it did before this fix`
+  );
+
   // Warm every page once: the first visit to each pays one-off work (fetching the review
   // queue, the skills list) that is not what "switching views" costs in daily use.
   for (const page of PAGES) {

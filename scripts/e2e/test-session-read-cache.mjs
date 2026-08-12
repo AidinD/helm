@@ -100,6 +100,41 @@ try {
     `a same-size in-place rewrite is still noticed (${flipped.lastRole}) - keying the cache on size alone would have returned the stale "assistant" here`
   );
 
+  // --- and the other half of the key: a size change with the mtime PUT BACK -----
+  // The mirror of the case above, and the one this file used to miss. An independent review
+  // (2026-08-12) mutated the cache to key on mtime ALONE and this test stayed green, because
+  // every other case here changes both. Filesystems do hand back coarse or restored
+  // timestamps, and a size change under an unchanged mtime is precisely when size is the
+  // only thing left to notice it.
+  // A FIXED timestamp on both sides, rather than reading one and putting it back: utimesSync
+  // does not round-trip sub-millisecond precision, so "restore what was there" leaves the
+  // two mtimes almost-but-not-quite equal and the fixture proves nothing.
+  const pinned = new Date(Date.now() - 60_000);
+  fs.utimesSync(livePath, pinned, pinned);
+  const statBefore = fs.statSync(livePath);
+  find(readAllSessions(opts), LIVE); // cache this (mtime, size) pair
+  fs.writeFileSync(
+    livePath,
+    [
+      { type: "user", message: {} },
+      { type: "assistant", message: {} },
+      { type: "assistant", message: { extra: "makes this file longer" } },
+    ]
+      .map((l) => JSON.stringify(l))
+      .join("\n") + "\n"
+  );
+  fs.utimesSync(livePath, pinned, pinned);
+  const statAfter = fs.statSync(livePath);
+  ok(
+    statAfter.mtimeMs === statBefore.mtimeMs && statAfter.size !== statBefore.size,
+    `the fixture really is "same mtime, different size" (${statBefore.size} -> ${statAfter.size} bytes, mtime pinned at ${statBefore.mtimeMs})`
+  );
+  const sizeOnly = find(readAllSessions(opts), LIVE);
+  ok(
+    sizeOnly.lastRole === "assistant",
+    `a size change under an unchanged mtime is still noticed (${sizeOnly.lastRole}) - keying on mtime alone would have returned the stale "user" here`
+  );
+
   // --- the real data folder was never touched ----------------------------------
   // The env seam is only honoured if it was set before the import; if it was not, the
   // numbers above would have come from Aidin's real 90 sessions.

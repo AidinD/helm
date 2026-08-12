@@ -81,6 +81,26 @@ try {
   commit("c.txt");
   ok(gitHeadStamp(root) !== packedBaseline, "a commit made AFTER `git pack-refs --all` still changes the stamp - the packed-refs case is covered, not silently blind");
 
+  // The packed-refs COMPONENT of the stamp, pinned on its own.
+  //
+  // The assertion above passes even without it, because committing recreates the loose ref
+  // and the loose-ref read alone notices that. An independent review (2026-08-12) removed
+  // packed-refs from the stamp entirely and this file stayed green - so the component was
+  // justified in prose and covered by nothing. It matters in the state where the ref a
+  // branch points to lives ONLY in packed-refs, which is exactly what a repack leaves
+  // behind, so this touches that file directly rather than hoping a git command produces
+  // the state.
+  git("pack-refs", "--all");
+  const packedOnlyBefore = gitHeadStamp(root);
+  const packedRefsPath = path.join(root, ".git", "packed-refs");
+  ok(fs.existsSync(packedRefsPath), "the repo really has a packed-refs file to key on");
+  const future = new Date(Date.now() + 5_000);
+  fs.utimesSync(packedRefsPath, future, future);
+  ok(
+    gitHeadStamp(root) !== packedOnlyBefore,
+    "packed-refs moving on its own changes the stamp - without this the whole packed-refs half of the key could be deleted and every check here would still pass"
+  );
+
   // --- a .git FILE (worktree/submodule shape) --------------------------------
   // Must report "cannot tell" (null), NOT a stable stamp: a stable stamp here would
   // cache the first answer forever in exactly the shape this cannot reason about.
