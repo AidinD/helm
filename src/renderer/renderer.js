@@ -2339,6 +2339,25 @@ let reviewProjectFilter = null; // a category name, or null for every project
 // The domain comes straight from each Jot category's own W/P classification. "all"
 // = no domain filtering; resets on reload, like the other two.
 let reviewDomainFilter = "all"; // "all" | "work" | "private"
+// Defaults ON: a task in review with no commit tied to it, no declared checks, and
+// no critical/core criticality is not code review's problem - it is what "korten
+// ska vara bundna till commits - har ingen commit gjorts så behövs inget kort"
+// (Aidin, 2026-08-11) asks for. Kept as a toggle rather than a server-side drop,
+// same reasoning as reviewOnlyRepoRooted: a filter that silently omits work is the
+// exact failure this whole surface exists to prevent, so it stays discoverable and
+// one click from reversible.
+let reviewHideNoCommits = true;
+// Deliberately narrow: this hides ONLY the "unrecorded" clutter - a task moved to
+// review with no record at all AND nothing committed against it, which is noise,
+// not work waiting on a decision. A record that DOES exist is never hidden by this
+// rule, however it fares otherwise (stamp, judgment, incomplete, no commits and
+// all) - it is documented evidence somebody wrote, and test-acceptance-gate is the
+// load-bearing case: a cosmetic, fully-covered "stamp" record with no commit still
+// carries its acceptance criteria and test steps, and hiding that card would hide
+// real work, not noise. `r.hasCommits === false` is a POSITIVE statement from
+// buildReviewsPayload ("git was asked and found nothing"); undefined (an older
+// payload, or a row a test built by hand) is not treated as a confirmed absence.
+const rowNeedsNoCommitsCard = (r) => r.verdict !== "unrecorded" || r.hasCommits !== false;
 
 // Which band a row belongs to. The queue's own module decides this and sends it as
 // row.band; the fallback is for a row from an older payload. At module scope so the page,
@@ -2369,7 +2388,8 @@ function visibleReviewRows(allRows, { ignoreProjectFilter = false, ignoreDomainF
     (r) =>
       (!reviewOnlyRepoRooted || r.repoPath) &&
       (!project || r.category === project) &&
-      (domain === "all" || r.domain === domain)
+      (domain === "all" || r.domain === domain) &&
+      (!reviewHideNoCommits || rowNeedsNoCommitsCard(r))
   );
 }
 
@@ -2390,7 +2410,7 @@ function reviewTallyFromRows(rows) {
  * options is a trap. The counts on each chip are what the repo filter would leave, so
  * the numbers agree with what clicking actually shows.
  */
-function reviewFilterBarEl(allRows, nonRepoCount) {
+function reviewFilterBarEl(allRows, nonRepoCount, noCommitsCount) {
   const bar = document.createElement("div");
   bar.className = "rev-filters";
   // Repo-eligible rows, before the domain filter - so the Work/Private chips can
@@ -2490,6 +2510,26 @@ function reviewFilterBarEl(allRows, nonRepoCount) {
         : "Showing every board, including ones with no code to review. Click to go back to code only."
     )
   );
+  // "No commit, no card" (Aidin, 2026-08-11): a repo-rooted task with no commit tied
+  // to it, no declared checks, and no critical/core criticality isn't code review's
+  // problem, so it's held back by default - same reversible-chip pattern as "Code
+  // only" above, not a silent drop.
+  bar.append(
+    chip(
+      reviewHideNoCommits
+        ? noCommitsCount > 0
+          ? `Bound to commits · ${noCommitsCount} hidden`
+          : "Bound to commits"
+        : "Showing uncommitted too",
+      reviewHideNoCommits,
+      () => {
+        reviewHideNoCommits = !reviewHideNoCommits;
+      },
+      reviewHideNoCommits
+        ? `Only rows with a commit tied to them (or declared checks, or critical/core criticality). ${noCommitsCount} row(s) with nothing committed are held back - click to include them.`
+        : "Showing rows with no commit tied to them too - click to hide them again."
+    )
+  );
   return bar;
 }
 
@@ -2501,6 +2541,10 @@ async function renderReviewPage() {
   const res = await window.helm.listReviews();
   const allRows = res?.rows || [];
   const nonRepoCount = allRows.filter((r) => !r.repoPath).length;
+  // Repo-rooted rows this filter would hold back - counted before it is applied, same
+  // rule nonRepoCount follows, so the chip can say how many and never erase its own
+  // toggle.
+  const noCommitsCount = allRows.filter((r) => r.repoPath && !rowNeedsNoCommitsCard(r)).length;
   const rows = visibleReviewRows(allRows);
   // Counted from the rows actually SHOWN, not from the whole queue: a summary line that
   // described a set the page is not displaying is worse than no summary, because it is
@@ -2552,7 +2596,7 @@ async function renderReviewPage() {
     topbar.append(runAll);
   }
   frag.append(topbar);
-  frag.append(reviewFilterBarEl(allRows, nonRepoCount));
+  frag.append(reviewFilterBarEl(allRows, nonRepoCount, noCommitsCount));
 
   if (!res?.ok && res?.error) {
     const err = document.createElement("div");
@@ -11709,11 +11753,39 @@ function widgetBodyQuota(data) {
     const l = document.createElement("span");
     l.textContent = "Fleet spend (est.)";
     const v = document.createElement("span");
-    v.className = "wd-quota-val";
+    v.className = "wd-quota-val" + (spend.stopped || spend.over ? " crit" : "");
     v.textContent = spend.labelText.replace(/^Fleet spend \(est\.\)\s*/, "");
     v.title = spend.title;
     line.append(l, v);
     frag.append(line);
+    // The widget dashboard dropped the old header chip's Resume/Stop control
+    // when it replaced the classic dashboard (Aidin, 2026-08-11: the button
+    // "fanns i förra dashboarden ... nu saknas den"). Reused instead of
+    // recreated: same IPC calls the old dashOrchestrationChip made.
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "text-btn wd-quota-spend-btn";
+    if (spend.stopped || spend.over) {
+      btn.textContent = "Resume";
+      btn.title = "Clear the stop + reset spend so new work can start (keeps the ceiling)";
+      btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        btn.disabled = true;
+        await window.helm.resumeOrchestration();
+        await renderDashboardPage();
+      });
+    } else {
+      btn.textContent = "Stop";
+      btn.title = "Stop everything: halt the whole fleet (cancels live runs; blocks new work from starting)";
+      btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        btn.disabled = true;
+        const res = await window.helm.killOrchestration();
+        showToast(res && res.ok ? `Fleet stopped (${res.cancelled} live run${res.cancelled === 1 ? "" : "s"} cancelled).` : "Couldn't stop the fleet - try again.");
+        await renderDashboardPage();
+      });
+    }
+    frag.append(btn);
   }
   return frag;
 }
