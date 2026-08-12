@@ -2613,16 +2613,27 @@ async function renderReviewPage() {
   }
   // A cached payload of any age is worth painting - it is replaced moments later, and the
   // alternative is showing nothing at all for seconds.
+  //
+  // The `cached` flag decides whether a second call is needed at all, and getting that wrong
+  // was expensive: asking for a cached payload when the cache is COLD makes the main process
+  // build the whole queue anyway and return it unflagged, so an unconditional refresh below
+  // threw that away and built it a second time. The first visit after launch - the exact case
+  // this whole change exists to improve, and the slowest one, ~10s in a fresh profile - paid
+  // for TWO builds instead of one (found by review, 2026-08-12).
+  let first = null;
   try {
-    const cached = await window.helm.listReviews({ maxAgeMs: 24 * 60 * 60 * 1000 });
-    if (token !== reviewRenderToken) {
-      return; // navigated away, or a newer render started
-    }
-    if (cached?.cached) {
-      paintReviewPage(cached, { refreshing: true });
-    }
+    first = await window.helm.listReviews({ maxAgeMs: 24 * 60 * 60 * 1000 });
   } catch {
-    // No cached payload to show - fall through to the fresh build, same as before.
+    // Nothing to paint yet; fall through to the fresh build, same as before.
+  }
+  if (token !== reviewRenderToken) {
+    return; // navigated away, or a newer render started
+  }
+  if (first) {
+    paintReviewPage(first, { refreshing: !!first.cached });
+    if (!first.cached) {
+      return; // that WAS a fresh build - there is nothing newer to fetch
+    }
   }
   const fresh = await window.helm.listReviews();
   if (token !== reviewRenderToken) {

@@ -44,6 +44,10 @@ import {
 } from "./lib/scheduledPrompts.js";
 import { reviewQueueInputsFingerprint, readReviewRecord, writeReviewRecord, buildAutoReviewRecord, recordCheckRun, gauntletStatus, currentHead, codeChangedBetween } from "./lib/reviewRecords.js";
 import { resolveTaskCommits, diffForCommits, shippedVersionForCommits } from "./lib/reviewDiff.js";
+// projectKey stays imported here even though the review BUILD moved to reviewQueueBuild.js:
+// `reviews:acknowledgeCommit` keys its acks by the same normalized project key, and dropping
+// this import turned that handler into a ReferenceError (found by review, 2026-08-12).
+import { projectKey } from "./lib/commitReview.js";
 import { buildReviewQueuePayload } from "./lib/reviewQueueBuild.js";
 import { runHeavy, stopHeavyWorker, heavyWorkerStatus } from "./lib/heavyWorker.js";
 import { recommendReviewer, diffStats, REVIEWER_MODELS } from "./lib/reviewerModel.js";
@@ -5794,11 +5798,39 @@ function runDueScheduledPrompts() {
 // because git state (a new commit) is an input this fingerprint deliberately does NOT
 // cover, and being current is the whole point of that surface.
 let reviewQueueCache = null; // { at, payload, inputs }
+// How many times this main process has actually BUILT the queue, carried on every payload.
+// The build is the expensive thing here, and "how many did that render cost?" is not
+// answerable from the outside otherwise: the handler is async, so the slow-IPC guard sees
+// only its synchronous span (near zero now that the build runs in the worker), and
+// window.helm cannot be stubbed from a test because contextBridge makes it read-only. A
+// counter on the payload is the one honest observable, and it is what pins the first
+// Review visit to a single build (scripts/e2e/test-view-switch-cost.mjs).
+let reviewQueueBuilds = 0;
 const REVIEW_QUEUE_DEFAULT_MAX_AGE_MS = 20_000;
 
 // See reviewQueueInputsFingerprint in reviewRecords.js for what this covers and, more
 // importantly, what it deliberately does not (git state).
-const reviewQueueInputs = () => reviewQueueInputsFingerprint(resolveMetaHome(), resolveJotTodosPath());
+// `config.jot.path` WINS over the default location - jot.js resolves the board as
+// `jotConfig.path || resolveJotTodosPath()`, and that setting is honoured elsewhere in this
+// file. Fingerprinting the default path while the queue was built from a configured one
+// would watch a file that never moves: the cached payload would then be returned forever
+// with no age escape hatch, and a badge frozen at a wrong number looks exactly like a badge
+// that is right. Found by review, 2026-08-12.
+const reviewQueueInputs = () => reviewQueueInputsFingerprint(resolveMetaHome(), loadConfig().jot?.path || resolveJotTodosPath());
+
+/**
+ * Drop the cached queue because something it depends on changed that the fingerprint cannot
+ * see.
+ *
+ * Acknowledging a commit, or a task with no record, writes config.json - not the board and
+ * not the records folder, so the input fingerprint is unmoved and a cached badge would keep
+ * reporting the pre-ack count. The old age-keyed cache self-corrected within 20 seconds;
+ * keying on inputs made it correct about the inputs it watches and blind to this one (found
+ * by review, 2026-08-12).
+ */
+function invalidateReviewQueueCache() {
+  reviewQueueCache = null;
+}
 
 ipcMain.handle("reviews:list", async (_e, opts = {}) => {
   // maxAgeMs marks a caller that only needs a number and can accept a cached answer.
@@ -5809,10 +5841,10 @@ ipcMain.handle("reviews:list", async (_e, opts = {}) => {
   if (maxAge > 0 && reviewQueueCache) {
     const inputs = reviewQueueInputs();
     if (inputs !== null && inputs === reviewQueueCache.inputs) {
-      return { ...reviewQueueCache.payload, cached: true };
+      return { ...reviewQueueCache.payload, cached: true, builds: reviewQueueBuilds };
     }
     if (Date.now() - reviewQueueCache.at <= maxAge) {
-      return { ...reviewQueueCache.payload, cached: true };
+      return { ...reviewQueueCache.payload, cached: true, builds: reviewQueueBuilds };
     }
   }
   // Fingerprint BEFORE the build, not after: a board edit that lands while the build is
@@ -5820,8 +5852,9 @@ ipcMain.handle("reviews:list", async (_e, opts = {}) => {
   // as already accounted for.
   const inputs = reviewQueueInputs();
   const payload = await buildReviewsPayload();
+  reviewQueueBuilds += 1;
   reviewQueueCache = { at: Date.now(), payload, inputs };
-  return payload;
+  return { ...payload, builds: reviewQueueBuilds };
 });
 
 /**
@@ -5952,6 +5985,7 @@ ipcMain.handle("reviews:acknowledgeNoRecord", (_event, { taskId } = {}) => {
     const set = new Set(cfg.acknowledgedNoRecord || []);
     set.add(String(taskId));
     writeConfig({ ...cfg, acknowledgedNoRecord: [...set] });
+    invalidateReviewQueueCache();
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err?.message || String(err) };
@@ -5989,6 +6023,7 @@ ipcMain.handle("reviews:acknowledgeCommit", (_event, { projectPath, sha, shas } 
     }
     acks[key] = [...set];
     writeConfig({ ...cfg, commitReviewAcks: acks });
+    invalidateReviewQueueCache();
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err?.message || String(err) };

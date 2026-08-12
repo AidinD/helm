@@ -477,7 +477,22 @@ export function acceptanceDrift(rec, taskDescription) {
 // author's reach (CI), which is not built.
 const RUN_KEY_FILE = path.join(".helm", "run-key");
 
-function runKey(metaHome) {
+/**
+ * The signing key, created on first use.
+ *
+ * `create` exists because VERIFYING must never mint one. Verification runs inside the
+ * off-main worker (buildReviewQueue -> gauntletStatus -> verifyCheckRun), and a key
+ * generated there would be a second process writing the meta-home - the one thing the
+ * worker promises not to do, and a straight race with main if both find the file missing
+ * at once. The loser's key wins on disk and every previously signed run then fails to
+ * verify, i.e. the board silently reports verified work as unverified (found by review,
+ * 2026-08-12).
+ *
+ * It is also just wrong on its own terms: minting a key while checking a signature
+ * guarantees that signature cannot match. No key means "cannot confirm", which
+ * verifyCheckRun already renders as unverified - the honest answer.
+ */
+function runKey(metaHome, { create = true } = {}) {
   if (!metaHome) {
     return null;
   }
@@ -486,6 +501,9 @@ function runKey(metaHome) {
     if (fs.existsSync(file)) {
       const key = fs.readFileSync(file, "utf8").trim();
       return key.length >= 32 ? key : null;
+    }
+    if (!create) {
+      return null;
     }
     const key = crypto.randomBytes(32).toString("hex");
     fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -506,8 +524,10 @@ function runKey(metaHome) {
  * thing that produced the exit code. Binding the signature to the declared command
  * means a pass can only ever be claimed for the command the reader is looking at.
  */
-export function signCheckRun(metaHome, taskId, run, declaredCmd = undefined) {
-  const key = runKey(metaHome);
+export function signCheckRun(metaHome, taskId, run, declaredCmd = undefined, { create = true } = {}) {
+  // create defaults to true so SIGNING still establishes the key on first use. Only
+  // verifyCheckRun passes false - see runKey for why reading must never write.
+  const key = runKey(metaHome, { create });
   if (!key) {
     return null;
   }
@@ -633,7 +653,8 @@ export function verifyCheckRun(metaHome, taskId, run, declaredCmd = undefined) {
   if (!run || typeof run.sig !== "string") {
     return false;
   }
-  const expected = signCheckRun(metaHome, taskId, run, declaredCmd);
+  // create:false - verifying a signature must never generate the key it is checking against.
+  const expected = signCheckRun(metaHome, taskId, run, declaredCmd, { create: false });
   if (!expected || expected.length !== run.sig.length) {
     return false;
   }

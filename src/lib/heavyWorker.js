@@ -18,7 +18,12 @@ import { utilityProcess } from "electron";
  */
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const WORKER_PATH = path.join(__dirname, "..", "worker", "heavy.mjs");
+// HELM_HEAVY_WORKER_MODULE is a test seam. The fallback below is the safety net the whole
+// design rests on - "if the worker cannot start, everything still works, just slower" - and
+// until it was pointed at a deliberately broken worker, that sentence was an argument rather
+// than a tested fact (review, 2026-08-12). scripts/e2e/test-heavy-worker-fallback.mjs points
+// it at a worker that never reports ready.
+const WORKER_PATH = process.env.HELM_HEAVY_WORKER_MODULE || path.join(__dirname, "..", "worker", "heavy.mjs");
 
 // Long enough that a genuinely slow job (a cold review build on a spinning disk) is not
 // abandoned, short enough that a wedged worker cannot hold a view hostage. On timeout the
@@ -30,15 +35,25 @@ const MAX_RESTARTS = 3;
 
 let child = null;
 let readyPromise = null;
+let ready = false; // the worker answered the ready handshake - see heavyWorkerStatus
 let restarts = 0;
 let disabled = false;
 let seq = 0;
 const pending = new Map(); // id -> { resolve, reject, timer }
 let lastError = null;
 
-/** Whether the worker is actually carrying the load, for the honest answer in diagnostics. */
+/**
+ * Whether the worker is actually carrying the load, for the honest answer in diagnostics.
+ *
+ * `alive` means the READY HANDSHAKE SUCCEEDED, not merely that a child object exists. It
+ * used to mean the latter, and that made this function lie in the one case it was added to
+ * expose: a worker whose module graph fails to load (the file's own comment calls an ESM
+ * entry point in a utility process "exactly the thing that can silently not load") never
+ * reports ready and never exits, so a child object sits there forever while every job runs
+ * on the main process. Status said alive:true throughout (found by review, 2026-08-12).
+ */
 export function heavyWorkerStatus() {
-  return { alive: !!child && !disabled, disabled, restarts, lastError };
+  return { alive: !!child && ready && !disabled, disabled, restarts, lastError };
 }
 
 function failAllPending(reason) {
@@ -69,6 +84,7 @@ function spawn() {
     };
     function onReady(message) {
       if (message && message.ready) {
+        ready = true;
         settle(resolve, true);
       }
     }
@@ -76,7 +92,20 @@ function spawn() {
     // A worker that never says "ready" is a worker that failed to load its module graph
     // (an ESM entry point in a utility process is exactly the thing that can silently not
     // load). Reject rather than hang, so the first caller falls back immediately.
-    timer = setTimeout(() => settle(reject, new Error("worker did not report ready")), 10_000);
+    //
+    // And then KILL it. Leaving the child object in place was the bug: nothing ever exited,
+    // so the exit handler below never ran, `child` stayed non-null, and every later call
+    // awaited this same already-rejected promise - a permanent silent fallback that
+    // heavyWorkerStatus still reported as healthy. Killing it makes the exit path run, which
+    // clears the child and counts the failure toward MAX_RESTARTS like any other death.
+    timer = setTimeout(() => {
+      settle(reject, new Error("worker did not report ready"));
+      try {
+        spawned.kill();
+      } catch {
+        // already gone; the exit handler will still fire
+      }
+    }, 10_000);
     spawned.once("exit", () => settle(reject, new Error("worker exited before reporting ready")));
   });
   // Nothing may call this promise's rejection "unhandled": ensureWorker awaits it, but a
@@ -104,6 +133,7 @@ function spawn() {
   child.once("exit", (code) => {
     lastError = `worker exited (code ${code})`;
     child = null;
+    ready = false;
     readyPromise = null;
     // Every in-flight call must be told, or its caller waits forever for a process that
     // no longer exists. They fall back in-process, so nothing is lost but time.
@@ -159,7 +189,17 @@ export async function runHeavy(kind, args, inProcess) {
         reject(new Error(`worker job '${kind}' timed out`));
       }, CALL_TIMEOUT_MS);
       pending.set(id, { resolve, reject, timer });
-      worker.postMessage({ id, kind, args });
+      try {
+        worker.postMessage({ id, kind, args });
+      } catch (err) {
+        // postMessage can throw before the message is ever sent - the whole config object
+        // crosses this boundary, and anything non-cloneable in it fails here. Registering
+        // the entry and the timer first and then not cleaning them up left a 30-second
+        // timer and a map entry behind on every such call (found by review, 2026-08-12).
+        clearTimeout(timer);
+        pending.delete(id);
+        reject(err);
+      }
     });
   } catch (err) {
     // Deliberately not re-thrown. The caller asked for a review queue, not for a report on
