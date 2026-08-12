@@ -5824,7 +5824,8 @@ function collectUnboundCommits({ records, rows, sessions, jotConfig }) {
         watermarks[key] = watermark;
         changed = true;
       }
-      const commits = listUnboundCommits(projectPath, { watermark, isBound });
+      const acks = (cfg.commitReviewAcks && cfg.commitReviewAcks[key]) || [];
+      const commits = listUnboundCommits(projectPath, { watermark, acks, isBound });
       if (commits.length > 0) {
         out.push({ projectPath, projectName: path.basename(projectPath), commits });
       }
@@ -5985,22 +5986,34 @@ ipcMain.handle("reviews:acknowledgeNoRecord", (_event, { taskId } = {}) => {
 // Acknowledge an unbound commit: advance the project's review watermark to it, so it (and
 // its ancestors) drop out of the unbound-commits list - "I have reviewed up to here". The
 // watermark is EXCLUSIVE (watermark..HEAD), so newer commits stay listed.
-ipcMain.handle("reviews:acknowledgeCommit", (_event, { projectPath, sha } = {}) => {
-  if (!projectPath || !sha) {
+ipcMain.handle("reviews:acknowledgeCommit", (_event, { projectPath, sha, shas } = {}) => {
+  // Accept one sha or many (many = "Reviewed all", which must acknowledge EVERY shown commit,
+  // not just the newest - divergent siblings each need their own floor entry, see below).
+  const list = (Array.isArray(shas) && shas.length ? shas : [sha]).map((s) => String(s || "").trim()).filter(Boolean);
+  if (!projectPath || list.length === 0) {
     return { ok: false, error: "Need a project and a commit to acknowledge." };
   }
-  // Validate the sha: a malformed watermark makes listUnboundCommits fall back to listing
-  // from the root (the OPPOSITE of "reviewed"), so reject it rather than store it.
-  if (!/^[0-9a-f]{7,40}$/i.test(String(sha).trim())) {
+  // Validate each sha: a malformed floor entry could make listUnboundCommits behave oddly, so
+  // reject rather than store it.
+  if (list.some((s) => !/^[0-9a-f]{7,40}$/i.test(s))) {
     return { ok: false, error: "That doesn't look like a commit id." };
   }
   try {
     const cfg = loadConfig();
-    const watermarks = { ...(cfg.commitReviewWatermarks || {}) };
-    // Same canonical key the scan uses, so acknowledging actually advances the watermark the
-    // section reads (not a differently-spelled duplicate).
-    watermarks[projectKey(projectPath)] = String(sha).trim();
-    writeConfig({ ...cfg, commitReviewWatermarks: watermarks });
+    // ADD to a SET of acknowledged commits, don't overwrite a single watermark. Acknowledging
+    // is not "advance a linear pointer" - two unbound commits can sit on divergent branches
+    // (neither an ancestor of the other), and a single pointer can never exclude both, so
+    // acking one used to re-surface the other forever (the captain, 2026-08-12). listUnboundCommits
+    // now excludes everything reachable from ANY ack (git log HEAD --not ...). The initial
+    // baseline still lives in commitReviewWatermarks; user acks accumulate here.
+    const acks = { ...(cfg.commitReviewAcks || {}) };
+    const key = projectKey(projectPath);
+    const set = new Set(acks[key] || []);
+    for (const s of list) {
+      set.add(s);
+    }
+    acks[key] = [...set];
+    writeConfig({ ...cfg, commitReviewAcks: acks });
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err?.message || String(err) };

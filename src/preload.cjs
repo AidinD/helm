@@ -108,7 +108,7 @@ contextBridge.exposeInMainWorld("helm", {
   // Commit-centric review (work with no Jot task): a single commit's patch, and
   // acknowledging a commit (advances the project's review watermark past it).
   getCommitDiff: (projectPath, sha) => ipcRenderer.invoke("reviews:commitDiff", { projectPath, sha }),
-  acknowledgeCommit: (projectPath, sha) => ipcRenderer.invoke("reviews:acknowledgeCommit", { projectPath, sha }),
+  acknowledgeCommit: (projectPath, sha, shas) => ipcRenderer.invoke("reviews:acknowledgeCommit", { projectPath, sha, shas }),
   // Author, date, the full commit message and the change's size - the body a commit
   // row has instead of a review record.
   getCommitDetail: (projectPath, sha) => ipcRenderer.invoke("reviews:commitDetail", { projectPath, sha }),

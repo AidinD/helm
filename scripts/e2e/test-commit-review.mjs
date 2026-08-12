@@ -49,8 +49,20 @@ const here = os.tmpdir(); // exists, so the fs guard passes
   };
   const isBound = makeIsBound({ taskShortIds: ["07cd4fc9"] });
   const commits = listUnboundCommits(here, { watermark: "abcdef1", isBound, run });
-  ok(seenArgs.includes("abcdef1..HEAD"), `the log range is <watermark>..HEAD (${seenArgs.join(" ")})`);
+  ok(
+    seenArgs.includes("HEAD") && seenArgs.includes("--not") && seenArgs.includes("abcdef1") && !seenArgs.some((x) => x.includes("..")),
+    `the floor is a --not exclude set, not a <watermark>..HEAD range (${seenArgs.join(" ")})`
+  );
   ok(seenArgs.includes("--no-merges"), "merge commits are excluded");
+  ok(seenArgs.includes("--ignore-missing"), "a stale floor sha is ignored, not fatal");
+
+  // Acks join the watermark as additional --not excludes (the divergent-branch fix): both the
+  // baseline and every acknowledged commit become floor entries in one listing.
+  listUnboundCommits(here, { watermark: "abcdef1", acks: ["1234567", "89abcde"], run: (_p, a) => ((seenArgs = a), fakeLog) });
+  ok(
+    seenArgs.includes("--not") && seenArgs.includes("abcdef1") && seenArgs.includes("1234567") && seenArgs.includes("89abcde"),
+    `every ack is excluded alongside the baseline (${seenArgs.join(" ")})`
+  );
   ok(commits.length === 2, `the bound commit is filtered out (${commits.length} of 2 unbound)`);
   ok(
     commits.every((c) => c.shortSha.length === 8 && c.sha.startsWith(c.shortSha)),

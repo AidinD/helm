@@ -2750,7 +2750,10 @@ async function renderReviewPage() {
       ackAll.addEventListener("click", async (e) => {
         e.stopPropagation();
         ackAll.disabled = true;
-        const r = await window.helm.acknowledgeCommit(group.projectPath, group.commits[0].sha);
+        // Acknowledge EVERY shown commit, not just the newest: the group can hold divergent
+        // siblings (each merged via its own merge commit), and acking only the top would leave
+        // the others behind - the same toggle the single-watermark model caused (2026-08-12).
+        const r = await window.helm.acknowledgeCommit(group.projectPath, null, group.commits.map((c) => c.sha));
         if (!r?.ok) {
           ackAll.disabled = false;
           showToast(r?.error || "Couldn't acknowledge those.");
