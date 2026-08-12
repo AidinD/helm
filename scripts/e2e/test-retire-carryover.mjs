@@ -9,6 +9,11 @@ requireLive("starts a real session so a retire has something to carry over");
 //
 // Two real claude turns; can take a couple of minutes.
 //
+// SIBLING: test-retire-carry-over-stubbed.mjs asserts the same carry-over against a stubbed
+// binary, so it runs in every sweep for free. This one is the only place the REAL CLI is
+// exercised, which is why it still earns its keep - but it only runs under --live, and in
+// practice had never run at all when the stubbed one was written (2026-08-12).
+//
 // Run:  node scripts/e2e/test-retire-carryover.mjs
 import { launch } from "./harness.mjs";
 import fs from "node:fs";

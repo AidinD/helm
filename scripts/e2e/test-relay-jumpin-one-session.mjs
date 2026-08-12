@@ -18,6 +18,10 @@
 // fixtures/fake-claude, so no model is reached and nothing is spent - the whole reason these
 // three transitions never got a test is that the real binary costs tokens on every run.
 //
+// SIBLING: test-relay-delivery.mjs drives a real Opus relay end to end and polls for its
+// report-up. It covers delivery against the real CLI; this covers the LOCK, which is the part
+// that corrupts a transcript, and costs nothing so it actually runs.
+//
 // It launches the app, so it runs in the SLOW lane.
 // Run:  node scripts/e2e/test-relay-jumpin-one-session.mjs
 import fs from "node:fs";
