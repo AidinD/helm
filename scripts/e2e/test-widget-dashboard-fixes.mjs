@@ -65,21 +65,55 @@ fs.writeFileSync(
 process.env.HELM_CONFIG_PATH = configPath;
 process.env.HELM_MATES_PATH = path.join(tmp, "mates.json");
 process.env.HELM_SECOND_MATES_PATH = path.join(tmp, "second-mates.json");
+process.env.HELM_GOAL_RUN_HISTORY_PATH = path.join(tmp, "goal-run-history.json");
+process.env.HELM_META_HOME_OVERRIDE = path.join(tmp, "meta-home");
+process.env.HELM_E2E_PORT = "9382";
+
+// Dynamic import AFTER the env vars: secondMates.js resolves its path at import time, and a
+// static import here would read the ambient value and touch the real dev data file.
+const { secondMateId, AUTO_CAPTAIN } = await import("../../src/lib/secondMates.js");
+
+// The auto fixture, in the shape the app produces TODAY.
+//
+// It used to seed the pre-2026-08-03 shape: a Helm SESSION carrying startedBy:"auto",
+// registered as a second mate under "direct". Two later changes retired both halves. An auto
+// task is no longer a session of its own - it is an autopilot RUN under a project's second
+// mate - and a node only becomes an auto node because a RUN under it says startedBy:"auto".
+// Then AUTO_CAPTAIN gave the auto lane its own dispatcher identity, so a binding registered
+// under "direct" lands on a DIFFERENT node than the run does. The sibling file
+// test-auto-widget-renders-run.mjs was written because of exactly this and says so in its
+// header; this fixture simply never caught up (2026-08-12, first full sweep since 08-02).
+const AUTO_SM_ID = secondMateId(AUTO_CAPTAIN, AUTO_PROJECT);
 fs.writeFileSync(
   process.env.HELM_SECOND_MATES_PATH,
   JSON.stringify({
-    sm_e2eauto: {
-      firstMateId: "direct",
+    [AUTO_SM_ID]: {
+      firstMateId: AUTO_CAPTAIN,
       projectPath: AUTO_PROJECT,
       name: "e2e-auto-run",
-      status: "created",
-      sessionId: AUTO_SESSION_ID,
+      status: "proposed",
+      sessionId: null,
     },
   }),
   "utf8"
 );
-process.env.HELM_META_HOME_OVERRIDE = path.join(tmp, "meta-home");
-process.env.HELM_E2E_PORT = "9382";
+fs.writeFileSync(
+  process.env.HELM_GOAL_RUN_HISTORY_PATH,
+  JSON.stringify([
+    {
+      goalRunId: "e2e-auto-run-1",
+      goal: "Task from the board: add a --version flag",
+      projectPath: AUTO_PROJECT,
+      status: "running",
+      dispatchedBy: AUTO_SM_ID,
+      tier: "crew",
+      startedBy: "auto",
+      autoTaskId: "e2e-card-1",
+      updatedAt: Date.now(),
+    },
+  ]),
+  "utf8"
+);
 
 const J = JSON.stringify;
 

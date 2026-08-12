@@ -80,10 +80,17 @@ try {
 
   // --- the button actually opens it -----------------------------------------
   const opened = await app.eval(`(async () => {
-    navigateToPage("fleet");
-    // Poll for the captain's card to render rather than a fixed wait - the Fleet
-    // section draws from an async refresh, and a fixed delay raced it under the
-    // full serial suite's load (green in isolation, flaky in the sweep).
+    // The DASHBOARD, because there is no longer a "fleet" page to navigate to. The classic
+    // section stack was retired once the widget grid had been in daily use (task 337895ce),
+    // and navigateToPage has had no "fleet" branch since - so this called it, nothing
+    // happened, and the card it then looked for was never on screen. The card itself is
+    // alive and unchanged: the Captain widget renders it through fleetDirectCardEl, same
+    // element, same "+ Session" button (2026-08-12, first full sweep since 08-02).
+    navigateToPage("dashboard");
+    await renderDashboardPage();
+    // Poll for the captain's card to render rather than a fixed wait - the widget draws from
+    // an async refresh, and a fixed delay raced it under the full serial suite's load (green
+    // in isolation, flaky in the sweep).
     let btn = null;
     for (let i = 0; i < 60; i++) {
       btn = [...document.querySelectorAll(".fleet-mate-card.direct .fleet-btn")].find((b) => b.textContent.includes("+ Session"));

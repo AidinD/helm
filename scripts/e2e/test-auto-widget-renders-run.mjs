@@ -42,10 +42,18 @@ process.env.HELM_E2E_PORT = process.env.HELM_E2E_PORT || "9391";
 // Dynamic imports AFTER the env vars: these modules resolve their paths at import
 // time, and a static import here would read the ambient values and write into the
 // real dev data files.
-const { secondMateId } = await import("../../src/lib/secondMates.js");
+const { secondMateId, AUTO_CAPTAIN } = await import("../../src/lib/secondMates.js");
 const { launch } = await import("./harness.mjs");
 
-const SM_ID = secondMateId("direct", PROJECT);
+// Under the AUTO-CAPTAIN's own identity, not "direct". The auto lane used to dispatch
+// under the shared "direct" second-mate id, so an Auto pass and a manual captain session on
+// the same project collapsed into one node; AUTO_CAPTAIN fixed that by giving auto its own.
+// deriveSecondMates now routes every startedBy:"auto" run to secondMateId(AUTO_CAPTAIN,
+// project) - so a fixture that registers its binding under "direct" ends up with TWO nodes:
+// the run's auto node, and an unrelated binding node carrying the name and session. The
+// assertions then read the binding node and correctly find no crew and no startedBy. The
+// fixture was describing the pre-fix data model (2026-08-12, first full sweep since 08-02).
+const SM_ID = secondMateId(AUTO_CAPTAIN, PROJECT);
 const RUN_ID = "e2e-auto-crew-run";
 
 fs.writeFileSync(
@@ -59,7 +67,7 @@ fs.writeFileSync(
   process.env.HELM_SECOND_MATES_PATH,
   JSON.stringify({
     [SM_ID]: {
-      firstMateId: "direct",
+      firstMateId: AUTO_CAPTAIN,
       projectPath: PROJECT,
       name: "some-project",
       status: "proposed",
