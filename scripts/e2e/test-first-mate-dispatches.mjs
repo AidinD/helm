@@ -1,3 +1,10 @@
+// KNOWN-SOFT (2026-08-12): the structural half of this check is now sound - with a bound
+// mateId the session really is a first mate, and the tool sequence shows it (ToolSearch ->
+// helm_list_projects instead of the old Bash -> Write). What is left is a MODEL-BEHAVIOUR
+// expectation: that one Sonnet turn both orients AND completes a dispatch. It orients
+// reliably; completing in a single turn it does not. Treat a red run here as "the mate did
+// not finish in one turn", not as a broken guard - the guard is covered deterministically by
+// test-first-mate-guards (Write denied) and test-first-mate-gating.
 import { requireLive } from "./live-gate.mjs";
 requireLive("drives a real first mate through a dispatch");
 
@@ -81,11 +88,20 @@ try {
 
   const projPath = fakeProj.replace(/\\/g, "\\\\");
   const prompt = `Jag vill jobba med projektet fake-proj (${fakeProj}). Jag vill lagga till en enkel hello-funktion i repot.`;
+  // mateId is REQUIRED, and leaving it out is why this failed on 2026-08-12 with the tool
+  // sequence Bash -> Read -> Write -> Bash. Without it the session is not a first mate at all:
+  // it gets no helm_* dispatch tools (so it CANNOT relay) and no tier guard (so Write is not
+  // denied) - so it did the work itself, which the check then reported as the old
+  // absorb-the-work behaviour. It was reading a session that was never a first mate. Deciding
+  // first-mate-ness by cwd alone was itself a bug, so the binding is the point.
+  const mateId = await app.eval(`window.helm.listMates().then(r => ((r.active || [])[0] || {}).mateId || null)`);
+  log("launching as first mate:", mateId);
   const started = await app.eval(`window.helm.startSession({
     cwd: ${JSON.stringify(metaHome)},
     prompt: ${JSON.stringify(prompt)},
     model: "claude-sonnet-5",
-    effort: "medium"
+    effort: "medium",
+    mateId: ${JSON.stringify(mateId)}
   })`);
   log("startSession:", JSON.stringify(started));
 
