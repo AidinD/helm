@@ -29,6 +29,7 @@ const ok = (c, m) => {
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "helm-atomic-"));
 const target = path.join(dir, "store.json");
 const realRename = fs.renameSync;
+const realUnlink = fs.unlinkSync;
 
 /** Make renameSync throw `errCode` for the first `times` attempts on our target. */
 function lockFor(times, errCode = "EPERM") {
@@ -78,6 +79,45 @@ try {
   ok(/stayed locked|EPERM/i.test(stuck.error || ""), `and names the likely cause (${stuck.error})`);
   ok(fs.readFileSync(target, "utf8") === "untouched", "the original file is intact - no half-write");
   ok(fs.readdirSync(dir).filter((f) => f.includes(".tmp")).length === 0, "and no .tmp files are left from the failed attempts");
+
+  // --- a temp file that is ITSELF briefly locked is still cleaned up, not leaked ---
+  // The leak that motivated the retried cleanup (found 2026-08-12): on Windows+Dropbox
+  // the sync client can grab a lock on the fresh .tmp the instant it appears, so the
+  // rename fails AND the first unlink of that temp fails too. The old code unlinked
+  // once and swallowed the error, leaving the temp behind - and since fleet-state is
+  // rewritten every ~5s, the dispatch dir accumulated 1462 orphaned
+  // `.fleet-state.json.<uuid>.tmp` files. A single silent unlink would fail this.
+  {
+    fs.writeFileSync(target, "untouched", "utf8");
+    // Rename fails hard (one attempt, one temp) so we land straight in cleanup.
+    fs.renameSync = (from, to) => {
+      if (to === target) {
+        const err = new Error("no such device");
+        err.code = "ENODEV";
+        throw err;
+      }
+      return realRename(from, to);
+    };
+    // The temp's OWN unlink is locked for its first two tries, then clears - exactly
+    // the Dropbox-grabbed-the-tmp race.
+    let unlinkFails = 2;
+    fs.unlinkSync = (p) => {
+      if (String(p).includes(".tmp") && unlinkFails > 0) {
+        unlinkFails -= 1;
+        const err = new Error("resource busy");
+        err.code = "EBUSY";
+        throw err;
+      }
+      return realUnlink(p);
+    };
+    const res = writeFileAtomicSync(target, "should not land");
+    fs.renameSync = realRename;
+    fs.unlinkSync = realUnlink;
+    ok(res.ok === false, "a hard rename error still fails the write");
+    ok(unlinkFails === 0, `the temp's locked unlink was retried past its lock, not abandoned (${unlinkFails} fails left)`);
+    ok(fs.readdirSync(dir).filter((f) => f.includes(".tmp")).length === 0, "the briefly-locked temp is eventually removed, not leaked");
+    ok(fs.readFileSync(target, "utf8") === "untouched", "and the original file is untouched");
+  }
 
   // --- a REAL error is not retried into a hang ---
   fs.renameSync = (from, to) => {
@@ -185,6 +225,7 @@ try {
   console.error("ERR", err.stack || err.message);
 } finally {
   fs.renameSync = realRename;
+  fs.unlinkSync = realUnlink;
   try {
     fs.rmSync(dir, { recursive: true, force: true });
   } catch {}
