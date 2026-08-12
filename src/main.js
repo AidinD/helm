@@ -12,7 +12,7 @@ import crypto from "node:crypto";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { readAllSessions, enrichWithJot, setSessionArchived, forkTranscriptAtUserMessage, switchSessionRootFolder } from "./lib/sessions.js";
-import { loadJot, loadGoals, addSubtask, formatJotSummaryForClassifier, projectBoardSummary, reviewTasks, allTaskShortIds, signedOffWithoutRecord, setTaskStatus, setTaskTags, readJotState, ensureTagsExist } from "./lib/jot.js";
+import { loadJot, loadGoals, addSubtask, formatJotSummaryForClassifier, projectBoardSummary, setTaskStatus, setTaskTags, readJotState, ensureTagsExist } from "./lib/jot.js";
 import { resolveJotDataDir, resolveJotTodosPath } from "./lib/jotDataDir.js";
 import { loadConfig, writeConfig } from "./lib/config.js";
 import { startSession, resolveClaudeBinary } from "./lib/launcher.js";
@@ -42,10 +42,10 @@ import {
   pruneScheduledPrompts,
   quotaResetFireAt,
 } from "./lib/scheduledPrompts.js";
-import { buildReviewQueue, listReviewRecords, reviewQueueInputsFingerprint, reviewQueueTally, readReviewRecord, writeReviewRecord, buildAutoReviewRecord, recordCheckRun, gauntletStatus, currentHead, codeChangedBetween } from "./lib/reviewRecords.js";
-import { resolveTaskCommits, resolveTaskCommitsBatch, diffForCommits, shippedVersionForCommits } from "./lib/reviewDiff.js";
-import { normalizeFsPath as normalizeRepoKey } from "./lib/fsPath.js";
-import { listUnboundCommits, initialWatermark, makeIsBound, projectKey } from "./lib/commitReview.js";
+import { reviewQueueInputsFingerprint, readReviewRecord, writeReviewRecord, buildAutoReviewRecord, recordCheckRun, gauntletStatus, currentHead, codeChangedBetween } from "./lib/reviewRecords.js";
+import { resolveTaskCommits, diffForCommits, shippedVersionForCommits } from "./lib/reviewDiff.js";
+import { buildReviewQueuePayload } from "./lib/reviewQueueBuild.js";
+import { runHeavy, stopHeavyWorker, heavyWorkerStatus } from "./lib/heavyWorker.js";
 import { recommendReviewer, diffStats, REVIEWER_MODELS } from "./lib/reviewerModel.js";
 import { buildReviewHtml, buildCommitReviewHtml } from "./lib/reviewHtml.js";
 import { reviewWritingBriefLines } from "./lib/reviewLanguage.js";
@@ -354,10 +354,16 @@ function createWindow() {
 }
 
 // --- Overview: read + enrich sessions (reuses the Session Radar read layer) ---
-ipcMain.handle("sessions:get", () => {
+//
+// The READ runs off the main process (see lib/heavyWorker.js). It is the 30-second poll,
+// and it cost 93-212ms of blocked main process every time - it tail-reads a transcript per
+// session and rebuilds the transcript index whenever that has gone cold. The ENRICHMENT
+// below stays here, because it reads main-process state (which sessions Helm is currently
+// running, what the classifier has said) that the worker has no view of and should not.
+ipcMain.handle("sessions:get", async () => {
   const config = loadConfig();
   const attentionWindowMs = (config.attentionWindowHours || 24) * 60 * 60 * 1000;
-  const { error, sessions } = readAllSessions({ attentionWindowMs });
+  const { error, sessions } = await runHeavy("sessions", { attentionWindowMs }, () => readAllSessions({ attentionWindowMs }));
   // The manual-ack downgrade MUST happen BEFORE enrichWithJot: its scoring
   // (attentionScore/needsAttention) reads session.status, so applying this
   // after scoring would leave an acknowledged session's score/spotlight
@@ -5751,7 +5757,7 @@ const REVIEW_QUEUE_DEFAULT_MAX_AGE_MS = 20_000;
 // importantly, what it deliberately does not (git state).
 const reviewQueueInputs = () => reviewQueueInputsFingerprint(resolveMetaHome(), resolveJotTodosPath());
 
-ipcMain.handle("reviews:list", (_e, opts = {}) => {
+ipcMain.handle("reviews:list", async (_e, opts = {}) => {
   // maxAgeMs marks a caller that only needs a number and can accept a cached answer.
   // The VALUE is kept as a ceiling (a caller asking for 20s never gets a 10-minute-old
   // payload if the clock somehow outruns the fingerprint), but the fingerprint is what
@@ -5770,256 +5776,64 @@ ipcMain.handle("reviews:list", (_e, opts = {}) => {
   // running must invalidate the result it was not included in, rather than being stamped
   // as already accounted for.
   const inputs = reviewQueueInputs();
-  const payload = buildReviewsPayload();
+  const payload = await buildReviewsPayload();
   reviewQueueCache = { at: Date.now(), payload, inputs };
   return payload;
 });
 
 /**
- * Which Jot categories correspond to an actual code repo, and where it lives.
+ * The review queue, built OFF the main process when possible.
  *
- * "endast visa saker i review som faktiskt är rootade till ett repo - potentiella
- * kodändringar är de enda som behöver reviewas" (Aidin, 2026-08-04). His private
- * board and his life-domain boards were filling the queue with rows that have no
- * code to review.
+ * The build itself moved to lib/reviewQueueBuild.js so it can run in the utility process
+ * (see worker/heavy.mjs): it is the most expensive thing Helm does - ~1.4s on Aidin's
+ * real board even after the phase-1 git batching - and it used to run on the one thread
+ * that also has to keep the window responsive.
  *
- * Candidates are the cwds Helm has actually seen among its sessions - the same source
- * the dashboard's project chips use - narrowed to the ones that really are git
- * checkouts. The match is loose in ONE direction on purpose: a board named "Crewline"
- * belongs to the repo folder `tgs-crewline`, so a containment test is used rather than
- * equality. Being too generous here shows an extra row; being too strict HIDES work
- * that needed reviewing, and that is the expensive mistake.
+ * Two things stay HERE, and they are the reason this wrapper exists rather than a direct
+ * call:
+ *
+ *   1. resolveMetaHome needs app.isPackaged, so it is resolved here and passed in.
+ *   2. The commit-review watermarks the build discovers are WRITTEN here. Main is the
+ *      single writer of config.json; letting the worker persist them would race the main
+ *      process for the same file, which trades a slow app for a corrupted one.
+ *
+ * Returns a Promise now. Callers that cannot await get the synchronous path below.
  */
-function repoRootedCategories(records = [], sessions = null) {
-  const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-  const repos = new Map(); // normalized folder name -> absolute path
-
-  // THREE sources, because session cwds alone are not enough and getting this wrong is
-  // the expensive direction. Measured against his real board: the "Helm" category came
-  // back NOT A REPO, which would have hidden his own Helm work behind the code-only
-  // filter by default - because he runs Helm's sessions from the meta-home, so
-  // D:\Repo\Tools\helm never appears as a session cwd at all.
-  //
-  //   1. review records' projectPath - authoritative: a record names its own repo, and
-  //      that field is now required whenever the record declares checks.
-  //   2. goal-run history projectPaths - every project an autonomous run has touched.
-  //   3. session cwds - projects opened by hand.
-  const candidates = [
-    ...records.map((r) => r.projectPath),
-    ...loadGoalRunHistory().map((r) => r.projectPath),
-    ...((sessions || readAllSessions()?.sessions || []).map((s) => s.cwd)),
-  ];
-  for (const cwd of new Set(candidates.filter(Boolean))) {
-    try {
-      if (!fs.existsSync(path.join(cwd, ".git"))) {
-        continue;
-      }
-    } catch {
-      continue;
-    }
-    const name = norm(path.basename(cwd));
-    if (name && !repos.has(name)) {
-      repos.set(name, cwd);
-    }
-  }
-  return {
-    /** The repo a category belongs to, or null when it is not code work at all. */
-    repoFor(category) {
-      const c = norm(category);
-      if (!c) {
-        return null;
-      }
-      if (repos.has(c)) {
-        return repos.get(c);
-      }
-      for (const [name, cwd] of repos) {
-        if (name.includes(c) || c.includes(name)) {
-          return cwd;
-        }
-      }
-      return null;
-    },
-  };
-}
-
-// Commit-centric review source: for every git project Helm knows, the commits NOT bound to
-// a Jot task, so work done in a project without a Jot board (a session against Reinmaker
-// with a GitHub board) still lands in review. Bound commits (sha in a record's `commits`, or
-// a task short id in the subject) roll up under their task's row and are excluded. Bounded
-// per project by a stored watermark - only commits after it surface - which is initialized
-// to the mainline/upstream baseline on first sight (so un-integrated work shows immediately
-// without flooding the whole history) and advanced by acknowledging a commit.
-function collectUnboundCommits({ records, rows, sessions, jotConfig }) {
-  try {
-    const cfg = loadConfig();
-    const watermarks = { ...(cfg.commitReviewWatermarks || {}) };
-    let changed = false;
-    // Known git projects: the same sources repo-rooting uses, plus the explicit Jot category
-    // bindings already resolved onto the rows. Keyed by projectKey so a repo referenced under
-    // two path spellings is ONE project with one watermark (not two duplicate sections).
-    // Sessions are passed in (already loaded once by the caller) so this doesn't re-tail every
-    // transcript a second time per payload build.
-    const byKey = new Map(); // projectKey -> display path (first spelling seen)
-    for (const p of [
-      ...records.map((r) => r.projectPath),
-      ...loadGoalRunHistory().map((r) => r.projectPath),
-      ...(sessions || []).map((s) => s.cwd),
-      ...rows.map((r) => r.repoPath),
-    ]) {
-      if (!p) {
-        continue;
-      }
-      let abs;
-      try {
-        abs = path.resolve(p);
-      } catch {
-        continue;
-      }
-      const key = projectKey(abs);
-      if (byKey.has(key)) {
-        continue;
-      }
-      try {
-        if (fs.existsSync(path.join(abs, ".git"))) {
-          byKey.set(key, abs);
-        }
-      } catch {
-        // unreadable path - skip
-      }
-    }
-    if (byKey.size === 0) {
-      return [];
-    }
-    const recordCommitShas = records.flatMap((r) =>
-      (r.commits || []).map((c) => (typeof c === "string" ? c : c?.sha)).filter(Boolean)
-    );
-    // ALL task ids (any status), so a commit naming a task that is still in-progress/open is
-    // recognised as bound rather than mislabelled "no task" (ship-review finding).
-    const taskShortIds = allTaskShortIds(jotConfig || {});
-    const isBound = makeIsBound({ recordCommitShas, taskShortIds });
-    const out = [];
-    for (const [key, projectPath] of byKey) {
-      let watermark = watermarks[key];
-      if (watermark === undefined) {
-        // First sight: stamp the baseline. Stored even when null (a small repo with no
-        // mainline) so it is not recomputed on every payload build.
-        watermark = initialWatermark(projectPath);
-        watermarks[key] = watermark;
-        changed = true;
-      }
-      const acks = (cfg.commitReviewAcks && cfg.commitReviewAcks[key]) || [];
-      const commits = listUnboundCommits(projectPath, { watermark, acks, isBound });
-      if (commits.length > 0) {
-        out.push({ projectPath, projectName: path.basename(projectPath), commits });
-      }
-    }
-    if (changed) {
-      try {
-        writeConfig({ ...cfg, commitReviewWatermarks: watermarks });
-      } catch (err) {
-        console.error("[helm] could not persist commit-review watermarks:", err);
-      }
-    }
-    return out;
-  } catch (err) {
-    console.error("[helm] collectUnboundCommits failed:", err);
-    return [];
-  }
-}
-
-function buildReviewsPayload() {
+async function buildReviewsPayload() {
   const config = loadConfig();
-  const board = reviewTasks(config.jot || {});
   const metaHome = resolveMetaHome();
-  // metaHome is threaded in so the queue can VERIFY that each check run was stamped
-  // by the app rather than written into the record by hand.
-  const records = listReviewRecords(metaHome);
-  const rows = buildReviewQueue(board.tasks, records, metaHome);
-  // Annotate rather than filter here: the page decides what to show, and it says how
-  // many it is holding back. Dropping them in the main process would make the count
-  // unknowable, and a queue that silently omits work is the failure this whole surface
-  // exists to prevent.
-  // Read the session index ONCE and thread it to both consumers (repo-rooting and the
-  // unbound-commit scan), rather than each tailing every transcript separately.
-  const allSessions = readAllSessions()?.sessions || [];
-  const roots = repoRootedCategories(records, allSessions);
-  // An auto-completed task with no record still knows its project: the goal run that
-  // produced it recorded projectPath against its autoTaskId. This is the most reliable
-  // repo source for exactly the cards that would otherwise be a dead end (no record, no
-  // category binding), so the diff / independent-reviewer actions can still root.
-  const autoRunProject = new Map();
-  for (const r of loadGoalRunHistory()) {
-    if (r?.autoTaskId && r.projectPath && !autoRunProject.has(r.autoTaskId)) {
-      autoRunProject.set(r.autoTaskId, r.projectPath);
-    }
-  }
-  for (const row of rows) {
-    // Jot's explicit per-board folder binding (Category.repoPath) is authoritative when
-    // set; the fuzzy category-name-to-cwd guess is only a fallback. That guess reliably
-    // resolved for helm alone - helm is the meta-home and never appears as a session cwd,
-    // so it was backfilled from review records - which left every other board's rows with
-    // no repoPath and dropped from the default repo-rooted view (task 75a01d5d: "Review
-    // verkar bara göra ordentliga reviews för helm").
-    row.repoPath = row.categoryRepoPath || roots.repoFor(row.category) || autoRunProject.get(row.taskId) || null;
-  }
-  // Whether ANY commit is tied to each task - from the record, or (failing that) a log
-  // search for its short id. Cards are meant to be bound to commits (Aidin: "har ingen
-  // commit gjorts så behövs inget kort"); this is the fact the page filters on, computed
-  // here rather than the renderer because it needs git. Annotated, not dropped - same
-  // reasoning as the comment above: the count of what a filter hides must stay knowable.
-  //
-  // ONE git call per repo, not one per row. This loop used to spawn a git process for
-  // every row that had no recorded commit, and a git process costs ~70ms of startup on
-  // Windows before doing any work: 20 rows measured at 2194ms of blocked main process on
-  // 2026-08-12, which is the app-wide freeze this file's cache comment already described
-  // in 2026-08-03 and never actually fixed. Batched: 237ms for the same rows, identical
-  // results. Grouped on the NORMALIZED path so the same repo spelled `D:\Repo\...` by one
-  // source and `D:/Repo/...` by another is one group and not two (both spellings were
-  // live on his board).
-  const rowsNeedingSearch = rows.filter((row) => row.repoPath && (row.record?.commits || []).length === 0);
-  const searchByRepo = new Map();
-  for (const row of rowsNeedingSearch) {
-    const key = normalizeRepoKey(row.repoPath);
-    if (searchByRepo.has(key)) {
-      searchByRepo.get(key).taskIds.push(row.taskId);
-    } else {
-      searchByRepo.set(key, { projectPath: row.repoPath, taskIds: [row.taskId] });
-    }
-  }
-  const searchResults = new Map();
-  for (const { projectPath, taskIds } of searchByRepo.values()) {
-    for (const [taskId, result] of resolveTaskCommitsBatch(projectPath, taskIds)) {
-      searchResults.set(taskId, result);
-    }
-  }
-  for (const row of rows) {
-    const recCommits = row.record?.commits || [];
-    row.hasCommits = recCommits.length > 0 || (searchResults.get(row.taskId)?.commits.length || 0) > 0;
-  }
-  // The audit half: work that reached done without ever being recorded. A direct
-  // board write cannot be prevented from here, only detected - and it has to surface
-  // on the page he actually reads.
-  const haveRecord = new Set(records.map((r) => String(r.taskId).toLowerCase()));
-  // A task counts as "handled" if it has a record OR Aidin has acknowledged it. The
-  // audit's job is to tell him something bypassed review; once he has SEEN that,
-  // repeating it for a fortnight just teaches him to skim the section (his review,
-  // 2026-07-28: "när du sett dem en gång blir de bara tjat"). Acknowledging does not
-  // create evidence and does not claim the work was reviewed - it only records that he
-  // knows, which is the whole purpose of the signal.
-  const acked = new Set((config.acknowledgedNoRecord || []).map((id) => String(id).toLowerCase()));
-  const unrecordedDone = signedOffWithoutRecord(
-    config.jot || {},
-    (id) => haveRecord.has(String(id).toLowerCase()) || acked.has(String(id).toLowerCase())
+  const { payload, watermarks } = await runHeavy("reviewQueue", { metaHome, config }, () =>
+    buildReviewQueuePayload({ metaHome, config })
   );
-  return {
-    ok: board.ok,
-    error: board.error || null,
-    rows,
-    tally: reviewQueueTally(rows),
-    doneWithoutRecord: unrecordedDone.ok ? unrecordedDone.tasks : [],
-    // Commits per project not tied to any Jot task, so review works even without a Jot board.
-    unboundCommits: collectUnboundCommits({ records, rows, sessions: allSessions, jotConfig: config.jot || {} }),
-  };
+  persistCommitReviewWatermarks(watermarks);
+  return payload;
+}
+
+/** The same build, on this thread. For the few callers that are not async. */
+function buildReviewsPayloadSync() {
+  const config = loadConfig();
+  const { payload, watermarks } = buildReviewQueuePayload({ metaHome: resolveMetaHome(), config });
+  persistCommitReviewWatermarks(watermarks);
+  return payload;
+}
+
+/**
+ * Persist newly-discovered commit-review baselines.
+ *
+ * Re-reads the config rather than writing back the copy the build was handed: the build
+ * can take a second or more, and anything the user changed in settings meanwhile would be
+ * silently reverted by writing a stale snapshot. Only the watermarks key is carried over.
+ */
+function persistCommitReviewWatermarks(watermarks) {
+  if (!watermarks) {
+    return;
+  }
+  try {
+    const fresh = loadConfig();
+    writeConfig({ ...fresh, commitReviewWatermarks: { ...(fresh.commitReviewWatermarks || {}), ...watermarks } });
+  } catch (err) {
+    console.error("[helm] could not persist commit-review watermarks:", err);
+  }
 }
 
 // Review actions: move a task on the board from the review page itself, so
@@ -6293,10 +6107,10 @@ ipcMain.handle("reviews:diff", (_event, { taskId, projectPath: fallbackProject }
 //
 // Fixed filename per task, overwritten each time - same reasoning as the summary-page
 // skill's fixed path: nothing accumulates in the temp dir.
-ipcMain.handle("reviews:presentReview", (_event, { taskId } = {}) => {
+ipcMain.handle("reviews:presentReview", async (_event, { taskId } = {}) => {
   const metaHome = resolveMetaHome();
   const rec = readReviewRecord(metaHome, taskId);
-  const payload = buildReviewsPayload();
+  const payload = await buildReviewsPayload();
   const row = (payload.rows || []).find((r) => String(r.taskId).toLowerCase() === String(taskId || "").toLowerCase()) || null;
   if (!rec && !row) {
     return { ok: false, error: "Nothing on the board or in the records matches that task." };
@@ -6722,6 +6536,12 @@ ipcMain.handle("scheduledPrompts:cancel", (_event, { id } = {}) => {
 
 ipcMain.handle("models:freshnessStatus", () => latestModelFreshness);
 
+// Whether the heavy jobs are actually running off the main process. Exposed because the
+// fallback is SILENT by design - if the utility process cannot start, everything still
+// works, just as slowly as it did before - and a speed-up you cannot tell is happening is
+// one you cannot tell has stopped happening.
+ipcMain.handle("heavyWorker:status", () => heavyWorkerStatus());
+
 app.whenReady().then(() => {
   prunePastedImages();
   seedQuotaWindows();
@@ -6765,6 +6585,10 @@ app.whenReady().then(() => {
 // its claude.exe process tree orphaned — same underlying issue as Stop
 // (see killChildTree above), just triggered by app exit instead of a click.
 app.on("before-quit", () => {
+  // The off-main worker goes with the app. It holds no state worth saving (it never
+  // writes), so there is nothing to flush - but a utility process that outlived its app
+  // would be exactly the kind of orphan the child-process sweep below exists to prevent.
+  stopHeavyWorker();
   // Synchronous kills here: this handler does not (and cannot easily) await,
   // so an async taskkill would race the app's own teardown and often lose,
   // orphaning the very process tree this sweep exists to clean up.
