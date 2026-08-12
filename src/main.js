@@ -1018,6 +1018,26 @@ function applySessionArchiveInner(sessionId, archived) {
       nextCfg.archivedSecondMates = [...smSet];
     }
   }
+  // A second mate bound to this session must LET IT GO when it's archived. The
+  // second mate id is deterministic per (first mate, project), so a stale binding
+  // to an archived session makes a freshly-created second mate for the SAME project
+  // inherit it - and jumping in then resurrects the archived session instead of
+  // starting fresh (the captain, 2026-08-12: "den 2nd mate som spann upp bindades till en
+  // annan session jag redan arkiverat"). Reverting the binding to "proposed" (a null
+  // session) makes the node read as fresh so the next jump-in opens a new session.
+  if (shouldArchive) {
+    try {
+      const bindings = readBindings();
+      for (const form of sessionIdForms(sessionId)) {
+        const smId = secondMateIdForSession(form, bindings);
+        if (smId) {
+          bindSecondMateSession(smId, null);
+        }
+      }
+    } catch (err) {
+      console.error("[helm] could not clear a second-mate binding on archive:", err);
+    }
+  }
   // Mirror into the Helm-owned session index if this is a Helm-created session
   // (no Desktop file to patch), and persist the overlay in the same write.
   if (cfg.helmSessions && cfg.helmSessions[sessionId]) {
