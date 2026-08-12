@@ -95,6 +95,36 @@ function plainReason(err, filePath) {
   return err?.message || String(err);
 }
 
+/**
+ * Remove a temp file that never made it onto its target. Best-effort - it never
+ * throws - but RETRIED, because the obvious "unlinkSync and swallow" loses a race
+ * on Windows+Dropbox: the sync client can grab a lock on the temp the instant it
+ * appears, so a single silent unlink leaves it behind. That is how the dispatch dir
+ * accumulated 1462 orphaned `.fleet-state.json.<uuid>.tmp` files (found 2026-08-12)
+ * - fleet state is rewritten every ~5s, so each lost cleanup compounds fast. Retry
+ * over the same backoff the rename uses so a transient lock on the temp clears
+ * before we give up.
+ */
+function bestEffortRemove(tmp) {
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    try {
+      fs.unlinkSync(tmp);
+      return;
+    } catch (err) {
+      if (err?.code === "ENOENT") {
+        return; // already gone (e.g. the rename actually took) - nothing to clean up
+      }
+      // The temp still exists if we got here with anything but ENOENT, so an EPERM/
+      // EBUSY/EACCES is a live lock worth waiting out - same signal as for the rename.
+      if (isTransientLock(err, true) && attempt < MAX_ATTEMPTS - 1) {
+        sleepSync(60 * (attempt + 1));
+        continue;
+      }
+      return; // out of attempts, or a non-lock error - still best-effort, never throw
+    }
+  }
+}
+
 export function writeFileAtomicSync(filePath, contents, { onBeforeRename = null } = {}) {
   const dir = path.dirname(filePath);
   const base = path.basename(filePath);
@@ -107,7 +137,7 @@ export function writeFileAtomicSync(filePath, contents, { onBeforeRename = null 
       if (onBeforeRename) {
         const abort = onBeforeRename();
         if (abort) {
-          fs.unlinkSync(tmp);
+          bestEffortRemove(tmp);
           lastError = abort;
           continue;
         }
@@ -115,11 +145,7 @@ export function writeFileAtomicSync(filePath, contents, { onBeforeRename = null 
       fs.renameSync(tmp, filePath);
       return { ok: true };
     } catch (err) {
-      try {
-        fs.unlinkSync(tmp);
-      } catch {
-        // best-effort cleanup; the write already failed
-      }
+      bestEffortRemove(tmp);
       // Whether the destination already exists decides whether an EPERM is a lock
       // worth waiting out or a permission problem worth reporting immediately.
       let targetExists = false;
