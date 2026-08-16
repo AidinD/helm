@@ -43,6 +43,46 @@ export function secondMateId(firstMateId, projectPath) {
   return "sm_" + crypto.createHash("sha1").update(key).digest("hex").slice(0, 12);
 }
 
+// A second mate has exactly ONE id namespace, and this is the only function that
+// mints it. The Fleet also renders a node for a plain project session that is not
+// a registered second mate, keyed "sess_<sessionId>" - but that is a DISPLAY key
+// for a row on a screen, not an identity.
+//
+// It leaked. Jumping into such a node passed its display key on as the session's
+// secondMateId, so it was stamped onto every crew run as dispatchedBy and written
+// into the bindings file. deriveSecondMates only recognizes "sm_" as a second mate,
+// so those runs hashed into a phantom node no binding matches, and the node the
+// captain was looking at showed an empty crew list - "den här 2nd maten kör
+// autopilots men den syns inte i trädvy" (the captain, task 99089c59). His own data had
+// three skiff runs dispatched by sess_3436226e-..., a binding for that id with
+// projectPath undefined, and two id namespaces living side by side in one file.
+//
+// Teaching derive to also understand "sess_" would have cleared the symptom and
+// made two namespaces permanent. Instead the display key is translated back to a
+// real identity at the one boundary it crosses (a session launch) and in the one
+// place that reads history written before the fix.
+export function isDisplaySecondMateId(id) {
+  return typeof id === "string" && id.startsWith("sess_");
+}
+
+/**
+ * The durable second-mate id for an id that may be a renderer display key.
+ * A session node has no first mate above it (it is the captain's own project
+ * session), so it resolves under DIRECT_FIRST_MATE for its project - exactly the
+ * node a registered direct second mate for that project already has.
+ * Returns null when a display key arrives with no project to resolve against,
+ * so a caller can refuse rather than invent a node at an unknown path.
+ */
+export function resolveSecondMateId(id, projectPath) {
+  if (!isDisplaySecondMateId(id)) {
+    return id || null;
+  }
+  if (!projectPath) {
+    return null;
+  }
+  return secondMateId(DIRECT_FIRST_MATE, projectPath);
+}
+
 /** The persisted per-second-mate overrides: { [secondMateId]: { sessionId, name } }. */
 export function readBindings() {
   if (!fs.existsSync(bindingsPath)) {
@@ -110,6 +150,12 @@ export function deriveSecondMates(runHistory, bindings = readBindings()) {
     // (ship-review). Second-mate ids are "sm_<hash>"; first mates are
     // "mate_<uuid>" or the synthetic "direct".
     const dispatchedBySecondMate = typeof dispatcher === "string" && dispatcher.startsWith("sm_");
+    // LEGACY: a run dispatched before the display key stopped leaking (see
+    // resolveSecondMateId) carries "sess_<sessionId>" as its dispatcher. Route it
+    // to the node the fixed path now produces, so crew stranded on a phantom
+    // reappears under the second mate that actually ran it - without rewriting
+    // history, the same migration shape the auto routing below already uses.
+    const dispatchedByDisplayKey = isDisplaySecondMateId(dispatcher);
     // An AUTO-started run always belongs to the project's AUTO node - even a LEGACY one
     // dispatched under the old shared "direct" second-mate id. Without this, one auto run
     // landed on a MANUAL second mate that happened to share the project and flipped it into
@@ -118,9 +164,11 @@ export function deriveSecondMates(runHistory, bindings = readBindings()) {
     const isAuto = r.startedBy === "auto";
     const id = isAuto
       ? secondMateId(AUTO_CAPTAIN, r.projectPath)
-      : dispatchedBySecondMate
-        ? dispatcher
-        : secondMateId(dispatcher, r.projectPath);
+      : dispatchedByDisplayKey
+        ? secondMateId(DIRECT_FIRST_MATE, r.projectPath)
+        : dispatchedBySecondMate
+          ? dispatcher
+          : secondMateId(dispatcher, r.projectPath);
     let sm = byId.get(id);
     if (!sm) {
       sm = {
@@ -130,9 +178,11 @@ export function deriveSecondMates(runHistory, bindings = readBindings()) {
         // gets its parent from the binding below.
         firstMateId: isAuto
           ? AUTO_CAPTAIN
-          : dispatchedBySecondMate
-            ? bindings[id]?.firstMateId || DIRECT_FIRST_MATE
-            : dispatcher,
+          : dispatchedByDisplayKey
+            ? DIRECT_FIRST_MATE
+            : dispatchedBySecondMate
+              ? bindings[id]?.firstMateId || DIRECT_FIRST_MATE
+              : dispatcher,
         projectPath: r.projectPath,
         name: path.basename(r.projectPath) || r.projectPath,
         sessionId: null,
@@ -231,13 +281,19 @@ export function proposeSecondMate(firstMateId, projectPath, { brief = null, assi
  * session by its durable binding, not a pane tag that a resume rebuilds away
  * (the "resumed second mate loses its tools" bug).
  */
-export function secondMateIdForSession(sessionId, bindings = readBindings()) {
+export function secondMateIdForSession(sessionId, bindings = readBindings(), { projectPath = null } = {}) {
   if (!sessionId) {
     return null;
   }
   for (const [id, b] of Object.entries(bindings)) {
     if (b && b.sessionId === sessionId) {
-      return id;
+      // A binding written before the display key was stopped at the boundary holds
+      // "sess_<id>" (five such records exist in the real store). Returning it would
+      // re-leak the key onto this turn's dispatches, so translate it back - and if
+      // there is no project to translate against, report no second mate rather than
+      // a fake one. Never widen this to "return it anyway when translation fails":
+      // that is the leak, restored.
+      return isDisplaySecondMateId(id) ? resolveSecondMateId(id, projectPath || b.projectPath) : id;
     }
   }
   return null;
@@ -261,7 +317,14 @@ export function markSecondMateCreated(secondMateId, sessionId, model = null) {
  * session belongs to one node, so this clears the id from any other second mate
  * first. Returns the binding object.
  */
-export function bindSecondMateSession(secondMateId, sessionId) {
+export function bindSecondMateSession(secondMateId, sessionId, { projectPath = null } = {}) {
+  // A display key is not an identity (see resolveSecondMateId). Refusing it here is
+  // the backstop: five such bindings already exist in the real store, every one of
+  // them with projectPath undefined, which is also why deriveSecondMates could not
+  // union them back in even as empty nodes.
+  if (isDisplaySecondMateId(secondMateId)) {
+    throw new Error(`bindSecondMateSession got a display key (${secondMateId}); resolve it with resolveSecondMateId first`);
+  }
   const bindings = readBindings();
   if (sessionId) {
     for (const [id, b] of Object.entries(bindings)) {
@@ -273,6 +336,12 @@ export function bindSecondMateSession(secondMateId, sessionId) {
   bindings[secondMateId] = {
     ...(bindings[secondMateId] || {}),
     sessionId: sessionId || null,
+    // Carried so deriveSecondMates can union this node in before it has any crew.
+    // Its union loop skips a binding with no projectPath, so a second mate bound
+    // by a jump-in used to be invisible until its first dispatch landed. Never
+    // downgrade an existing path to null - a later bind without one must not erase
+    // what an earlier one established.
+    projectPath: projectPath || bindings[secondMateId]?.projectPath || null,
     // Binding a live session IS the "first engagement" that turns a proposed
     // second mate into a created one (Phase-2 Slice 1 lazy creation). CLEARING the
     // session (null) reverts it to "proposed": a node with no session is not
@@ -283,6 +352,59 @@ export function bindSecondMateSession(secondMateId, sessionId) {
   };
   writeBindings(bindings);
   return bindings[secondMateId];
+}
+
+/**
+ * One-time repair of bindings written before the display key was stopped at the
+ * boundary: rewrites every "sess_<sessionId>" record onto the real second-mate id
+ * for its project, merging into an existing record rather than replacing it.
+ *
+ * It needs a project, and a legacy record has none (all five in the real store were
+ * written with projectPath undefined) - so the caller supplies a lookup from session
+ * id to that session's cwd. This lives here rather than in the app because it is the
+ * bindings file's own invariant; the app only knows where sessions live.
+ *
+ * Without it the fix is half-done in a way that is worse than the bug: the crew
+ * resolves onto the real node while the SESSION stays on the legacy record, so the
+ * captain sees two rows - one with a session and no crew, one with crew and no
+ * session - instead of the single second mate the whole exercise is about.
+ *
+ * A record whose session cannot be located is left untouched, not deleted: an
+ * unresolvable binding is a thing to look at, not evidence it is safe to discard.
+ * Returns { migrated, skipped }.
+ */
+export function migrateDisplayKeyBindings(projectPathForSession) {
+  const bindings = readBindings();
+  let migrated = 0;
+  let skipped = 0;
+  for (const [id, b] of Object.entries(bindings)) {
+    if (!isDisplaySecondMateId(id)) {
+      continue;
+    }
+    const sessionId = b?.sessionId || id.slice("sess_".length);
+    const projectPath = b?.projectPath || (projectPathForSession ? projectPathForSession(sessionId) : null);
+    const realId = resolveSecondMateId(id, projectPath);
+    if (!realId) {
+      skipped++;
+      continue;
+    }
+    // Merge, keeping whatever the real record already has: a name the captain typed
+    // or a live session binding must not be clobbered by an older legacy record.
+    const target = bindings[realId] || {};
+    bindings[realId] = {
+      ...b,
+      ...target,
+      projectPath: target.projectPath || projectPath,
+      sessionId: target.sessionId || b?.sessionId || null,
+      status: target.sessionId || b?.sessionId ? "created" : target.status || b?.status || "proposed",
+    };
+    delete bindings[id];
+    migrated++;
+  }
+  if (migrated > 0) {
+    writeBindings(bindings);
+  }
+  return { migrated, skipped };
 }
 
 /** Sets a custom name override for a second mate (default is the project basename). */

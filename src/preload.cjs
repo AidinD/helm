@@ -238,7 +238,10 @@ contextBridge.exposeInMainWorld("helm", {
   bindMateSession: (mateId, sessionId) => ipcRenderer.invoke("mates:bindSession", { mateId, sessionId }),
   // Second mates: per-(firstMate,project) sessions derived from dispatched runs.
   listSecondMates: () => ipcRenderer.invoke("secondMates:list"),
-  bindSecondMateSession: (secondMateId, sessionId) => ipcRenderer.invoke("secondMates:bindSession", { secondMateId, sessionId }),
+  // projectPath is what lets main translate a "sess_<id>" display key for a project
+  // session node into a real second-mate id, and what lets the node be rendered
+  // before it has any crew (task 99089c59).
+  bindSecondMateSession: (secondMateId, sessionId, projectPath) => ipcRenderer.invoke("secondMates:bindSession", { secondMateId, sessionId, projectPath }),
   renameSecondMate: (secondMateId, name) => ipcRenderer.invoke("secondMates:rename", { secondMateId, name }),
   archiveSecondMate: (id) => ipcRenderer.invoke("secondMates:archive", { id }),
   onSessionEvent: (handler) => {

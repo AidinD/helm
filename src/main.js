@@ -92,7 +92,7 @@ import { listSlashItems } from "./lib/slashCommands.js";
 import { trackHelmUsage, summarizeHelmUsage, summarizeReviewActions } from "./lib/helmUsage.js";
 import { mcpAllowedToolsFromConfig } from "./lib/userMcp.js";
 import { initAutoUpdate } from "./lib/autoUpdate.js";
-import { deriveSecondMates, bindSecondMateSession, renameSecondMate, readBindings, proposeSecondMate, markSecondMateCreated, secondMateIdForSession, secondMateId, removeSecondMates, AUTO_CAPTAIN } from "./lib/secondMates.js";
+import { deriveSecondMates, bindSecondMateSession, renameSecondMate, readBindings, proposeSecondMate, markSecondMateCreated, secondMateIdForSession, secondMateId, removeSecondMates, resolveSecondMateId, isDisplaySecondMateId, migrateDisplayKeyBindings, AUTO_CAPTAIN } from "./lib/secondMates.js";
 import {
   AUTO_WIDTH_CAP,
   AUTO_CAPTAIN_TAGS,
@@ -2229,9 +2229,17 @@ ipcMain.handle("secondMates:list", () => {
     return { ok: false, error: err?.message || String(err), secondMates: [] };
   }
 });
-ipcMain.handle("secondMates:bindSession", (_event, { secondMateId, sessionId }) => {
+ipcMain.handle("secondMates:bindSession", (_event, { secondMateId, sessionId, projectPath }) => {
   try {
-    return { ok: true, binding: bindSecondMateSession(secondMateId, sessionId) };
+    // Same boundary as the session-launch path: the renderer may hand over a
+    // "sess_<id>" display key for a project session node, and that must not become
+    // a durable identity (task 99089c59). With no project to resolve against there
+    // is no real node to bind, so refuse loudly instead of writing a nameless one.
+    const resolved = resolveSecondMateId(secondMateId, projectPath);
+    if (!resolved) {
+      return { ok: false, error: `Cannot bind ${secondMateId}: a session node needs its project path to resolve to a second mate.` };
+    }
+    return { ok: true, binding: bindSecondMateSession(resolved, sessionId, { projectPath }) };
   } catch (err) {
     return { ok: false, error: err?.message || String(err) };
   }
@@ -2402,7 +2410,7 @@ ipcMain.handle(
         // runGoal path (never this handler), so this only ever narrows a
         // first-mate launch.
         strictMcpConfig = true;
-      } else if (secondMateId || (resumeSessionId && secondMateIdForSession(resumeSessionId))) {
+      } else if (secondMateId || (resumeSessionId && secondMateIdForSession(resumeSessionId, undefined, { projectPath: cwd }))) {
         // Phase-2 Slice 2: a SECOND-MATE session (project-rooted) gets the crew-
         // dispatch tools too - one tier deeper than a first mate. Resolve the id
         // from the pane tag on a fresh engagement OR from the durable binding on
@@ -2412,7 +2420,14 @@ ipcMain.handle(
         // for hands-on project work, and helm_* is ADDED on top (+ pre-approved).
         // Dispatches are stamped dispatchedBy=<this id>, callerTier "second-mate",
         // so the depth cap allows crew but crew can't re-dispatch.
-        effectiveSecondMateId = secondMateId || secondMateIdForSession(resumeSessionId);
+        // THE BOUNDARY. The Fleet renders a plain project session as a node keyed
+        // "sess_<sessionId>", and jumping into it hands that key straight here. It is
+        // a display key, not an identity: passed on, it was stamped as dispatchedBy on
+        // every crew run and written to the bindings file, where deriveSecondMates
+        // (which knows only "sm_") hashed it into a phantom - so the node the captain
+        // was looking at showed no crew at all (task 99089c59). Translate it once, here,
+        // and a second mate keeps exactly one id namespace everywhere downstream.
+        effectiveSecondMateId = resolveSecondMateId(secondMateId, cwd) || secondMateIdForSession(resumeSessionId, undefined, { projectPath: cwd });
         const metaHome = resolveMetaHome();
         ensureDispatchDirs(metaHome);
         // Resolve the parent first mate from the DERIVED second mate, not the raw
@@ -2539,7 +2554,9 @@ ipcMain.handle(
           // (the orphaned-first-dispatch window flagged in review).
           if (effectiveSecondMateId) {
             try {
-              bindSecondMateSession(effectiveSecondMateId, evt.sessionId);
+              // cwd is this session's project - the one field that lets the node be
+              // rendered before it has dispatched anything.
+              bindSecondMateSession(effectiveSecondMateId, evt.sessionId, { projectPath: cwd });
             } catch (err) {
               console.error("[helm] failed to bind second-mate session:", err);
             }
@@ -5126,7 +5143,7 @@ function runRelayTurn(metaHome, { secondMateId: smId, projectPath, message, allo
             // relay/jump-in resumes the SAME session, and index it so the
             // relay-driven session shows in the session list like a jumped-into
             // one (review PLAUSIBLE #3).
-            bindSecondMateSession(smId, evt.sessionId);
+            bindSecondMateSession(smId, evt.sessionId, { projectPath });
             // Close the fresh-bind window (see boundSessionKey note above): the
             // session now appears in the session list, so lock its id too before
             // a jump-in can race it. Resumed turns already lock on the id via
@@ -6639,9 +6656,34 @@ ipcMain.handle("models:freshnessStatus", () => latestModelFreshness);
 // one you cannot tell has stopped happening.
 ipcMain.handle("heavyWorker:status", () => heavyWorkerStatus());
 
+// Fold bindings written under a renderer display key onto their real second-mate id
+// (task 99089c59). Runs once at startup because it needs sessions - a legacy record
+// carries no project of its own, and the session's cwd is the only place that says
+// which project it was. Best-effort: a store this cannot repair is a cosmetic Fleet
+// problem, never a reason the app fails to start.
+function repairDisplayKeyBindings() {
+  try {
+    const { sessions } = readAllSessions({ attentionWindowMs: Number.MAX_SAFE_INTEGER });
+    const cwdBySession = new Map();
+    for (const s of sessions || []) {
+      if (s.cwd) {
+        cwdBySession.set(s.cliSessionId || s.sessionId, s.cwd);
+        cwdBySession.set(s.sessionId, s.cwd);
+      }
+    }
+    const res = migrateDisplayKeyBindings((sessionId) => cwdBySession.get(sessionId) || null);
+    if (res.migrated || res.skipped) {
+      console.log(`[helm] second-mate bindings repaired: ${res.migrated} migrated, ${res.skipped} left alone (no project found)`);
+    }
+  } catch (err) {
+    console.error("[helm] could not repair second-mate bindings:", err?.message || err);
+  }
+}
+
 app.whenReady().then(() => {
   prunePastedImages();
   seedQuotaWindows();
+  repairDisplayKeyBindings();
   createWindow();
   setInterval(runOrchestratorSweep, ORCHESTRATOR_SWEEP_INTERVAL_MS);
   setInterval(runStaleBuildCheck, STALE_BUILD_CHECK_INTERVAL_MS);

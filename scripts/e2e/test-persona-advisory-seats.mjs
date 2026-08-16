@@ -115,9 +115,17 @@ const mainSrc = fs.readFileSync(path.join(repo, "src", "main.js"), "utf8");
 const launcherSrc = fs.readFileSync(path.join(repo, "src", "lib", "launcher.js"), "utf8");
 ok(/agents = personaAgents\(\)/.test(mainSrc), "main.js attaches the seats to a launch");
 ok(/--agents/.test(launcherSrc), "and the launcher passes them to the CLI");
-const secondMateBranch = mainSrc.slice(mainSrc.indexOf("effectiveSecondMateId = secondMateId"), mainSrc.indexOf("} catch (err) {", mainSrc.indexOf("effectiveSecondMateId = secondMateId")));
+// Anchor on the ASSIGNMENT, not on what is assigned. This used to slice from the
+// literal "effectiveSecondMateId = secondMateId", so the day the right-hand side
+// changed (task 99089c59 wrapped it in resolveSecondMateId) indexOf returned -1, the
+// slice ran from the top of the file, and BOTH halves of this check reported failure
+// while the wiring they describe was untouched. A guard that breaks on an unrelated
+// edit teaches you to ignore it.
+const smAnchor = mainSrc.indexOf("effectiveSecondMateId =");
+ok(smAnchor > 0, "the second-mate branch is locatable in main.js - if this fails the two checks below are meaningless, not failing");
+const secondMateBranch = mainSrc.slice(smAnchor, mainSrc.indexOf("} catch (err) {", smAnchor));
 ok(/agents = personaAgents\(\)/.test(secondMateBranch), "the attachment sits in the SECOND-MATE branch, the tier that has Task");
-const firstMateBranch = mainSrc.slice(mainSrc.indexOf("allowedTools = FIRST_MATE_ALLOWED_TOOLS"), mainSrc.indexOf("effectiveSecondMateId = secondMateId"));
+const firstMateBranch = mainSrc.slice(mainSrc.indexOf("allowedTools = FIRST_MATE_ALLOWED_TOOLS"), smAnchor);
 ok(!/agents = personaAgents\(\)/.test(firstMateBranch), "and not on the first mate, which is denied Task and could never call one");
 
 // The manual is how a second mate learns the seats exist at all - an injected
