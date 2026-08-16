@@ -4160,10 +4160,31 @@ function offerArchiveChoice(x, y, session, plainArchive) {
 // beginning something new. "Carry over" gives the outgoing mate a final
 // summarize turn and seeds the successor's composer with it, for continuing the
 // same job in clean context. See DECISIONS.md "Retire: carry-over is a choice".
+// Three options, not two, because keeping the knowledge and carrying it forward are
+// separate wishes (the captain, 2026-08-12: "jag vill inte carry over för jag vill starta en ny
+// topic men jag vill fortfarande behålla det vi pratat om den här sessionen"). The middle
+// one is the case he says is common and that previously had no button: the outgoing mate
+// still writes its durable handoff document, and the successor still starts blank.
+//
+// Ordered cheapest-to-most, so the destructive-of-context option is not the default target
+// of a mis-click, and worded by what you GET rather than by what the code does.
 function offerRetireChoice(x, y, mate) {
   showContextMenu(x, y, [
-    { label: "Retire (start fresh)", onClick: () => retireMateClean(mate) },
-    { label: "Retire and carry over", onClick: () => retireMateWithCarryOver(mate) },
+    {
+      label: "Retire (start fresh)",
+      hint: "No summary. Anything already on disk stays.",
+      onClick: () => retireMateClean(mate),
+    },
+    {
+      label: "Retire, keep notes - new topic",
+      hint: "Writes the handoff document, next mate starts blank",
+      onClick: () => retireMateWithCarryOver(mate, undefined, { carryOver: false }),
+    },
+    {
+      label: "Retire and carry over",
+      hint: "Writes it AND seeds the next mate, to continue this thread",
+      onClick: () => retireMateWithCarryOver(mate),
+    },
   ]);
 }
 
@@ -5425,7 +5446,22 @@ async function summarizeAndCarryOver(session) {
 // thread survives the transfer.
 // persona === undefined means an ordinary refresh, which KEEPS whatever the mate was; a key
 // (or an explicit null for Coordinator) is a deliberate switch.
-async function retireMateWithCarryOver(mate, persona = undefined) {
+// KEEPING the session's knowledge and CARRYING IT INTO the next session are two
+// different wishes, and bundling them was the mistake here.
+//
+// the captain, 2026-08-12, after the durable-document work landed: "nej, jag vill att det ska
+// vara separata. Ofta vill jag inte carry over för jag vill starta en ny topic men jag
+// vill fortfarande behålla det vi pratat om den här sessionen."
+//
+// The two options he had were all-or-nothing: carry over saved a durable document AND
+// seeded the successor's composer, and "start fresh" did neither. So the common case -
+// a new topic, without throwing away what was just discussed - had no button, and the
+// only way to keep the notes was to accept a carry-over he did not want.
+//
+// `carryOver` therefore controls ONLY the one-shot message to the successor. The durable
+// document is written whenever there is a summary at all, because that is the half he
+// almost always wants.
+async function retireMateWithCarryOver(mate, persona = undefined, { carryOver = true } = {}) {
   let handoff = null;
   // A persistent spinner toast for the WHOLE retire - the summarize, the
   // per-mate handoffs, and the archiving are all multi-second and usually
@@ -5476,7 +5512,10 @@ async function retireMateWithCarryOver(mate, persona = undefined) {
   }
   await saveSecondMateHandoffsFor(mate, busy);
   busy.update(`Retiring ${mate.name} - archiving…`);
-  const retireRes = await window.helm.retireMate(mate.mateId, handoff, persona || null, persona === undefined);
+  // The durable document above is already written. What is withheld here is only the
+  // one-shot carry-over: passing no handoff means the successor boots on a blank
+  // composer, which is the point of "keep the notes, start a new topic".
+  const retireRes = await window.helm.retireMate(mate.mateId, carryOver ? handoff : null, persona || null, persona === undefined);
   reflectTornDownSessions(retireRes);
   await archiveOutgoingMateSession(mate);
   busy.done();
@@ -9466,6 +9505,9 @@ async function startup() {
   await rehydrateGoalRuns();
   await refresh();
   updateRunningIndicator();
+  // Runs already in flight when the app opens count too - a badge that only
+  // appeared once a NEW event arrived would read zero after every restart.
+  paintAutopilotBadge();
   // startup: the default landing page, NOT an override of a page you already
   // picked while this was still loading.
   navigateToPage("dashboard", { startup: true });
@@ -11599,6 +11641,25 @@ async function jumpIntoSecondMate(sm) {
     // needs the project to translate it into a real second mate (task 99089c59).
     if (sm.secondMateId && resumeId) {
       window.helm.bindSecondMateSession(sm.secondMateId, resumeId, sm.projectPath);
+    }
+    // Crew that finished has to be SURFACED here too, not only on a fresh session.
+    //
+    // the captain, task 28db596e: "autopilots (crewmates) rapporterar inte tillbaka till 2nd
+    // mate ordentligt." The report loop was never broken - runs write to the inbox and
+    // helm_collect_reports would return them. What was broken is that nothing told the
+    // second mate to look. The nudge was seeded only by the branch below, so it worked
+    // exactly once per second mate: the first jump-in, when no session existed yet. Every
+    // jump-in after that resumed silently, and the finished crew sat in the inbox with
+    // nobody prompted to read it. That is the same shape as the manual only reaching a
+    // fresh turn - a signal attached to session creation, for a tier that is resumed far
+    // more often than it is created.
+    //
+    // Seeded as a DRAFT, not sent: the captain may have jumped in to say something else,
+    // and an auto-sent turn would spend Opus tokens on a decision he had not made. An
+    // existing draft always wins - his half-typed message is never worth a nudge.
+    const nudge = pendingSecondMateReviewNudge(sm);
+    if (nudge && resumeId && !queuedPromptBySession.get(resumeId)) {
+      queuedPromptBySession.set(resumeId, nudge);
     }
     openSessionInPane(existing, 0, { secondMateId: sm.secondMateId });
   } else {
@@ -14141,6 +14202,7 @@ function renderGoalPage() {
       // folder / verify / model picks usually carry over between runs.
       goalInput.value = "";
       updateRunningIndicator();
+      paintAutopilotBadge();
       renderGoalPage();
     });
   });
@@ -14944,6 +15006,38 @@ setInterval(() => {
   void paintReviewBadge();
 }, 60 * 1000);
 
+/**
+ * Paint the subnav's Autopilot badge: how many runs are working RIGHT NOW.
+ *
+ * the captain, task 8180e733: "kan vi lägga en markör över autopilot också som visar hur många
+ * jobb som körs nu", with a screenshot of the Review badge as the reference.
+ *
+ * It reads the same live view every crew surface reads (crewLiveRun + crewRunning), so the
+ * tab count cannot disagree with the rows underneath it - the failure that made the review
+ * badge worth writing a paragraph about. Unlike Review's, this number is cheap: it comes off
+ * goal-run state the renderer already holds, so it repaints on every goal event instead of
+ * on a slow tick, and a run that starts is visible immediately rather than up to a minute
+ * later.
+ *
+ * Deliberately NOT the same colour as the review badge - see .attention-badge.running.
+ * "Something is working" and "you are needed" must not look alike.
+ */
+function paintAutopilotBadge() {
+  const badge = document.getElementById("autopilotBadge");
+  if (!badge) {
+    return;
+  }
+  let n = 0;
+  try {
+    n = [...goalRuns.values()].map(crewLiveRun).filter(crewRunning).length;
+  } catch {
+    return; // leave the last known number rather than blanking it on a hiccup
+  }
+  badge.textContent = n > 0 ? String(n) : "";
+  badge.classList.toggle("hidden", n === 0);
+  badge.title = n === 1 ? "1 autopilot run working" : `${n} autopilot runs working`;
+}
+
 // carries goalRunId; events from a stale run (a previous run, or after a new
 // one started) are ignored so late events can't clobber current state.
 window.helm.onGoalEvent((evt) => {
@@ -15024,6 +15118,9 @@ window.helm.onGoalEvent((evt) => {
   // Ambient running indicator is app-wide, so update it on every event
   // regardless of which page is visible.
   updateRunningIndicator();
+  // Same footing, and for the same reason: the Autopilot tab count must be right
+  // whichever page you happen to be on, not only once you open Autopilot.
+  paintAutopilotBadge();
   // Only re-render if the Goal page is actually visible, to avoid
   // clobbering another page the user may have switched to mid-run.
   if (!document.getElementById("goalPage").classList.contains("hidden")) {

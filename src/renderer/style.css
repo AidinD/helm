@@ -1019,6 +1019,16 @@ body.advanced .row-jot {
   text-align: center;
 }
 
+/* The Autopilot count is "work is running", not "you are needed". The amber
+   --waiting tone above is reserved for the second meaning, and reusing it here
+   would have made two very different signals look identical in the same row of
+   tabs - the Review badge would stop meaning anything specific. --active is the
+   same "working" tone the dashboard pulse dot already uses, so the two surfaces
+   agree without a new colour being invented for this. */
+.attention-badge.running {
+  background: var(--active);
+}
+
 /* Ambient "N Autopilot runs in progress" signal on the Dashboard tab, visible
    from any page (the model is dispatch-and-step-away, so knowing something is
    running matters most when you're NOT on the Autopilot page). Distinct from
