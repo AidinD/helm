@@ -91,7 +91,16 @@ try {
     writesThisTurn,
     budget,
   });
-} catch {
+} catch (err) {
+  // FAIL CLOSED for the tier that has no write budget at all. The policy module fails closed
+  // on syntax it cannot read; converting an exception here into a silent allow reversed that
+  // doctrine one layer up, and nothing marked it (review, 2026-08-16). A second mate may
+  // write anyway, so an allow there costs only an uncounted edit.
+  process.stderr.write(`[helm-tier-guard] classifier threw: ${err?.message || err}
+`);
+  if (tier === "first-mate") {
+    deny("HELM TIER GUARD: this call could not be classified, and a first mate does not write files. Hand the work to a second mate with helm_create_second_mate or helm_relay_to_second_mate.");
+  }
   allow();
 }
 

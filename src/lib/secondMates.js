@@ -388,16 +388,44 @@ export function migrateDisplayKeyBindings(projectPathForSession) {
       skipped++;
       continue;
     }
-    // Merge, keeping whatever the real record already has: a name the captain typed
-    // or a live session binding must not be clobbered by an older legacy record.
-    const target = bindings[realId] || {};
+    const target = bindings[realId];
+    // REFUSE TO MERGE ANYTHING AWAY. An earlier version spread the two records together and
+    // deleted the legacy one, which an independent review showed losing real state: with a
+    // session id on both, the legacy one vanished and the session the captain had actually
+    // been working in stopped being bound to anything; with two legacy records resolving to
+    // the same target, the second was absorbed and everything unique to it disappeared -
+    // and it was counted as a success. On the real store three of five records collide like
+    // that, and only the fact that they happen to be empty saved them.
+    //
+    // So this now migrates ONLY when nothing can be lost: no target yet, or a target that
+    // holds nothing of its own. Anything else is left exactly as it was, and reported.
+    // A binding left behind is visible and fixable; a merged-away one is neither.
+    const targetHolds = target && (target.sessionId || target.name || target.brief || target.assignments);
+    if (targetHolds) {
+      skipped++;
+      continue;
+    }
     bindings[realId] = {
       ...b,
-      ...target,
-      projectPath: target.projectPath || projectPath,
-      sessionId: target.sessionId || b?.sessionId || null,
-      status: target.sessionId || b?.sessionId ? "created" : target.status || b?.status || "proposed",
+      ...(target || {}),
+      projectPath: (target && target.projectPath) || projectPath,
+      sessionId: (target && target.sessionId) || b?.sessionId || null,
+      // A node with no session is "proposed", not "created" - bindSecondMateSession states
+      // that rule, and the earlier version wrote records that broke it, so the Fleet showed
+      // a session-less node as active.
+      status: (target && target.sessionId) || b?.sessionId ? "created" : "proposed",
     };
+    // A session belongs to exactly one node. bindSecondMateSession enforces that when it
+    // writes; the migration used to write straight past it, so the same session could end up
+    // claimed by two records and which one won depended on key order in the file.
+    if (bindings[realId].sessionId) {
+      for (const [otherId, other] of Object.entries(bindings)) {
+        if (otherId !== realId && otherId !== id && other && other.sessionId === bindings[realId].sessionId) {
+          other.sessionId = null;
+          other.status = "proposed";
+        }
+      }
+    }
     delete bindings[id];
     migrated++;
   }
@@ -405,6 +433,35 @@ export function migrateDisplayKeyBindings(projectPathForSession) {
     writeBindings(bindings);
   }
   return { migrated, skipped };
+}
+
+/**
+ * Release a session from any LEGACY display-keyed binding that still claims it.
+ *
+ * Archiving a session must un-bind it, or a later jump-in resurrects the archived session -
+ * the bug that block was written for (Aidin, 2026-08-12). secondMateIdForSession now
+ * translates a display key and returns null when it has no project to translate against, so
+ * a legacy record could no longer be reached through it and archiving silently stopped
+ * releasing those sessions (found by review, 2026-08-16). This closes the gap at the level
+ * that owns the file, rather than having the caller edit the store by hand.
+ */
+export function releaseDisplayKeyedSession(sessionId) {
+  if (!sessionId) {
+    return 0;
+  }
+  const bindings = readBindings();
+  let released = 0;
+  for (const [id, b] of Object.entries(bindings)) {
+    if (isDisplaySecondMateId(id) && b && b.sessionId === sessionId) {
+      b.sessionId = null;
+      b.status = "proposed";
+      released++;
+    }
+  }
+  if (released > 0) {
+    writeBindings(bindings);
+  }
+  return released;
 }
 
 /** Sets a custom name override for a second mate (default is the project basename). */

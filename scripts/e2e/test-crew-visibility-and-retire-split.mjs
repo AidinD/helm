@@ -32,8 +32,10 @@ const ok = (c, m) => {
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const renderer = fs.readFileSync(path.join(repo, "src", "renderer", "renderer.js"), "utf8");
-const html = fs.readFileSync(path.join(repo, "src", "renderer", "index.html"), "utf8");
-const css = fs.readFileSync(path.join(repo, "src", "renderer", "style.css"), "utf8");
+// Comments stripped here too. The JS scan already did this; HTML and CSS did not, so
+// commenting the badge markup out left its assertions green (found by review, 2026-08-16).
+const html = fs.readFileSync(path.join(repo, "src", "renderer", "index.html"), "utf8").replace(/<!--[\s\S]*?-->/g, "");
+const css = fs.readFileSync(path.join(repo, "src", "renderer", "style.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 
 // Comments are stripped before the source assertions below. Without this, commenting a
 // guarded line out leaves every check green - the first entry on the ship-review failure
@@ -49,7 +51,7 @@ ok(
 );
 ok(/function paintAutopilotBadge\(\)/.test(code), "there is a painter for it");
 ok(
-  /paintAutopilotBadge\(\)[\s\S]{0,200}?/.test(code) && (code.match(/paintAutopilotBadge\(\)/g) || []).length >= 4,
+  (code.match(/paintAutopilotBadge\(\)/g) || []).length >= 4,
   `it is painted from more than one place (${(code.match(/paintAutopilotBadge\(\)/g) || []).length} call sites) - a badge painted only by the Autopilot page repeats the exact bug the review badge already had, where the number appeared only after you opened the page it was meant to send you to`
 );
 const painter = code.slice(code.indexOf("function paintAutopilotBadge()"), code.indexOf("function paintAutopilotBadge()") + 900);
