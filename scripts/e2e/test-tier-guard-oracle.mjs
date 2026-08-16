@@ -90,6 +90,26 @@ const WRITERS = [
   "truncate -s 0 seed.txt",
   "python3 -c \"open('pwn.txt','w').write('x')\"",
   "sed 's/a/b/' seed.txt > pwn.txt",
+  // Added after a third review (2026-08-16) ran its own corpus and found these three ALLOWED.
+  // All three sat in READ_ONLY - the one list this design claims is safe to enumerate - which
+  // is the strongest argument for keeping this file's corpus growing rather than fixed. The
+  // last one overwrote its SOURCE file in place: the 2026-08-12 incident, spelled differently.
+  "sort -o pwn.txt seed.txt",
+  "uniq seed.txt pwn.txt",
+  "awk -i inplace '{print \"MUTATED\"}' seed.txt",
+  "split -l 1 seed.txt pwn",
+  "shuf -o pwn.txt seed.txt",
+  "csplit -f pwn seed.txt 1",
+  "source ./writer.sh",
+  ". ./writer.sh",
+  "echo 'touch pwn.txt' | bash",
+  "npx --yes -- node -e \"require('fs').writeFileSync('pwn.txt','y')\"",
+  "if true; then touch pwn.txt; fi",
+  "case a in a) touch pwn.txt;; esac",
+  "{ touch pwn.txt; }",
+  "$(echo touch) pwn.txt",
+  "nice -n 5 touch pwn.txt",
+  "stdbuf -o0 touch pwn.txt",
   "cat seed.txt | sed 's/a/b/' > pwn.txt",
 ];
 
@@ -148,6 +168,25 @@ const READERS = [
   "pwd",
   "which node",
   "diff a.txt b.txt",
+  // The false blocks a third review measured. Every one is a command a coordinator plausibly
+  // reaches for, and `git diff @{u}..HEAD` was literally the command that review's own brief
+  // told it to run.
+  "git diff @{u}..HEAD --stat",
+  "git log --oneline @{u}..HEAD",
+  "git tag",
+  "git branch --contains HEAD",
+  "git branch --merged main",
+  "git show-branch",
+  "gh api -X GET repos/AidinD/jot",
+  "python3 -m json.tool package.json",
+  "git for-each-ref --sort=-committerdate",
+  "git blame -L 1,20 src/main.js",
+  "git worktree list --porcelain",
+  "git bisect log",
+  "cat package.json | jq '.scripts | keys'",
+  "rg -n \"TODO\" --glob '!node_modules'",
+  "bash -c 'ls -la'",
+  "stat -c %s package.json",
 ];
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "helm-oracle-"));
@@ -177,7 +216,8 @@ function snapshot(dir) {
 
 function reallyWrites(cmd) {
   const dir = fs.mkdtempSync(path.join(root, "run-"));
-  fs.writeFileSync(path.join(dir, "seed.txt"), "aaa", "utf8");
+  fs.writeFileSync(path.join(dir, "seed.txt"), "bbb\naaa\naaa\n", "utf8");
+  fs.writeFileSync(path.join(dir, "writer.sh"), "touch pwn.txt\n", "utf8");
   const before = snapshot(dir);
   spawnSync(bash, ["-c", cmd], { cwd: dir, timeout: 8000, encoding: "utf8", stdio: "ignore" });
   const after = snapshot(dir);

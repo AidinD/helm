@@ -56,6 +56,25 @@ export const SECOND_MATE_TURN_WRITE_BUDGET = 3;
 // with --disallowedTools, which is stronger than intercepting them; they are listed here
 // because that removal does not apply to a second mate, whose budget must still count them.
 const MUTATING_TOOLS = new Set(["write", "edit", "notebookedit", "multiedit"]);
+
+// Stems that make a tool name write-shaped. A review found Agent, Task, Workflow, ApplyPatch,
+// StrReplace, create_file and mcp__filesystem__write_file all ALLOWED, because anything not
+// in the four-name list above fell through to allow. Kun Chen's guard solved this by shape
+// and says why an enumeration cannot work: "any future tool name outside the matcher would be
+// silently missed". Same reasoning, same fix.
+const WRITE_SHAPED = ["write", "edit", "patch", "creat", "delete", "remove", "rename", "upload", "commit", "push", "replace", "insert", "append", "mkdir", "save", "agent", "task", "workflow", "spawn", "dispatch", "worktree", "cron", "schedul", "sendmessage", "remotetrigger"];
+// Whole names only, so neither list can widen by accident. These are read tools and Helm's own
+// delegation tools - `helm_create_second_mate` contains "creat" and is the single most
+// important thing a blocked first mate must still be able to call.
+const NOT_WRITE_SHAPED = new Set(["todowrite", "taskcreate", "taskupdate", "websearch", "webfetch", "read", "grep", "glob", "ls"]);
+
+function toolIsWriteShaped(name) {
+  const bare = name.startsWith("mcp__") ? name.split("__").pop() : name;
+  if (NOT_WRITE_SHAPED.has(bare) || bare.startsWith("helm_")) {
+    return false;
+  }
+  return WRITE_SHAPED.some((stem) => bare.includes(stem));
+}
 const SHELL_TOOLS = new Set(["bash", "powershell", "shell"]);
 
 // ---------------------------------------------------------------------------
@@ -254,6 +273,14 @@ export function readShell(source) {
       continue;
     }
 
+    // `{` and `}` delimit a group command only as STANDALONE words. Splitting on them
+    // mid-word turned `git diff @{u}..HEAD` into three nodes and read `u` as a command, so
+    // every upstream-relative git range was refused (review, 2026-08-16).
+    if ((ch === "{" || ch === "}") && current) {
+      pushChar(ch, false);
+      i++;
+      continue;
+    }
     if (ch === ";" || ch === "&" || ch === "|" || ch === "\n" || ch === "(" || ch === ")" || ch === "{" || ch === "}") {
       endNode();
       i++;
@@ -322,7 +349,7 @@ function commandName(word) {
 
 // Commands with no way to modify anything, whatever their arguments.
 const READ_ONLY = new Set([
-  "ls", "dir", "cat", "bat", "head", "tail", "less", "more", "nl", "wc", "sort", "uniq",
+  "ls", "dir", "cat", "bat", "head", "tail", "less", "more", "nl", "wc",
   "cut", "tr", "column", "fold", "rev", "seq", "echo", "printf", "pwd", "cd", "basename",
   "dirname", "realpath", "readlink", "which", "where", "whoami", "hostname", "date",
   "uname", "id", "groups", "du", "df", "stat", "file", "type", "test", "true", "false",
@@ -334,19 +361,31 @@ const READ_ONLY = new Set([
 // Commands that are read-only ONLY under a condition their arguments must satisfy.
 // Each returns true when THIS invocation is provably read-only.
 const CONDITIONAL = new Map([
+  // Tools whose ordinary use is a read but which carry an output-file flag. A third review
+  // (2026-08-16) proved all three by running them: `sort -o f`, `uniq in out` and
+  // `awk -i inplace` each wrote, and each was ALLOWED because it sat in the unconditional
+  // list above. The last one overwrote its source file in place - the 2026-08-12 incident,
+  // spelled differently. The lesson is that this list must be built by reading each tool's
+  // flags, not by recognising its name.
+  ["sort", (a) => !a.some((w) => w === "-o" || w.startsWith("--output"))],
+  // GNU uniq takes an optional OUTPUT file as its second positional argument.
+  ["uniq", (a) => a.filter((w) => !w.startsWith("-")).length < 2],
+  ["tree", (a) => !a.some((w) => w === "-o" || w.startsWith("--output"))],
+  ["xmllint", (a) => !a.some((w) => w.startsWith("--output") || w === "-o")],
+  ["yq", (a) => !a.some((w) => w === "-i" || w === "--inplace" || w.startsWith("--in-place"))],
   // -i / --in-place edits the file.
   ["sed", (a) => !a.some((w) => w === "-i" || w.startsWith("-i") || w === "--in-place" || w.startsWith("--in-place"))],
   // An awk program can redirect internally: `awk 'BEGIN{print "x" > "/tmp/f"}'`.
-  ["awk", (a) => !a.some((w) => w.includes(">") || /\bprint\s*>/.test(w) || w.includes("system("))],
+  ["awk", (a) => !a.some((w, k) => w.includes(">") || w.includes("system(") || w === "-i" || w.startsWith("--in-place") || a[k - 1] === "-i")],
   ["gawk", (a) => !a.some((w) => w.includes(">") || w.includes("system("))],
   ["mawk", (a) => !a.some((w) => w.includes(">") || w.includes("system("))],
   // -exec / -execdir / -delete / -ok all act.
   ["find", (a) => !a.some((w) => ["-exec", "-execdir", "-delete", "-ok", "-okdir", "-fprint", "-fprintf", "-fls"].includes(w))],
   // A version query runs no program. Anything else might.
   ["node", (a) => a.length > 0 && a.every((w) => ["--version", "-v", "--help", "-h"].includes(w))],
-  ["python", (a) => a.length > 0 && a.every((w) => ["--version", "-V", "--help", "-h"].includes(w))],
-  ["python3", (a) => a.length > 0 && a.every((w) => ["--version", "-V", "--help", "-h"].includes(w))],
-  ["py", (a) => a.length > 0 && a.every((w) => ["--version", "-V", "--help", "-h"].includes(w))],
+  ["python", pythonIsReadOnly],
+  ["python3", pythonIsReadOnly],
+  ["py", pythonIsReadOnly],
   ["deno", (a) => a.length > 0 && a.every((w) => ["--version", "-V", "--help", "-h"].includes(w))],
   ["bun", (a) => a.length > 0 && a.every((w) => ["--version", "-v", "--help", "-h"].includes(w))],
   ["git", gitIsReadOnly],
@@ -362,15 +401,15 @@ const GIT_READ_ONLY = new Set([
   "log", "show", "diff", "status", "blame", "annotate", "rev-parse", "rev-list", "describe",
   "shortlog", "reflog", "whatchanged", "ls-files", "ls-tree", "ls-remote", "cat-file",
   "merge-base", "name-rev", "count-objects", "check-ignore", "check-attr", "verify-commit",
-  "verify-tag", "grep", "diff-tree", "diff-index", "for-each-ref", "show-ref", "var",
+  "verify-tag", "grep", "diff-tree", "diff-index", "for-each-ref", "show-ref", "show-branch", "var",
   "cherry", "range-diff", "instaweb", "help", "version",
 ]);
 // git subcommands that read OR write depending on their flags. Listing is fine; the same
 // subcommand with a different flag deletes a branch. The previous version refused all of
 // these outright, which blocked `git branch -a` and `git remote -v`.
 const GIT_CONDITIONAL = new Map([
-  ["branch", (a) => a.every((w) => w.startsWith("-") ? /^(-a|-r|-v+|-l|--list|--all|--remotes|--verbose|--show-current|--contains|--no-contains|--merged|--no-merged|--points-at|--format|--color|--no-color|--sort|--column|--i(gnore-case)?)(=.*)?$/.test(w) : false)],
-  ["tag", (a) => a.length > 0 && a.every((w) => /^(-l|--list|-n\d*|--contains|--no-contains|--points-at|--merged|--no-merged|--sort|--format|--color|--no-color)(=.*)?$/.test(w) || (a.includes("-l") || a.includes("--list")))],
+  ["branch", (a) => a.every((w, k) => ["--contains", "--no-contains", "--merged", "--no-merged", "--points-at", "--sort", "--format", "--color"].includes(a[k - 1]) ? true : w.startsWith("-") ? /^(-a|-r|-v+|-l|--list|--all|--remotes|--verbose|--show-current|--contains|--no-contains|--merged|--no-merged|--points-at|--format|--color|--no-color|--sort|--column|--i(gnore-case)?)(=.*)?$/.test(w) : false)],
+  ["tag", (a) => a.length === 0 || a.every((w) => /^(-l|--list|-n\d*|--contains|--no-contains|--points-at|--merged|--no-merged|--sort|--format|--color|--no-color)(=.*)?$/.test(w) || (a.includes("-l") || a.includes("--list")))],
   ["remote", (a) => a.length === 0 || (a[0] === "-v" && a.length === 1) || ["show", "get-url"].includes(a[0])],
   ["stash", (a) => ["list", "show"].includes((a[0] || "").toLowerCase())],
   ["config", (a) => a.some((w) => ["--get", "--get-all", "--get-regexp", "--list", "-l"].includes(w))],
@@ -413,13 +452,34 @@ function ghIsReadOnly(args) {
   const lower = args.map((w) => w.toLowerCase());
   if (lower[0] === "api") {
     // `gh api` is a GET until a method or a field says otherwise.
-    return !lower.some((w) => ["-x", "--method", "-f", "--raw-field", "-f=", "--field", "--input"].includes(w) || w.startsWith("-x") || w.startsWith("--method"));
+    const mi = lower.findIndex((w) => w === "-x" || w === "--method");
+    const method = mi >= 0 ? (lower[mi + 1] || "") : "get";
+    if (!["get", "head"].includes(method)) {
+      return false;
+    }
+    return !lower.some((w) => ["-f", "--raw-field", "--field", "--input"].includes(w));
   }
   if (lower[0] === "auth") {
     return lower[1] === "status" || lower[1] === "token";
   }
-  // `gh <noun> <verb>` - the verb must be a read.
-  return lower.slice(0, 3).some((w) => GH_READ_VERBS.has(w));
+  // `gh <noun> <verb>` - the VERB must be a read, and it is the first non-flag word after the
+  // noun. Accepting a read verb anywhere in the first three words let `gh alias set list ...`
+  // through, and it really did rewrite the captain's gh config during the review.
+  const words = lower.filter((w) => !w.startsWith("-"));
+  return words.length >= 2 ? GH_READ_VERBS.has(words[1]) : words.length === 1;
+}
+
+// `python -m json.tool x.json` pretty-prints and is a very ordinary way to read a file.
+// Anything else handed to an interpreter can write, so it stays unproven.
+const PY_READ_MODULES = new Set(["json.tool", "site", "sysconfig", "platform", "this"]);
+function pythonIsReadOnly(args) {
+  if (args.length === 0) {
+    return false;
+  }
+  if (args.every((w) => ["--version", "-V", "--help", "-h"].includes(w))) {
+    return true;
+  }
+  return args[0] === "-m" && PY_READ_MODULES.has((args[1] || "").toLowerCase());
 }
 
 function npmIsReadOnly(args) {
@@ -557,127 +617,64 @@ export function shellNotReadOnlyReason(command) {
   return firstUnprovenCommand(nodes);
 }
 
-// Commands whose PURPOSE is to change a file. Used only for the second mate's BUDGET,
-// where the question is "was that a file change?" rather than "is this safe?" - a miss
-// here costs an uncounted edit, not a tier violation, so an enumeration is acceptable in
-// this one place and nowhere else in this file.
-const FILE_MUTATORS = new Set([
-  "tee", "mkdir", "rmdir", "touch", "cp", "mv", "rm", "ln", "truncate", "dd", "install",
-  "shred", "patch", "unzip", "copy", "move", "ren", "rename", "md", "xcopy", "robocopy",
-  "set-content", "add-content", "out-file", "new-item", "remove-item", "copy-item",
-  "move-item", "rename-item", "clear-content", "ni", "cpi", "mi", "ri",
-]);
+// Supervision: what a second mate does to VALIDATE crew work rather than to author it.
+// Running the project's build, its tests, and landing a crew branch are the whole job of
+// this tier, so they must not spend an authoring budget.
+const SUPERVISION_RUNNERS = new Set(["npm", "pnpm", "yarn", "make", "gradlew", "cargo", "dotnet", "mvn", "gradle", "docker", "jest", "vitest", "pytest", "tsc", "eslint"]);
+// git is supervision EXCEPT where it materialises working-tree content the second mate did
+// not write by hand. `git apply` and `git checkout -- .` are authoring by another name; the
+// review found both costing zero.
+const GIT_AUTHORING = new Set(["init", "clone", "apply", "am", "cherry-pick", "revert", "checkout", "restore", "clean", "stash"]);
 
-/** Did this shell command change a file? (second-mate budget accounting) */
-export function shellMutatesFile(command) {
-  const { nodes, redirectsToFile, error } = readShell(String(command ?? ""));
+function isSupervisionCommand(command) {
+  const { nodes, error } = readShell(command);
   if (error) {
-    return true; // unreadable counts, so a budget cannot be dodged by being obscure
-  }
-  if (redirectsToFile) {
-    return true;
-  }
-  const walk = (list, depth) => {
-    if (depth > 8) {
-      return true;
-    }
-    for (const words of list) {
-      let i = 0;
-      // Set once a wrapper (timeout/env/nohup/xargs...) has been passed. After one, an
-      // unrecognised word is an ARGUMENT of the wrapper, not the end of the command - so
-      // keep scanning instead of stopping. `timeout 5 touch pwn.txt` stopped at `5`.
-      let afterWrapper = false;
-      while (i < words.length) {
-        const w = words[i];
-        // Skip assignments and shell keywords so the real command is reached - `T=tee; ...`
-        // and `for f in a; do touch x; done` both hid a write behind one of these.
-        if (!w.quoted && /^[A-Za-z_][A-Za-z0-9_]*=/.test(w.value)) {
-          i++;
-          continue;
-        }
-        const name = commandName(w.value);
-        if (KEYWORDS.has(name)) {
-          i++;
-          continue;
-        }
-        if (w.quoted && i > 0 && !afterWrapper) {
-          break;
-        }
-        // A command position that is a variable expansion cannot be resolved without running
-        // the shell, so it counts. `T=tee; echo hi | $T pwn.txt` really writes.
-        if (!w.quoted && w.value.includes("$")) {
-          return true;
-        }
-        if (FILE_MUTATORS.has(name)) {
-          return true;
-        }
-        if (name === "sed" && words.slice(i + 1).some((x) => x.value.startsWith("-i"))) {
-          return true;
-        }
-        // awk can redirect from inside its own program.
-        if (["awk", "gawk", "mawk"].includes(name) && words.slice(i + 1).some((x) => x.value.includes(">"))) {
-          return true;
-        }
-        // find -exec runs an arbitrary command; tar/git can create.
-        if (name === "find" && words.slice(i + 1).some((x) => ["-exec", "-execdir", "-delete", "-ok"].includes(x.value))) {
-          return true;
-        }
-        if (name === "tar" && words.slice(i + 1).some((x) => /^-?-?[cx]/.test(x.value))) {
-          return true;
-        }
-        // git is SUPERVISION for a second mate, not authoring: inspecting, merging and
-        // landing crew work is exactly what this tier is for, and charging `git merge`
-        // against a three-edit budget would lock it out of its own job. Only the two
-        // subcommands that materialise a whole new tree count as authoring.
-        if (name === "git") {
-          const sub = words.slice(i + 1).map((x) => x.value.toLowerCase()).find((x) => !x.startsWith("-"));
-          if (sub === "init" || sub === "clone") {
-            return true;
-          }
-        }
-        if (NESTING.has(name)) {
-          const flags = NESTING.get(name);
-          const idx = words.findIndex((x, k) => k > i && flags.includes(x.value.toLowerCase()));
-          if (idx >= 0 && words[idx + 1]) {
-            const inner = readShell(words[idx + 1].value);
-            if (inner.error || inner.redirectsToFile || walk(inner.nodes, depth + 1)) {
-              return true;
-            }
-            break;
-          }
-          const next = words[i + 1];
-          if (flags.length === 0 && next && next.quoted) {
-            const inner = readShell(next.value);
-            if (inner.error || inner.redirectsToFile || walk(inner.nodes, depth + 1)) {
-              return true;
-            }
-            break;
-          }
-          afterWrapper = true;
-          i++;
-          continue;
-        }
-        // An interpreter handed an INLINE program can write anything, so it counts. A named
-        // script does NOT: a second mate runs its project's test and build scripts constantly
-        // to validate crew work, and counting those would exhaust the budget without a single
-        // file having been edited. That is a deliberate accuracy trade - a miss here costs an
-        // uncounted edit, never a tier violation, because a first mate is refused either way.
-        if (["node", "python", "python3", "py", "perl", "ruby", "php", "deno", "bun"].includes(name)) {
-          const rest = words.slice(i + 1).map((x) => x.value);
-          if (rest.some((x) => ["-e", "-p", "-c", "--eval", "--print", "-E", "--command"].includes(x)) || rest.includes("-")) {
-            return true;
-          }
-        }
-        if (afterWrapper) {
-          i++;
-          continue;
-        }
-        break;
-      }
-    }
     return false;
-  };
-  return walk(nodes, 0);
+  }
+  for (const words of nodes) {
+    for (let i = 0; i < words.length; i++) {
+      const w = words[i];
+      if (!w.quoted && /^[A-Za-z_][A-Za-z0-9_]*=/.test(w.value)) {
+        continue;
+      }
+      const name = commandName(w.value);
+      if (KEYWORDS.has(name)) {
+        continue;
+      }
+      if (name === "git") {
+        const sub = words.slice(i + 1).map((x) => x.value.toLowerCase()).find((x) => !x.startsWith("-"));
+        return !GIT_AUTHORING.has(sub || "");
+      }
+      // A named script run through an interpreter is a test or a build, not hand authoring.
+      // Deliberate accuracy trade: a script CAN write, so this is where the budget is least
+      // exact. It costs an uncounted edit, never a tier violation, because a first mate is
+      // refused either way - and the alternative charged three `npm test` runs against a
+      // three-edit budget and locked a second mate out of validating its own crew.
+      if (["node", "python", "python3", "py", "deno", "bun"].includes(name)) {
+        const rest = words.slice(i + 1).map((x) => x.value);
+        return rest.length > 0 && !rest.some((x) => ["-e", "-p", "-c", "--eval", "--print"].includes(x)) && !rest.includes("-");
+      }
+      return SUPERVISION_RUNNERS.has(name);
+    }
+  }
+  return false;
+}
+
+/**
+ * Did this shell command change a file? (second-mate budget accounting)
+ *
+ * DEFINED IN TERMS OF THE READ-ONLY QUESTION, not as a second enumeration. It used to walk
+ * the command again with its own FILE_MUTATORS list, and a review measured what that costs:
+ * `sort -o`, `uniq in out`, `split`, `source ./writer.sh`, `npx --yes -- node -e "...write"`
+ * and six more all wrote for real and spent nothing, while `git apply` and
+ * `npx prettier --write` were free by design. Two lists over one lexer drift apart; one list
+ * with an explicit exception set cannot.
+ */
+export function shellMutatesFile(command) {
+  if (!shellNotReadOnlyReason(command)) {
+    return false;
+  }
+  return !isSupervisionCommand(command);
 }
 
 const FIRST_MATE_DENIAL = [
@@ -723,7 +720,7 @@ function secondMateDenial(used, budget) {
 export function decideToolCall({ tier, tool, input = {}, writesThisTurn = 0, budget = SECOND_MATE_TURN_WRITE_BUDGET } = {}) {
   const name = String(tool || "").toLowerCase();
   const isShell = SHELL_TOOLS.has(name);
-  const isMutatingTool = MUTATING_TOOLS.has(name);
+  const isMutatingTool = MUTATING_TOOLS.has(name) || toolIsWriteShaped(name);
 
   if (!isShell && !isMutatingTool) {
     // Read tools, MCP tools, everything else. Not this guard's business.
