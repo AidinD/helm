@@ -9,13 +9,14 @@ import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
 import crypto from "node:crypto";
-import { execFile, execFileSync, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn, spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { readAllSessions, enrichWithJot, setSessionArchived, forkTranscriptAtUserMessage, switchSessionRootFolder } from "./lib/sessions.js";
 import { loadJot, loadGoals, addSubtask, formatJotSummaryForClassifier, projectBoardSummary, setTaskStatus, setTaskTags, readJotState, ensureTagsExist, boardPath } from "./lib/jot.js";
 import { resolveJotDataDir, resolveJotTodosPath } from "./lib/jotDataDir.js";
 import { loadConfig, writeConfig } from "./lib/config.js";
 import { startSession, resolveClaudeBinary } from "./lib/launcher.js";
+import { turnCounterPath, TIER_FIRST_MATE, TIER_SECOND_MATE } from "./lib/tierGuard.js";
 import { createLiveSessionRegistry } from "./lib/liveSessions.js";
 import { sessionLifecycleState, applyStatusOverrides, sessionStateSource } from "./lib/sessionState.js";
 import { createJotHostStore } from "./lib/jotHostStore.js";
@@ -1749,6 +1750,108 @@ function userMcpAllowedTools() {
 
 // The first-mate operating manual, attached as system context on a fresh
 // first-mate turn (see session:start). Read once and cached - it's a static doc.
+// --- Tier guard wiring (src/lib/tierGuard.js) ------------------------------------
+//
+// Builds the inline --settings JSON that attaches the PreToolUse hook, plus the
+// environment the hook reads. Passed on EVERY launch of a tiered session, fresh or
+// resumed - that is the property the manual does not have, and the reason Captain
+// Hook kept its old rules until it was retired.
+//
+// The hook script must be reachable on disk from the PACKAGED app too. It is inside
+// the asar archive, which node cannot execute directly, so the app's own node
+// runtime runs it via ELECTRON_RUN_AS_NODE - the same trick the heavy worker uses.
+// What to run the hook script WITH.
+//
+// A plain `node` on PATH is strongly preferred. The obvious alternative - Helm's own
+// Electron binary with ELECTRON_RUN_AS_NODE=1 - works, but that variable would have
+// to sit in the SESSION's environment, and everything the session starts inherits it.
+// Helm's own E2E harness launches Electron; a second mate running that suite would
+// have found the app silently starting as a bare node process instead. A guard that
+// breaks the tests of the project it is guarding is not a guard.
+//
+// So the env-var route is the fallback, not the default, and it is recorded here in
+// one place rather than at the launch site.
+let _tierGuardRunner;
+function tierGuardRunner() {
+  if (_tierGuardRunner !== undefined) {
+    return _tierGuardRunner;
+  }
+  _tierGuardRunner = null;
+  const explicit = process.env.HELM_NODE_BIN;
+  if (explicit && fs.existsSync(explicit)) {
+    _tierGuardRunner = { bin: explicit, env: {} };
+    return _tierGuardRunner;
+  }
+  try {
+    const probe = spawnSync(process.platform === "win32" ? "where" : "which", ["node"], { encoding: "utf8" });
+    const found = (probe.stdout || "").split(/\r?\n/).map((l) => l.trim()).find(Boolean);
+    if (found && fs.existsSync(found)) {
+      _tierGuardRunner = { bin: found, env: {} };
+      return _tierGuardRunner;
+    }
+  } catch {
+    // fall through to the Electron fallback
+  }
+  if (process.execPath) {
+    console.warn("[helm] tier guard: no node on PATH, falling back to this app's runtime (ELECTRON_RUN_AS_NODE is set for the session)");
+    _tierGuardRunner = { bin: process.execPath, env: { ELECTRON_RUN_AS_NODE: "1" } };
+  }
+  return _tierGuardRunner;
+}
+
+function tierGuardLaunchConfig(tier, { sessionId, metaHome }) {
+  if (!tier) {
+    return {};
+  }
+  const hookScript = process.env.HELM_TIER_GUARD_MODULE || path.join(__dirname, "hooks", "tierGuardHook.mjs");
+  const runner = tierGuardRunner();
+  if (!runner) {
+    // No runtime to run the hook with. Say so loudly rather than launching a tiered
+    // session with a guard that silently is not there - a fence you believe in and
+    // do not have is worse than no fence.
+    console.error("[helm] TIER GUARD NOT ATTACHED: no node runtime could be resolved. This session can write files.");
+    return {};
+  }
+  const command = `"${runner.bin}" "${hookScript}"`;
+  return {
+    settings: {
+      hooks: {
+        PreToolUse: [
+          {
+            // Catch-all. A matcher that enumerates tool names is the fail-open shape
+            // this guard exists to close: Bash was missing from the old
+            // --disallowedTools list, and any tool added later would be missing from
+            // a matcher too. The script owns classification; the matcher owns nothing.
+            matcher: ".*",
+            hooks: [{ type: "command", command }],
+          },
+        ],
+      },
+    },
+    extraEnv: {
+      ...runner.env,
+      HELM_TIER: tier,
+      HELM_TIER_SESSION: sessionId || "",
+      HELM_META_HOME: metaHome || "",
+    },
+  };
+}
+
+// Each turn is one launch, so clearing the counter here IS "per turn". Without the
+// reset the second mate's budget would be a lifetime allowance: three writes across
+// a whole session rather than three per turn, and it would look like the guard had
+// silently turned into a prohibition.
+function resetTierTurnCounter(metaHome, sessionId) {
+  if (!metaHome || !sessionId) {
+    return;
+  }
+  try {
+    fs.rmSync(turnCounterPath(metaHome, sessionId), { force: true });
+  } catch {
+    // A counter that cannot be cleared only makes the budget stricter, never looser.
+  }
+}
+
 let _firstMateInstructions = null;
 function firstMateInstructions() {
   if (_firstMateInstructions === null) {
@@ -2366,6 +2469,10 @@ ipcMain.handle(
     let strictMcpConfig;
     let agents;
     let effectiveSecondMateId = null;
+    // Which tier this launch runs as, decided in the branches below and turned into
+    // the tier-guard hook config just before the launch. Kept as one variable so a
+    // future tier cannot be added to the manual without also reaching the guard.
+    let launchTier = null;
     // A meta-home session is a FIRST MATE only when it is actually bound to one -
     // either the pane passed its mateId, or a resumed session resolves to a mate by
     // its binding. A meta-home session with NO mate (a personal chat the captain
@@ -2386,7 +2493,13 @@ ipcMain.handle(
         allowedTools = FIRST_MATE_ALLOWED_TOOLS;
         // Tier-discipline guard (ad17e2e6): deny file mutation + sub-agent
         // fan-out so a first mate can't do hands-on project work in its own seat.
+        // Schema removal is the strongest layer available and stays - a tool that is
+        // not offered cannot be called. It is not the whole guard, because the shell
+        // cannot be removed (a first mate reads with it) and the shell is the route
+        // both Captain Hook and Captain Haddock actually took. That surface belongs
+        // to the PreToolUse hook attached below.
         disallowedTools = FIRST_MATE_DISALLOWED_TOOLS;
+        launchTier = TIER_FIRST_MATE;
         // Load the first-mate operating manual as system context on the FRESH
         // turn only (no resume) so a newly-spun-up mate boots knowing its role,
         // with the composer left empty for the captain's first prompt. On resume
@@ -2464,6 +2577,7 @@ ipcMain.handle(
         // is denied it by the tier guard, so injecting seats there would advertise
         // something it structurally cannot call).
         agents = personaAgents();
+        launchTier = TIER_SECOND_MATE;
         // NOT strict: additive to the project's full MCP set (see comment above).
       }
     } catch (err) {
@@ -2486,6 +2600,12 @@ ipcMain.handle(
       liveTurnId = resumeSessionId;
       markSessionLive(liveTurnId);
     }
+    // One launch = one turn, so this is where "per turn" is actually defined for the
+    // second mate's write budget. Skipping it would silently turn a per-turn budget
+    // into a per-session one.
+    if (launchTier === TIER_SECOND_MATE) {
+      resetTierTurnCounter(resolveMetaHome(), resumeSessionId);
+    }
     // launching (Epic f3d096fa): spawned, nothing back yet. A FRESH launch has no
     // session id in this window at all, which is exactly why the transcript
     // heuristic cannot see it - so track it by launchId and bind the id later.
@@ -2506,6 +2626,11 @@ ipcMain.handle(
       appendSystemPrompt,
       strictMcpConfig,
       agents,
+      // The tier guard. A resume knows its session id upfront; a fresh launch does
+      // not, so the hook falls back to the session_id the harness puts in its own
+      // payload. Only the second mate's budget needs the id at all - a first mate's
+      // answer never depends on it, which keeps the strictest tier the least fragile.
+      ...tierGuardLaunchConfig(launchTier, { sessionId: resumeSessionId, metaHome: resolveMetaHome() }),
       onEvent: (evt) => {
         if (evt.kind === "session" && evt.sessionId && !internal && !liveTurnId) {
           liveTurnId = evt.sessionId;
@@ -5117,6 +5242,7 @@ function runRelayTurn(metaHome, { secondMateId: smId, projectPath, message, allo
   if (liveTurnId) {
     markSessionLive(liveTurnId);
   }
+  resetTierTurnCounter(metaHome, resumeSessionId);
   let child;
   let done;
   try {
@@ -5132,6 +5258,10 @@ function runRelayTurn(metaHome, { secondMateId: smId, projectPath, message, allo
       appendSystemPrompt: secondMateAppendPrompt(resumeSessionId, secondMateInstructions()),
       strictMcpConfig: false,
       resumeSessionId,
+      // A relay turn is a second-mate turn. Leaving the guard off here would have
+      // made "the captain jumped in" and "a first mate relayed" two different sets of
+      // rules for the same seat, and the relay path is the one that runs unattended.
+      ...tierGuardLaunchConfig(TIER_SECOND_MATE, { sessionId: resumeSessionId, metaHome }),
       onEvent: (evt) => {
         if (evt.kind === "session" && evt.sessionId) {
           if (!liveTurnId) {
@@ -5256,9 +5386,40 @@ function processDispatchRequests(metaHome) {
         // accepts a valid absolute-path escape hatch and returns null for an
         // unknown name/path - falling back to the raw string would register a
         // phantom second mate at a bogus path (review CONFIRMED).
-        const proposeProject = resolveDispatchProject(request.project);
+        let proposeProject = resolveDispatchProject(request.project);
+        if (!proposeProject && request.create === true) {
+          // Layer 0: a project that does not exist yet. Without this the answer to
+          // "build me a new app" was "Unknown project" on every delegation attempt,
+          // so the only working route was the first mate building it itself - which
+          // is exactly what happened on 2026-08-13 (task ee795e65).
+          //
+          // Deliberately narrow, because creating a directory from a queued request
+          // is the one place this could be turned into "write anywhere by asking":
+          // an absolute path only (no name guessing, no relative escape), and it must
+          // not already exist as a file.
+          const requested = String(request.project || "");
+          if (!path.isAbsolute(requested)) {
+            reject(`Cannot create "${requested}": pass an ABSOLUTE path when create is true, so there is no ambiguity about where a new project lands.`);
+            continue;
+          }
+          try {
+            const target = path.resolve(requested);
+            if (fs.existsSync(target) && !fs.statSync(target).isDirectory()) {
+              reject(`Cannot create "${target}": something that is not a directory is already there.`);
+              continue;
+            }
+            fs.mkdirSync(target, { recursive: true });
+            proposeProject = target;
+            console.log(`[helm] created a new project folder for a delegated build: ${target}`);
+          } catch (err) {
+            reject(`Could not create "${requested}": ${err?.message || String(err)}`);
+            continue;
+          }
+        }
         if (!proposeProject) {
-          reject(`Unknown project "${request.project}". Call helm_list_projects, or pass an explicit absolute repo path.`);
+          reject(
+            `Unknown project "${request.project}". Call helm_list_projects, or pass an explicit absolute repo path. If this is work with no project yet (a new app, a new tool), pass an absolute path AND create:true - a new build is still a second mate's job.`
+          );
           continue;
         }
         try {

@@ -59,10 +59,28 @@ try {
   );
 
   // The bind was written to the isolated store, so a later resolve/rebuild recognises it.
+  //
+  // This used to assert the binding appeared under "sess_c-rein" - the renderer's own
+  // display key. That WAS the behaviour, and it was the bug (task 99089c59): the key
+  // became a durable identity, crew runs were stamped with it, and deriveSecondMates
+  // (which knows only "sm_") hashed them into a phantom node, so the second mate the
+  // captain was looking at showed no crew at all. The test's intent - a jump-in binds
+  // the session so a later resolve finds it - is unchanged and still checked here; only
+  // the id it must be filed under is corrected, to the one secondMateId() mints.
+  const { secondMateId, DIRECT_FIRST_MATE } = await import("../../src/lib/secondMates.js");
+  const expectedId = secondMateId(DIRECT_FIRST_MATE, PROJECT);
   const bindings = JSON.parse(fs.readFileSync(process.env.HELM_SECOND_MATES_PATH, "utf8"));
   ok(
-    bindings["sess_c-rein"]?.sessionId === "c-rein",
-    `jump-in also BOUND the session to the second mate (${JSON.stringify(bindings["sess_c-rein"] || null)})`
+    bindings[expectedId]?.sessionId === "c-rein",
+    `jump-in BOUND the session under the real second-mate id ${expectedId} (${JSON.stringify(bindings[expectedId] || null)})`
+  );
+  ok(
+    bindings[expectedId]?.projectPath,
+    `and recorded its project (${bindings[expectedId]?.projectPath || "MISSING"}) - without it deriveSecondMates cannot render the node until its first dispatch lands`
+  );
+  ok(
+    !Object.keys(bindings).some((k) => k.startsWith("sess_")),
+    `and nothing was filed under a display key (${Object.keys(bindings).join(", ") || "empty"}) - two id namespaces for one thing is what produced the phantom`
   );
 
   // Source: the resume path forwards the id (a plain openSessionInPane(existing, 0) is the bug).
