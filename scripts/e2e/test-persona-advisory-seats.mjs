@@ -115,18 +115,32 @@ const mainSrc = fs.readFileSync(path.join(repo, "src", "main.js"), "utf8");
 const launcherSrc = fs.readFileSync(path.join(repo, "src", "lib", "launcher.js"), "utf8");
 ok(/agents = personaAgents\(\)/.test(mainSrc), "main.js attaches the seats to a launch");
 ok(/--agents/.test(launcherSrc), "and the launcher passes them to the CLI");
-// Anchor on the ASSIGNMENT, not on what is assigned. This used to slice from the
-// literal "effectiveSecondMateId = secondMateId", so the day the right-hand side
-// changed (task 99089c59 wrapped it in resolveSecondMateId) indexOf returned -1, the
-// slice ran from the top of the file, and BOTH halves of this check reported failure
-// while the wiring they describe was untouched. A guard that breaks on an unrelated
-// edit teaches you to ignore it.
-const smAnchor = mainSrc.indexOf("effectiveSecondMateId =");
-ok(smAnchor > 0, "the second-mate branch is locatable in main.js - if this fails the two checks below are meaningless, not failing");
+// Anchor on the BRANCH, and prove the anchor is the branch.
+//
+// This has now been wrong twice in opposite directions. It first sliced from the literal
+// "effectiveSecondMateId = secondMateId", so an unrelated edit to the right-hand side made
+// both halves report failure while the wiring was fine. The fix for that anchored on
+// "effectiveSecondMateId =" - which matches the DECLARATION (`let effectiveSecondMateId =
+// null;`) fifty lines earlier, so the second-mate slice swallowed the first-mate branch and
+// the first-mate slice ran backwards to zero length. Both checks then passed no matter what,
+// including with the seats attached to the first mate: exactly the thing they forbid. Found
+// by review, 2026-08-16.
+//
+// So the anchor is the branch condition itself, and the check below proves the slice really
+// is the second-mate branch before anything is asserted about its contents.
+const smAnchor = mainSrc.indexOf("} else if (secondMateId ||");
+ok(smAnchor > 0, "the second-mate branch is locatable in main.js - without this the two checks below are meaningless rather than failing");
 const secondMateBranch = mainSrc.slice(smAnchor, mainSrc.indexOf("} catch (err) {", smAnchor));
+ok(
+  /effectiveSecondMateId =/.test(secondMateBranch) && !/let effectiveSecondMateId/.test(secondMateBranch),
+  "and the slice is the branch body, not the variable declaration above it - the declaration is what the previous anchor found, and it made both checks below unfailable"
+);
 ok(/agents = personaAgents\(\)/.test(secondMateBranch), "the attachment sits in the SECOND-MATE branch, the tier that has Task");
-const firstMateBranch = mainSrc.slice(mainSrc.indexOf("allowedTools = FIRST_MATE_ALLOWED_TOOLS"), smAnchor);
-ok(!/agents = personaAgents\(\)/.test(firstMateBranch), "and not on the first mate, which is denied Task and could never call one");
+const fmStart = mainSrc.indexOf("allowedTools = FIRST_MATE_ALLOWED_TOOLS");
+ok(fmStart > 0 && fmStart < smAnchor, "the first-mate branch is locatable and comes before it - a backwards slice is empty, and an empty string satisfies any 'does not contain' check");
+const firstMateBranch = mainSrc.slice(fmStart, smAnchor);
+ok(firstMateBranch.length > 200, `and the first-mate slice has real content (${firstMateBranch.length} chars)`);
+ok(!/agents = personaAgents\(\)/.test(firstMateBranch), "and the seats are NOT on the first mate, which is denied Task and could never call one");
 
 // The manual is how a second mate learns the seats exist at all - an injected
 // capability nothing mentions is an unused capability.

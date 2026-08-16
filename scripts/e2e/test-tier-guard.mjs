@@ -15,7 +15,7 @@
 // Run:  node scripts/e2e/test-tier-guard.mjs
 import {
   decideToolCall,
-  shellWriteReason,
+  shellNotReadOnlyReason,
   readShell,
   TIER_FIRST_MATE,
   TIER_SECOND_MATE,
@@ -90,7 +90,7 @@ ok(allows("Bash", { command: "node --version" }), "node --version, which runs no
 ok(allows("Bash", { command: "npm ls --depth=0" }), "npm ls");
 ok(allows("Bash", { command: "gh issue list" }), "gh issue list");
 ok(allows("Bash", { command: "echo 'hello world'" }), "a plain echo");
-ok(allows("Bash", { command: "cmd 2>&1" }), "2>&1 duplicates a file descriptor and writes no file");
+ok(allows("Bash", { command: "git status 2>&1" }), "2>&1 duplicates a file descriptor and writes no file");
 ok(allows("Read", { file_path: "x.md" }), "the Read tool");
 ok(allows("mcp__helm-dispatch__helm_create_second_mate", { project: "dinghy" }), "and the delegation tool this guard exists to push it toward");
 
@@ -100,7 +100,7 @@ ok(allows("mcp__helm-dispatch__helm_create_second_mate", { project: "dinghy" }),
 // Kun Chen's cd-guard deliberately fails OPEN on syntax it cannot parse, because a
 // wrongly blocked write there is a correctness hazard. Here the trade runs the other
 // way, and the asymmetry is the point rather than an oversight.
-const broken = shellWriteReason("echo 'unterminated");
+const broken = shellNotReadOnlyReason("echo 'unterminated");
 ok(!!broken, `an unreadable command is refused rather than waved through (${broken})`);
 ok(readShell("echo 'unterminated").error === true, "and the reader reports WHY, rather than silently returning a partial word list");
 

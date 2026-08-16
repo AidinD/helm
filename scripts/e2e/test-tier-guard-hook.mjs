@@ -49,6 +49,13 @@ const READ = { tool_name: "Bash", tool_input: { command: "git log --oneline -5" 
 // --- 1. the envelope the harness reads ---------------------------------------
 const denied = runHook(WRITE, { HELM_TIER: "first-mate" });
 ok(denied.decision === "deny", "a first mate's shell write comes back as a deny decision");
+// EVERY field, not just the one this test happens to read. A mutation that set
+// hookEventName to a wrong value survived the whole suite (review, 2026-08-16), and if the
+// CLI keys on that field to honour a deny, the guard fails open with a green suite.
+const envelope = JSON.parse(denied.stdout).hookSpecificOutput;
+ok(envelope.hookEventName === "PreToolUse", `the envelope names the right hook event (${envelope.hookEventName}) - the CLI reads this, and nothing was checking it`);
+ok(typeof envelope.permissionDecisionReason === "string" && envelope.permissionDecisionReason.length > 50, "and carries a reason long enough to actually redirect the mate");
+ok(Object.keys(JSON.parse(denied.stdout)).join(",") === "hookSpecificOutput", "and the payload has exactly the one top-level key the contract defines");
 ok(denied.code === 0, `and the hook still exits 0 (${denied.code}) - a non-zero exit is a hook CRASH to the harness, not a policy answer`);
 ok(/helm_create_second_mate/.test(denied.reason), "the reason names the tool to reach for instead, so the refusal is a direction rather than a wall");
 ok(/create: true/.test(denied.reason), "and tells it how to delegate work that has no project yet - the case that cornered Captain Haddock");
@@ -96,10 +103,18 @@ ok(runHook(WRITE, { HELM_TIER: "second-mate" }).decision === "allow", "clearing 
 fs.writeFileSync(counter, "{ this is not json", "utf8");
 ok(runHook(WRITE, { HELM_TIER: "first-mate" }).decision === "deny", "a corrupt counter file does not soften the first mate's refusal");
 fs.rmSync(counter, { force: true });
+// A raw spawn with NO meta-home in the environment. The previous version passed a third
+// argument to runHook, which takes two - it was ignored, runHook injected a meta home
+// anyway, and the line silently re-ran an assertion from earlier in the file instead of
+// testing what it claimed (found by review, 2026-08-16).
+const noHome = spawnSync(process.execPath, [HOOK], {
+  input: JSON.stringify(WRITE),
+  encoding: "utf8",
+  env: Object.fromEntries(Object.entries({ ...process.env, HELM_TIER: "first-mate" }).filter(([k]) => k !== "HELM_META_HOME" && k !== "HELM_TIER_SESSION")),
+});
 ok(
-  runHook(WRITE, { HELM_TIER: "first-mate" }, {}).decision === "deny" &&
-    spawnSync(process.execPath, [HOOK], { input: JSON.stringify(WRITE), encoding: "utf8", env: { ...process.env, HELM_TIER: "first-mate" } }).stdout.includes("deny"),
-  "and neither does having no meta-home to keep a counter in"
+  noHome.status === 0 && /"permissionDecision":"deny"/.test(noHome.stdout || ""),
+  `and neither does having no meta-home to keep a counter in (exit ${noHome.status}, ${JSON.stringify((noHome.stdout || "").slice(0, 60))})`
 );
 
 fs.rmSync(metaHome, { recursive: true, force: true });

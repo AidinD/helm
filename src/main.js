@@ -93,7 +93,7 @@ import { listSlashItems } from "./lib/slashCommands.js";
 import { trackHelmUsage, summarizeHelmUsage, summarizeReviewActions } from "./lib/helmUsage.js";
 import { mcpAllowedToolsFromConfig } from "./lib/userMcp.js";
 import { initAutoUpdate } from "./lib/autoUpdate.js";
-import { deriveSecondMates, bindSecondMateSession, renameSecondMate, readBindings, proposeSecondMate, markSecondMateCreated, secondMateIdForSession, secondMateId, removeSecondMates, resolveSecondMateId, isDisplaySecondMateId, migrateDisplayKeyBindings, AUTO_CAPTAIN } from "./lib/secondMates.js";
+import { deriveSecondMates, bindSecondMateSession, renameSecondMate, readBindings, proposeSecondMate, markSecondMateCreated, secondMateIdForSession, secondMateId, removeSecondMates, resolveSecondMateId, isDisplaySecondMateId, migrateDisplayKeyBindings, releaseDisplayKeyedSession, AUTO_CAPTAIN } from "./lib/secondMates.js";
 import {
   AUTO_WIDTH_CAP,
   AUTO_CAPTAIN_TAGS,
@@ -1085,6 +1085,12 @@ function applySessionArchiveInner(sessionId, archived) {
     try {
       const bindings = readBindings();
       for (const form of sessionIdForms(sessionId)) {
+        // Clear the LEGACY key directly as well as the resolved one. secondMateIdForSession
+        // now translates a display key and returns null when it cannot, so with no project to
+        // translate against this loop silently stopped releasing archived sessions - and the
+        // block exists precisely so an archived session is not resurrected by a later jump-in
+        // (the captain, 2026-08-12). Found by review, 2026-08-16.
+        releaseDisplayKeyedSession(form);
         const smId = secondMateIdForSession(form, bindings);
         if (smId) {
           bindSecondMateSession(smId, null);
