@@ -1803,7 +1803,28 @@ function tierGuardLaunchConfig(tier, { sessionId, metaHome }) {
   if (!tier) {
     return {};
   }
-  const hookScript = process.env.HELM_TIER_GUARD_MODULE || path.join(__dirname, "hooks", "tierGuardHook.mjs");
+  // The hook runs in a SEPARATE process that the CLI spawns, under plain node - and plain
+  // node cannot read a path inside an asar archive; only Electron's patched fs can. Shipped
+  // from inside the archive, the guard would have worked in every dev run and silently failed
+  // to start in the installed app, which is the worst way for a fence to fail: present,
+  // believed in, absent.
+  //
+  // So package.json's build.extraResources copies the hook AND the policy it imports to
+  // resources/tier-guard/, keeping their relative layout so the `../lib/tierGuard.js` import
+  // still resolves. asarUnpack would have been the more obvious tool and does not work here:
+  // setting it makes electron-builder walk node_modules for the unpacked set, and Helm's
+  // `@jot/core` dependency resolves outside the project root, which is fatal to that walk
+  // ("dist-core/index.mjs must be under helm/"). extraResources is what this build already
+  // uses for Jot's own files, and it is verified end to end by test-packaged-build.
+  const hookScript =
+    process.env.HELM_TIER_GUARD_MODULE ||
+    (app.isPackaged
+      ? path.join(process.resourcesPath, "tier-guard", "hooks", "tierGuardHook.mjs")
+      : path.join(__dirname, "hooks", "tierGuardHook.mjs"));
+  if (!fs.existsSync(hookScript)) {
+    console.error(`[helm] TIER GUARD NOT ATTACHED: hook script missing at ${hookScript}. This session can write files.`);
+    return {};
+  }
   const runner = tierGuardRunner();
   if (!runner) {
     // No runtime to run the hook with. Say so loudly rather than launching a tiered
