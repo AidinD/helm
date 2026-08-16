@@ -128,12 +128,17 @@ const TOOLS = [
   {
     name: "helm_create_second_mate",
     description:
-      "FIRST MATES ONLY: register a second mate for a project. Use it for BOTH the daily-loop 'lay out A, B, C' step AND, crucially, as your response whenever the captain names a single project to work on ('I want to work on beatdrop') - reach for this INSTEAD of exploring the repo or implementing yourself. It does NOT spin up a session: it lazily registers the assignment so the second mate appears in the Fleet, and its Opus session spins up only when the captain jumps into it (or you relay to it). So the pattern is: create it, then tell the captain to jump into it in the Fleet. Idempotent per project.",
+      "FIRST MATES ONLY: register a second mate for a project. Use it for BOTH the daily-loop 'lay out A, B, C' step AND, crucially, as your response whenever the captain names a single project to work on ('I want to work on beatdrop') - reach for this INSTEAD of exploring the repo or implementing yourself. It ALSO covers work that has no project yet ('build me a new app'): pass an absolute path plus create:true and the folder is created for you, so a brand-new build is still a second mate's job and never yours. It does NOT spin up a session: it lazily registers the assignment so the second mate appears in the Fleet, and its Opus session spins up only when the captain jumps into it (or you relay to it). So the pattern is: create it, then tell the captain to jump into it in the Fleet. Idempotent per project.",
     inputSchema: {
       type: "object",
       properties: {
         project: { type: "string", description: "Project name (see helm_list_projects) or absolute repo path." },
         brief: { type: "string", description: "What this second mate should own for the project (the assignment)." },
+        create: {
+          type: "boolean",
+          description:
+            "Set true when the project does not exist yet, and pass an absolute path for `project`. Creates the folder and registers a second mate rooted there. Without this a new build has nowhere to be delegated to, and the only route left is doing it yourself - which is not a route you have.",
+        },
       },
       required: ["project"],
     },
@@ -319,6 +324,13 @@ async function toolCreateSecondMate(args) {
     kind: "propose-second-mate",
     project,
     brief: (args?.brief || "").trim() || null,
+    // Layer 0 of the tier fix. A first mate that is forbidden to build must be able
+    // to hand a NEW build to someone; without this, resolveDispatchProject rejected
+    // every path that did not exist yet, so "build me a new app" had no legal move
+    // at all and Captain Haddock built an entire Electron project in the
+    // coordinator seat (2026-08-13). Enforcement without a legal alternative just
+    // converts doing-it-wrong into refusing-to-help.
+    create: args?.create === true,
     dispatchedBy: MATE_ID,
     callerTier: CALLER_TIER,
   });

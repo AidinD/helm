@@ -61,7 +61,7 @@ export function resolveClaudeBinary() {
  * Returns { child, done } where `done` resolves with a summary once the process
  * exits. Emits normalized events: { kind, ...fields }.
  */
-export function startSession({ cwd, prompt, model, effort, permissionMode, resumeSessionId, onEvent, mcpConfig, allowedTools, disallowedTools, appendSystemPrompt, strictMcpConfig, agents }) {
+export function startSession({ cwd, prompt, model, effort, permissionMode, resumeSessionId, onEvent, mcpConfig, allowedTools, disallowedTools, appendSystemPrompt, strictMcpConfig, agents, settings, extraEnv }) {
   const args = [
     "-p",
     prompt,
@@ -82,6 +82,15 @@ export function startSession({ cwd, prompt, model, effort, permissionMode, resum
   // a user message.
   if (appendSystemPrompt) {
     args.push("--append-system-prompt", appendSystemPrompt);
+  }
+  // Tier guard (src/lib/tierGuard.js). An inline settings JSON carrying a PreToolUse
+  // hook, passed on EVERY launch - which is the whole reason the guard lives here
+  // and not in the manual above. --append-system-prompt only reaches a fresh
+  // session, so a rule change did not bind a running mate until it was retired; a
+  // hook is re-applied per launch, and every turn is a launch. `--settings` is
+  // additive, so the captain's own settings still apply underneath it.
+  if (settings) {
+    args.push("--settings", typeof settings === "string" ? settings : JSON.stringify(settings));
   }
   // First-mate tier (docs/first-mate-tier-design.md section 5): main.js passes
   // an inline mcp-config JSON string ONLY when this launch is a first mate
@@ -146,7 +155,11 @@ export function startSession({ cwd, prompt, model, effort, permissionMode, resum
     // Only shell out if we couldn't resolve a real binary (unlikely) — a
     // direct .exe spawn needs no shell and keeps multi-word prompts intact.
     shell: !claudePath.toLowerCase().endsWith(".exe"),
-    env: process.env,
+    // extraEnv carries the tier guard's context (which tier, which session, where
+    // the meta home is) to the hook process the CLI spawns. It travels in the
+    // environment rather than in the hook command line so a path with a space or a
+    // quote cannot reshape the command the hook runs as.
+    env: extraEnv ? { ...process.env, ...extraEnv } : process.env,
   });
 
   let buffer = "";
