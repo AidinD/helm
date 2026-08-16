@@ -11595,8 +11595,10 @@ async function jumpIntoSecondMate(sm) {
     // task itself instead of dispatching autopilots. Bind it now so future resolves (and a
     // later pane rebuild) recognise the session as this second mate.
     const resumeId = existing.cliSessionId || existing.sessionId;
+    // Pass the project too: for a session node the id is a display key and main
+    // needs the project to translate it into a real second mate (task 99089c59).
     if (sm.secondMateId && resumeId) {
-      window.helm.bindSecondMateSession(sm.secondMateId, resumeId);
+      window.helm.bindSecondMateSession(sm.secondMateId, resumeId, sm.projectPath);
     }
     openSessionInPane(existing, 0, { secondMateId: sm.secondMateId });
   } else {
@@ -17730,7 +17732,7 @@ window.helm.onSessionEvent((evt) => {
         window.helm.bindMateSession(pane.mateId, evt.sessionId);
       }
       if (pane.secondMateId) {
-        window.helm.bindSecondMateSession(pane.secondMateId, evt.sessionId);
+        window.helm.bindSecondMateSession(pane.secondMateId, evt.sessionId, pane.cwd);
       }
       break;
     case "tool_use":
