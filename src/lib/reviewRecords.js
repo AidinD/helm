@@ -74,14 +74,39 @@ export function reviewsDir(metaHome) {
 export function reviewQueueInputsFingerprint(metaHome, todosPath) {
   const parts = [];
   let readable = 0;
-  for (const p of [todosPath, reviewsDir(metaHome)]) {
-    try {
-      const st = fs.statSync(p);
-      parts.push(`${p}:${st.mtimeMs}:${st.size}`);
-      readable++;
-    } catch {
-      parts.push(`${p}:-`);
+  try {
+    const st = fs.statSync(todosPath);
+    parts.push(`${todosPath}:${st.mtimeMs}:${st.size}`);
+    readable++;
+  } catch {
+    parts.push(`${todosPath}:-`);
+  }
+  // The record files themselves, NOT just the directory they sit in.
+  //
+  // Statting the directory was cheaper and wrong: on NTFS a directory's mtime and size only
+  // move when an entry is ADDED or REMOVED, so editing an existing record - stamping a check
+  // run, changing a verdict, acknowledging an item - left the fingerprint identical.
+  // Measured 2026-08-16: writing new content into an existing file changed neither the
+  // directory's mtime nor its size, while creating one changed both. And because a matching
+  // fingerprint short-circuits before the age ceiling, the cached queue was then returned
+  // with no expiry at all, so the Review badge could sit on a stale number indefinitely -
+  // in a file whose own comment says stale review state is exactly what must not be quietly
+  // out of date.
+  //
+  // The cost is one stat per record instead of one for the directory. That is tens of stats
+  // on a 60-second tick, against the ~2 seconds of git work this cache exists to avoid.
+  const dir = reviewsDir(metaHome);
+  try {
+    const names = fs.readdirSync(dir).filter((n) => n.endsWith(".json")).sort();
+    let stamp = `${dir}:${names.length}`;
+    for (const n of names) {
+      const st = fs.statSync(path.join(dir, n));
+      stamp += `|${n}:${st.mtimeMs}:${st.size}`;
     }
+    parts.push(stamp);
+    readable++;
+  } catch {
+    parts.push(`${dir}:-`);
   }
   return readable === 0 ? null : parts.join("|");
 }
