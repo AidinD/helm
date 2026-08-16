@@ -25,6 +25,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -104,6 +105,32 @@ try {
     status.alive === true,
     `and the off-main worker really came up INSIDE the packaged build (${JSON.stringify(status)}) - an ESM entry point loaded from an asar archive is the one part of the performance work dev cannot verify, and its fallback would have hidden a failure behind "just slower"`
   );
+  // --- 4. the tier guard's hook, for the same reason and a sharper one ------
+  // The hook is NOT loaded by Electron. The claude CLI spawns it as its own process under
+  // plain node, and plain node cannot read a path inside an asar archive - only Electron's
+  // patched fs can. So a guard that works in every dev run would simply never start in the
+  // installed app, and nothing would say so: no crash, no log, just a first mate quietly able
+  // to write files again. That is worse than having no guard, because the guard is believed in.
+  //
+  // Two things are checked, and the second is the one that matters: that the file is on the
+  // real filesystem (build.asarUnpack), and that plain node can actually EXECUTE it there.
+  const unpacked = path.join(repo, "dist", "win-unpacked", "resources", "tier-guard", "hooks", "tierGuardHook.mjs");
+  ok(fs.existsSync(unpacked), `the tier-guard hook ships outside the asar (${path.relative(repo, unpacked)}) - inside the archive, the node process that runs it could not open it`);
+  ok(
+    fs.existsSync(path.join(repo, "dist", "win-unpacked", "resources", "tier-guard", "lib", "tierGuard.js")),
+    "and so does the policy it imports, at the relative path the hook's own import expects - shipping only the entry point would move the failure one import deeper"
+  );
+  if (fs.existsSync(unpacked)) {
+    const probe = spawnSync(process.execPath, [unpacked], {
+      input: JSON.stringify({ tool_name: "Bash", tool_input: { command: "cat > x.md << 'EOF'\nhi\nEOF" } }),
+      encoding: "utf8",
+      env: { ...process.env, HELM_TIER: "first-mate" },
+    });
+    ok(
+      probe.status === 0 && /"permissionDecision":"deny"/.test(probe.stdout || ""),
+      `and PLAIN NODE runs it from there and gets a deny back (exit ${probe.status}, stdout ${JSON.stringify((probe.stdout || "").slice(0, 80))}) - this is the actual thing the CLI does, not a stand-in for it`
+    );
+  }
 } finally {
   if (app) {
     await app.close();
@@ -113,7 +140,7 @@ try {
 
 console.log(
   exit === 0
-    ? "VERIFY OK: the packaged build starts, persists its state, and runs its off-main worker."
+    ? "VERIFY OK: the packaged build starts, persists its state, runs its off-main worker, and its tier guard can actually be executed."
     : "VERIFY FAILED - and this is the lane where a bug reaches Aidin's installed app."
 );
 process.exit(exit);

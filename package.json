@@ -60,6 +60,14 @@
     ],
     "extraResources": [
       {
+        "from": "src/hooks/tierGuardHook.mjs",
+        "to": "tier-guard/hooks/tierGuardHook.mjs"
+      },
+      {
+        "from": "src/lib/tierGuard.js",
+        "to": "tier-guard/lib/tierGuard.js"
+      },
+      {
         "from": "../jot/out/renderer",
         "to": "jot/out/renderer",
         "filter": [
