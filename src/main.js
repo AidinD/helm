@@ -115,6 +115,7 @@ import { parseAnsi, newAnsiState, collapseCarriageReturns } from "./lib/ansi.js"
 import {
   ensureDispatchDirs,
   requestsDir,
+  reportsDir,
   readRequests,
   claimRequest,
   removeRequest,
@@ -125,6 +126,7 @@ import {
   pruneDispatchQueue,
 } from "./lib/dispatchQueue.js";
 import { recordsNeedingReport, buildReportFromRecord } from "./lib/dispatchReconcile.js";
+import { writeJsonAtomicSync } from "./lib/atomicWrite.js";
 import { assembleFleetState } from "./lib/fleetState.js";
 import { widthCapExceeded, depthCapExceeded, isForeignDispatch } from "./lib/dispatchCaps.js";
 import { listRoutines, createRoutine, updateRoutine, removeRoutine, dueRoutines, markRoutineFired } from "./lib/helmRoutines.js";
@@ -6859,13 +6861,87 @@ function repairDisplayKeyBindings() {
         cwdBySession.set(s.sessionId, s.cwd);
       }
     }
-    const res = migrateDisplayKeyBindings((sessionId) => cwdBySession.get(sessionId) || null);
+    const lookup = (sessionId) => cwdBySession.get(sessionId) || null;
+    const res = migrateDisplayKeyBindings(lookup);
     if (res.migrated || res.skipped) {
       console.log(`[helm] second-mate bindings repaired: ${res.migrated} migrated, ${res.skipped} left alone (no project found)`);
+    }
+    // The REPORTS have to move with the binding, and this is where the first pass at
+    // this migration was only half done. Moving the binding to the real id while leaving
+    // the inbox addressed to the display key made a mate's own history invisible to it:
+    // helm_collect_reports matches dispatchedBy exactly, so eleven reports belonging to
+    // the skiff second mate silently stopped being collectable the moment the binding
+    // was repaired (found live, 2026-08-17).
+    //
+    // Repairing the DATA rather than teaching the reader about legacy ids is deliberate.
+    // A translation in the collect path would leave two id namespaces alive forever,
+    // which is the exact thing this whole migration exists to end - and it would be a
+    // third place that has to remember the old shape.
+    const reports = repairDisplayKeyReports(lookup);
+    if (reports.migrated || reports.skipped) {
+      console.log(`[helm] dispatch reports repaired: ${reports.migrated} re-addressed, ${reports.skipped} left alone`);
     }
   } catch (err) {
     console.error("[helm] could not repair second-mate bindings:", err?.message || err);
   }
+}
+
+/**
+ * Re-address dispatch reports that still name a renderer display key, so a second mate
+ * whose binding was migrated can still collect its own history.
+ *
+ * Same conservative rule as the binding migration: a report whose session cannot be
+ * resolved to a project is LEFT ALONE rather than guessed at or discarded. An unreadable
+ * or unresolvable report is a thing to look at, not evidence it is safe to rewrite.
+ */
+function repairDisplayKeyReports(projectPathForSession) {
+  let migrated = 0;
+  let skipped = 0;
+  const dir = reportsDir(resolveMetaHome());
+  let names = [];
+  try {
+    names = fs.readdirSync(dir).filter((n) => n.endsWith(".json"));
+  } catch {
+    return { migrated, skipped };
+  }
+  for (const name of names) {
+    const file = path.join(dir, name);
+    let report;
+    try {
+      report = JSON.parse(fs.readFileSync(file, "utf8"));
+    } catch {
+      skipped++;
+      continue;
+    }
+    if (!isDisplaySecondMateId(report?.dispatchedBy)) {
+      continue;
+    }
+    const sessionId = String(report.dispatchedBy).slice("sess_".length);
+    // The SESSION's cwd, not the report's `project` field. A first draft read `project`
+    // first, reasoning it was the better evidence - it is not: that field holds a project
+    // NAME ("nw-skiff"), not a path, so hashing it produced a valid-looking id for a
+    // node that does not exist and every report would have been re-addressed to nobody.
+    // Caught only because the repair was dry-run against a COPY of the real inbox first.
+    // `report.project` is still accepted as a fallback, but only when it is a real path.
+    const fallback = report.project && path.isAbsolute(String(report.project)) ? String(report.project) : null;
+    const projectPath = projectPathForSession(sessionId) || fallback;
+    const realId = resolveSecondMateId(report.dispatchedBy, projectPath);
+    if (!realId) {
+      skipped++;
+      continue;
+    }
+    try {
+      const res = writeJsonAtomicSync(file, { ...report, dispatchedBy: realId });
+      if (res.ok) {
+        migrated++;
+      } else {
+        skipped++;
+      }
+    } catch {
+      skipped++;
+    }
+  }
+  return { migrated, skipped };
 }
 
 app.whenReady().then(() => {

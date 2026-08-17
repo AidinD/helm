@@ -123,6 +123,30 @@ const released = releaseDisplayKeyedSession("F");
 ok(released === 1 && read()["sess_F"].sessionId === null, `archiving releases a legacy binding (${released}) - otherwise jumping in resurrects the session the captain archived`);
 ok(read()["sess_F"].status === "proposed", "and the record stops claiming to be an active seat");
 
+// --- 4. the reports must move with the binding -------------------------------
+// The first pass at this migration moved the BINDING and left the inbox addressed to the
+// display key, so a mate's own history became invisible to it - helm_collect_reports
+// matches dispatchedBy exactly, and eleven of the skiff second mate's reports silently
+// stopped being collectable the moment its binding was repaired (found live, 2026-08-17).
+const repair = strip(fs.readFileSync(path.join(repo, "src", "main.js"), "utf8"));
+const fn = repair.slice(repair.indexOf("function repairDisplayKeyReports("), repair.indexOf("function repairDisplayKeyReports(") + 2000);
+ok(fn.length > 400, "the report repair exists in main.js");
+ok(/isDisplaySecondMateId\(report\?\.dispatchedBy\)/.test(fn), "it only touches reports still addressed to a display key");
+ok(/projectPathForSession\(sessionId\) \|\| fallback/.test(fn), "and resolves the project from the SESSION first, not from the report's own field");
+ok(/skipped\+\+/.test(fn) && !/unlink|rmSync|delete /.test(fn), "an unresolvable report is skipped, never deleted - same conservative rule as the bindings");
+ok(/repairDisplayKeyReports\(lookup\)/.test(repair), "and it is actually called by the startup repair, with the same lookup");
+
+// THE TRAP ITSELF, as behaviour rather than a source scan. A report carries `project` as a
+// NAME ("nw-skiff"), not a path. A first draft preferred that field, and it hashed to a
+// valid-looking id for a node that does not exist - every report would have been
+// re-addressed to nobody. Only a dry run against a copy of the real inbox caught it.
+const fromName = secondMateId(DIRECT_FIRST_MATE, "nw-skiff");
+const fromPath = secondMateId(DIRECT_FIRST_MATE, PROJECT);
+ok(
+  fromName !== fromPath,
+  `hashing a project NAME and a project PATH give different ids (${fromName} vs ${fromPath}) - which is why the repair must not fall back to the report's own project field unless it is absolute`
+);
+
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(
   exit === 0
