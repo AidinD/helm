@@ -6469,3 +6469,327 @@ A pane has NO LAYOUT until its page is visible, so a hidden pane's `getBoundingC
 `performance.now()` is clamped to 0.1ms in the renderer, so a single keystroke is below the clock and must be measured in a batch.
 And a tight loop of keystrokes stops modelling typing at all - in that shape, setting `.value` alone timed SLOWER than setting it AND dispatching the event, which cannot be true, and was measurement ordering.
 Every performance check added here was mutation-tested against the unfixed code before its green result was believed; the head-stamp one caught a weak assertion of its own that way (a packed-refs baseline taken before the repack rather than after, so it was passing for the wrong reason).
+
+## 2026-08-16 - The direction: scarcity moves down to project seats, and the first-mate tier is on notice
+
+**Decision.** Helm's tier structure is being reconsidered, and the likely destination is:
+captain -> N project-bound seats -> crew. The Direct/Captain lane, which today allows an
+unlimited number of sessions, goes away. The first-mate tier's cross-project value survives
+as a PAGE rather than as a session. Nothing is being refactored yet; the constraint gets
+tested first (see "Next step").
+
+**Why, and this is the part that matters.** Aidin, 2026-08-16, stating an original goal of
+Helm that had never been written down: "En av startmålen var att Helm skulle begränsa mitt
+fokus - eftersom jag med claude desktop har en tendens att starta många sessioner och hoppa
+mellan dem pga att jag vill fylla ai's tänk väntetid blev det stress och mycket context
+switching. Jag märker att det har ju inte ändrats eftersom Direct Captain fortfarande tillåter
+mig att använda hur många sessioner som helst."
+
+That reframes what the first-mate tier was ever worth. It is the only place in Helm with a
+fixed, small number of seats - two, retire-to-replace. THAT is the focus mechanism, and it
+happened to be bolted to the tier that turned out to deliver least. The tier feels hard to
+justify because its value was never the coordination; it was the scarcity. So the move is to
+put the scarcity where the work actually happens, and let the tier go.
+
+An independent review comparing Helm to Kun Chen's firstmate (2026-08-16) reached the same
+place from the other side: it called the second-mate tier "the second architecture firstmate
+warns against", and named the FIRST mate as the tier hardest to justify, citing Helm's own
+manual - the most common request is single-project, where the first mate's whole contribution
+is one tool call and a sentence, and the manual itself says the captain may bypass it.
+
+**What this converges on.** captain -> project seat -> crew is the same depth Kun Chen's
+distro settles on. He gets there by having the captain talk ONLY to the coordinator and never
+touch code. That is the wrong trade for Aidin, who wants to be hands-on. Same shape, opposite
+route.
+
+**Alternatives considered.**
+- *Keep the first mate and fix its usage.* Rejected as the primary move: it addresses the
+  wrong thing. Even a perfectly-used first mate leaves the Direct lane unlimited, and the
+  Direct lane is the leak.
+- *Kun Chen's one-interface model (captain speaks only to the coordinator).* Rejected: it
+  removes the hands-on work Aidin values and is good at.
+- *Keep a cross-project SESSION for the daily survey.* Rejected: that job is a report, not a
+  conversation. Helm already computes the inputs (fleet snapshot, review queue, the board).
+  An agent that reads files and says what matters is a dashboard with a token cost and a wait.
+
+**What would make this fail, recorded now so it can be checked later.**
+1. Seat count is the whole mechanism. If seats are effectively unlimited, nothing has changed.
+   Start at 3, show the number, let it be raised deliberately.
+2. Switching projects must be free. Switch = retire a seat, spawn another. If that loses
+   context he will hoard seats instead. The "keep notes, new topic" retire option built on
+   2026-08-16 was a convenience that day; under this model it is load-bearing.
+3. A constraint that is routed around is worse than none, because it hides the problem. The
+   quick question in another repo WILL happen and must not cost a seat.
+4. Fewer seats do not remove the wait that drives the behaviour - they can convert stress into
+   frustration. The other half is that the fleet must convincingly say "things are working,
+   nothing needs you". Reviews is the surface Aidin says he actually spends that wait on, so
+   it is coupled to this decision rather than separate from it.
+
+**Next step: test the constraint before building the architecture.** Turn the Direct lane off
+for a week and require every session to take one of N seats. No refactor. If the session count
+drops and the day feels better, commit to the structure; if he fights it, that is a cheap
+lesson. A clickable mock of the new Fleet shape comes before any architectural change
+(mock-first rule for direction shifts).
+
+
+## 2026-08-16 - Where human quality control belongs when AI writes and AI reviews
+
+**The split.** The machine owns "does it work" - tests, checks, adversarial review, commands
+actually run. The captain owns "is it right, and do I accept the risk" - whether it is what he
+asked for, whether the trade-off is the one he wants, whether what went unverified is
+acceptable to live with.
+
+That is why he does not review code broadly. Reading a diff is verifying correctness, which is
+the machine's job and the place a human becomes the bottleneck. His words, 2026-08-16: "Jag
+vill inte granska kod helt - jag vill inte flytta flaskhals. Däremot vill jag ha möjligheten
+att förstå vad som byggts, testa det manuellt, granska diff om jag vill, ha kritisk kod
+utpekad."
+
+**Consequence: `notVerified` is the risk transfer, not a humility note.** It is the field where
+the machine says what it does not know, and pressing Accept is where the captain takes that
+risk on. That single reframing is what makes a review record a decision rather than a report,
+and it is why the field is mandatory.
+
+**The card.** Must fit one screen; everything else is one click away. Six parts, in order:
+one line on what he can now do that he could not before (outcome, never mechanism); how to try
+it himself; what was checked (collapsed, with the commands); what was NOT checked (expanded -
+this is the decision); where to look if he wants; one decision - Accept / Needs work / Ask.
+Plain language, deliberately not technical: "Reviews får inte ha för mycket information och
+ska vara skrivet med lätt språk att förstå."
+
+**Two-part diff, his idea.** "See diff (critical: N)" and "See everything" as separate actions,
+so pointing is distinct from disclosing.
+
+**But criticality never comes from the author.** A model that graded its own work would repeat
+the exact failure of 2026-08-16, where this file's own guard was declared safe and was defeated
+by seven characters. Two sources instead: a MECHANICAL floor that needs no judgment (auth,
+crypto, money, deletion, a guard, a migration that rewrites the captain's files, a deleted
+test, the only change with no test), and an INDEPENDENT reviewer that may RAISE it and never
+lower it. Same asymmetry ship-review already uses for criticality.
+
+**The queue is work that has finished being PREPARED, not work that is finished.** Four states
+before the captain sees anything: arrived -> declared checks actually run (44 of 82 records had
+never run theirs) -> independently reviewed -> ready for you. The page shows only the last by
+default. The other three are machine work and belong in the background - ideally during the
+captain's own wait, which is the symmetry worth designing for: his waiting time is its working
+time.
+
+**Sampling is what keeps his time constant.** Everything is machine-verified. He reviews all
+CRITICAL items plus a random sample of the rest. The sample is not there to find the bug in
+that card; it is there to measure whether the pipeline is lying. Find nothing over time and the
+rate can drop; find something and it is an alarm about the pipeline, not about one card.
+Without this his review load scales with production, and he becomes the bottleneck precisely
+when Helm starts working.
+
+**What today proved about AI reviewing AI.** Three independent reviewers were run against this
+session's own work; two broke it outright (a guard defeated by `bash -c`, a migration that
+could delete the captain's records) and the third graded it B- and found three more holes. So
+it works - but only with three mechanical conditions: a FRESH context (the author found none of
+it while looking), an instruction to BREAK rather than to assess ("review this" produces
+praise), and a requirement to RUN rather than read (every real finding came from executing
+something; the differential oracle that runs 77 real commands found four holes no reading had
+seen). Those three conditions are the design, not the sentiment.
+
+**Coupled decision: a second mate clears its own finished crew runs.** Leaving them for the
+captain to acknowledge was deliberate - the acknowledgement was his only trace that the run
+happened - but the review pipeline replaces that trace, so the reason expires. Order matters:
+auto-clearing BEFORE the pipeline exists hides work rather than removing overhead. A second
+mate may only clear what it validated and rolled up; anything that failed, escalated or could
+not be verified stays, because that is by definition what needs him.
+
+**Open, and the captain's to decide** (recorded so they are not settled by default):
+does Accept also MERGE, or only bless; what happens on "Needs work" - auto-dispatch back with
+his comment, or park; what happens to work he never reviews while away - land or block; the
+sampling rate and whether it adapts; and whether the review record should be AUTHORED by an
+independent pass rather than by the worker, which is the same author-grades-itself argument one
+level up and costs an extra agent run per item.
+
+
+## 2026-08-16 - The fleet becomes project seats; merging lands but never publishes; sampling is a streak, not a schedule
+
+Settled with Aidin the same day, refining the direction entry above.
+
+**Seat count is the widget count.** No setting, no number to tune: the captain places as many
+first-mate widgets as he wants projects, and that IS the constraint. His words: "platsantalet
+bestämt av antalet widgets jag sätter, så vi behöver ingen justerbar siffra."
+
+**Naming and shape.** The current first-mate tier disappears. The project-bound tier is
+renamed FIRST MATE, so the chain is captain -> first mate -> crew. The Captain/Direct widget
+goes away entirely. Seats are created and archived freely, like today's second mates, rather
+than living in two fixed slots - and they keep the three-way retire built on 2026-08-16
+(clean / keep notes, new topic / carry over), because "switching projects must be free" is
+what stops the captain hoarding seats.
+
+*Risk to watch during the trial week:* when the count is "however many widgets I add", the
+constraint is self-imposed again, which is what the Direct lane was. What probably saves it is
+that adding a widget is a deliberate, persistent layout act rather than an impulse. That is the
+thing the trial is actually measuring.
+
+**The independent reviewer is a per-project toggle, with one override.** Low-criticality
+projects should not spend tokens on a full adversarial pass. But a MECHANICALLY critical item
+turns it on regardless of the project's setting - otherwise the low-priority repo that happens
+to touch auth or deletion is exactly what slips through, and criticality was deliberately not
+an opinion.
+
+Kun Chen's firstmate reaches the same shape from the other direction: hard rule 2 is "Never
+merge a PR without the captain's explicit word" (AGENTS.md:28), and the ONLY standing
+relaxation is a per-project `yolo` posture the captain approves (AGENTS.md:29, 280-284). Aidin
+proposed the per-project toggle independently.
+
+**Merging lands; it never publishes.** Aidin's instinct was auto-merge; his answer to "what
+happens while I am away" was "det står still". Those conflict, and the resolution is to split
+landing from releasing:
+- crew work merges automatically once the machine gates pass
+- nothing is PUBLISHED without him
+- CRITICAL items do not auto-merge; they wait
+
+The consequence has to be stated rather than absorbed: **review becomes an audit after landing,
+not a gate before it.** That is the deliberate trade for not being the bottleneck, and it
+raises the stakes on the machine gates being real, because nothing else then stands between
+crew output and main.
+
+Worth noting what firstmate does with worktrees, since Aidin asked: it DOES tear down
+automatically, but gated - hard rule 3 "Never tear down unlanded work", with
+`bin/fm-teardown.sh` owning the complete landed-work test (AGENTS.md:30-31). That is
+independently the same safety rule already written for Helm's auto-cleanup task.
+
+**"Needs work" sends it back with his comment as the brief.** Because the change has usually
+already landed, that produces a FOLLOW-UP rather than a reopening - except for critical items,
+which had not merged yet and therefore genuinely block.
+
+**Sampling is a streak per project, with no dates and nothing to remember.** An earlier draft
+said "100% for two weeks", and Aidin rejected the shape, not the number: "då måste jag komma
+ihåg det om två veckor? kan vi göra adaptiviteten automatisk?" He is right - a rule that needs
+a human to remember it has already failed, and this whole system exists so nothing depends on
+his memory. Time was a crutch for what a counter does by itself:
+
+- per project, count CONSECUTIVE reviews he accepted with no finding
+- streak 0-9 -> he sees everything (which is what a new or rarely-touched project gets, for
+  free, without a calibration period existing as a concept)
+- 10-24 -> every third
+- 25+ -> every fifth
+- ONE finding resets that project to zero
+
+Critical items are always shown regardless of streak. Unsampled items auto-accept, so the
+streak only grows on items he actually looked at - it measures the pipeline's honesty on
+inspected work, which is the thing worth measuring.
+
+Two supporting properties so the mechanism is legible without being thought about: the rate is
+shown on the seat ("showing 1 in 3 - 14 clean in a row"), and the queue count says what it is a
+slice of ("8 need you, of 23 landed"). Plus a one-click "show me everything for a while" for
+when he is suspicious and does not want to justify why.
+
+*The honest cost:* sampling means some real problems ship without a human ever looking. That is
+the deal being made deliberately. The streak reset is what catches a pipeline that has started
+lying, and no-decay is deliberate too - trust is lost by evidence, not by the calendar.
+
+**Review records are authored independently, verified by the seat.** The independent pass
+WRITES the record; the project's first mate verifies and rolls it up. The author of the code
+never writes its own grade - the same argument as criticality, one level up.
+
+
+## 2026-08-16 - What the machine gates are, where a new project is born, and spending Opus on breaking rather than doing
+
+**The trial week's measure, so the experiment has an outcome instead of a feeling.** The Direct
+lane goes off for one week. Three things are read at the end, and Helm already logs the first
+two: how many sessions were live at once (the number the whole idea is aimed at), how many
+project switches per day, and one line from Aidin on whether the week felt calmer or merely
+tighter. The third decides it - the first two only say whether the behaviour changed. An
+experiment with no declared outcome is the same failure as a declared check nobody ran.
+
+**Machine gates: three, and failing one means "a human looks", never "rejected".**
+
+1. *It declared checks, and they ran green.* Note the inversion: the question is not "does this
+   repo have tests", it is "did this CHANGE state what would catch a regression in it, and did
+   that run". A project with no test suite can still declare its build or a smoke command. A
+   change that declares nothing does not auto-merge - which handles the no-tests project
+   honestly rather than special-casing it.
+2. *Nothing mechanically critical was touched.* Critical never auto-merges; it queues.
+3. *The independent pass, where the project has it on, returned no unresolved finding.*
+
+Failing a gate is not a verdict on the work, it just routes it to Aidin. The useful property
+that falls out: **the quality of a project's declared checks directly buys down his review
+load**, so the incentive points the right way without anyone being told to write more tests.
+
+**A new project is born as a seat, not by a session moving.** Aidin asked whether a seat in the
+claude root could be told to start a new project and "re-root itself". A session's cwd is fixed
+at launch, so nothing re-roots - but the mechanism already exists and only needs to move:
+`helm_create_second_mate` with `create: true` makes the folder and registers a seat rooted
+there, and the captain jumps into that. So the tool stops being coordinator-only and becomes
+something any seat may call, which also answers the cross-project question - a project seat
+that finds work belonging elsewhere hands it sideways to that project's seat. Depth stays
+capped because it is a sibling handoff, not a new tier.
+
+*Constraint to preserve:* if any seat could spawn seats freely, the widget count stops being
+the limit. So a seat PROPOSES a project seat and it appears as a proposal for Aidin to place.
+The scarcity stays his.
+
+**Budget: cap concurrent OPUS, not tokens.** Aidin's framing, and it is the right one: "Sonnet
+och haiku agenter drar nästan inga tokens så de är inte problemet. Problemet blir om vi spinner
+upp för många opus agenter." So the control is a small slot count for concurrent Opus runs -
+countable and visible, like the widgets, rather than an abstract ceiling to tune. Everything
+cheaper runs freely and does not compete for slots. Exceeding the cap QUEUES rather than fails,
+reusing the resumable-run and width-cap machinery that already exists (`DISPATCH_WIDTH_CAP`),
+keyed on model rather than on dispatcher. The manual gate fires only when a run would exceed
+the cap, so it is rare enough to still mean something.
+
+**The principle underneath it: spend Opus on breaking things, not on doing things.** Today's
+evidence is direct - the three reviews that found the real defects were Opus and they were all
+adversarial, while the code they broke had been written and tested by the same tier without
+finding any of it. So in the review pipeline the cheap models run the checks and author the
+record, and Opus is reserved for the adversarial pass on items that are critical or sampled.
+That also makes the per-project independent-reviewer toggle a cost dial that maps exactly onto
+where the money goes.
+
+
+## 2026-08-16 - Researched: Lavish's artifact loop, and no-mistakes as a git proxy
+
+**Lavish (`lavish-axi`, MIT, kunchenguid).** The agent writes an HTML file; `npx lavish-axi
+<file>` starts a loopback server (port 4387), opens a browser, and injects an annotation SDK
+WITHOUT modifying the saved artifact. The session is keyed by the canonical file path, so there
+are no ids to pass around. Then `lavish-axi poll <file>` LONG-POLLS and blocks until the human
+sends feedback. The human can annotate selected text and elements with real DOM selectors, edit
+rendered Mermaid diagrams as whiteboards, interact with native form controls, attach images
+(stored locally - the agent gets paths and hashes, never bytes), and chat freely. The agent
+edits the HTML, re-runs the open command to reload, uses `--agent-reply` to answer in the
+browser chat, and resumes polling.
+
+**The transferable idea is the blocking poll, not the browser.** It is what converts a one-shot
+artifact into a conversation: the agent's turn cannot end while the human is still annotating.
+
+**What Helm should NOT copy.** Helm already has an Electron window and durable sessions, so it
+needs neither the server nor the browser - it can render the artifact in a pane. And it should
+NOT block: Lavish blocks because a CLI invocation has nothing to come back to, whereas Helm has
+a session and a composer queue. In Helm the loop should be TURN-BASED - annotate several
+things, send once, one turn - which is cheaper and matches the chat surface the captain is
+already looking at. The same queued-draft mechanism used for the crew nudge (2026-08-16) is the
+right transport.
+
+**Collision to resolve before building this: design iteration is authoring, and the second-mate
+write budget punishes it.** Iterating an HTML artifact would burn three writes almost
+immediately. Resolution: artifacts are not project source, so writing them does not spend the
+authoring budget - the same carve-out shape as supervision commands. Keep them in a designated
+artifacts location so the rule is mechanical rather than a judgement about what a file is.
+
+**no-mistakes (kunchenguid/no-mistakes) is a LOCAL GIT PROXY, and that is the whole insight.**
+You add it as a remote and `git push no-mistakes <branch>` instead of pushing to origin. It runs
+review -> test -> docs -> lint -> push -> PR -> CI in a disposable worktree, applies the safe
+fixes itself and escalates the rest, forwards the branch only once the gate passes, opens the
+PR, and watches CI. It is also drivable as `/no-mistakes <task>` from an agent, or as a TUI.
+firstmate then CLOSES THE LOOP IN CI: `.github/workflows/no-mistakes-required.yml` fails any PR
+whose body does not carry the no-mistakes signature, so a hand-raised PR cannot merge.
+
+**Compared to Helm's ship-review: our CONTENT is better, their MECHANISM is better.**
+Ship-review carries things no-mistakes has no equivalent for - the failure list of fifteen real
+misses, the rule that the reviewer and not the author sets criticality, the demand for
+runnable checks named before the suite is shown, the review record with its mandatory
+notVerified. But ship-review is a skill somebody has to REMEMBER to invoke, and Helm's own
+CLAUDE.md encodes that as "ask whether to run /ship-review before pushing anything larger" -
+a human-memory rule, which is precisely the class this session concluded is already broken.
+A gate sitting on the path to the remote cannot be forgotten.
+
+**Recommendation: adopt, do not rebuild** (Aidin's standing rule about not re-implementing
+tools that exist). Evaluate `no-mistakes` as the delivery mechanism and keep ship-review's
+rubric as the content it runs - and if that works, Helm's auto-merge gates from the entry above
+stop being something Helm has to build and become something it configures.
+
