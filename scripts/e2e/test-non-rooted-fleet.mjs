@@ -37,7 +37,7 @@ const metaHome = path.join(tmp, "meta-home");
 fs.mkdirSync(metaHome, { recursive: true });
 process.env.HELM_CONFIG_PATH = configPath;
 process.env.HELM_META_HOME_OVERRIDE = metaHome;
-process.env.HELM_E2E_PORT = "9390";
+process.env.HELM_E2E_PORT = process.env.HELM_E2E_PORT || "9390";
 
 const J = JSON.stringify;
 const readCfg = () => (fs.existsSync(configPath) ? JSON.parse(fs.readFileSync(configPath, "utf8")) : {});

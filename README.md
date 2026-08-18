@@ -54,9 +54,11 @@ npm test            # the full sweep, one Electron launch per app test
 node scripts/run-tests.mjs docs jot   # only files whose name matches a term
 ```
 
-Tests are discovered from `scripts/e2e/test-*.mjs`; a test that imports the CDP harness is treated as an app test and runs one at a time, because several pin a fixed debug port.
+Tests are discovered from `scripts/e2e/test-*.mjs`; a test that imports the CDP harness is treated as an app test and runs one at a time, because each launches a real Electron window and they would otherwise fight over focus.
 
-Two conventions worth knowing:
+Three conventions worth knowing:
+
+- **A run leaves nothing behind, and that is checked rather than hoped.** Each launch gets its own Electron profile and `config.json` in temp, stamped with the PID of the run that owns it; a later launch reaps anything whose owning run is gone, killing the process first if one is still using it. A debug port is a preference, not an identity — the harness finds its app through the `DevToolsActivePort` file in its own profile, so a taken port costs an ephemeral one instead of silently attaching to somebody else's window. `test-e2e-no-strays.mjs` asserts all of it.
 
 - **A test may decline to run itself.** One check spawns the real `claude` CLI and spends tokens, so it is opt-in behind `HELM_LIVE_CLI_TESTS=1`. The runner reports such a test as `skip` and names it at the end rather than counting an un-run check as a pass.
 - **The summary counts what ran**, not what exists. `--fast` never starts the app tests and says so, because reporting them as passed would be the kind of green that means nothing.
