@@ -84,7 +84,7 @@ process.env.HELM_PROJECTS_ROOT = path.join(emptyRoot, "projects");
 // still handing the scan every repo an autopilot has ever touched.
 process.env.HELM_GOAL_RUN_HISTORY_PATH = path.join(tmp, "goal-run-history.json");
 fs.writeFileSync(process.env.HELM_GOAL_RUN_HISTORY_PATH, "[]", "utf8");
-process.env.HELM_E2E_PORT = "9353";
+process.env.HELM_E2E_PORT = process.env.HELM_E2E_PORT || "9353";
 
 try {
   app = await launch();

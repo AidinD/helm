@@ -64,7 +64,7 @@ process.env.HELM_CONFIG_PATH = configPath;
 process.env.HELM_META_HOME_OVERRIDE = metaHome;
 process.env.HELM_MATES_PATH = path.join(tmp, "mates.json");
 process.env.HELM_SECOND_MATES_PATH = path.join(tmp, "second-mates.json");
-process.env.HELM_E2E_PORT = "9387";
+process.env.HELM_E2E_PORT = process.env.HELM_E2E_PORT || "9387";
 
 const readBoard = () => JSON.parse(fs.readFileSync(jotPath, "utf8"));
 const task = (id) => readBoard().todos.find((t) => t.id === id);

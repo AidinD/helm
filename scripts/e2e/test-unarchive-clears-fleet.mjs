@@ -30,7 +30,7 @@ const ok = (c, m) => {
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "helm-unarch-"));
 const configPath = path.join(tmp, "config.json");
 process.env.HELM_CONFIG_PATH = configPath;
-process.env.HELM_E2E_PORT = "9374";
+process.env.HELM_E2E_PORT = process.env.HELM_E2E_PORT || "9374";
 
 try {
   app = await launch();

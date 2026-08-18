@@ -4678,6 +4678,15 @@ ipcMain.handle("docs:staleness", (_event, { cwd }) => {
 // one attached to the other's app - the wrong-app-attach bug, reintroduced across
 // invocations instead of within one.
 let checkPortCursor = 0;
+// Every gauntlet check process currently running, so before-quit can take them
+// down with the app. A check is usually `node scripts/e2e/test-*.mjs`, which
+// launches a whole Electron of its OWN - so quitting Helm mid-run used to leave
+// a live E2E Helm behind with no parent to close it, and that orphan then held a
+// debug port and leaked a Chromium profile for as long as the machine stayed up.
+// Every other long-lived child in this file is tracked for exactly this reason
+// (liveChildren, liveGoalRuns, liveVoiceStreams); the check children were the one
+// family that was not.
+const liveCheckRuns = new Set();
 let staleProjectsCache = { at: 0, rows: [], unchecked: 0, uncheckedPaths: [], considered: 0, parked: 0, dormant: 0, dormantDays: 0, error: null };
 let staleProjectsRefreshing = null;
 // Bumped whenever a decision invalidates an in-flight sweep (parking a project).
@@ -6721,6 +6730,7 @@ ipcMain.handle("reviews:runChecks", async (_event, { taskId } = {}) => {
         resolve({ exitCode: null, tail: `could not start: ${err.message}` });
         return;
       }
+      liveCheckRuns.add(child);
       // A check that hangs must not hang the review page.
       const timer = setTimeout(() => {
         killChildTree(child);
@@ -6735,10 +6745,12 @@ ipcMain.handle("reviews:runChecks", async (_event, { taskId } = {}) => {
       child.stderr?.on("data", grab);
       child.on("error", (err) => {
         clearTimeout(timer);
+        liveCheckRuns.delete(child);
         resolve({ exitCode: null, tail: `error: ${err.message}` });
       });
       child.on("close", (code) => {
         clearTimeout(timer);
+        liveCheckRuns.delete(child);
         resolve({ exitCode: code, tail: out.slice(-1200) });
       });
     });
@@ -7023,6 +7035,15 @@ app.on("before-quit", () => {
     }
   }
   liveGoalRuns.clear();
+  // Same again for review-gauntlet check processes. These matter more than their
+  // number suggests: a check is typically an E2E script that launches its own
+  // Electron, so an orphan here is a whole invisible Helm that goes on holding a
+  // debug port and a Chromium profile - and, if it is ever driven, spawning check
+  // children of its own. Synchronous for the same teardown-race reason.
+  for (const child of liveCheckRuns) {
+    killChildTree(child, { sync: true });
+  }
+  liveCheckRuns.clear();
   // Same orphan-prevention concern as liveChildren above, but for any
   // whisper-stream.exe still holding the microphone (continuous voice mode
   // left active when the app quits). SDL2's audio capture does not get

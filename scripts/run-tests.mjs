@@ -25,8 +25,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { execFileSync, spawn } from "node:child_process";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const e2eDir = path.join(here, "e2e");
@@ -79,14 +79,36 @@ if (costing.length > 0) {
 // --- a syntax gate first: cheapest possible check, and the renderer is 14k lines
 const SYNTAX_TARGETS = ["src/main.js", "src/renderer/renderer.js", "src/preload.cjs"];
 
+// child.kill() only terminates the process itself. An app test is a node process
+// that has launched a whole Electron underneath it, so killing just the node left
+// the app running with nobody to close it - a timeout GUARANTEED a stray, which is
+// the worst possible moment to make one (the run is already going badly). taskkill
+// /T takes the tree, and is scoped to this one PID, never to an image name.
+function killTree(pid) {
+  if (!pid) {
+    return;
+  }
+  if (process.platform === "win32") {
+    try {
+      execFileSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore" });
+    } catch {
+      /* already exited */
+    }
+    return;
+  }
+  try {
+    process.kill(pid);
+  } catch {
+    /* already exited */
+  }
+}
+
 function run(cmd, cmdArgs, timeoutMs) {
   return new Promise((resolve) => {
     const child = spawn(cmd, cmdArgs, { cwd: repo, shell: false, windowsHide: true });
     let out = "";
     const timer = setTimeout(() => {
-      try {
-        child.kill();
-      } catch {}
+      killTree(child.pid);
       resolve({ code: 124, out: out + "\n[timed out]" });
     }, timeoutMs);
     child.stdout.on("data", (d) => (out += d.toString()));
@@ -186,6 +208,45 @@ if (slow.length) {
     if (r.code !== 0) {
       failures.push({ file: t.file, out: r.out });
     }
+  }
+}
+
+// A suite that leaks must SAY so. Every app test is supposed to leave nothing
+// behind, but "nothing was left behind" is invisible when it fails - a leaked
+// Chromium profile breaks no assertion, and a surviving Electron only shows up
+// later, as an unrelated test failing strangely because the stray holds its debug
+// port. So the run reports its own litter and clears it, rather than leaving it
+// for whoever runs next to be confused by. Not counted as a failure: the property
+// itself is asserted by test-e2e-no-strays.mjs, which CAN fail.
+if (slow.length) {
+  const { sweepAbandonedRuns, processesUsingE2EProfiles } = await import(
+    path.join(e2eDir, "harness.mjs").replace(/\\/g, "/").replace(/^([A-Za-z]):/, "file:///$1:")
+  );
+  const swept = await sweepAbandonedRuns();
+  if (swept.killed.length || swept.removed.length) {
+    console.log(
+      `\nleftovers from this run: killed ${swept.killed.length} process(es), removed ${swept.removed.length} temp directory(ies)`
+    );
+  }
+  // Let the LAST test's own teardown finish before judging. taskkill returns before
+  // Windows has actually torn the tree down, so an immediate check catches the final
+  // app mid-exit and cries wolf on a perfectly clean run - which it did on the first
+  // run that had this warning (7 processes reported, all gone a moment later). A
+  // warning you see every time stops being a warning at all.
+  let stillUp = [];
+  for (let i = 0; i < 10; i++) {
+    stillUp = await processesUsingE2EProfiles();
+    if (stillUp.length === 0) {
+      break;
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  if (stillUp.length) {
+    console.log(
+      `WARNING: ${stillUp.length} E2E process(es) are STILL running 10s after the suite finished (pid ${stillUp
+        .map((p) => p.pid)
+        .join(", ")}). Nothing should outlive its own test - see test-e2e-no-strays.mjs.`
+    );
   }
 }
 
