@@ -6937,3 +6937,34 @@ what produced several of them. Candidate direction, to settle when the work star
 
 Explicitly NOT the strategy: more review passes on top of the same evidence. Several of these
 bugs survived review passes. What they had not survived was being RUN.
+
+### Addendum, same day: what has never actually run
+
+The captain's sharpest framing of the trust problem was a question about a feature, not a bug:
+"jag vet inte om autopilot nudgen funkar än heller för den har än så länge varit manuell. etc".
+
+So the inventory got measured rather than assumed, against 46 real runs and 23 real reports.
+Most mechanisms HAVE fired at least once: the auto-captain (9 runs), crew dispatched by a
+first mate (7) and by a second mate (31), report roll-ups (8), verify commands (26), scheduled
+prompts (7), review records (89), report reconciliation after a restart (13).
+
+Two have never fired at all, and both matter more than their zero suggests:
+
+**Escalation: 0 of 46.** `escalationEnabled = Boolean(escalationConfig)` - it is opt-in, and
+no dispatch path passes a config. So the only mechanism by which a run can STOP and ask a
+human instead of guessing has never once run, along with the `escalated` report status and the
+"paused, needs you" UI behind it. That is precisely the mechanism you want when you do not
+trust the autonomy, and it is inert.
+
+**Quota exhaustion: 0 of 46 classified** - while the captain's own scheduled prompts record it
+happening: "två autopiloter tillhörande den här sessionen dog pga att jag fick slut på tokens".
+The classifier looks thorough on the page (rate limit / quota / usage limit / 429 / 529 /
+overloaded). It just never sees the error, or the run exits down another path first. And
+`resumable` is set only for quota_exhausted and escalated - so a run killed by quota is filed
+as a real failure and cannot be resumed, which is why the captain had to hand-write scheduled
+prompts asking them to continue.
+
+**The general rule this suggests, and the reason the inventory becomes a standing page rather
+than a one-off measurement: a mechanism that has never fired is not finished, it is untested -
+whatever its tests say.** Helm has enough of these that "does it work?" cannot be answered from
+the code, only from the record of it having happened.
