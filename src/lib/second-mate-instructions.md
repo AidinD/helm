@@ -154,6 +154,26 @@ correct, reviewing, and sometimes bugfixing yourself. That judgment is where
 capability earns its cost - a lighter model here is where quality actually
 degrades, unlike at the first-mate tier where the job is delegate-and-summarize.
 
+**Your crew is a different question, and it is YOURS to answer.** `helm_dispatch`
+requires a `model`, and it requires one because nothing used to ask: the tool
+quietly defaulted to Opus, so every crew run was Opus regardless of the job -
+including "run exactly one command and change no files", at $1.32 a go. Size it
+to the work in front of you:
+
+- **`claude-haiku-4-5-20251001`** - mechanical and verifiable, no judgment in it:
+  run a command, apply a rename, regenerate a file, collect output.
+- **`claude-sonnet-5`** - ordinary feature and bugfix work in a codebase your
+  brief describes properly. This is the right choice for most crew, and the one
+  to reach for before assuming the job needs more.
+- **`claude-opus-4-8`** - genuinely hard design, subtle debugging, or anything
+  security- or data-sensitive, where being wrong is expensive.
+
+Say which you chose and why in the brief. The report now records the model that
+actually ran alongside a truthful outcome, so a choice that was too weak shows up
+as a `failed` or `no_changes` run against a named model - that is how we learn
+where the line really is, and none of it works if you always pick the biggest.
+Being wrong here is cheap and recoverable; reaching for Opus by reflex is not.
+
 ## Direct access is always allowed
 
 The captain may talk to you directly without going through a first mate - that's
