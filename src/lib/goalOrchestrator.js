@@ -431,12 +431,31 @@ function truncate(text, max) {
  * `contextWindow` and `fillPct` as `null` when the model's context window
  * isn't reported (e.g. an unrecognized model string) — never throws, since a
  * missing/odd usage shape must not fail an otherwise-successful iteration.
- * `resolvedModel` is the real model id the CLI actually ran (the key of
- * `parsed.modelUsage`, e.g. "claude-haiku-4-5") — normally there is exactly
- * one entry per single-turn batch call. This is how Helm learns which model
- * ran when no `--model` flag was passed (e.g. every auto-captain run).
+ * `resolvedModel` is the model that actually did this iteration's work.
+ *
+ * IT IS NOT `Object.keys(modelUsage)[0]`, which is what this function used to
+ * return on the stated assumption that "normally there is exactly one entry per
+ * single-turn batch call". That assumption is false, and every dispatched run
+ * between 2026-08-16 and 2026-08-18 was mislabelled because of it: the CLI makes
+ * a small internal Haiku call (~530 tokens, $0.0006) alongside the real one and
+ * lists it FIRST, so all 22 crewline crew runs recorded "claude-haiku-4-5" while
+ * genuinely running Opus 4.8 at ~$20 a run.
+ *
+ * The mislabel was not cosmetic. `contextWindow` was read from that same wrong
+ * entry - 200 000 instead of the real model's 1 000 000 - so `fillPct` ran 5x
+ * high and the "context is filling up, truncate notes.md" guard
+ * (CONTEXT_FILL_WARN_THRESHOLD) fired at 80 000 tokens instead of 400 000.
+ * Twelve of those 22 runs had their own working notes cut to the 20 000-char
+ * floor, repeatedly, mid-job.
+ *
+ * So: prefer the model we ASKED for when the CLI confirms it ran (the useful
+ * question is "did we get what we asked for?", and it is answerable), and only
+ * infer when nothing was requested - e.g. every auto-captain run - by taking the
+ * entry that did the most work rather than the one that happens to be first.
+ * `modelsSeen` carries every key so a helper call is visible rather than
+ * silently discarded.
  */
-export function extractUsage(parsed) {
+export function extractUsage(parsed, { requestedModel = null } = {}) {
   const usage = parsed?.usage || {};
   const totalTokens =
     (usage.input_tokens || 0) +
@@ -446,21 +465,34 @@ export function extractUsage(parsed) {
 
   let contextWindow = null;
   let resolvedModel = null;
+  let modelsSeen = [];
   if (parsed?.modelUsage && typeof parsed.modelUsage === "object") {
-    const entries = Object.entries(parsed.modelUsage);
-    if (entries.length > 0) {
-      resolvedModel = entries[0][0] || null;
-    }
-    for (const [, modelUsage] of entries) {
-      if (modelUsage && typeof modelUsage.contextWindow === "number" && modelUsage.contextWindow > 0) {
-        contextWindow = modelUsage.contextWindow;
-        break;
+    const entries = Object.entries(parsed.modelUsage).filter(([key]) => key);
+    modelsSeen = entries.map(([key]) => key);
+    // Work done by one entry, cache included - an Opus turn can be 2 fresh input
+    // tokens on top of 40k of cache, so counting only input/output would rank the
+    // chatty little helper above the model that did the job.
+    const work = (u) =>
+      (u?.inputTokens || 0) + (u?.outputTokens || 0) + (u?.cacheReadInputTokens || 0) + (u?.cacheCreationInputTokens || 0);
+    const requested = requestedModel ? entries.find(([key]) => key === requestedModel) : null;
+    const busiest = entries.reduce(
+      (best, entry) => (!best || work(entry[1]) > work(best[1]) || (work(entry[1]) === work(best[1]) && (entry[1]?.costUSD || 0) > (best[1]?.costUSD || 0)) ? entry : best),
+      null
+    );
+    const chosen = requested || busiest;
+    if (chosen) {
+      resolvedModel = chosen[0];
+      // The window of the model that actually ran, NOT "the first entry with a
+      // positive window" - that is the exact line that made every crew run think
+      // it had a fifth of the context it really had.
+      if (typeof chosen[1]?.contextWindow === "number" && chosen[1].contextWindow > 0) {
+        contextWindow = chosen[1].contextWindow;
       }
     }
   }
 
   const fillPct = contextWindow ? totalTokens / contextWindow : null;
-  return { totalTokens, contextWindow, fillPct, resolvedModel };
+  return { totalTokens, contextWindow, fillPct, resolvedModel, modelsSeen };
 }
 
 /**
@@ -725,7 +757,7 @@ function runIteration({ worktreePath, goal, notesContent, planContent, repoMapCo
         });
         return;
       }
-      finish({ ok: true, result, costUsd: parsed.total_cost_usd || 0, usage: extractUsage(parsed) });
+      finish({ ok: true, result, costUsd: parsed.total_cost_usd || 0, usage: extractUsage(parsed, { requestedModel: model }) });
     });
   });
 }
