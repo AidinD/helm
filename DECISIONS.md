@@ -6870,3 +6870,70 @@ actually ran alongside a truthful outcome, so a too-weak choice surfaces as a `f
 Aidin's hypothesis - that Sonnet would have sufficed - is untestable on the existing data,
 because every run was Opus with amputated notes.
 It becomes testable from here.
+
+## 2026-08-18 - Aidin does not trust Helm, and the reason is structural rather than a run of bad luck
+
+His words, at the end of the day the model-label and report-truthfulness bugs were found:
+"jag litar just nu inte på helm och känner inte att jag kan utföra arbete där...
+hela tiden har viktiga saker inte fungerat som vi tror eller avsett och mycket krångel".
+
+This is recorded as a decision input, not a complaint to be reassured away.
+No feature work on Helm should be planned until there is an answer to it.
+
+**Eight findings in one day, and not one of them was a broken function.**
+The guard let 80 of 90 real writer commands through, and nothing had ever run a real command
+against it.
+The model label was wrong for two days, and the test that guarded it fed in the very
+assumption it was built on.
+22 of 23 crew reports claimed success without reaching their goal, and nothing checked the
+claim.
+The second mate ran Sonnet 5 at low effort while its own system prompt told it, in words,
+that it was running Opus - nothing enforces the model at all.
+A nudge asked a mate to re-merge 27 finished runs, which was my own fix from the day before,
+made unbounded.
+Display keys are still being written into durable state because the earlier fix translated
+them on READ only.
+A test turned out to be flaky rather than failing, so its red had been dismissed.
+And the E2E harness can attach to an already-running app, which means any app test can
+silently validate a different build than the one on disk.
+
+**The shape they share: Helm asserts things about itself that nothing verifies.**
+Instructions, labels, comments and docs are written in the voice of mechanisms - "you run on
+Opus", "the resolved model", "status: done" - while the mechanism that would make them true
+was never built, or was built on one path and not the other.
+The tests were green throughout, because they mostly assert what the author already believed.
+That is why it feels like important things quietly do not work: that is exactly what has been
+happening, and it has looked healthy the entire time.
+
+**Consequence worth stating plainly:** the crewline board is probably more optimistic than the
+work. Seven of those runs died after two consecutive failures and six hit their iteration cap,
+all reported as done. Whatever is on those branches deserves a pass before anything is built
+on top of it.
+
+**Decision: the next block of Helm work is a reliability block, not features.**
+The strategy has to attack the SHAPE above, not the eight instances - fixing the instances is
+what produced several of them. Candidate direction, to settle when the work starts:
+
+1. **A claim in prose must be an assertion in code, or it must be deleted.**
+   Every "X runs on Y" / "Z is guaranteed" sentence in an instruction file or doc either gets a
+   test that fails when it stops being true, or it stops being written. The Opus sentence in
+   second-mate-instructions.md is the worst current example: it was read by the model as fact,
+   every turn, while being false.
+
+2. **One path per concept, or an enforced mirror.**
+   Three copies of the run-outcome rule, two model-selection paths for one seat, a read-side id
+   translation with no write-side counterpart. Every one of those drifted. Where a mirror is
+   unavoidable (the renderer cannot import ES modules), the test that asserts the copies agree
+   is part of the mirror, not an optional extra.
+
+3. **Tests must be able to fail for the right reason.**
+   Real commands against the guard, verbatim captured payloads instead of hand-written shapes,
+   temp fixtures instead of shared state, and a harness that refuses to run against an app it
+   did not launch. The differential oracle is the model here: it was the only check whose result
+   was not bounded by what its author imagined.
+
+4. **Nothing dies silently** (already on the board as the watchdog item) - because most of
+   these were found by Aidin noticing, not by Helm noticing.
+
+Explicitly NOT the strategy: more review passes on top of the same evidence. Several of these
+bugs survived review passes. What they had not survived was being RUN.
