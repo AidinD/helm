@@ -28,7 +28,15 @@ try {
     goalRuns.clear();
     goalRuns.set("err", { goalRunId: "err", ordinal: ++goalRunSeq, goal: "Broken build goal", projectPath: "P", status: "error", iterations: [], result: null, error: "npm build failed", escalation: null, latestPlan: null });
     goalRuns.set("esc", { goalRunId: "esc", ordinal: ++goalRunSeq, goal: "Ambiguous goal", projectPath: "P", status: "running", iterations: [], result: null, error: null, escalation: { reason: "ambiguity" }, latestPlan: null });
-    goalRuns.set("ok", { goalRunId: "ok", ordinal: ++goalRunSeq, goal: "Finished fine", projectPath: "P", status: "done", iterations: [], result: {}, error: null, escalation: null, latestPlan: null });
+    // A run that finished cleanly needs a REAL terminal shape: a stoppedReason and the
+    // commits it produced. This used to be \`result: {}\`, which cannot occur - the goal
+    // loop always sets a stoppedReason (it initialises to max_iterations_reached), and
+    // all 42 runs in the real history carry one, rehydrated ones included. Once "the
+    // loop ended" stopped meaning "the goal was met" (src/lib/runOutcome.js), a result
+    // with no stoppedReason correctly classifies as \`unknown\` and asks to be looked at,
+    // so the empty fixture was asserting that an unnameable outcome should be treated as
+    // success - the exact thing that made 22 of 23 crew reports claim they had worked.
+    goalRuns.set("ok", { goalRunId: "ok", ordinal: ++goalRunSeq, goal: "Finished fine", projectPath: "P", status: "done", iterations: [], result: { stoppedReason: "no_op_convergence", commitCount: 2, branchName: "helm/goal-ok" }, error: null, escalation: null, latestPlan: null });
     return true;
   })()`);
 
@@ -91,10 +99,34 @@ try {
     attentionBlocks + attentionSummaries >= 2,
     `both the errored and the escalated run are marked as needing you (got ${attentionBlocks} expanded + ${attentionSummaries} collapsed)`
   );
-  // And the clean one is NOT marked - an attention mark on everything marks nothing.
-  const cleanMarked = await app.eval(`[...document.querySelectorAll("#goalPage .goal-run-summary-needs, #goalPage .goal-run-detail-attention")]
-    .some((el) => /Finished fine/.test(el.textContent))`);
-  assert(!cleanMarked, "and the run that finished fine is not marked");
+  // An attention mark on everything marks nothing - so what matters is that the marks
+  // DISCRIMINATE, which is what this now asserts.
+  //
+  // It used to assert the clean run carried no mark at all, with a `result: {}` fixture.
+  // Two things changed. The fixture became a real terminal shape (see the seed above),
+  // and a converged run with commits carries "ready for review" - which it did before
+  // this too, from commitCount, so that half is not new. What IS new: a run that
+  // converged having committed NOTHING no longer reads as done (runOutcome.js), because
+  // "the loop ended" was being reported as "the goal was met" on 22 of 23 real crew
+  // reports. That is a deliberate widening, per the standing rule that under-flagging an
+  // attention signal is the worse failure.
+  //
+  // The load-bearing check is the one further up: the Dashboard's needs-you queue - the
+  // surface actually scanned for "what wants me" - still excludes this run. The Goal page
+  // is the per-run detail list, where "2 commits waiting" is information, not an alarm.
+  const cleanMark = await app.eval(`(() => {
+    const el = [...document.querySelectorAll("#goalPage .goal-run-summary-needs, #goalPage .goal-run-detail-attention")]
+      .find((e) => /Finished fine/.test(e.textContent));
+    return el ? el.textContent : null;
+  })()`);
+  assert(
+    !cleanMark || /(commit|✓)/.test(cleanMark),
+    `the run that finished fine is either unmarked or marked only as review-ready - the check glyph and its commit count, never an alarm (got: ${cleanMark ? cleanMark.slice(0, 70) : "unmarked"})`
+  );
+  assert(
+    !cleanMark || !/(did NOT reach|failed|ran out|unrecognised)/i.test(cleanMark),
+    "and its mark carries none of the failure language, so the kinds stay distinguishable at a glance"
+  );
 
   const errors = app.getConsoleErrors();
   assert(errors.length === 0, `no console errors (got ${errors.length})`);
