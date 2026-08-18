@@ -55,8 +55,18 @@ assert(interrupted.status === "interrupted", "a running-but-not-live record beco
 assert(/interrupted/i.test(interrupted.needsCaptain), "interrupted report tells the captain it was interrupted");
 assert(interrupted.changed.commitCount === 2 && interrupted.reconciled === true && interrupted.reportedAt === now, "interrupted report carries commit info + reconciled flag + timestamp");
 
-const done = buildReportFromRecord({ dispatchId: "d1", dispatchedBy: "mate-x", goal: "g", projectPath: "P", status: "done", commitCount: 3, branchName: "feat", stoppedReason: "completed" }, now);
-assert(done.status === "done" && /3 commit/.test(done.needsCaptain), "a done record with commits reports 'N commits ready for review'");
+// NOTE: this case used to pass `stoppedReason: "completed"` - a value the goal loop
+// cannot produce. Its only terminal reasons are cancelled / escalated / quota_exhausted
+// / two_consecutive_failures / no_op_convergence / max_iterations_reached; there is no
+// goal-reached state at all. Asserting against an invented success reason is a small
+// version of the bug this whole area had (see runOutcome.js): a report that claimed
+// success because nothing said otherwise.
+const done = buildReportFromRecord({ dispatchId: "d1", dispatchedBy: "mate-x", goal: "g", projectPath: "P", status: "done", commitCount: 3, branchName: "feat", stoppedReason: "no_op_convergence" }, now);
+assert(done.status === "done" && /3 commit/.test(done.needsCaptain), "a converged record WITH commits reports 'N commits ready for review'");
+
+const stalled = buildReportFromRecord({ dispatchId: "d3", dispatchedBy: "mate-x", goal: "g", projectPath: "P", status: "done", commitCount: 0, branchName: "feat", stoppedReason: "max_iterations_reached" }, now);
+assert(stalled.status !== "done", `a record that ran out of iterations does not report 'done' (got '${stalled.status}')`);
+assert(!!stalled.needsCaptain, "and it still assigns something back rather than reporting that nothing needs attention");
 
 const errored = buildReportFromRecord({ dispatchId: "d9", goal: "g", projectPath: "P", status: "error", error: "boom" }, now);
 assert(errored.status === "error" && /boom/.test(errored.needsCaptain), "an errored record surfaces the error as needsCaptain");

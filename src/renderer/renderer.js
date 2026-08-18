@@ -13546,7 +13546,7 @@ function goalRunReport(run) {
 
   if (run.status === "error") {
     return {
-      status: "failed",
+      status: "errored",
       changed: run.error || "The run ended with an error.",
       needsCaptain: "Errored - inspect and re-dispatch.",
       commitCount,
@@ -13566,17 +13566,38 @@ function goalRunReport(run) {
     const detail = run.escalation?.detail || "Run paused for a human decision.";
     return { status: "paused", changed: detail, needsCaptain: detail, commitCount, branchName };
   }
-  // Clean finish (status "done", not escalated).
-  const changed =
-    lastImplement?.result?.summary ||
-    (commitCount > 0
-      ? `${commitCount} commit${commitCount === 1 ? "" : "s"} landed.`
-      : `Run stopped: ${run.result?.stoppedReason || "done"}.`);
-  const needsCaptain =
-    commitCount > 0
-      ? `${commitCount} commit${commitCount === 1 ? "" : "s"} ready for review${branchName ? ` in ${branchName}` : ""}.`
-      : null;
-  return { status: "done", changed, needsCaptain, commitCount, branchName };
+  // The loop ended without crashing - which is NOT the same as reaching the goal, and used
+  // to be reported as though it were. This branch returned status "done" for every
+  // stoppedReason, so a run that died after failing twice in a row drew a green check and,
+  // with nothing committed, a null needsCaptain - meaning it never bubbled up to the
+  // captain's board either. Measured on the crewline board 2026-08-18: 22 of 23 runs shown
+  // as done, none of which had reached its goal.
+  //
+  // MIRROR of classifyRunOutcome in src/lib/runOutcome.js - the renderer is a classic
+  // script and cannot import an ES module (same constraint as MODEL_MENU_OPTIONS and
+  // WORKING_LIFECYCLE_STATES). test-run-outcome-truthful.mjs asserts the two vocabularies
+  // stay in step, because a mirror nobody checks is how three copies of this drifted apart.
+  const reason = run.result?.stoppedReason || null;
+  const ready = commitCount > 0 ? `${commitCount} commit${commitCount === 1 ? "" : "s"} ready for review${branchName ? ` in ${branchName}` : ""}.` : null;
+  const OUTCOMES = {
+    no_op_convergence: commitCount
+      ? { status: "done", why: "Converged: it stopped making further changes.", needs: ready }
+      : { status: "no_changes", why: "Stopped without changing anything - either the goal was already met, or it was stuck.", needs: "Finished without committing anything. Check whether the goal was already met or the run was stuck." },
+    two_consecutive_failures: { status: "failed", why: "Stopped after two iterations failed in a row - it did NOT reach the goal.", needs: ready || "Failed twice in a row and committed nothing." },
+    max_iterations_reached: { status: "incomplete", why: "Ran out of iterations before reaching the goal.", needs: ready || "Hit its iteration cap and committed nothing." },
+    quota_exhausted: { status: "interrupted", why: "Stopped early: the token quota ran out. This run is resumable.", needs: ready || "Ran out of quota before finishing - resume it." },
+    cancelled: { status: "cancelled", why: "Cancelled before it finished.", needs: ready || "Cancelled before finishing." },
+  };
+  const outcome = OUTCOMES[reason] || {
+    status: "unknown",
+    why: `Stopped for an unrecognised reason${reason ? ` (${reason})` : ""}.`,
+    needs: `Stopped for a reason Helm does not recognise${reason ? ` (${reason})` : ""} - check the worktree.`,
+  };
+  // The last implement step's own line is useful detail but must never stand alone as the
+  // verdict: for a run that died it describes the last thing that WORKED.
+  const step = lastImplement?.result?.summary || null;
+  const changed = outcome.status === "done" ? step || `${commitCount} commit${commitCount === 1 ? "" : "s"} landed.` : step ? `${outcome.why} Last completed step: ${step}` : outcome.why;
+  return { status: outcome.status, changed, needsCaptain: outcome.needs, commitCount, branchName };
 }
 
 // A run has reached a terminal state (its outcome is final, ready to report).
