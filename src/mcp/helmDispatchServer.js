@@ -85,7 +85,12 @@ const TOOLS = [
         tier: { type: "string", description: "Tier label for the run. Defaults to 'second-mate'." },
         model: {
           type: "string",
-          description: "Model for the dispatched run. Defaults to Opus (the second-mate default) when omitted.",
+          description:
+            "REQUIRED. Size the model to THIS job rather than reaching for the biggest one. " +
+            "`claude-haiku-4-5-20251001` for mechanical, verifiable work with no judgement in it (run a command, apply a rename, regenerate a file). " +
+            "`claude-sonnet-5` for ordinary feature and bugfix work in a codebase the goal describes - the right choice for most crew. " +
+            "`claude-opus-4-8` for genuinely hard design, subtle debugging, or anything security- or data-sensitive where being wrong is expensive. " +
+            "State your choice and reasoning in the goal brief.",
         },
         effort: { type: "string", description: "Optional effort level passed to the run." },
         maxIterations: { type: "number", description: "Optional iteration cap (app clamps to 1..20)." },
@@ -94,13 +99,14 @@ const TOOLS = [
           description: "Optional independent verify gate, e.g. 'npm test'. See the Helm-self caveat above.",
         },
       },
-      required: ["project", "goal"],
+      required: ["project", "goal", "model"],
     },
   },
   {
     name: "helm_collect_reports",
     description:
-      "Pull compact reports for this mate's dispatched runs (status, one-line summary, what changed, what needs the captain, worktree pointer). Not the transcript. Call at a bookend or when the captain asks 'what came back?'.",
+      "Pull compact reports for this mate's dispatched runs (status, one-line summary, what changed, what needs the captain, which model ran, worktree pointer). Not the transcript. Call at a bookend or when the captain asks 'what came back?'. " +
+      "READ `status` CAREFULLY - only `done` means the run stopped cleanly with work to show. `failed` means it gave up after two failures in a row, `incomplete` means it ran out of iterations, `no_changes` means it committed nothing at all, `interrupted` means it can be resumed, `unknown` means Helm could not name the outcome. Anything other than `done` is unfinished work, however confident its summary reads.",
     inputSchema: {
       type: "object",
       properties: {
@@ -210,15 +216,31 @@ async function toolDispatch(args) {
   if (!project || !goal) {
     return { error: "Both `project` and `goal` are required." };
   }
+  // The model is a DELIBERATE choice, not a default. This used to fall back to Opus
+  // whenever a mate omitted it, and mates always omitted it because nothing ever told
+  // them to choose - so every crew run was Opus regardless of the job. Measured on the
+  // crewline board 2026-08-18: 22 of 22 runs on Opus, including "run exactly one
+  // command and modify no files" at $1.32 a go.
+  //
+  // Rejecting is safe and cheap: no run has started, and the message below names the
+  // choice. The mate holds the goal, so it is the only party that can size the job.
+  const model = (args?.model || "").trim();
+  if (!model) {
+    return {
+      error:
+        "`model` is required - pick the one that fits THIS job, do not reach for the biggest by reflex. " +
+        "claude-haiku-4-5-20251001: mechanical, verifiable, no judgement (run a command, apply a rename, regenerate a file). " +
+        "claude-sonnet-5: ordinary feature and bugfix work in a codebase you have described in the goal - the right default for most crew. " +
+        "claude-opus-4-8: genuinely hard design, subtle debugging, security- or data-integrity-sensitive changes, or anything where being wrong is expensive. " +
+        "Say which you picked and why in the goal brief, so the choice can be judged against what comes back.",
+    };
+  }
   ensureDispatchDirs(META_HOME);
-  // Model-per-tier (design decision 6): default the dispatched run to Opus (the
-  // second-mate default) unless the mate overrides it. Use the full model id
-  // the rest of the app uses, not the "opus" CLI alias (review finding L7).
   const request = {
     project,
     goal,
     tier: args.tier || "crew",
-    model: args.model || "claude-opus-4-8",
+    model,
     effort: args.effort || null,
     maxIterations: typeof args.maxIterations === "number" ? args.maxIterations : null,
     verifyCommand: args.verifyCommand || null,

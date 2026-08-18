@@ -6793,3 +6793,80 @@ tools that exist). Evaluate `no-mistakes` as the delivery mechanism and keep shi
 rubric as the content it runs - and if that works, Helm's auto-merge gates from the entry above
 stop being something Helm has to build and become something it configures.
 
+
+## 2026-08-18 - Two lies in the crew pipeline: the model that ran, and whether the run worked
+
+Aidin asked why crew agents "always get Haiku" and solve bugs half-heartedly.
+The premise was wrong and what was actually happening was worse.
+
+**They were never on Haiku.**
+All 22 crewline crew runs requested and ran Opus 4.8; the cost proves it ($19.72 for a run
+Haiku would have done for pennies).
+The CLI returns a LIST of models it used and always lists a small internal Haiku helper call
+first (521 tokens, $0.0006).
+`extractUsage` took `entries[0][0]` and called that "the model that ran", on a stated
+assumption - "normally there is exactly one entry per single-turn batch call" - that is simply
+false.
+The test guarding that function fed it exactly one entry in every case, so it encoded the bug
+rather than catching it.
+
+**The mislabel was not cosmetic, and that is the part worth remembering.**
+The same wrong entry supplied the context window: 200 000 instead of the real model's
+1 000 000.
+`fillPct` therefore ran 5x high, and the "context is filling, truncate notes.md" guard fired at
+80 000 tokens instead of 400 000.
+Twelve of the 22 runs had their own working notes cut to the 20 000-character floor, mid-job.
+A crew that keeps forgetting what it worked out is a plausible mechanism for "solves bugs
+half-heartedly", though the causal link to output quality is inferred, not measured.
+
+**Decision: ask "did we get what we asked for?", and infer only when nothing was asked.**
+When a model was requested and the CLI confirms it ran, that is the answer.
+When none was (every auto-captain run), take the entry that did the most work - cache included,
+because an Opus turn can be two fresh input tokens on top of 40k of cache, so ranking by
+input+output alone puts the chatty little helper first again.
+The context window comes from the same entry, and `modelsSeen` keeps the rest visible instead
+of discarding them.
+Rejected: ranking by cost alone (works today, but couples us to pricing), and reporting the
+requested model unconditionally (the interesting case is precisely a request that did NOT
+happen).
+
+**Separately: every crew run reported success.**
+22 of 23 reports said `status: "done"` and not one had reached its goal - nine stopped changing
+anything, seven died after failing twice in a row, six ran out of iterations.
+The report builder had three outcomes (`error` when the process died, `escalated`, and `done`
+for everything else), and the autopilot loop has **no goal-reached terminal state at all**: it
+only ever stops by running out, failing, or ceasing to change things.
+So "the loop ended" was being reported as "the goal was met".
+Six runs committed nothing while also reporting that nothing needed the captain's attention.
+Worse, the summary was the last SUCCESSFUL implement step's own one-liner, so a run that died
+showed a cheerful commit-message-shaped sentence about the last thing that worked.
+
+**Decision: one shared classifier (`src/lib/runOutcome.js`), used by both report builders.**
+`failed` / `incomplete` / `no_changes` / `interrupted` / `cancelled` / `unknown`, with `done`
+reserved for converged-with-commits - the loop's only success-shaped path.
+An unrecognised stop reason resolves to `unknown` with an assign-back rather than to success,
+so a new reason added upstream cannot silently become "done" the way this did.
+The outcome leads the summary and the last completed step follows it as context; the detail was
+useful, the framing was the lie.
+Both builders share one definition because they had already drifted apart once.
+
+**And the model was never chosen at all.**
+`helm_dispatch` did `args.model || "claude-opus-4-8"`, and mates always omitted the field
+because nothing - not the tool schema, not `second-mate-instructions.md` - ever asked them to
+choose. Hence 22 of 22 on Opus, including one whose entire goal was "run exactly one command
+and modify no files", at $1.32.
+
+**Decision: `model` is required, and an omission is refused rather than defaulted.**
+Rejecting is cheap and safe - no run has started, and the refusal names the three tiers, so the
+mate retries immediately.
+Rejected: defaulting to Sonnet instead (inverts the cost mistake into a silent quality one -
+the same class of bug, pointed the other way), and inferring a tier from the goal prose (a
+guess dressed as a recommendation).
+The mate holds the brief; it is the only party that can size the job.
+
+**What makes this measurable for the first time:** the report now carries the model that
+actually ran alongside a truthful outcome, so a too-weak choice surfaces as a `failed` or
+`no_changes` run against a named model.
+Aidin's hypothesis - that Sonnet would have sufficed - is untestable on the existing data,
+because every run was Opus with amputated notes.
+It becomes testable from here.
