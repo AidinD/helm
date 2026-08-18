@@ -126,6 +126,7 @@ import {
   pruneDispatchQueue,
 } from "./lib/dispatchQueue.js";
 import { recordsNeedingReport, buildReportFromRecord } from "./lib/dispatchReconcile.js";
+import { classifyRunOutcome, buildOutcomeSummary } from "./lib/runOutcome.js";
 import { writeJsonAtomicSync } from "./lib/atomicWrite.js";
 import { assembleFleetState } from "./lib/fleetState.js";
 import { widthCapExceeded, depthCapExceeded, isForeignDispatch } from "./lib/dispatchCaps.js";
@@ -5622,20 +5623,20 @@ function buildDispatchReport({ dispatchId, mateId, request, result, meta }) {
       needsCaptain: meta.error || "The dispatched run errored; inspect and re-dispatch.",
     };
   }
-  const escalated = result.stoppedReason === "escalated";
   const commitCount = typeof result.commitCount === "number" ? result.commitCount : 0;
   const lastImplement = [...(result.iterations || [])]
     .reverse()
     .find((r) => r.ok && r.result && r.phase === "implement");
-  const summary = escalated
-    ? result.escalation?.detail || "Run paused for a human decision."
-    : lastImplement?.result?.summary || `Run stopped: ${result.stoppedReason}.`;
-  let needsCaptain = null;
-  if (escalated) {
-    needsCaptain = result.escalation?.detail || "Run paused - needs a human decision.";
-  } else if (commitCount > 0) {
-    needsCaptain = `${commitCount} commit(s) ready for review in ${result.branchName}.`;
-  }
+  // The loop has no goal-reached state, so "it stopped" is not "it succeeded" - see
+  // src/lib/runOutcome.js for what this replaced and what it was costing.
+  const outcome = classifyRunOutcome({
+    stoppedReason: result.stoppedReason,
+    commitCount,
+    branchName: result.branchName,
+    escalation: result.stoppedReason === "escalated" ? result.escalation || { detail: "Run paused for a human decision." } : null,
+  });
+  const summary = buildOutcomeSummary(outcome.headline, lastImplement?.result?.summary, outcome.status);
+  const needsCaptain = outcome.needsCaptain;
   const totalCost = (result.iterations || []).reduce((sum, r) => sum + (typeof r.costUsd === "number" ? r.costUsd : 0), 0);
   return {
     dispatchId,
@@ -5643,8 +5644,12 @@ function buildDispatchReport({ dispatchId, mateId, request, result, meta }) {
     project: request.project,
     goal: request.goal,
     tier: request.tier || "second-mate",
-    status: escalated ? "escalated" : "done",
+    status: outcome.status,
     summary,
+    // Which model actually did the work, so a mate reading this report can see it -
+    // reports carried no model at all, which is why a run that was silently
+    // mislabelled for two days was invisible here (2026-08-18).
+    model: result.resolvedModel || request.model || null,
     changed: {
       commitCount,
       branchName: result.branchName || null,

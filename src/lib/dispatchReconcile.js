@@ -11,6 +11,8 @@
 // Pure functions here (single definition, unit-testable without Electron);
 // main.js feeds them loadGoalRunHistory() + readReports() + live-run ids.
 
+import { classifyRunOutcome } from "./runOutcome.js";
+
 /**
  * Records that were dispatched (have a dispatchId) but have no report yet AND
  * are not currently live (a live run's own onComplete will still report). These
@@ -43,29 +45,17 @@ export function recordsNeedingReport(records, existingReportIds, liveGoalRunIds,
  * (the app died mid-run). needsCaptain is the load-bearing assign-back field.
  */
 export function buildReportFromRecord(rec, now) {
-  const wasRunning = rec.status === "running";
-  const status = wasRunning ? "interrupted" : rec.status;
   const commitCount = typeof rec.commitCount === "number" ? rec.commitCount : 0;
-
-  let needsCaptain = null;
-  if (rec.escalation) {
-    needsCaptain = rec.escalation.detail || "Run paused - needs a human decision.";
-  } else if (status === "error") {
-    needsCaptain = rec.error || "The dispatched run errored; inspect and re-dispatch.";
-  } else if (status === "interrupted") {
-    needsCaptain = "The dispatched run was interrupted by an app restart; review its worktree or re-dispatch.";
-  } else if (commitCount > 0) {
-    needsCaptain = `${commitCount} commit(s) ready for review in ${rec.branchName}.`;
-  }
-
-  let summary;
-  if (status === "interrupted") {
-    summary = "Run interrupted by an app restart (its committed work is intact in the worktree).";
-  } else if (status === "error") {
-    summary = rec.error || "The dispatched run errored.";
-  } else {
-    summary = rec.stoppedReason ? `Run stopped: ${rec.stoppedReason}.` : "Run finished.";
-  }
+  // Same single definition as the live path in main.js. These two builders drifted
+  // apart once already, and both were calling every non-crashed run "done".
+  const outcome = classifyRunOutcome({
+    stoppedReason: rec.stoppedReason,
+    commitCount,
+    branchName: rec.branchName,
+    error: rec.status === "error" ? rec.error || "The dispatched run errored." : null,
+    escalation: rec.escalation || null,
+    interrupted: rec.status === "running",
+  });
 
   return {
     dispatchId: rec.dispatchId,
@@ -73,10 +63,11 @@ export function buildReportFromRecord(rec, now) {
     project: rec.projectPath,
     goal: rec.goal,
     tier: rec.tier || "crew",
-    status,
-    summary,
+    status: outcome.status,
+    summary: outcome.headline,
+    model: rec.resolvedModel || rec.model || null,
     changed: { commitCount, branchName: rec.branchName || null, worktreePath: rec.worktreePath || null },
-    needsCaptain,
+    needsCaptain: outcome.needsCaptain,
     stoppedReason: rec.stoppedReason || null,
     reportedAt: now,
     reconciled: true,
