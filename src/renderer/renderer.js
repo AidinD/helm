@@ -9583,6 +9583,12 @@ async function rehydrateGoalRuns() {
       latestPlan: record.plan || null,
       latestNotes: record.notes || null,
       latestModel: record.resolvedModel || null,
+      // When this run reached its terminal state, carried across a restart so a
+      // report-back nudge can scope itself to work that landed SINCE the mate last
+      // looked. Without it every rehydrated run looks equally fresh forever, which is
+      // how one mate was handed 27 runs to merge, most of them days old and already
+      // merged (found live 2026-08-18).
+      finishedAt: record.updatedAt || record.startedAt || null,
       persisted: true,
     });
   }
@@ -11560,7 +11566,14 @@ function mostRecentSessionForCwd(cwd) {
 // this project's dispatched, terminal, not-yet-acknowledged runs. Empty when
 // there's nothing waiting.
 function pendingSecondMateReviewNudge(sm) {
-  const runs = [...goalRuns.values()]
+  // WHAT COUNTS AS "WAITING". Everything terminal and unacknowledged used to, which is
+  // wrong in a way that got worse the longer a project ran: on 2026-08-18 this handed the
+  // skiff mate 27 runs with the instruction to merge them, most days old and already
+  // merged to master. An instruction to re-merge finished work is not noise, it is a
+  // hazard. So the boundary is the mate's own last turn: work that landed while it was
+  // away is news, work it has already sat through is not.
+  const lastLookedAt = secondMateLastLookedAt(sm);
+  const eligible = [...goalRuns.values()]
     .filter(isTerminalRun)
     .filter((r) => !isGoalRunAcknowledged(r.goalRunId))
     .filter((r) => samePath(r.projectPath, sm.projectPath))
@@ -11568,20 +11581,51 @@ function pendingSecondMateReviewNudge(sm) {
     // dispatched runs (the auto crew is dispatched under the auto second mate's own sm_ id,
     // never the literal "auto"), so scoping by dispatchedBy === firstMateId would filter every
     // auto run out and open the auto second mate BLANK. Only a real first-mate parent scopes.
-    .filter((r) => (sm.firstMateId && sm.firstMateId !== "direct" && sm.firstMateId !== "auto" ? r.dispatchedBy === sm.firstMateId : true))
+    .filter((r) => (sm.firstMateId && sm.firstMateId !== "direct" && sm.firstMateId !== "auto" ? r.dispatchedBy === sm.firstMateId : true));
+  // A run with no finish time is one this app session watched start, so it is new by
+  // construction. A mate with no session yet has never looked at anything, so everything
+  // unacknowledged is news to it - that is the blank-session case this nudge exists for.
+  const runs = eligible
+    .filter((r) => !lastLookedAt || !r.finishedAt || r.finishedAt > lastLookedAt)
     .sort((a, b) => (b.ordinal || 0) - (a.ordinal || 0));
   if (runs.length === 0) {
     return "";
   }
-  const lines = runs.slice(0, REPORT_BACK_LIMIT).map((r) => {
+  const shown = runs.slice(0, REPORT_BACK_LIMIT);
+  const lines = shown.map((r) => {
     const rep = goalRunReport(r);
     const branch = rep.branchName ? ` [branch ${rep.branchName}, ${rep.commitCount || 0} commit(s)]` : "";
-    return `- "${r.goal}" — ${rep.status}${branch}${rep.needsCaptain ? ` — ${rep.needsCaptain}` : ""}`;
+    // A crew brief can be hundreds of lines. Pasting them whole made the nudge itself the
+    // biggest thing in the mate's context before it had done anything.
+    const goal = String(r.goal || "").replace(/\s+/g, " ").trim();
+    const brief = goal.length > 140 ? goal.slice(0, 140) + "…" : goal;
+    return `- "${brief}" — ${rep.status}${branch}${rep.needsCaptain ? ` — ${rep.needsCaptain}` : ""}`;
   });
+  // The headline used to say runs.length while listing only REPORT_BACK_LIMIT of them, so
+  // it announced 27 and showed 6 with no hint the rest existed.
+  const more = runs.length - shown.length;
+  const tail = more > 0 ? ` (${more} older one${more === 1 ? "" : "s"} not listed - use the Autopilot page for the full set)` : "";
   return (
-    `You are the second mate for this project - the judgment tier. Your dispatched crew reported back ${runs.length} run${runs.length === 1 ? "" : "s"}, each on its OWN branch + worktree. ` +
-    `For each: inspect the commits on its branch, verify the fix actually holds (don't trust the run's own claim), then MERGE the solid ones into the main branch and say clearly which you merged. For any that failed or look wrong, say what you'd re-dispatch or fix instead - do not merge those. Crew work waiting:\n${lines.join("\n")}`
+    `You are the second mate for this project - the judgment tier. Since your last turn, ${runs.length} crew run${runs.length === 1 ? "" : "s"} reported back, each on its OWN branch + worktree${tail}. ` +
+    `For each: check whether its branch is already merged (skip it if so), inspect its commits, verify the fix actually holds - don't trust the run's own claim - then merge the ones that hold and say clearly which you merged. ` +
+    `For any that failed or look wrong, say what you'd re-dispatch or fix instead - do not merge those. Crew work waiting:\n${lines.join("\n")}`
   );
+}
+
+/**
+ * When this second mate last had a turn - the boundary between "landed while you were
+ * away" and "you have already seen this".
+ *
+ * Read off the bound session's own last activity, because that is the same clock the
+ * runs are stamped against and it survives a restart. A mate with no session has never
+ * looked at anything, so callers treat 0 as "everything is news".
+ */
+function secondMateLastLookedAt(sm) {
+  if (!sm?.sessionId) {
+    return 0;
+  }
+  const sess = state.sessions.find((s) => (s.cliSessionId || s.sessionId) === sm.sessionId);
+  return sess?.lastActivityAt || 0;
 }
 
 // Jump into a second mate: resume its bound project session; else the most
@@ -15109,9 +15153,13 @@ window.helm.onGoalEvent((evt) => {
   } else if (evt.kind === "done") {
     run.status = "done";
     run.result = evt.result;
+    // WHEN it finished, so a report-back nudge can tell "landed since you last looked"
+    // from "has been sitting here for days" - see pendingSecondMateReviewNudge.
+    run.finishedAt = Date.now();
   } else if (evt.kind === "error") {
     run.status = "error";
     run.error = evt.error;
+    run.finishedAt = Date.now();
     // Failures must be visible even off-page (see unseenGoalAttention above) -
     // a run erroring while the user is on Chat/Plan would otherwise sit
     // silently until they happen to check the Goal page.
