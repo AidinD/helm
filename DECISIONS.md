@@ -6968,3 +6968,29 @@ prompts asking them to continue.
 than a one-off measurement: a mechanism that has never fired is not finished, it is untested -
 whatever its tests say.** Helm has enough of these that "does it work?" cannot be answered from
 the code, only from the record of it having happened.
+
+### 2026-08-18, end of day: Helm is out of the loop until the reliability block lands
+
+Aidin: "jag vill inte köra helm förän vi lagt ner tid på att fixa den. Jag kör mina sessioner i
+claude desktop så länge."
+
+So Helm is not the workflow right now. That is the correct call given the day's findings, and
+it is a useful constraint rather than a pause: everything Helm is supposed to give him has to
+be re-justified against a plain Claude Desktop session that already works.
+
+**Nothing is stranded by it.** The dispatch queue holds zero unprocessed requests, and the
+three runs still marked `running` will be reconciled to `interrupted` on the next launch by
+the same mechanism that has already done it 13 times. No queued prompt, no pending crew.
+
+**What actually stops:** the report-back handshake for any future crew, the auto-captain
+(already disabled in config), scheduled prompts, and - the one with a live consequence - the
+Review page. Ten Jot items sit in `review` with written review records, and those records are
+JSON on disk that only Helm renders. The joint review that was planned needs another surface,
+and a rendered page built straight from `.helm/reviews/*.json` is enough for it; the records
+were deliberately written to be readable, and Helm is not required to read them.
+
+**The thing to be careful about while Helm is off:** the reason it existed was focus - Claude
+Desktop is what produced the session sprawl and the stress in the first place
+(2026-08-16 entry). Running in Desktop again is the right short-term call, but if the sprawl
+returns it is evidence about what Helm is FOR, not a reason to hurry it back. Worth watching
+deliberately rather than noticing later.
