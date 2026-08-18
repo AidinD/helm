@@ -291,7 +291,15 @@ ok(
 const fmSupervision = supervision.filter((c) => !shellNotReadOnlyReason(c));
 ok(fmSupervision.length === 0, fmSupervision.length === 0 ? "and a first mate still cannot run any of them" : `a first mate can run: ${fmSupervision.join(", ")}`);
 
-fs.rmSync(root, { recursive: true, force: true });
+// Best-effort. This corpus deliberately RUNS 60-odd real writer commands, some of
+// which spawn helpers (npx, node, git) that Windows may still hold a handle to when we
+// get here - and a temp dir we could not delete must never turn a green oracle red.
+// Seen 2026-08-18: the whole suite aborted on this line AFTER every assertion passed.
+try {
+  fs.rmSync(root, { recursive: true, force: true });
+} catch (err) {
+  console.log(`note: could not remove the sandbox at ${root} (${err.code || err.message}) - it is a temp dir, and the assertions above already ran.`);
+}
 console.log(
   exit === 0
     ? "VERIFY OK: reality and the classifier agree - nothing that wrote was allowed, and nothing a coordinator reads with was blocked."
