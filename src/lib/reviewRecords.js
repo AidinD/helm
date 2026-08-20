@@ -158,9 +158,100 @@ export const CRITICALITY_TIERS = {
 export const CRITICALITY_LEVELS = Object.keys(CRITICALITY_TIERS);
 
 /**
+ * Limits that keep a record readable, measured from the 93 records that existed on
+ * 2026-08-20 rather than picked by feel.
+ *
+ * What the measurement said: the median summary was 393 characters - a paragraph, not
+ * a sentence - with a longest of 2104. Median visible line was 115 characters in the
+ * evidence and 180 in the gaps. The habit was consistently two to four times too long,
+ * and the cost is on record: Aidin approved ten records in a row without reading any of
+ * them and said the text was why.
+ *
+ * A `detail` is deliberately UNCAPPED. The point is not less information - it is that
+ * the long half belongs behind the expander instead of in the line. Every limit here is
+ * on what the reader sees before clicking anything.
+ */
+export const READABILITY_LIMITS = Object.freeze({
+  summary: 240,
+  visibleLine: 120,
+  step: 120,
+  expect: 120,
+  evidenceItems: 5,
+  gapItems: 5,
+  stepItems: 6,
+});
+
+/** The line a reader sees before expanding anything. */
+function visibleLine(item) {
+  return String((typeof item === "string" ? item : item?.claim) || "");
+}
+
+/**
+ * Is this record readable? SEPARATE from reviewRecordProblems on purpose.
+ *
+ * Correctness rules are retroactive - a critical item with nothing independent behind
+ * it was always inadmissible and should render as incomplete however old it is.
+ * Readability rules are not: applying them backwards would mark about ninety existing
+ * records incomplete in one go, which is noise, and noise is the thing being fixed.
+ * So this gate runs on WRITE only, and the rendering path never calls it.
+ *
+ * Every message says what to DO, not just what is wrong. A limit that only says "too
+ * long" invites deleting the honest half; naming the {claim, detail} split says where
+ * the honest half goes instead.
+ */
+export function reviewRecordReadability(rec) {
+  const problems = [];
+  if (!rec || typeof rec !== "object") {
+    return [];
+  }
+  const L = READABILITY_LIMITS;
+  const summary = String(rec.summary || "");
+  if (summary.length > L.summary) {
+    problems.push(
+      `summary is ${summary.length} characters (limit ${L.summary}) - say what changed in one or two short sentences and move the rest into an evidence entry's detail`
+    );
+  }
+  for (const [field, items, cap] of [
+    ["evidence", rec.evidence, L.evidenceItems],
+    ["notVerified", rec.notVerified, L.gapItems],
+  ]) {
+    if (!Array.isArray(items)) {
+      continue;
+    }
+    if (items.length > cap) {
+      problems.push(`${field} has ${items.length} entries (limit ${cap}) - merge the ones that make the same point`);
+    }
+    items.forEach((item, i) => {
+      const line = visibleLine(item);
+      if (line.length > L.visibleLine) {
+        problems.push(
+          `${field}[${i}] shows ${line.length} characters before anything is clicked (limit ${L.visibleLine}) - split it into { claim, detail }: the claim is the line, the detail goes behind "explain" and has no limit`
+        );
+      }
+    });
+  }
+  if (Array.isArray(rec.testSteps)) {
+    if (rec.testSteps.length > L.stepItems) {
+      problems.push(`testSteps has ${rec.testSteps.length} steps (limit ${L.stepItems}) - a checklist longer than that does not get ticked`);
+    }
+    rec.testSteps.forEach((s, i) => {
+      if (String(s?.step || "").length > L.step) {
+        problems.push(`testSteps[${i}].step is ${String(s.step).length} characters (limit ${L.step}) - one action per step`);
+      }
+      if (String(s?.expect || "").length > L.expect) {
+        problems.push(`testSteps[${i}].expect is ${String(s.expect).length} characters (limit ${L.expect}) - one thing to look for`);
+      }
+    });
+  }
+  return problems;
+}
+
+/**
  * What is wrong with a record, as a list of human-readable problems. Empty means
  * complete. Used both to refuse a bad write and to mark a rendered record as
  * incomplete rather than silently showing a hollow card.
+ *
+ * Readability is NOT checked here - see reviewRecordReadability for why.
  */
 export function reviewRecordProblems(rec) {
   const problems = [];
@@ -1005,7 +1096,14 @@ export function buildAutoReviewRecord({ taskId, projectPath, outcome, where, bra
     ],
     evidence: [`${outcome}. ${where}.`, `Stopped because: ${stoppedReason || "unknown"}.`],
     notVerified: [
-      "Produced AUTONOMOUSLY by an autopilot and NOT verified end to end - the summary is the machine's own claim, not a checked result.",
+      // Claim short, the honest long half behind "explain" - the same shape every
+      // hand-written record is now held to, applied to the one the app writes itself.
+      // It was 129 characters on one line and would have been refused by its own gate.
+      {
+        claim: "An autopilot wrote this on its own. Nobody has checked it.",
+        detail:
+          "The summary above is the machine's own account of what it did, not a verified result. It was not run end to end, and no test confirmed the outcome it claims.",
+      },
       "The work lives in an isolated worktree/branch and is NOT merged.",
       "No human or independent reviewer has looked at it yet - use 'Independent reviewer' on the card for that.",
     ],
@@ -1022,6 +1120,14 @@ export function writeReviewRecord(metaHome, rec, { now = Date.now(), isRunStamp 
   const problems = reviewRecordProblems(rec);
   if (problems.length > 0) {
     return { ok: false, error: `Incomplete review record: ${problems.join("; ")}`, problems };
+  }
+  // Readability is enforced at the WRITE, not at the render - the limits would otherwise
+  // mark ninety existing records incomplete at once, and noise is what they exist to
+  // fix. Refusing here is the point: left as a convention, this was followed for exactly
+  // one record before the habit came back.
+  const unreadable = reviewRecordReadability(rec);
+  if (unreadable.length > 0) {
+    return { ok: false, error: `Review record is too long to be read: ${unreadable.join("; ")}`, problems: unreadable };
   }
   const file = reviewRecordPath(metaHome, rec.taskId);
   const existing = readReviewRecord(metaHome, rec.taskId);

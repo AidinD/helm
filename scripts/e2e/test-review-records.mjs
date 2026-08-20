@@ -11,6 +11,8 @@ import {
   reviewsDir,
   reviewRecordPath,
   reviewRecordProblems,
+  reviewRecordReadability,
+  READABILITY_LIMITS,
   readReviewRecord,
   listReviewRecords,
   writeReviewRecord,
@@ -737,6 +739,61 @@ try {
   ok(gauntletStatus(null).state === "none", "gauntletStatus(null) is a safe no-op");
   ok(recordCheckRun(metaHome, "no-such-id-000000", { label: "x", exitCode: 0 }).ok === false, "stamping a run onto a missing record fails loudly");
   ok(recordCheckRun(metaHome, G, { exitCode: 0 }).ok === false, "a run with no label is refused - it could not be matched to a check");
+
+  // ---- readability, enforced 2026-08-20 ---------------------------------------
+  // Measured first, not guessed: across the 93 records that existed that day the median
+  // summary was 393 characters and the median gap line 180. Only 3 of the 93 pass these
+  // limits, which is why they are enforced at the WRITE and never at the render - marking
+  // ninety records incomplete at once is the noise this exists to remove.
+  const L = READABILITY_LIMITS;
+  ok(reviewRecordReadability(complete()).length === 0, "a short record is readable");
+
+  const longSummary = complete({ summary: "x".repeat(L.summary + 1) });
+  ok(
+    reviewRecordReadability(longSummary).some((p) => /summary is \d+ characters/.test(p)),
+    `one character over the summary limit (${L.summary}) is refused`
+  );
+  ok(
+    reviewRecordProblems(longSummary).length === 0,
+    "but reviewRecordProblems does NOT flag it - readability is not retroactive, or every old record turns incomplete at once"
+  );
+
+  // THE property that makes the limits fair rather than lossy: the honest long half is
+  // not deleted, it moves behind the expander, and `detail` is uncapped.
+  const longLine = "y".repeat(L.visibleLine + 1);
+  ok(
+    reviewRecordReadability(complete({ evidence: [longLine] })).some((p) => /split it into \{ claim, detail \}/.test(p)),
+    "a long visible line is refused, and the message says where the long half goes"
+  );
+  ok(
+    reviewRecordReadability(complete({ evidence: [{ claim: "Short claim.", detail: longLine.repeat(6) }] })).length === 0,
+    "moving that text into `detail` makes it pass - detail has NO limit, so nothing has to be dropped to comply"
+  );
+  ok(
+    reviewRecordReadability(complete({ notVerified: [longLine] })).some((p) => /notVerified\[0\]/.test(p)),
+    "the same limit applies to the gaps, named by index so it is findable"
+  );
+  ok(
+    reviewRecordReadability(complete({ evidence: Array.from({ length: L.evidenceItems + 1 }, (_, i) => `point ${i}`) })).some((p) =>
+      /merge the ones that make the same point/.test(p)
+    ),
+    `more than ${L.evidenceItems} evidence entries is refused`
+  );
+  ok(
+    reviewRecordReadability(
+      complete({ testSteps: [{ step: "z".repeat(L.step + 1), expect: "fine" }] })
+    ).some((p) => /one action per step/.test(p)),
+    "an over-long step is refused with what to do instead"
+  );
+
+  // And the gate actually bites on the way in, not only in a pure function.
+  // A task id nothing else in this file has written, so "nothing was written" is
+  // actually testing the refusal rather than reading a record from an earlier case.
+  const FRESH = "7c1e9d40-5a2b-4c8e-9f31-2ad6be845100";
+  const wroteLong = writeReviewRecord(metaHome, complete({ taskId: FRESH, summary: "q".repeat(L.summary + 50) }));
+  ok(wroteLong.ok === false && /too long to be read/.test(wroteLong.error || ""), "writeReviewRecord REFUSES an unreadable record");
+  ok(readReviewRecord(metaHome, FRESH) === null, "and nothing was written to disk");
+  ok(writeReviewRecord(metaHome, complete({ taskId: FRESH })).ok === true, "while the same record within the limits writes fine");
 
 } catch (err) {
   exit = 1;
