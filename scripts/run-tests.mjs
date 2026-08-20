@@ -220,7 +220,12 @@ if (slow.length) {
 // itself is asserted by test-e2e-no-strays.mjs, which CAN fail.
 if (slow.length) {
   const { sweepAbandonedRuns, processesUsingE2EProfiles } = await import(
-    path.join(e2eDir, "harness.mjs").replace(/\\/g, "/").replace(/^([A-Za-z]):/, "file:///$1:")
+    // pathToFileURL, not a hand-rolled backslash swap: it percent-encodes what a
+    // file URL has to encode. The hand-rolled version worked only because this repo
+    // sits at a path with no space, `#` or `?` in it - a clone under
+    // "C:\My Projects" or a "v1#final" directory would have produced a URL that
+    // silently pointed somewhere else, or truncated at the `#`.
+    pathToFileURL(path.join(e2eDir, "harness.mjs")).href
   );
   const swept = await sweepAbandonedRuns();
   if (swept.killed.length || swept.removed.length) {

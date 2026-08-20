@@ -707,8 +707,10 @@ export async function rmDirWithRetries(dir, attempts = 6) {
       }
     }
   }
-  // Left behind on purpose rather than thrown: the owner marker inside it is now
-  // this (soon to exit) process's PID, so the next launch's sweep collects it.
+  // Left behind on purpose rather than thrown: the owner marker BESIDE it still
+  // names this (soon to exit) process's PID, so the next launch's sweep collects it.
+  // Beside, not inside - that is the whole point of ownerPath(), and it is why a
+  // failed removal leaves a directory that reads "dead" rather than "unknown".
   return false;
 }
 
