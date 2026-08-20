@@ -56,7 +56,7 @@ fs.writeFileSync(path.join(noVcs, "DECISIONS.md"), "# decisions\n");
 const configPath = path.join(tmp, "config.json");
 process.env.HELM_CONFIG_PATH = configPath;
 process.env.HELM_META_HOME_OVERRIDE = path.join(tmp, "meta-home");
-process.env.HELM_E2E_PORT = "9380";
+process.env.HELM_E2E_PORT = process.env.HELM_E2E_PORT || "9380";
 
 const J = JSON.stringify;
 

@@ -29,7 +29,7 @@ process.env.HELM_MATES_PATH = path.join(tmp, "mates.json");
 process.env.HELM_SECOND_MATES_PATH = path.join(tmp, "second-mates.json");
 process.env.HELM_GOAL_RUN_HISTORY_PATH = path.join(tmp, "goal-run-history.json");
 process.env.HELM_META_HOME_OVERRIDE = path.join(tmp, "meta-home");
-process.env.HELM_E2E_PORT = "9384";
+process.env.HELM_E2E_PORT = process.env.HELM_E2E_PORT || "9384";
 
 try {
   app = await launch();

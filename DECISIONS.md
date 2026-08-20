@@ -7029,6 +7029,87 @@ still what a fresh install or an auto-update fetches. 0.2.81 is built and instal
 (verified, launches, window comes up), but publishing and retiring 0.2.78 is Aidin's call.
 
 
+## 2026-08-18 — E2E strays: a debug port was never an identity
+
+Aidin reported leftover E2E Electron instances surviving test runs, ~20 leaked
+`helm-e2e-userdata-*` Chromium profiles in `%TEMP%`, and a stray on port 9392
+making `test-harness-userdata-isolated.mjs` fail an assertion that had nothing
+to do with it. Killing the stray made it pass again.
+
+**Four independent defects, each reproduced before being fixed.**
+
+**1. `launch()` cleaned up only in `close()`.** Every failure between `spawn` and
+`return harness` — a ready timeout on a slow cold start, most often — threw, so
+the caller's `finally { await app?.close() }` had nothing to close and the
+Electron it had just spawned ran forever with no handle to it. This is the main
+way a stray is *made*.
+
+**2. A taken debug port silently attached to the wrong app.** Verified by
+launching two instances on one port: the second logs `bind() returned an error`
+and `Cannot start http server for devtools`, then **runs on perfectly well with
+no debugger**. `/json/list` shows exactly one page target — the first app's — so
+the harness attached to that and drove the wrong window, while the app it had
+spawned sat invisible in temp. Every assertion after that point was about
+somebody else's renderer.
+
+**3. Gauntlet check children were the one untracked child family.** A check is
+usually `node scripts/e2e/test-*.mjs`, which launches a whole Electron of its
+own, and it was a bare local in `runChecks` — not in `liveChildren`,
+`liveGoalRuns` or `liveVoiceStreams`, so `before-quit` never swept it. Quitting
+Helm mid-run orphaned a live E2E Helm, which then held a port and could spawn
+check children of its own. That is the "keeps spawning further child Helms" part
+of the report.
+
+**4. The runner's timeout guaranteed a stray.** `run()` used `child.kill()`,
+which on Windows terminates only that `node.exe` — the Electron underneath it
+survives. A test that overran its 300s budget therefore *always* leaked a whole
+app, at the worst possible moment.
+
+**Decision: identity comes from the profile directory, not the port.**
+Chromium writes `DevToolsActivePort` into `--user-data-dir`. The harness now
+waits for that file *in its own profile* and connects to the port it names, so
+attaching to a stranger is structurally impossible rather than merely unlikely.
+The same directory replaces the port as the kill discriminator: it is unique per
+launch by construction, and it appears on the command line of the entire chain —
+`cmd.exe`, npm's `node.exe`, the electron main and every GPU/renderer/utility
+child (measured: 9 processes, all matched) — where the port appeared only on the
+main. It also cannot reach Aidin's own Helm, whose profile is `%APPDATA%\helm`.
+A requested port that is taken now costs an ephemeral one, with a warning naming
+who holds it. `HELM_E2E_PORT` survives as a hint; 15 tests that hard-assigned it
+(overriding the port the gauntlet hands them) now honour the parent's value.
+
+**Decision: the sweep asks who owns a directory, not how old it is.**
+The 1-hour threshold was wrong in both directions — a suite or gauntlet check
+running past an hour would have its **live** profile deleted by a concurrent
+launch, and a directory leaked thirty seconds ago survived a full hour of test
+runs, which is how twenty of them accumulated. Each temp directory now carries
+the PID of the run that made it; the sweep removes those whose owner has exited
+and never touches a live one. Age remains only as a fallback for unmarked
+directories. `helm-e2e-config-*` is swept the same way — it had no sweep at all
+and 150+ had piled up going back three weeks.
+
+**And it kills before it deletes.** An abandoned profile is usually abandoned
+*because* something is still running out of it, so Windows has it locked and a
+delete-only sweep skips exactly the case it exists for, forever.
+
+**Rejected: failing fast on a busy port.** Honest, but it turns the gauntlet's
+normal case (an E2E running inside a Helm a harness already launched) into a
+red for an environmental reason. Recovering onto an ephemeral port and naming
+the occupant in a warning keeps the run correct and still surfaces the stray.
+
+**Rejected: a broader reaper keyed on `electron.exe`.** Same family as the
+`taskkill /IM electron.exe` rule in CLAUDE.md. Everything here is keyed to a
+per-run temp profile, which no other app on the machine can be using.
+
+`scripts/e2e/test-e2e-no-strays.mjs` asserts the properties, not the presence of
+the code: a failed launch leaves no directory, two runs on one port provably
+drive two different windows (each marks its own `window.__strayProbe` and reads
+back its own value), a tree-killed test run leaves no Electron, and a leftover
+from a dead run is reaped rather than attached to. Both mutations tried against
+it were caught — removing the failure cleanup, and restoring the trust-the-
+requested-port behaviour, which failed three assertions including the window
+one ("saw two and two").
+
 ### 2026-08-20: the firstmate skill is the reference for report-back, and "crew wakes its own mate" goes first
 
 Aidin ran `~/.claude/skills/firstmate` in a plain Claude Code desktop session and it worked:
