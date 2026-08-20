@@ -38,7 +38,18 @@ const base = {
   ok(rec.verdict === "judgment", "verdict is judgment, never a stamp - autonomous output is not verified");
   ok(rec.criticality === "core" && rec.checks[0].cmd === "npm test", "the check is the run's own verify gate");
   ok(/Wired the icon/.test(rec.summary) && /Finished with 3 commits/.test(rec.summary), "the summary carries what the run did");
-  ok((rec.notVerified || []).some((n) => /NOT verified end to end/i.test(n)), "notVerified states plainly that nothing is verified");
+  // The entry is now {claim, detail} - short line, long half behind "explain" - so read
+  // both halves. Asserted as the MEANING plus the length, because the point of the split
+  // is that the honest sentence survives while the line stays readable.
+  const gapText = (n) => (typeof n === "string" ? n : `${n?.claim || ""} ${n?.detail || ""}`);
+  ok(
+    (rec.notVerified || []).some((n) => /nobody has checked it/i.test(gapText(n)) && /not a verified result/i.test(gapText(n))),
+    "notVerified still states plainly that nothing is verified"
+  );
+  ok(
+    (rec.notVerified || []).every((n) => String(typeof n === "string" ? n : n?.claim || "").length <= 120),
+    "and every visible line is short enough to read before clicking anything"
+  );
   ok(!!rec.ask && /decide/i.test(rec.ask), "a judgment record states the ask (the decision the human must make)");
 }
 
