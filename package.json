@@ -14,10 +14,13 @@
   },
   "build": {
     "appId": "com.aidin.helm",
+    "afterPack": "scripts/afterPack.mjs",
     "productName": "Helm",
     "files": [
       "**/*",
       "!.whisper/**/*",
+      "!.claude/**/*",
+      "!pasted-images/**/*",
       "!docs/**/*",
       "!spike/**/*",
       "!scripts/**/*",
