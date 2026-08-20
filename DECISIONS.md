@@ -7212,3 +7212,38 @@ Crew work runs through the firstmate skill in desktop, which he has now tested a
 That is not a workaround pending Helm - on the report-back loop specifically, the skill is the better implementation, and Helm's version of it should be built to match what the skill already does.
 Helm's real advantages are elsewhere and remain real: crew survives the mate dying, the tier rules are enforced in code rather than requested in prose, the width cap is counted rather than remembered, and `helm_fleet_state` shows the other mate's work so two coordinators do not collide.
 None of those advantages help if the finished work is never read.
+
+
+### 2026-08-20: the inventory has three columns, and the third one is the finding
+
+Jot f95bfae5 asked what has never actually run.
+The answer needed a method, because the obvious one - "does it have a test?" - is the question that produced the problem.
+A passing test reads exactly like a working feature, which is how the tier guard passed its suite while letting 80 of 90 real writer commands through, and how 22 of 23 crew reports claimed success.
+
+**So the measure is: how many times has this fired in real operation?**
+Built as `scripts/inventory-mechanisms.mjs` rather than a note, because a one-off measurement rots and this one wants re-running after every reliability fix.
+It reads only, takes no locks, runs safely while Helm is up, and exits 2 when something has tests but has never run, so a release can gate on it.
+
+**First reading over the real state: 30 mechanisms, 8 have never run, 4 cannot be measured at all.**
+The eight that never ran all have passing tests - escalation has thirteen of them.
+`helm_report_up`, whose own description calls itself "how the chain closes", is 0 of 51.
+Quota exhaustion is 0 of 51 while Aidin's own notes record autopilots dying of it.
+
+**The third column is what this exercise actually produced.**
+Four mechanisms leave no trace on disk, so no amount of looking can establish whether they have ever worked.
+The tier guard hands a denial back to the run and discards it - nothing counted, nothing logged - so the one mechanism standing between a coordinator and writing code is also the one we can say least about.
+Nothing marks a report as read, so whether a mate ever looked at the inbox is unanswerable.
+Auto-compact keeps its history in an in-memory Map that dies with the app, and a FAILED compaction is recorded nowhere at all.
+
+**Decision: moving a row out of the unmeasurable column outranks writing another test for it.**
+A test says the code can work; a trace says it did.
+For three of the four the fix is one line written at the moment the mechanism fires, which is cheap next to what it buys - the difference between auditing a claim and believing it.
+This reorders the reliability block: the traces come before new coverage.
+
+**A finding from building the measurement, which is the same shape as everything else here.**
+The first version read the tier guard as "never run" because its turn-counter directory was empty.
+That was wrong: the counter is deleted after each turn (`resetTierTurnCounter`), so an empty directory means "no turn in flight", not "never used".
+A state being read as an assertion it does not make - in the tool built to catch exactly that.
+It is now reported as unmeasurable, which is the truth.
+
+Published as a readable page (https://claude.ai/code/artifact/dd3c582c-63a7-4c0c-b37d-eaffc4c0f299) rather than left in a task description, because the previous day's ten review records were approved without being read and unreadability was the stated reason.
