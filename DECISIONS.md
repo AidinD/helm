@@ -6995,40 +6995,6 @@ Desktop is what produced the session sprawl and the stress in the first place
 returns it is evidence about what Helm is FOR, not a reason to hurry it back. Worth watching
 deliberately rather than noticing later.
 
-## 2026-08-20 - The installed Helm died silently because the packer shipped a live agent worktree
-
-"helm startar inte ens längre efter senaste installern." It did not start, and it said nothing:
-the installed `Helm.exe` exited with code 1, no window, no stderr, no crash in the event log.
-Windows Electron builds are GUI-subsystem, so even a syntax error in the main process has
-nowhere to print - the one class of failure this app cannot report about itself.
-
-**The cause was one file changing size while electron-builder packed.** `build.files` was
-`**/*` plus a hand-maintained deny list, and `.claude/` was not on it - so build 0.2.78
-packaged `.claude/worktrees/nostalgic-nobel-5872af`, a *live agent worktree*, at 12:01 while an
-agent was working in it. electron-builder writes the asar header (per-file offset, size,
-sha256) from a directory scan and streams the contents in a second pass. `scripts/e2e/harness.mjs`
-inside that worktree was 39407 bytes at scan time and a different size at copy time, so every
-one of the 834 files after it landed at the wrong offset - including `src/main.js`, which the
-app then read as the middle of an unrelated module. 1876 files verified against their own
-header hash; the remaining 834 did not, in one contiguous run starting exactly at that file.
-The archive still parsed, `asar list` still worked, NSIS still built an installer, GitHub still
-got a release. Nothing anywhere said "this app cannot start".
-
-**Two fixes, and the second is the one that matters.** `.claude/**/*` and `pasted-images/**/*`
-are excluded now (which also cut the installer by ~4MB and the asar from 30.7MB to 18.9MB).
-But the exclusion only names the directory that happened to bite: ANY file written during a
-pack does this, and Helm's whole point is agents editing this repo while the captain does something
-else - it will happen again. So `scripts/verifyAsar.mjs` re-hashes every file in the archive
-against the header the packer just wrote, and `scripts/afterPack.mjs` runs it as an
-electron-builder `afterPack` hook - after the app dir exists, BEFORE NSIS and before publish.
-That is the only seam where refusing still means the broken installer never exists. A drifted
-build now fails loudly naming the first file that drifted, instead of shipping.
-
-**Left standing:** release 0.2.78 is still `Latest` on GitHub, i.e. the corrupt installer is
-still what a fresh install or an auto-update fetches. 0.2.81 is built and installed locally
-(verified, launches, window comes up), but publishing and retiring 0.2.78 is the captain's call.
-
-
 ## 2026-08-18 — E2E strays: a debug port was never an identity
 
 The captain reported leftover E2E Electron instances surviving test runs, ~20 leaked
@@ -7109,6 +7075,88 @@ from a dead run is reaped rather than attached to. Both mutations tried against
 it were caught — removing the failure cleanup, and restoring the trust-the-
 requested-port behaviour, which failed three assertions including the window
 one ("saw two and two").
+
+## 2026-08-18 - Two sessions solved the foreign-app problem in opposite ways; the profile directory won
+
+Two chip sessions, stopped mid-work the same afternoon, both attacked the same defect: the E2E
+harness could attach to an Electron it had not launched and drive it, so every assertion after that
+point described a stranger. They reached opposite conclusions and each rejected the other's by name.
+Recorded here because the losing branch's reasoning contains the sharper warning.
+
+**What the second session found, and it is worth keeping.**
+`test-archive-clears-second-mate-binding.mjs` had been failing three assertions, reproducibly, on a
+clean tree. Two days went into believing the display-key migration had broken the archive path - a
+plausible live bug, since a jump-in could then resurrect a session the captain had archived.
+It was neither the product nor the test. A leftover E2E Electron was holding the default debug port,
+the new app could not bind it, and the harness - which identified its target as "a page on this
+port" and nothing more - attached to the stranger. That stranger ran a different checkout pointed at
+a different second-mates file, so the archive it performed wrote somewhere else entirely, and the
+test read back its own untouched store and reported the binding was never cleared.
+The proof it was a foreign process rather than a broken one: while diagnosing, a syntax error left
+the app unable to load at all, and `window.helm.archiveSession(...)` still returned `{ok: true}`.
+
+**The warning that outlives the mechanism.** The failure direction was the lucky one. The same setup
+silently reports a **PASS** when the app under test is broken, because the assertions describe a
+healthy stranger, and nothing in the output distinguishes that from a real pass. A wrong red cost two
+days; the wrong green would never have announced itself. That is why this is a harness-integrity
+problem and not a test bug, and it is the reason the Jot card about concurrent E2E runs was rewritten
+from "a flaky test" to what it actually is.
+
+**Decision: the profile-directory approach supersedes the refuse-to-launch approach.**
+The second session's fix was a pre-flight probe: if the debug port already answers, refuse to launch,
+naming the port and the way out. Its argument was that a free port before spawning is what makes the
+instance we then attach to ours, and it rejected ephemeral ports for removing the predictable port an
+interactive run can be attached to by hand.
+The first session instead made the profile directory the identity: wait for `DevToolsActivePort`
+inside our OWN profile and connect to the port it names. That is the stronger property. Refusing to
+launch prevents the collision; reading our own profile makes the attachment *correct even when the
+collision happens*, which its test demonstrates directly by running two harnesses against one
+requested port and proving each drove its own window.
+The ergonomic objection turned out not to bite: the requested port is still used whenever it is free,
+so the predictable-port case is unchanged, and only a genuinely occupied port costs an ephemeral one.
+And the losing branch's own "loose end, deliberately not fixed here" - that strays are still created -
+is exactly what the winning branch fixed.
+
+**So `test-harness-refuses-foreign-app.mjs` was NOT taken.** It asserts the rejected mechanism, and
+verified against the merged code it fails four of five assertions for that reason - correctly, since
+the harness now recovers where the test demands a refusal. Its property is covered, more strongly, by
+`test-e2e-no-strays.mjs`. Keeping a test that pins a design we deliberately replaced would make the
+next change to the harness look like a regression.
+
+
+## 2026-08-20 - The installed Helm died silently because the packer shipped a live agent worktree
+
+"helm startar inte ens längre efter senaste installern." It did not start, and it said nothing:
+the installed `Helm.exe` exited with code 1, no window, no stderr, no crash in the event log.
+Windows Electron builds are GUI-subsystem, so even a syntax error in the main process has
+nowhere to print - the one class of failure this app cannot report about itself.
+
+**The cause was one file changing size while electron-builder packed.** `build.files` was
+`**/*` plus a hand-maintained deny list, and `.claude/` was not on it - so build 0.2.78
+packaged `.claude/worktrees/nostalgic-nobel-5872af`, a *live agent worktree*, at 12:01 while an
+agent was working in it. electron-builder writes the asar header (per-file offset, size,
+sha256) from a directory scan and streams the contents in a second pass. `scripts/e2e/harness.mjs`
+inside that worktree was 39407 bytes at scan time and a different size at copy time, so every
+one of the 834 files after it landed at the wrong offset - including `src/main.js`, which the
+app then read as the middle of an unrelated module. 1876 files verified against their own
+header hash; the remaining 834 did not, in one contiguous run starting exactly at that file.
+The archive still parsed, `asar list` still worked, NSIS still built an installer, GitHub still
+got a release. Nothing anywhere said "this app cannot start".
+
+**Two fixes, and the second is the one that matters.** `.claude/**/*` and `pasted-images/**/*`
+are excluded now (which also cut the installer by ~4MB and the asar from 30.7MB to 18.9MB).
+But the exclusion only names the directory that happened to bite: ANY file written during a
+pack does this, and Helm's whole point is agents editing this repo while the captain does something
+else - it will happen again. So `scripts/verifyAsar.mjs` re-hashes every file in the archive
+against the header the packer just wrote, and `scripts/afterPack.mjs` runs it as an
+electron-builder `afterPack` hook - after the app dir exists, BEFORE NSIS and before publish.
+That is the only seam where refusing still means the broken installer never exists. A drifted
+build now fails loudly naming the first file that drifted, instead of shipping.
+
+**Left standing:** release 0.2.78 is still `Latest` on GitHub, i.e. the corrupt installer is
+still what a fresh install or an auto-update fetches. 0.2.81 is built and installed locally
+(verified, launches, window comes up), but publishing and retiring 0.2.78 is the captain's call.
+
 
 ### 2026-08-20: the firstmate skill is the reference for report-back, and "crew wakes its own mate" goes first
 
