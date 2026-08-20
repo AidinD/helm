@@ -47,7 +47,7 @@ fs.writeFileSync(
 );
 process.env.HELM_META_HOME_OVERRIDE = path.join(tmp, "meta-home");
 process.env.HELM_CONFIG_PATH = path.join(tmp, "config.json");
-process.env.HELM_E2E_PORT = "9377";
+process.env.HELM_E2E_PORT = process.env.HELM_E2E_PORT || "9586";
 
 const J = JSON.stringify;
 // Read the overlay as a user sees it: header status + the transcript text.

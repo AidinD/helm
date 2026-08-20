@@ -56,7 +56,7 @@ const configPath = path.join(tmp, "config.json");
 fs.writeFileSync(configPath, JSON.stringify({ jot: { enabled: true, path: path.join(jotDir, "todos.json") } }), "utf8");
 process.env.HELM_CONFIG_PATH = configPath;
 process.env.HELM_META_HOME_OVERRIDE = metaHome;
-process.env.HELM_E2E_PORT = "9352";
+process.env.HELM_E2E_PORT = process.env.HELM_E2E_PORT || "9352";
 
 // A clean, committed repo for the checks to be pinned against.
 const repo = path.join(tmp, "repo");
