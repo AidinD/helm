@@ -64,6 +64,14 @@ running at the same time. Always restart via `scripts/restart-dev.sh`
 (shells out to `scripts/kill-helm.ps1`), which only kills processes whose
 command line actually points at this repo.
 
+That repo-path match also means `kill-helm.ps1` does NOT touch the *installed*
+Helm (`%LOCALAPPDATA%\Programs\Helm\Helm.exe`) - its command line points at the
+install dir, not here. A silent NSIS install (`"dist\Helm Setup <v>.exe" /S`)
+fails with exit code 2, doing nothing, while that installed app is running, and
+the only sign is the exit code. Stop it by exact path first
+(`Get-Process Helm | ? Path -eq "$env:LOCALAPPDATA\Programs\Helm\Helm.exe" |
+Stop-Process`) - precise enough to be safe, unlike matching on the image name.
+
 ## Session metadata + verifying changes (hard-won gotchas)
 
 These are the traps a fresh session most needs and would otherwise miss (they
