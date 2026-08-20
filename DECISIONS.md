@@ -6994,3 +6994,36 @@ Desktop is what produced the session sprawl and the stress in the first place
 (2026-08-16 entry). Running in Desktop again is the right short-term call, but if the sprawl
 returns it is evidence about what Helm is FOR, not a reason to hurry it back. Worth watching
 deliberately rather than noticing later.
+
+## 2026-08-20 - The installed Helm died silently because the packer shipped a live agent worktree
+
+"helm startar inte ens längre efter senaste installern." It did not start, and it said nothing:
+the installed `Helm.exe` exited with code 1, no window, no stderr, no crash in the event log.
+Windows Electron builds are GUI-subsystem, so even a syntax error in the main process has
+nowhere to print - the one class of failure this app cannot report about itself.
+
+**The cause was one file changing size while electron-builder packed.** `build.files` was
+`**/*` plus a hand-maintained deny list, and `.claude/` was not on it - so build 0.2.78
+packaged `.claude/worktrees/nostalgic-nobel-5872af`, a *live agent worktree*, at 12:01 while an
+agent was working in it. electron-builder writes the asar header (per-file offset, size,
+sha256) from a directory scan and streams the contents in a second pass. `scripts/e2e/harness.mjs`
+inside that worktree was 39407 bytes at scan time and a different size at copy time, so every
+one of the 834 files after it landed at the wrong offset - including `src/main.js`, which the
+app then read as the middle of an unrelated module. 1876 files verified against their own
+header hash; the remaining 834 did not, in one contiguous run starting exactly at that file.
+The archive still parsed, `asar list` still worked, NSIS still built an installer, GitHub still
+got a release. Nothing anywhere said "this app cannot start".
+
+**Two fixes, and the second is the one that matters.** `.claude/**/*` and `pasted-images/**/*`
+are excluded now (which also cut the installer by ~4MB and the asar from 30.7MB to 18.9MB).
+But the exclusion only names the directory that happened to bite: ANY file written during a
+pack does this, and Helm's whole point is agents editing this repo while Aidin does something
+else - it will happen again. So `scripts/verifyAsar.mjs` re-hashes every file in the archive
+against the header the packer just wrote, and `scripts/afterPack.mjs` runs it as an
+electron-builder `afterPack` hook - after the app dir exists, BEFORE NSIS and before publish.
+That is the only seam where refusing still means the broken installer never exists. A drifted
+build now fails loudly naming the first file that drifted, instead of shipping.
+
+**Left standing:** release 0.2.78 is still `Latest` on GitHub, i.e. the corrupt installer is
+still what a fresh install or an auto-update fetches. 0.2.81 is built and installed locally
+(verified, launches, window comes up), but publishing and retiring 0.2.78 is Aidin's call.
