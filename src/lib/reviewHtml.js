@@ -192,14 +192,32 @@ function bulletList(items, render = (x) => esc(x)) {
   return `<ul>${items.map((i) => `<li>${render(i)}</li>`).join("")}</ul>`;
 }
 
-/** Evidence entries are either a plain string or {claim, detail}. */
+/**
+ * Entries are either a plain string or {claim, detail}.
+ *
+ * The two halves used to be glued into ONE line with an em dash, which made every
+ * entry as long as its longest possible explanation - so the page was complete and
+ * unreadable at the same time, and the reader had no way to skip the part he did not
+ * need. The captain, 2026-08-20: "man kanske kan ha en explain knapp bredvid som kan
+ * förklara i en ruta och/eller en expander med en längre beskrivning per punkt."
+ *
+ * So the claim is always visible and the detail sits behind a native <details>. No
+ * script, works in a saved file, and the short version is what you get by default.
+ * Nothing is dropped - the honest long half is one click away instead of gone.
+ */
 function evidenceText(item) {
   if (typeof item === "string") {
     return esc(item);
   }
   const claim = item?.claim || "";
   const detail = item?.detail || "";
-  return `${esc(claim)}${claim && detail ? " — " : ""}${detail ? `<span class="muted">${esc(detail)}</span>` : ""}`;
+  if (!detail) {
+    return esc(claim);
+  }
+  if (!claim) {
+    return esc(detail);
+  }
+  return `<details class="why"><summary>${esc(claim)}</summary><div class="why-body">${esc(detail)}</div></details>`;
 }
 
 function chipHtml(text, cls = "") {
@@ -266,6 +284,18 @@ const STYLE = `
   li { margin-bottom: 7px; }
   p { margin: 0 0 12px; }
   .muted { color: var(--muted); }
+  /* Progressive disclosure: the claim is the line, the explanation is one click in.
+     Native <details>, so this works in a saved file with no script. The marker is
+     styled rather than hidden - a line that expands has to LOOK like one, or the
+     detail is there and nobody finds it. */
+  details.why { display: block; }
+  details.why > summary { cursor: pointer; list-style: none; display: block; }
+  details.why > summary::-webkit-details-marker { display: none; }
+  details.why > summary::after { content: " explain"; color: var(--muted); font-size: 12px; border: 1px solid #2a3040; border-radius: 3px; padding: 0 5px; margin-left: 7px; white-space: nowrap; }
+  details.why[open] > summary::after { content: " hide"; }
+  details.why > summary:hover::after { border-color: #3d465c; }
+  details.why > summary:focus-visible { outline: 2px solid #5b7cfa; outline-offset: 2px; }
+  .why-body { color: var(--muted); margin: 6px 0 2px; padding-left: 2px; border-left: 2px solid #262b38; padding-left: 10px; }
   code { background: #0d0f14; border-radius: 4px; padding: 1px 5px; font-family: Consolas, monospace; font-size: 13.5px; }
   pre.cmd, pre.tail, pre.md-code { background: #0d0f14; border-radius: 6px; padding: 10px 12px; overflow-x: auto; font-family: Consolas, monospace; font-size: 12.5px; line-height: 1.5; margin: 8px 0 0; }
   pre.tail { color: var(--muted); max-height: 320px; overflow-y: auto; }
@@ -428,8 +458,13 @@ export function buildReviewHtml({
     parts.push(section("Why this is not critical", `<p>${esc(row.whyNotCritical)}</p>`));
   }
 
-  parts.push(section("Evidence — what the author says was checked", bulletList(rec.evidence, evidenceText)));
-  parts.push(section("Not verified — the gaps they declared", bulletList(rec.notVerified), "warn"));
+  // Headings frame every line under them, so they are written for the reader rather
+  // than about the method. "Evidence — what the author says was checked" described the
+  // process; "What I checked" asks for a line that names the worry and what happened.
+  // Same for the gaps: naming them as RISK is what makes them act-on-able, and the
+  // previous wording ("the gaps they declared") only said something about the author.
+  parts.push(section("What I checked", bulletList(rec.evidence, evidenceText)));
+  parts.push(section("What could still be wrong", bulletList(rec.notVerified, evidenceText), "warn"));
 
   if (Array.isArray(rec.acceptanceCriteria) && rec.acceptanceCriteria.length > 0) {
     parts.push(

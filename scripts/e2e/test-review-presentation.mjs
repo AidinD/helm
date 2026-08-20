@@ -130,7 +130,7 @@ for (const [needle, why] of [
   ["Needs a decision from you", "a judgment verdict's open question is a section of its own"],
   ["Vill du att den ska vänta 6 eller 10 sekunder?", "and the question itself is printed"],
   ["Resting on the author&#x27;s word".replace("&#x27;", "'"), "the caveats are shown"],
-  ["Evidence", "the evidence block"],
+  ["What I checked", "the evidence block"],
   ["observed in a real run", "including an evidence entry's detail half"],
   ["A second, plain-string claim", "and a plain-string evidence entry, which is the other shape the record allows"],
   ["Not exercised against a real hung pipe", "the declared gaps"],
