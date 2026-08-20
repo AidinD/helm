@@ -121,6 +121,16 @@ try {
       bodyVisible: body.getBoundingClientRect().height > 0,
       open: item.classList.contains("rev-open"),
       evidenceItems: evid ? [...evid.querySelectorAll("li")].map((li) => li.textContent.trim()) : null,
+      // Progressive disclosure, added 2026-08-20: a {claim, detail} entry renders as a
+      // native <details> - the claim is the visible line and the detail is behind it.
+      // Read as three separate facts, because "the text is present somewhere" is NOT
+      // the property that matters. What matters is that the short line is what you get
+      // by default and the long half is reachable, and a single innerText check cannot
+      // tell those apart from the old glued-together line.
+      evidenceExpanders: evid ? [...evid.querySelectorAll("li details.rev-why")].length : 0,
+      evidenceSummaries: evid ? [...evid.querySelectorAll("li details.rev-why > summary")].map((s) => s.textContent.trim()) : null,
+      evidenceDetailOpen: evid ? [...evid.querySelectorAll("li details.rev-why")].map((d) => d.open) : null,
+      evidenceDetailBodies: evid ? [...evid.querySelectorAll("li details.rev-why > .rev-why-body")].map((b) => b.textContent.trim()) : null,
       evidenceLabel: evid?.querySelector(".rev-list-label")?.textContent || null,
       gapItems: gaps ? [...gaps.querySelectorAll("li")].map((li) => li.textContent.trim()) : null,
       gapLabel: gaps?.querySelector(".rev-list-label")?.textContent || null,
@@ -139,13 +149,25 @@ try {
 
   // THE point: sentences render as list items, not as pills.
   ok(opened.evidenceItems?.length === 3, `evidence renders as a list of 3 items (${opened.evidenceItems?.length})`);
-  ok(/^Evidence · 3$/.test(opened.evidenceLabel || ""), `under a labelled heading with its count (${JSON.stringify(opened.evidenceLabel)})`);
+  ok(/^What I checked · 3$/.test(opened.evidenceLabel || ""), `under a labelled heading with its count (${JSON.stringify(opened.evidenceLabel)})`);
+  // A {claim, detail} entry is now an expander, not one glued line. The claim carries
+  // the row; the explanation is one click in. The previous assertion pinned the glued
+  // form, which made every entry as long as its longest possible explanation.
+  ok(opened.evidenceExpanders === 1, `the {claim, detail} entry renders as an expander (${opened.evidenceExpanders})`);
   ok(
-    opened.evidenceItems?.[2] === "Mutation evidence - Removing the backoff branch turns the ordering assertions red.",
-    `a {claim, detail} entry is joined into one readable line (${JSON.stringify(opened.evidenceItems?.[2])})`
+    opened.evidenceSummaries?.[0] === "Mutation evidence",
+    `its visible line is the claim alone (${JSON.stringify(opened.evidenceSummaries?.[0])})`
+  );
+  ok(
+    opened.evidenceDetailOpen?.[0] === false,
+    `and it starts CLOSED, so the short version is what you get by default (open=${opened.evidenceDetailOpen?.[0]})`
+  );
+  ok(
+    opened.evidenceDetailBodies?.[0] === "Removing the backoff branch turns the ordering assertions red.",
+    `with the full explanation reachable behind it, not dropped (${JSON.stringify(opened.evidenceDetailBodies?.[0])})`
   );
   ok(opened.gapItems?.length === 2, `the gaps render as their own list (${opened.gapItems?.length})`);
-  ok(/^Not verified · 2$/.test(opened.gapLabel || ""), `named as gaps rather than mixed in with the evidence (${JSON.stringify(opened.gapLabel)})`);
+  ok(/^What could still be wrong · 2$/.test(opened.gapLabel || ""), `named as gaps rather than mixed in with the evidence (${JSON.stringify(opened.gapLabel)})`);
   ok(
     opened.longestChip <= 40,
     `no chip is holding a sentence any more - longest chip is ${opened.longestChip} chars (${JSON.stringify(opened.chipTexts)})`

@@ -1802,17 +1802,45 @@ function reviewRowEl(row, band = null) {
     const ul = document.createElement("ul");
     for (const item of items) {
       const li = document.createElement("li");
-      li.textContent =
-        typeof item === "string" ? item : `${item.claim || ""}${item.claim && item.detail ? " - " : ""}${item.detail || ""}`;
+      const claim = typeof item === "string" ? item : item?.claim || "";
+      const detail = typeof item === "string" ? "" : item?.detail || "";
+      if (claim && detail) {
+        // Progressive disclosure. These two halves used to be glued into one line, so
+        // every entry was as long as its longest possible explanation and there was no
+        // way to skip the part you did not need - complete and unreadable at once.
+        // Aidin, 2026-08-20: an explain button, or an expander with the longer
+        // description per item. Native <details>, so no state to track and no listener
+        // to leak on a re-render.
+        const d = document.createElement("details");
+        d.className = "rev-why";
+        const s = document.createElement("summary");
+        s.textContent = claim;
+        const body2 = document.createElement("div");
+        body2.className = "rev-why-body";
+        body2.textContent = detail;
+        d.append(s, body2);
+        li.append(d);
+      } else {
+        li.textContent = claim || detail;
+      }
       ul.append(li);
     }
     box.append(ul);
     body.append(box);
   };
-  listBlock("Evidence", rec.evidence, "rev-list-evidence", "What the author says was checked, and how.");
-  // The gaps are the useful half - a feature once shipped whose tests all passed while
-  // the feature was broken, because they exercised the wrong layer.
-  listBlock("Not verified", rec.notVerified, "rev-list-gaps", "What was NOT checked. A record listing only what passed is a sales pitch.");
+  // The HEADING does most of the work here, because it frames every line under it.
+  // These used to read "Evidence" and "Not verified", with subtitles that explained the
+  // METHOD to the reader ("a record listing only what passed is a sales pitch") - which
+  // is the author talking about his own process, not help. Aidin, 2026-08-20: both lists
+  // were still the hard part to understand after the length was fixed.
+  //
+  // "What I checked" invites a line that names the worry and what happened instead.
+  // "What could still be wrong" invites a line that names the RISK rather than the
+  // omission - and the risk is the half he can act on. The gaps stay mandatory: a
+  // feature once shipped whose tests all passed while the feature was broken, because
+  // they exercised the wrong layer.
+  listBlock("What I checked", rec.evidence, "rev-list-evidence", "Each line: the worry, and what actually happened.");
+  listBlock("What could still be wrong", rec.notVerified, "rev-list-gaps", "The gaps, said as risk rather than as omission.");
 
   const chips = document.createElement("div");
   chips.className = "rev-chips";
