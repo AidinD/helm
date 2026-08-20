@@ -68,6 +68,10 @@ export function buildReportFromRecord(rec, now) {
     model: rec.resolvedModel || rec.model || null,
     changed: { commitCount, branchName: rec.branchName || null, worktreePath: rec.worktreePath || null },
     needsCaptain: outcome.needsCaptain,
+    // Same split as the live path: alarm in needsCaptain, landed-but-unread work
+    // on its own quiet line. Kept in both builders because they drifted apart
+    // once already and both ended up calling every non-crashed run "done".
+    awaitingReview: outcome.awaitingReview || null,
     stoppedReason: rec.stoppedReason || null,
     reportedAt: now,
     reconciled: true,

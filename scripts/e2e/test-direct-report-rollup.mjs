@@ -32,7 +32,7 @@ try {
     goalRuns.set("cap-done", {
       goalRunId: "cap-done", ordinal: 1, goal: "A captain-launched run that finished",
       projectPath: "D:/Repo/x", status: "done", dispatchedBy: null, iterations: [{},{}],
-      result: { worktreePath: "D:/Repo/x-worktrees/goal-a", branchName: "helm/goal-a", stoppedReason: "completed", commitCount: 3 },
+      result: { worktreePath: "D:/Repo/x-worktrees/goal-a", branchName: "helm/goal-a", stoppedReason: "no_op_convergence", commitCount: 3 },
       error: null, escalation: null, latestPlan: null,
     });
     document.querySelectorAll("#rollupProbe").forEach((n) => n.remove());

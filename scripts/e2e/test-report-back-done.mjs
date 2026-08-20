@@ -66,7 +66,7 @@ try {
   await app.eval(`(async () => {
     state.config = await window.helm.setConfig({ acknowledgedGoalRuns: [] });
     goalRuns.clear();
-    goalRuns.set("noWt", { goalRunId:"noWt", ordinal:++goalRunSeq, goal:"DONE_no_worktree_run", projectPath:"P", dispatchedBy:${JSON.stringify(mateId)}, status:"done", result:{ commitCount:0, stoppedReason:"converged" }, iterations:[], error:null, escalation:null });
+    goalRuns.set("noWt", { goalRunId:"noWt", ordinal:++goalRunSeq, goal:"DONE_no_worktree_run", projectPath:"P", dispatchedBy:${JSON.stringify(mateId)}, status:"done", result:{ commitCount:0, stoppedReason: "no_op_convergence" }, iterations:[], error:null, escalation:null });
     goalRuns.set("wt", { goalRunId:"wt", ordinal:++goalRunSeq, goal:"DONE_with_worktree_run", projectPath:"P", dispatchedBy:${JSON.stringify(mateId)}, status:"done", result:{ commitCount:2, branchName:"helm/goal-wt", worktreePath:"D:/nope/helm-worktrees/wt" }, iterations:[], error:null, escalation:null });
     return true;
   })()`);

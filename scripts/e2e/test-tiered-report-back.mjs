@@ -31,9 +31,14 @@ try {
 
   await app.eval(`(() => {
     goalRuns.clear();
-    // Mate-dispatched, handled (clean) -> under the mate roll-up only.
+    // Mate-dispatched and genuinely successful -> under the mate roll-up only, NOT in
+    // the needs-you queue. It has to carry commits to be that: a run that converged
+    // having committed nothing did not succeed, it either found the goal already met or
+    // got stuck, and telling those apart is a captain's job. The old fixture said
+    // "clean" while seeding zero commits, so it was asserting that the wrong thing was
+    // quiet.
     goalRuns.set("mh", { goalRunId:"mh", ordinal:++goalRunSeq, goal:"MATE_handled_clean_run", projectPath:"P", dispatchedBy:${JSON.stringify(mate.mateId)},
-      status:"done", result:{ commitCount:0, stoppedReason:"converged" }, iterations:[], error:null, escalation:null });
+      status:"done", result:{ commitCount:2, branchName:"helm/goal-mh", stoppedReason: "no_op_convergence" }, iterations:[], error:null, escalation:null });
     // Mate-dispatched, escalated -> roll-up AND needs-you queue.
     goalRuns.set("me", { goalRunId:"me", ordinal:++goalRunSeq, goal:"MATE_escalated_run", projectPath:"P", dispatchedBy:${JSON.stringify(mate.mateId)},
       status:"done", result:{ commitCount:0 }, iterations:[], error:null, escalation:{ signal:"ambiguity_reported", detail:"Which token store?" } });

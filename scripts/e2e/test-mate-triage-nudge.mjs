@@ -35,8 +35,13 @@ try {
     state.config = state.config || {};
     state.config.acknowledgedGoalRuns = [];
     goalRuns.clear();
-    goalRuns.set("p1", { goalRunId:"p1", ordinal:++goalRunSeq, goal:"PROBE_clean_run", projectPath:"P", dispatchedBy:"mate_probe", status:"done", result:{ commitCount:0, stoppedReason:"converged" }, iterations:[], error:null, escalation:null });
-    goalRuns.set("p2", { goalRunId:"p2", ordinal:++goalRunSeq, goal:"PROBE_commits_run", projectPath:"P", dispatchedBy:"mate_probe", status:"done", result:{ commitCount:3, branchName:"helm/goal-p2" }, iterations:[], error:null, escalation:null });
+    // One genuinely successful run and one that genuinely failed - which is what
+    // "1 of 2 needs the captain" is asserting below. Both fixtures were wrong for that
+    // intent before 2026-08-20: the "clean" one committed nothing (so it converged
+    // without doing anything, which DOES want a look), and the other carried no stopped
+    // reason at all (so it classified as an outcome nobody can name).
+    goalRuns.set("p1", { goalRunId:"p1", ordinal:++goalRunSeq, goal:"PROBE_clean_run", projectPath:"P", dispatchedBy:"mate_probe", status:"done", result:{ commitCount:2, branchName:"helm/goal-p1", stoppedReason: "no_op_convergence" }, iterations:[], error:null, escalation:null });
+    goalRuns.set("p2", { goalRunId:"p2", ordinal:++goalRunSeq, goal:"PROBE_commits_run", projectPath:"P", dispatchedBy:"mate_probe", status:"done", result:{ commitCount:3, branchName:"helm/goal-p2", stoppedReason: "two_consecutive_failures" }, iterations:[], error:null, escalation:null });
     goalRuns.set("cap", { goalRunId:"cap", ordinal:++goalRunSeq, goal:"CAPTAIN_own_run", projectPath:"P", dispatchedBy:null, status:"done", result:{ commitCount:0 }, iterations:[], error:null, escalation:null });
     return true;
   })()`);

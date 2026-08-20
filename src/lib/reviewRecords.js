@@ -279,6 +279,18 @@ function criticalityProblems(rec) {
       );
     }
   }
+  // Security and integrity are ALWAYS the captain's call, however green the checks are.
+  // the captain, 2026-08-20: "ändringar som påverkar eventuell säkerhet eller integritet ska
+  // vara needs you." A `stamp` means "verified end to end, read it and move on", and this
+  // tier is defined as the one where being wrong is expensive or irreversible - so a
+  // stamp here is the author deciding that his eyes were not needed on exactly the class
+  // of change where they are. `judgment` also forces `ask`, which is what turns "a second
+  // pair of eyes" into a required statement of WHICH parts rather than a hope.
+  if (rec.criticality === "critical" && rec.verdict === "stamp") {
+    problems.push(
+      "a critical item cannot be a stamp - security, auth, data loss, money and irreversible actions always need the captain, so set verdict to judgment and state in `ask` which specific parts want a second pair of eyes"
+    );
+  }
   const checks = Array.isArray(rec.checks) ? rec.checks : [];
   if (tier.requiresChecks && checks.length === 0) {
     problems.push(`a ${rec.criticality} item needs at least one runnable check - "${tier.what}" cannot rest on prose alone`);

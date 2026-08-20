@@ -205,8 +205,24 @@ try {
   ok(reviewRecordProblems(complete({ criticality: "core", checks: [{ label: "x", cmd: "node -e 0" }] })).length === 0,
     "a core item with a check is complete");
 
-  // critical: the author's own passing tests are explicitly not enough.
-  const crit = (over = {}) => complete({ criticality: "critical", checks: [{ label: "x", cmd: "node -e 0" }], ...over });
+  // critical: the author's own passing tests are explicitly not enough, AND the captain
+  // always gets the call. The captain, 2026-08-20: "ändringar som påverkar eventuell säkerhet
+  // eller integritet ska vara needs you." A stamp means "read the evidence and move on",
+  // and this is the one tier where being wrong is expensive or irreversible - so the
+  // author does not get to decide his eyes were unnecessary. judgment also forces `ask`,
+  // which is what makes "these specific parts" a required field instead of a hope.
+  const crit = (over = {}) =>
+    complete({
+      criticality: "critical",
+      verdict: "judgment",
+      ask: "Confirm the token store choice before this ships.",
+      checks: [{ label: "x", cmd: "node -e 0" }],
+      ...over,
+    });
+  ok(
+    reviewRecordProblems(crit({ verdict: "stamp", ask: undefined })).some((p) => /cannot be a stamp/.test(p)),
+    "a CRITICAL item cannot be a stamp - security and integrity always need the captain, whatever the checks say"
+  );
   ok(reviewRecordProblems(crit()).some((p) => /needs independentReview/.test(p)),
     "a CRITICAL item without an independent pass is refused - green self-written tests are not evidence at this tier");
   ok(reviewRecordProblems(crit({ independentReview: { by: "code-review agent", summary: "" } })).some((p) => /needs independentReview/.test(p)),

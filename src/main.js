@@ -5665,6 +5665,12 @@ function buildDispatchReport({ dispatchId, mateId, request, result, meta }) {
       worktreePath: result.worktreePath || null,
     },
     needsCaptain,
+    // The quiet line: work that LANDED and nobody has read yet. Deliberately not
+    // folded into needsCaptain - that field is an alarm, and a successful run is
+    // not an alarm (see runOutcome.js). Deliberately not dropped either: nothing
+    // else surfaces unreviewed commits, and 117 of them reached skiff's master
+    // unread.
+    awaitingReview: outcome.awaitingReview || null,
     stoppedReason: result.stoppedReason || null,
     costUsd: Number(totalCost.toFixed(4)),
     iterations: (result.iterations || []).length,

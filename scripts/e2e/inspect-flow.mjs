@@ -63,7 +63,7 @@ try {
   await app.eval(`(() => {
     goalRuns.clear();
     goalRuns.set("g-run", { goalRunId: "g-run", ordinal: 1, goal: "Wire the crew Done button", projectPath: "D:/Repo/Tools/helm", status: "running", iterations: [{ phase: "implement" }], result: null, error: null, escalation: null, latestPlan: null });
-    goalRuns.set("g-done", { goalRunId: "g-done", ordinal: 2, goal: "Force-discard a dirty worktree", projectPath: "D:/Repo/Tools/helm", status: "done", iterations: [{},{},{}], result: { worktreePath: "D:/Repo/Tools/helm-worktrees/goal-x", branchName: "helm/goal-x", stoppedReason: "completed", commitCount: 3 }, error: null, escalation: null, latestPlan: null });
+    goalRuns.set("g-done", { goalRunId: "g-done", ordinal: 2, goal: "Force-discard a dirty worktree", projectPath: "D:/Repo/Tools/helm", status: "done", iterations: [{},{},{}], result: { worktreePath: "D:/Repo/Tools/helm-worktrees/goal-x", branchName: "helm/goal-x", stoppedReason: "no_op_convergence", commitCount: 3 }, error: null, escalation: null, latestPlan: null });
     goalRuns.set("g-esc", { goalRunId: "g-esc", ordinal: 3, goal: "Rework the deriveSecondMates grouping", projectPath: "D:/Repo/Tools/helm", status: "running", iterations: [{},{}], result: null, error: null, escalation: { reason: "ambiguous: two valid groupings, needs the captain" }, latestPlan: null });
     for (const id of goalRuns.keys()) { goalRunExpanded.add(id); }
     navigateToPage("goal");
