@@ -7247,3 +7247,45 @@ A state being read as an assertion it does not make - in the tool built to catch
 It is now reported as unmeasurable, which is the truth.
 
 Published as a readable page (https://claude.ai/code/artifact/dd3c582c-63a7-4c0c-b37d-eaffc4c0f299) rather than left in a task description, because the previous day's ten review records were approved without being read and unreadability was the stated reason.
+
+
+### 2026-08-20: what "needs you" means, and who earns the fast lane
+
+Settled with Aidin after the measurement showed the term had drifted.
+
+**His definition.**
+"Behöver mig i review ska betyda att något gick fel eller något är kritiskt och det vore bra med ett extra par ögon på 'dessa specifika delar'.
+Små tasks eller såna du känner dig trygg över kan gå vidare direkt."
+Then, separately: "ändringar som påverkar eventuell säkerhet eller integritet ska vara needs you", and "alla tasks ska gå igenom en oberoende granskare".
+
+**Why the term needed settling at all.**
+On 2026-08-18 I changed `needsCaptain` to also carry "N commits ready for review" - so a SUCCESSFUL run counted as needing him.
+That silently moved the term from "something went wrong" to "there is something to do", and the visible result was a queue where everything was flagged, which is a queue nobody reads.
+It is also why he approved ten review records in a row without checking any of them.
+The vocabulary rule exists for exactly this: an implementation shortcut must not redefine an agreed term without flagging it. I did not flag it.
+
+**The model, in three lanes.**
+
+*Needs you* - something went wrong, or something critical wants a second pair of eyes on at most two named parts.
+Security and integrity land here unconditionally: a green check does not buy a security change a pass.
+Concretely, the `critical` criticality tier (security, auth, data loss or corruption, money, irreversible or outward-facing actions) now forces `verdict: judgment`, and judgment already requires stating the ask - which is what makes "these specific parts" a required field rather than a hope.
+
+*Straight through* - and the gate is EVIDENCE, not my confidence.
+Something goes through when its declared checks ran and Helm itself saw them pass, and it is not security, data, money or irreversible.
+My confidence is a measured-bad predictor: the model label, the outcome classifier, the first tier guard and the self-assigned "cosmetic" label were all four cases where I was confident and wrong, and in every one the confidence is what suppressed the checking.
+The signed check-run already exists and is already measured (44 of 93 records), so this gate is one I cannot talk my way around.
+
+*Quiet list* - landed commits nobody has reviewed yet.
+This must NOT simply be deleted along with the flag. Nothing else currently surfaces unreviewed work, and 117 crew commits reaching crewline's master unreviewed is the concrete cost of not surfacing it.
+So the information moves to its own field and its own non-alarm surface.
+
+**Every task goes through an independent reviewer, and that is what makes the fast lane safe.**
+Without it, "small task, I feel confident" is my own judgment gating itself.
+With it, the fast lane is earned by an outside party rather than claimed by the author - which is the same asymmetry `ship-review` already settled on, now applied to every item instead of only the critical ones.
+
+**The condition on that, and it comes straight out of today's measurement.**
+`independentReview` sits on 18 of 93 records and records only THAT it happened, never what it found.
+Made mandatory in that shape it becomes another unmeasurable mechanism, and a reviewer that always says "looks good" is worse than none because it launders the author's confidence into evidence.
+So the reviewer must record its findings and their disposition - fixed, escalated, or dismissed with a reason - and a review with zero findings on a non-trivial change is itself a signal to distrust.
+
+**Not built yet, tracked separately:** the max-two "look at these parts" field, and the quiet awaiting-review surface.

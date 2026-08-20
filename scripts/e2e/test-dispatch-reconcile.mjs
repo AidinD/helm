@@ -62,7 +62,14 @@ assert(interrupted.changed.commitCount === 2 && interrupted.reconciled === true 
 // version of the bug this whole area had (see runOutcome.js): a report that claimed
 // success because nothing said otherwise.
 const done = buildReportFromRecord({ dispatchId: "d1", dispatchedBy: "mate-x", goal: "g", projectPath: "P", status: "done", commitCount: 3, branchName: "feat", stoppedReason: "no_op_convergence" }, now);
-assert(done.status === "done" && /3 commit/.test(done.needsCaptain), "a converged record WITH commits reports 'N commits ready for review'");
+// The split settled with Aidin on 2026-08-20: `needsCaptain` is an ALARM, and a run
+// that succeeded is not an alarm. Its commits are still announced - on the quiet
+// `awaitingReview` line. Both halves are asserted, because dropping the information
+// instead of moving it is the failure this replaced: nothing else surfaces landed but
+// unread work, and 117 crew commits reached crewline's master that way.
+assert(done.status === "done", "a converged record WITH commits reports done");
+assert(done.needsCaptain === null, "and raises NO alarm - a successful run is not something that went wrong");
+assert(/3 commit/.test(done.awaitingReview), "but still says its 3 commits are waiting to be read, on the quiet line");
 
 const stalled = buildReportFromRecord({ dispatchId: "d3", dispatchedBy: "mate-x", goal: "g", projectPath: "P", status: "done", commitCount: 0, branchName: "feat", stoppedReason: "max_iterations_reached" }, now);
 assert(stalled.status !== "done", `a record that ran out of iterations does not report 'done' (got '${stalled.status}')`);

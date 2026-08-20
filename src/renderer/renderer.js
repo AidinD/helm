@@ -13624,8 +13624,13 @@ function goalRunReport(run) {
   const reason = run.result?.stoppedReason || null;
   const ready = commitCount > 0 ? `${commitCount} commit${commitCount === 1 ? "" : "s"} ready for review${branchName ? ` in ${branchName}` : ""}.` : null;
   const OUTCOMES = {
+    // The one successful outcome, and therefore the one that raises NO alarm.
+    // `needs` is an alarm - something went wrong, or something critical wants a
+    // decision - and until 2026-08-20 this branch put "N commits ready for review"
+    // there, so every clean run counted toward the needs-you tally and the queue
+    // flagged everything. The commits are still announced, on `waiting` instead.
     no_op_convergence: commitCount
-      ? { status: "done", why: "Converged: it stopped making further changes.", needs: ready }
+      ? { status: "done", why: "Converged: it stopped making further changes.", needs: null, waiting: ready }
       : { status: "no_changes", why: "Stopped without changing anything - either the goal was already met, or it was stuck.", needs: "Finished without committing anything. Check whether the goal was already met or the run was stuck." },
     two_consecutive_failures: { status: "failed", why: "Stopped after two iterations failed in a row - it did NOT reach the goal.", needs: ready || "Failed twice in a row and committed nothing." },
     max_iterations_reached: { status: "incomplete", why: "Ran out of iterations before reaching the goal.", needs: ready || "Hit its iteration cap and committed nothing." },
@@ -13641,7 +13646,17 @@ function goalRunReport(run) {
   // verdict: for a run that died it describes the last thing that WORKED.
   const step = lastImplement?.result?.summary || null;
   const changed = outcome.status === "done" ? step || `${commitCount} commit${commitCount === 1 ? "" : "s"} landed.` : step ? `${outcome.why} Last completed step: ${step}` : outcome.why;
-  return { status: outcome.status, changed, needsCaptain: outcome.needs, commitCount, branchName };
+  return {
+    status: outcome.status,
+    changed,
+    needsCaptain: outcome.needs,
+    // Landed work nobody has read yet. Not an alarm, and not discarded either -
+    // unreviewed commits have no other surface, and 117 of them reached
+    // crewline's master unread.
+    awaitingReview: outcome.waiting || null,
+    commitCount,
+    branchName,
+  };
 }
 
 // A run has reached a terminal state (its outcome is final, ready to report).
@@ -13653,9 +13668,16 @@ function isTerminalRun(r) {
 function isGoalRunAcknowledged(id) {
   return (state.config?.acknowledgedGoalRuns || []).includes(id);
 }
-// Does this terminal run need the captain personally? (commits to review, an
-// escalation/pause, an error, or an interrupted run of unknown outcome). This
-// is the signal that bubbles a mate-dispatched run UP to the captain's board.
+// Does this terminal run need the captain personally? An ALARM only: an
+// escalation/pause, an error, a run that gave up or ran out of iterations, or an
+// interrupted run of unknown outcome. This is the signal that bubbles a
+// mate-dispatched run UP to the captain's board.
+//
+// A SUCCESSFUL run with commits deliberately does NOT count any more. It used to,
+// and the comment here used to say "commits to review" first - which is how the
+// board came to flag everything, and a board that flags everything is one nobody
+// reads. Those commits are now carried on `awaitingReview` and belong on a quiet
+// list, not in the alarm queue.
 function runNeedsCaptain(r) {
   return !!goalRunReport(r).needsCaptain;
 }

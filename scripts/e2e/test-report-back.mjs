@@ -48,23 +48,35 @@ try {
         needs: el.classList.contains("dash-report-needs"),
         icon: el.querySelector(".dash-state-ic")?.textContent || "",
         iconClass: el.querySelector(".dash-state-ic")?.className || "",
+        // Read straight off the classifier, not the DOM: the quiet awaiting-review
+        // line has no rendered surface yet (that is the deferred half of the
+        // 2026-08-20 split), so the assertion has to reach the value itself rather
+        // than a widget that does not exist. Asserting it here is what stops the
+        // information being quietly dropped while its surface is still unbuilt.
+        awaitingReview: goalRunReport(run).awaitingReview || null,
       };
       el.remove();
       return out;
     };
 
     return {
-      // Done WITH commits: needs the captain, and its what-changed is the implement iteration's
-      // own summary rather than a generic "finished".
+      // Converged WITH commits - the loop's one genuinely successful outcome. It raises
+      // no alarm: needs-captain means something went wrong or a decision is needed, and
+      // this is neither. Its what-changed is the implement iteration's own summary rather
+      // than a generic "finished". The commits are still announced, on awaitingReview.
+      // (No backticks in here - this block lives inside a template literal.)
       commits: rowOf(mk({
         goalRunId: "doneCommits", goal: "Add the export button",
-        result: { commitCount: 3, branchName: "helm/goal-abc", stoppedReason: "done" },
+        result: { commitCount: 3, branchName: "helm/goal-abc", stoppedReason: "no_op_convergence" },
         iterations: [{ ok: true, phase: "implement", result: { success: true, summary: "Wired the export button to the CSV writer" } }],
       })),
-      // Done CLEAN, nothing committed: finished, nothing for the captain to do.
-      clean: rowOf(mk({
+      // Converged having committed NOTHING. This used to be called the "clean" case and
+      // asserted to need nobody - which had it backwards: a run that stopped without
+      // changing anything either had its goal already met or was stuck, and telling those
+      // two apart is exactly a captain's job. So this is the row that raises the flag.
+      nothingCommitted: rowOf(mk({
         goalRunId: "doneClean", goal: "Investigate flaky test",
-        result: { commitCount: 0, branchName: "helm/goal-def", stoppedReason: "converged" },
+        result: { commitCount: 0, branchName: "helm/goal-def", stoppedReason: "no_op_convergence" },
       })),
       // Escalated: the escalation's detail IS the what-changed line.
       escalated: rowOf(mk({
@@ -100,16 +112,27 @@ try {
     /Wired the export button to the CSV writer/.test(res.commits.text),
     "its 'what changed' line is the implement iteration's own summary, not a generic finished message"
   );
+  // The commit count and branch still have to REACH the reader - the point of the
+  // 2026-08-20 split was to move them off the alarm line, not to drop them. Nothing
+  // else surfaces landed-but-unread work, and 117 crew commits reached crewline's
+  // master that way, so this asserts they are still stated.
   assert(
-    /3 commits ready for review in helm\/goal-abc/.test(res.commits.text),
-    `and its needs-captain nudge names the commit count + branch (${JSON.stringify(res.commits.text.slice(0, 130))})`
+    /3 commits/.test(res.commits.text),
+    `the row still states how much landed (${JSON.stringify(res.commits.text.slice(0, 130))})`
   );
-  assert(res.commits.needs === true, "a run with commits waiting carries the needs-captain accent");
-  assert(res.commits.icon === "⚠" && /dash-state-needs/.test(res.commits.iconClass), "and the warning icon");
+  assert(
+    /3 commits ready for review in helm\/goal-abc/.test(res.commits.awaitingReview || ""),
+    `and the quiet awaiting-review line names the count + branch (${JSON.stringify(res.commits.awaitingReview)})`
+  );
+  // Settled with Aidin 2026-08-20: needs-you is an ALARM, so the one successful outcome
+  // must not wear it. This assertion was inverted until then, which is why every clean
+  // run counted toward the tally and the queue flagged everything.
+  assert(res.commits.needs === false, "a successful run with commits raises NO needs-captain accent - nothing went wrong");
+  assert(res.commits.icon === "✓" && /dash-state-done/.test(res.commits.iconClass), "and shows the done check");
 
-  assert(/Investigate flaky test/.test(res.clean.text), "a clean run's row renders too");
-  assert(res.clean.needs === false, "but carries no needs-captain accent - there is nothing to act on");
-  assert(res.clean.icon === "✓" && /dash-state-done/.test(res.clean.iconClass), "and shows the done check instead");
+  assert(/Investigate flaky test/.test(res.nothingCommitted.text), "a run that committed nothing renders its row too");
+  assert(res.nothingCommitted.needs === true, "and DOES carry the needs-captain accent - stopping without changing anything is not success");
+  assert(res.nothingCommitted.icon === "⚠" && /dash-state-needs/.test(res.nothingCommitted.iconClass), "with the warning icon");
 
   assert(/Refactor auth layer/.test(res.escalated.text), "an escalated run's row renders");
   assert(

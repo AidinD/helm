@@ -56,7 +56,7 @@ try {
     commits: 1,
     lastSummary: "Did the thing.",
     verifyCommand: "npm test",
-    stoppedReason: "done",
+    stoppedReason: "no_op_convergence",
   });
   const written = writeReviewRecord(home, rec);
   ok(written.ok, `the record wrote (${written.error || "ok"}) - the rest of this check depends on it`);

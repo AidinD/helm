@@ -29,7 +29,7 @@ try {
   // one WITHOUT a worktree (errored before creating one).
   await app.eval(`(() => {
     goalRuns.clear();
-    goalRuns.set("done-wt", { goalRunId: "done-wt", ordinal: ++goalRunSeq, goal: "Finished with worktree", projectPath: "P", status: "done", iterations: [], result: { worktreePath: "P-worktrees/goal-x", branchName: "helm/goal-x", stoppedReason: "completed" }, error: null, escalation: null, latestPlan: null });
+    goalRuns.set("done-wt", { goalRunId: "done-wt", ordinal: ++goalRunSeq, goal: "Finished with worktree", projectPath: "P", status: "done", iterations: [], result: { worktreePath: "P-worktrees/goal-x", branchName: "helm/goal-x", stoppedReason: "no_op_convergence" }, error: null, escalation: null, latestPlan: null });
     goalRuns.set("running-1", { goalRunId: "running-1", ordinal: ++goalRunSeq, goal: "Still running", projectPath: "P", status: "running", iterations: [], result: null, error: null, escalation: null, latestPlan: null });
     goalRuns.set("err-nowt", { goalRunId: "err-nowt", ordinal: ++goalRunSeq, goal: "Errored, no worktree", projectPath: "P", status: "error", iterations: [], result: null, error: "boom", escalation: null, latestPlan: null });
     // Finished runs collapse to a one-line summary by default now - force them

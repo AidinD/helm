@@ -31,7 +31,7 @@ const backup = hadExisting ? fs.readFileSync(historyPath, "utf8") : null;
 
 const now = 1751800000000; // fixed timestamp (Date.now() avoided for determinism)
 const fixture = [
-  { goalRunId: "persist-done-1", goal: "A finished run", projectPath: "X", status: "done", worktreePath: "wt/a", branchName: "helm/goal-a", commitCount: 2, stoppedReason: "completed", escalation: null, error: null, startedAt: now, updatedAt: now },
+  { goalRunId: "persist-done-1", goal: "A finished run", projectPath: "X", status: "done", worktreePath: "wt/a", branchName: "helm/goal-a", commitCount: 2, stoppedReason: "no_op_convergence", escalation: null, error: null, startedAt: now, updatedAt: now },
   { goalRunId: "persist-running-1", goal: "A run cut off by restart", projectPath: "X", status: "running", worktreePath: null, branchName: null, commitCount: null, stoppedReason: null, escalation: null, error: null, startedAt: now, updatedAt: now },
 ];
 fs.writeFileSync(historyPath, JSON.stringify(fixture, null, 2) + "\n", "utf8");

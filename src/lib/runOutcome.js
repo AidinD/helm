@@ -26,6 +26,31 @@
 export const OUTCOME_DONE = "done";
 
 /**
+ * Every terminal reason the goal loop can actually emit. There is no goal-reached
+ * value in here, and that absence is the point.
+ *
+ * Exported so tests can be held to it. On 2026-08-18 a fixture was found asserting
+ * against `stoppedReason: "completed"` - a value nothing in the app can produce - and
+ * it was fixed in that ONE file. Two days later the same fiction turned out to be in
+ * eleven more: "completed" six times, "converged" four, "done" twice. Three tests were
+ * failing on it and the rest were passing for the wrong reason, describing a world the
+ * app cannot enter.
+ *
+ * test-stopped-reasons-are-real.mjs pins this list against goalOrchestrator.js's own
+ * source and then scans every fixture against it, so the class is closed rather than
+ * the instance. Fixing one occurrence and not looking for the others is failure 12 on
+ * ship-review's list; this is the guard that makes looking automatic.
+ */
+export const TERMINAL_REASONS = Object.freeze([
+  "cancelled",
+  "escalated",
+  "quota_exhausted",
+  "two_consecutive_failures",
+  "no_op_convergence",
+  "max_iterations_reached",
+]);
+
+/**
  * Outcomes that mean a human has to look before this work counts as anything. Exported
  * so a caller can ask the question without re-listing the strings and getting it wrong.
  */
@@ -43,9 +68,25 @@ export function isUnfinished(status) {
  * @param {string|null} [run.error] set when the process itself failed.
  * @param {object|null} [run.escalation]
  * @param {boolean} [run.interrupted] the app died mid-run (reconciliation path).
- * @returns {{ status: string, headline: string, needsCaptain: string|null }}
+ * @returns {{ status: string, headline: string, needsCaptain: string|null, awaitingReview: string|null }}
  *   `headline` is a plain sentence stating the outcome, meant to LEAD the summary so
  *   the last successful step's own words can never be mistaken for the run's verdict.
+ *
+ *   `needsCaptain` is an ALARM: something went wrong, or something critical wants a
+ *   decision. It is not "there is something to do". That distinction is the whole
+ *   point of the field, and on 2026-08-18 this function blurred it - a run that
+ *   SUCCEEDED carried "N commits ready for review" in `needsCaptain`, so every clean
+ *   run counted toward the needs-you tally. The visible result was a queue where
+ *   everything was flagged, which is a queue nobody reads: ten review records were
+ *   approved in a row without being read, and unreadability was the stated reason.
+ *   Aidin, 2026-08-20: "behöver mig i review ska betyda att något gick fel eller
+ *   något är kritiskt".
+ *
+ *   `awaitingReview` is where that displaced information went, and it must NOT be
+ *   dropped instead. Nothing else surfaces landed-but-unreviewed work, and the cost
+ *   of not surfacing it is concrete: 117 crew commits reached crewline's master with
+ *   nobody having read them. So a successful run still says its commits are waiting -
+ *   just on a quiet line rather than as an alarm.
  */
 export function classifyRunOutcome({ stoppedReason = null, commitCount = 0, branchName = null, error = null, escalation = null, interrupted = false } = {}) {
   const commits = typeof commitCount === "number" && commitCount > 0 ? commitCount : 0;
@@ -97,7 +138,14 @@ export function classifyRunOutcome({ stoppedReason = null, commitCount = 0, bran
       // With commits this is the closest thing the loop has to success; without any, it
       // sat there producing nothing, which must never read as done.
       return commits
-        ? { status: OUTCOME_DONE, headline: "Converged: it stopped making further changes.", needsCaptain: readyForReview }
+        ? {
+            status: OUTCOME_DONE,
+            headline: "Converged: it stopped making further changes.",
+            // The one genuinely successful outcome. Nothing went wrong, so nothing
+            // is alarmed - the commits are announced on the quiet line instead.
+            needsCaptain: null,
+            awaitingReview: readyForReview,
+          }
         : {
             status: "no_changes",
             headline: "Stopped without changing anything - either the goal was already met, or it was stuck.",

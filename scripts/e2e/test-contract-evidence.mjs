@@ -40,7 +40,7 @@ try {
     goalRuns.clear();
     goalRuns.set("r1", {
       goalRunId: "r1", ordinal: ++goalRunSeq, goal: "Add a dark-mode toggle", projectPath: "P",
-      status: "done", result: { success: true, summary: "done", stoppedReason: "completed" },
+      status: "done", result: { success: true, summary: "done", stoppedReason: "no_op_convergence" },
       error: null, escalation: null, latestPlan: null,
       iterations: [{
         iteration: 1, phase: "implement", ok: true, committed: true,
