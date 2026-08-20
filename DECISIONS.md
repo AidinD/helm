@@ -7027,3 +7027,59 @@ build now fails loudly naming the first file that drifted, instead of shipping.
 **Left standing:** release 0.2.78 is still `Latest` on GitHub, i.e. the corrupt installer is
 still what a fresh install or an auto-update fetches. 0.2.81 is built and installed locally
 (verified, launches, window comes up), but publishing and retiring 0.2.78 is the captain's call.
+
+
+### 2026-08-20: the firstmate skill is the reference for report-back, and "crew wakes its own mate" goes first
+
+The captain ran `~/.claude/skills/firstmate` in a plain Claude Code desktop session and it worked:
+"alla crews rapporterade tillbaka seamlessly och det skedde granskningar och iterationer på ett bra och vettigt sätt."
+He asked how the same thing works in Helm.
+The answer is worth writing down, because the comparison isolates exactly one mechanism.
+
+**The prompts are not the difference.**
+The skill is written as Helm's own counterpart and says so in its second paragraph: same role, same vocabulary, same rules, and it points at `first-mate-instructions.md` by path.
+Both forbid tier absorption in almost the same words, both cap fan-out, both require the brief to carry the captain's own words, both route landing through the captain.
+So a difference in outcome cannot be explained by instruction quality, and looking for it there would waste the finding.
+
+**The difference is that something wakes the coordinator.**
+In the skill, a crewmate finishes and the harness re-invokes the coordinator - free, automatic, no button.
+The skill names this itself when listing what it lacks: supervision is the harness's completion notification, which it calls strictly better than a watcher for this shape.
+In Helm, a crew run finishes, the report is written to `.helm-dispatch/reports`, and nothing happens.
+`helm_collect_reports` is a question the mate has to ask, and a mate can only ask questions when something has given it a turn.
+So the real wake path is two human actions: the captain clicks "jump in", and then presses enter on a seeded draft.
+
+**Measured on his own inbox, 2026-08-20.**
+51 reports on disk.
+38 of them carry a filled-in `needsCaptain` - they say themselves that something needs him.
+Zero of them came from `helm_report_up`, the tool whose own description reads "this is how the chain closes: first-mate <- you <- crew".
+The chain has never closed once.
+The tool exists, the instruction to call it is in `second-mate-instructions.md`, and nothing has ever asked anyone to run it - because nobody is awake at the moment it would be run.
+
+**Decision: this is the first concrete item in the reliability block, ahead of everything else on the board.**
+Jot task 28db596e, raised to priority -7.
+It sits above the block's own umbrella card because the block is a theme and this is a buildable thing.
+The design from 2026-08-17 stands unchanged and is confirmed rather than revised by the comparison: arrival is a free event (Helm already writes the report and emits `dispatch:report` in its own main process), triage is a cheap Haiku pass over the report files, and the mate's own model is spent only when triage says judgment is needed.
+The blocker also stands: `runRelayTurn` has its model hardcoded to Opus at `main.js:5281` and must become a parameter first.
+
+Two acceptance criteria come out of the comparison and are worth pinning here, because both are easy to satisfy falsely.
+A mechanism that still requires the captain to click first does not count as solved - the requirement is a push, not a cheaper poll.
+And the test cannot be "the report was written", because the report has always been written; it must be "the mate acted on a report without a human touching the app".
+
+**Second finding, tracked separately (new Jot task, priority -5): the iteration round-trip does not exist in Helm.**
+In the skill, a reviewer is dispatched against the crewmate's own worktree, the finding goes back to the *builder* with its context intact via `SendMessage`, and the reviewer re-verifies.
+The skill also documents the trap that makes this subtle - scoping the review from the coordinator's cwd finds a clean tree, reviews nothing, and stops correctly, which it calls a silent no-op rather than a review.
+Helm's crew iterates against itself: same agent, fresh context each pass, up to 20 passes, with `verifyCommand` as the only outside voice - and a command can only say pass or fail, never "this needs a decision".
+Worse, the round-trip is currently impossible rather than merely unbuilt: Helm's crew is a finished process, so a finding cannot be sent back into it.
+`helm_resume_crew` restarts the goal loop; it does not deliver one finding to an agent that remembers the code.
+The four advisory seats do not fill this gap - they are read-only consults the second mate must remember to request, and they cannot run anything.
+
+**Third finding, folded into the existing escalation task (2711e6f6).**
+It is not that no caller passes `escalationConfig`; `helm_dispatch` has no field for it in its schema at all.
+A second mate cannot enable escalation even if it wants to.
+That is the mechanical reason 0 of 46 runs have ever escalated, and it means the one mechanism for a run to stop and ask instead of guessing is a lever with no handle.
+
+**What this changes in the meantime.**
+Crew work runs through the firstmate skill in desktop, which he has now tested and which needs no app.
+That is not a workaround pending Helm - on the report-back loop specifically, the skill is the better implementation, and Helm's version of it should be built to match what the skill already does.
+Helm's real advantages are elsewhere and remain real: crew survives the mate dying, the tier rules are enforced in code rather than requested in prose, the width cap is counted rather than remembered, and `helm_fleet_state` shows the other mate's work so two coordinators do not collide.
+None of those advantages help if the finished work is never read.
