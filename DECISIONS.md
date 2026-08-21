@@ -1,5 +1,34 @@
 # Decisions
 
+## 2026-08-21 - The goal loop can finally say "done"
+
+The loop had six terminal reasons and not one of them meant the work was finished: `cancelled`, `escalated`, `quota_exhausted`, `two_consecutive_failures`, `no_op_convergence`, `max_iterations_reached`.
+All six are endings. The closest thing to success was `no_op_convergence`, whose own comment admits what it cannot tell: "either the goal is already satisfied or it's stuck."
+
+**How it surfaced.** `test-dispatch-loop` failed asserting the report had a terminal status.
+The run had been asked to create a file containing the word `hello`. Its own report says `Last completed step: Created HELLO.txt file in repository root containing exactly the word 'hello' with no trailing whitespace` - and then it ran three more iterations and stopped with `max_iterations_reached`, having spent $0.20 and four commits on a one-line goal.
+
+**The cause was in the contract, not the loop.** An iteration returned `{ success, summary, keyChanges, keyLearnings }`.
+`success` means "this step went well". Nothing in the schema could say "the goal is met", so the loop was never told, and it had no reason to stop other than running out of room or noticing that nothing changed twice.
+
+**Decided.** `goalReached` is a required field on the iteration schema, with a rule that spells out the distinction the field exists for: not "this step went well" but "the next iteration would have nothing to do", and read the goal and notes.md again before answering - because the work may already have been finished by an earlier iteration.
+The loop gains a seventh reason, `goal_reached`, and `classifyRunOutcome` treats it as the one outcome that means done: no alarm, commits announced on the quiet line.
+
+Four properties, each with a reason:
+
+- **Only an ACCEPTED iteration may claim it.** A `success:false` iteration has its file changes discarded, so its opinion about the goal describes work that no longer exists.
+- **Only from an explicit `=== true`.** Not a truthy read, so a model returning a string cannot end a run.
+- **Checked BEFORE convergence.** A finished run whose last iteration also happened to change nothing would otherwise be reported as "it stopped making further changes" - the vaguer of two true statements.
+- **`goal_reached` with no commits is NOT done.** It classifies as `no_changes` and does raise the alarm: a run claiming success while changing nothing is exactly the case worth a human's eye, and the wording says which of the two it might be rather than blaming the run.
+
+**What this does NOT claim.** The signal is the agent's self-report. Where a verify command is configured the claim is backed by that command having passed on the result; where none is, it is the machine's word, and the review record an autonomous run leaves is a `judgment` that says outright that nobody has checked it.
+An honest "it says it is done" is still strictly better than the previous state, where a finished run and an exhausted one were reported identically.
+
+**The test that named the gap is the test that flipped.** `test-stopped-reasons-are-real` asserted that the loop had NO goal-reached state, and that this was why "it stopped" must never render as "it succeeded".
+That assertion existed precisely so closing the gap would surface here rather than quietly, so it was flipped rather than deleted - and the property that survives is the one that matters: exactly ONE reason may mean success, and every other must be an ending.
+Two reasons that both read as "done" is how a run that merely ran out of iterations comes to look finished.
+The loop's own wiring is pinned at source level (the field is required, the claim is set in the two success branches and nowhere else, from an explicit `true`, and checked before convergence), because reaching the branch for real needs a live model run.
+
 ## 2026-08-21 - The ask is captured before the work, and the reviewer is judged against it
 
 The captain: "alla tasks kommer ju från en uppgift ... till slut hamnar det som en klar intent. Den här intentet ska sparas", used for two things - the independent reviewer reviews against it, and the review card states it beside what was actually done.

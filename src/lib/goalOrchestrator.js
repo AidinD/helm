@@ -155,11 +155,15 @@ const ITERATION_SCHEMA = JSON.stringify({
   type: "object",
   properties: {
     success: { type: "boolean" },
+    // Whether the WHOLE goal is now met - not whether this step went well, which is
+    // `success`. Added 2026-08-21 because the loop had no way to be told, and so no way
+    // to stop for the one reason that matters.
+    goalReached: { type: "boolean" },
     summary: { type: "string" },
     keyChanges: { type: "array", items: { type: "string" } },
     keyLearnings: { type: "array", items: { type: "string" } },
   },
-  required: ["success", "summary", "keyChanges", "keyLearnings"],
+  required: ["success", "goalReached", "summary", "keyChanges", "keyLearnings"],
 });
 
 const COMMON_ITERATION_RULES = [
@@ -178,6 +182,12 @@ const COMMON_ITERATION_RULES = [
   "  an error you couldn't resolve). The orchestrator will discard ALL file",
   "  changes from a success:false iteration, so do not set success:true unless",
   "  the working tree is actually in a good, coherent state.",
+  "- Set goalReached:true ONLY when the WHOLE goal stated above is now met and",
+  "  there is genuinely nothing left to do for it. This is not 'this step went",
+  "  well' — that is success. It is 'the next iteration would have nothing to",
+  "  do'. Read the goal again before answering, and read notes.md: the work may",
+  "  already have been finished by an earlier iteration. If any part of the goal",
+  "  is unfinished, unclear, or untested, set goalReached:false.",
   "- Respond only in the requested JSON schema. summary is ONE sentence",
   "  describing what this iteration actually did (used verbatim as the git",
   "  commit message). keyChanges is a short list of concrete changes made.",
@@ -1426,6 +1436,20 @@ export async function runGoal({
   // nothing outside .helm-goal/ (see NO_OP_CONVERGENCE_STREAK). Reset the
   // moment any real change or phase progress happens.
   let consecutiveNoOps = 0;
+  // Set when an ACCEPTED iteration reports the whole goal is met. Read with the other
+  // stop conditions below rather than acted on inside either success branch, so there is
+  // one place that decides the loop is over instead of two that can drift apart.
+  //
+  // Why this exists: until 2026-08-21 the loop had six terminal reasons and none of them
+  // was "done". The closest was no_op_convergence, whose own comment admits it cannot
+  // tell "the goal is already satisfied" from "it's stuck" - so a run that finished its
+  // work kept going until it converged or hit the cap. Observed on a real dispatch that
+  // wrote the one file it was asked for, then spent three more iterations and $0.20
+  // before stopping with max_iterations_reached.
+  //
+  // Only ever set from an ACCEPTED iteration. A success:false iteration has its file
+  // changes discarded, so its opinion about the goal describes work that no longer exists.
+  let goalReachedClaimed = false;
   let stoppedReason = "max_iterations_reached";
   // RPI phase, persisted to phase.json so it survives the fresh-subprocess-
   // per-iteration model the same way notes.md does. A brand-new worktree has
@@ -1564,6 +1588,9 @@ export async function runGoal({
           resolvedModel: outcome.usage?.resolvedModel ?? null,
         };
         consecutiveFailures = 0;
+        // The goal, per this iteration - and here the claim is BACKED: this branch is
+        // only reached when the run's own verify command passed on the result.
+        goalReachedClaimed = outcome.result.goalReached === true;
         // Verify gate only applies to implement, so this branch is always the
         // implement phase: a verified success that changed no real files is a
         // no-op toward convergence (finding); a real change resets the streak.
@@ -1623,6 +1650,9 @@ export async function runGoal({
         resolvedModel: outcome.usage?.resolvedModel ?? null,
       };
       consecutiveFailures = 0;
+      // The goal, per this iteration. No verify gate was configured, so this is the
+      // agent's own word - the review record for such a run is a `judgment` and says so.
+      goalReachedClaimed = outcome.result.goalReached === true;
       // Only an implement iteration that changed nothing real is a no-op toward
       // convergence (finding). research/plan legitimately produce no code
       // outside .helm-goal/ but DO make phase progress, so they reset the
@@ -1727,6 +1757,13 @@ export async function runGoal({
     }
     if (consecutiveFailures >= 2) {
       stoppedReason = "two_consecutive_failures";
+      break;
+    }
+    // Done, and said so. Checked BEFORE convergence on purpose: a finished run whose
+    // last iteration also happened to change nothing would otherwise be reported as
+    // "it stopped making further changes", which is the vaguer of two true statements.
+    if (goalReachedClaimed) {
+      stoppedReason = "goal_reached";
       break;
     }
     if (consecutiveNoOps >= NO_OP_CONVERGENCE_STREAK) {
