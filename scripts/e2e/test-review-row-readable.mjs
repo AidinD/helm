@@ -46,6 +46,11 @@ const ROW = {
   problems: [],
   caveats: [],
   drift: { drifted: false, snapshot: [], live: [] },
+  // WHAT WAS ASKED FOR (task 10928bdf). On the row, not the record, because the queue
+  // resolves it - from the record's snapshot, or live off the task for anything written
+  // before intents existed.
+  intent: { text: "Stop the auto lane paying for a triage call every minute on a card that cannot start.", source: "assistant" },
+  intentDrift: { drifted: false, snapshot: "", live: "" },
   gauntlet: { declared: 1, passed: 0, failed: 0, stale: 0, unrun: 1, unverified: 0, unusable: 0, state: "incomplete", perCheck: [] },
   record: {
     taskId: "1f8cca7b-1111-2222-3333-444444444444",
@@ -132,6 +137,18 @@ try {
       evidenceDetailOpen: evid ? [...evid.querySelectorAll("li details.rev-why")].map((d) => d.open) : null,
       evidenceDetailBodies: evid ? [...evid.querySelectorAll("li details.rev-why > .rev-why-body")].map((b) => b.textContent.trim()) : null,
       evidenceLabel: evid?.querySelector(".rev-list-label")?.textContent || null,
+      // WHAT WAS ASKED, above WHAT WAS DONE. The DOM ORDER is read, not just presence:
+      // the ask is the question and the summary is its answer, and an answer read before
+      // its question is only a claim to agree with. compareDocumentPosition returns
+      // DOCUMENT_POSITION_FOLLOWING (4) when the summary comes after the ask.
+      askText: body.querySelector(".rev-intent .rev-intent-text")?.textContent.trim() || null,
+      askLabel: body.querySelector(".rev-intent .rev-intent-label")?.textContent.trim() || null,
+      askNote: body.querySelector(".rev-intent .rev-intent-note")?.textContent.trim() || null,
+      askBeforeSummary: (() => {
+        const a = body.querySelector(".rev-intent");
+        const sum = body.querySelector(".rev-summary");
+        return a && sum ? (a.compareDocumentPosition(sum) & 4) === 4 : null;
+      })(),
       gapItems: gaps ? [...gaps.querySelectorAll("li")].map((li) => li.textContent.trim()) : null,
       gapLabel: gaps?.querySelector(".rev-list-label")?.textContent || null,
       longestChip: chipTexts.reduce((n, t) => Math.max(n, t.length), 0),
@@ -146,6 +163,17 @@ try {
     };
   })()`);
   ok(opened.bodyVisible && opened.open, "clicking the head opens it");
+
+  // --- what was asked, above what was done ------------------------------------
+  ok(opened.askLabel === "Asked for", `the card names the ask in plain words (${JSON.stringify(opened.askLabel)})`);
+  ok(opened.askText === ROW.intent.text, `and shows it (${JSON.stringify(opened.askText?.slice(0, 40))})`);
+  ok(opened.askBeforeSummary === true, "and it comes BEFORE what was done - the question above its answer, which is the whole point of the pair");
+  // A paraphrase must not read as his stated ask. This is the one line that keeps the
+  // reviewer and the reader from treating my reading of the request as the request.
+  ok(
+    opened.askNote !== null && /not confirmed by Aidin/.test(opened.askNote),
+    `a paraphrase says so on the card (${JSON.stringify(opened.askNote?.slice(0, 45))})`
+  );
 
   // THE point: sentences render as list items, not as pills.
   ok(opened.evidenceItems?.length === 3, `evidence renders as a list of 3 items (${opened.evidenceItems?.length})`);
@@ -293,6 +321,34 @@ try {
   );
   ok(everything.gauntlet, "the gauntlet box renders");
   ok(everything.actions.length >= 4, `and the actions are all there (${JSON.stringify(everything.actions)})`);
+
+  // --- a row with NO recorded ask -------------------------------------------
+  // Absence has to render. A card that silently omits the ask looks complete while
+  // missing the only thing the work can be found WRONG against, and that is precisely
+  // the failure mode of every review item written before this existed.
+  const noAsk = await app.eval(`(() => {
+    const row = ${JSON.stringify(ROW)};
+    delete row.intent;
+    document.querySelectorAll("#probeNoAsk").forEach((n) => n.remove());
+    const wrap = document.createElement("div");
+    wrap.id = "probeNoAsk";
+    wrap.append(reviewRowEl(row, "stamp"));
+    document.body.append(wrap);
+    const item = wrap.querySelector(".rev-item");
+    item.querySelector(".rev-head").click();
+    const box = item.querySelector(".rev-intent");
+    return {
+      present: !!box,
+      flagged: !!item.querySelector(".rev-intent-missing"),
+      label: box?.querySelector(".rev-intent-label")?.textContent.trim() || null,
+      hasText: !!box?.querySelector(".rev-intent-text"),
+      summaryStillThere: !!item.querySelector(".rev-summary"),
+    };
+  })()`);
+  ok(noAsk.present && noAsk.flagged, "a row with no recorded ask still renders the block, marked as missing - not silently skipped");
+  ok(/Nobody wrote down/.test(noAsk.label || ""), `and says so in plain words (${JSON.stringify(noAsk.label)})`);
+  ok(noAsk.hasText === false, "with no ask text, since inventing one is worse than admitting the gap");
+  ok(noAsk.summaryStillThere, "and the rest of the card renders as before - the missing ask is a caveat, not a dead end");
 
   const errors = app.getConsoleErrors();
   ok(errors.length === 0, `no console errors (${errors.length})`);

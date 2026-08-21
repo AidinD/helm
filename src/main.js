@@ -3920,6 +3920,14 @@ function finishAutoRun(taskId, result = null, meta = null) {
           lastSummary,
           verifyCommand: result?.verifyCommand || run.verifyCommand || null,
           stoppedReason: result?.stoppedReason || null,
+          // Without this the record has no intent, and a core record with no intent is
+          // REFUSED - which would put the card back to the blank dead end this whole
+          // path exists to prevent. test-auto-review-record pins that, so a future edit
+          // that drops the goal fails a test instead of silently blanking cards.
+          goal: run.goal || null,
+          // Fallback so a run whose goal did not survive still yields a card rather than
+          // being refused for having no intent. The board's own words for the task.
+          title: run.title || null,
         })
       );
     } catch (err) {
@@ -4236,6 +4244,12 @@ async function autoCaptainTick({ force = false } = {}) {
       autoRuns.set(todo.id, {
         taskId: todo.id,
         title: todo.text,
+        // The goal this run was dispatched with - the ask, in the words the autopilot
+        // actually worked from, captured BEFORE the work. It becomes the review record's
+        // `intent`, and it is the one intent in the app that cannot be a rationalisation
+        // of whatever the work turned into. Kept on the run because finishAutoRun writes
+        // the record and the dispatch scope is long gone by then.
+        goal,
         projectPath: where.projectPath,
         secondMateId: smId,
         goalRunId: started?.goalRunId || null,

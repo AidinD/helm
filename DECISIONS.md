@@ -1,5 +1,74 @@
 # Decisions
 
+## 2026-08-21 - The ask is captured before the work, and the reviewer is judged against it
+
+Aidin: "alla tasks kommer ju från en uppgift ... till slut hamnar det som en klar intent. Den här intentet ska sparas", used for two things - the independent reviewer reviews against it, and the review card states it beside what was actually done.
+
+**What was already there, and why it was not enough.**
+`acceptance.js` had existed since the "Jump in" bug: `AC:` lines in a Jot task's description, snapshotted onto the record, coverage-checked against test steps, with a drift detector.
+Its own header comment states the exact principle Aidin was asking for - a sentence written when the task is TAKEN constrains the work, the same sentence written at handoff merely describes it.
+Measured before building anything: 96 review records, 18 carried criteria; 242 Jot tasks, **one** had an `AC:` line; and **zero** of Helm's three instruction files mentioned criteria at all.
+So the 18 were all written by me at handoff - the useless direction - and the habit never formed because nothing ever asked for it.
+
+The reviewer's brief was the other half.
+It carried the title, the author's account of what was done, the evidence, the declared gaps and the checks, and its four numbered instructions were about correctness, criticality and mutation-testing a guard.
+None of them asked whether the work was what was wanted, so **"correct, but not what was asked" was not a finding the reviewer could physically report.**
+
+**Decided: intent and acceptance criteria are two things, and the vocabulary is held apart.**
+
+- **intent** - what was asked, and why. Prose. Not checkable.
+- **AC** - how we will know it is met. One line, linked to a test step. Checkable.
+
+Work can satisfy every criterion it was given and still answer the wrong question, because the criteria were derived from the same misreading as the code.
+A caveat that called the criteria "a stated intent" was reworded for exactly this reason.
+The intent gate explicitly does NOT accept criteria as a substitute, and a test pins that.
+
+**Where it lives.** `INTENT:` lines in the Jot task description, the same trailer discipline and the same three reasons as `AC:` - Jot is a shipped public app and must not carry Helm's private schema, Aidin has to be able to correct the ask before the work goes further, and one home means the task and the ask cannot drift apart.
+Snapshotted onto the record as `intent: { text, source }`, with drift reported against the live task the way acceptance drift already is.
+
+**Graded, like everything else here.** A `core` or `critical` record with no intent is refused at write time; `cosmetic` is allowed through and says on the card that nothing states the ask.
+Enforced on WRITE and never on render - the same split readability already uses, because 78 of 96 existing records carry no intent and marking them all invalid is the noise this work is undoing.
+
+**`source` is the honest limit made visible.** An intent I wrote is my paraphrase, so a reviewer given it inherits my misreading.
+No code closes that. What the field does is stop the paraphrase from *reading* as his stated ask: `assistant` renders as "My reading of the ask, not confirmed by Aidin", and an unattributed or unrecognised source falls back to `assistant` rather than up to `captain`.
+A paraphrase still clears the gate deliberately - Aidin does not hand-write a sentence per task, and a gate nobody can clear gets worked around rather than satisfied.
+`goal` is the one non-circular case: an autopilot's goal is the literal instruction it worked from, written before the run, and it now becomes that record's intent for free.
+
+**The reviewer states its own reading FIRST.** The brief asks for one sentence on what it believes was asked *before* it is shown the intent or the author's account, and requires that sentence in the verdict file rather than the chat.
+A reviewer handed the ask and the answer together reconciles them; asking first makes a mismatch something it noticed instead of something it was told.
+Wrong-intent became instruction 1 of five, ahead of criticality and the mutation probe.
+
+### Found on the way: the readability gate was destroying check evidence
+
+The limits that landed on 2026-08-20 are enforced inside `writeReviewRecord` - and `recordCheckRun` re-writes the *whole* record through that same function.
+So on any record that failed the limits, "Run checks" ran the command and then silently dropped the result.
+Measured: **89 of 96 records failed the limits, 93 declared a check.** Proven by stamping a passing check on a copy of a real record - refused, `checkRuns` empty afterwards.
+The mechanism whose entire claim is "part of the evidence is not the author's word" had been quietly unable to record that evidence for a day.
+
+**Decided: a pure evidence stamp skips the write-time gates, and the permission is derived rather than declared.**
+`isRunStamp` alone would be a convention, and a convention becomes a way to write anything past the gates.
+The bypass is granted only when the incoming record differs from the one on disk in nothing but `checkRuns`, so it can carry evidence and nothing else.
+86 of 86 previously-refused records now stamp; an edit passed with the flag is still refused.
+
+### Also found: four records with an unusable project path
+
+Four records from 2026-08-12 carried `projectPath: "D:RepoToolshelm"` - what a JSON or JS string containing `"D:\Repo\Tools\helm"` collapses to, since `\R` and `\T` are not escapes and the backslash is simply dropped.
+Every surface that needs the repo roots there, so See diff, Run checks, sending a reviewer and commit pinning all failed on a directory that cannot exist, and the card blamed a missing repo rather than the field.
+Repaired, and `reviewRecordProblems` now refuses the shape - by SHAPE, not by `existsSync`, because a repo that is merely moved or on an unplugged drive is a different problem and refusing the record for it would put the evidence out of reach exactly when someone is trying to read it.
+
+Three test fixtures had the same damage. Spelling them correctly broke two blocks a *second* way, which is the more interesting half: the mangled path resolved to nothing, so `currentHead()` returned null and staleness was never computed at all.
+Those blocks had been passing because their project path was broken. They now point at their own temp directory, and commit pinning is exercised where it belongs, against a real temp git repo.
+
+### What the mutation matrix caught that the green suite did not
+
+Five deliberate breakages, each restored byte-identical afterwards. Two mattered.
+
+Deleting the intent gate from the write path left **every** assertion about it green - the tests drove `reviewRecordIntentProblems` and never checked that `writeReviewRecord` consults it. The mechanism asserted, the symptom never checked. A block now drives the real write path.
+
+Repairing the three fixtures left **nothing at all** exercising the new mangled-path guard: a guard written to close a finding, with no test of its own. It has its own block now.
+
+A third, smaller one: an assertion written as `problems.length === 0` passed the moment an unrelated rule tripped, and would have stopped testing its guard without ever going red. It is scoped to its own message now.
+
 ## 2026-08-03 - The Auto widget was empty because a config line hid the row, not because of the widget
 
 A full day went into "auto runs are not visible in the Auto widget".

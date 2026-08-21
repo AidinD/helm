@@ -218,3 +218,51 @@ and the fresh session pays a real quality tax (proven 2026-07-08: a session
 without the captured traps proposed a materially worse fix). Keeping the files
 current is what lets you - and every tier - be discarded and refreshed without
 loss, and keeps a first mate's next survey of this project accurate.
+
+## Write down the ask BEFORE you touch the code
+
+At the moment work on a task starts - the first edit, not the handoff - put the ask
+on an `INTENT:` line in the task's own Jot description:
+
+    INTENT: <what was asked, and why, in one or two sentences>
+
+Then carry the same sentence onto the review record as
+`intent: { text, source }`, where `source` is:
+
+- `captain` - Aidin's own words, quoted.
+- `goal` - the goal an autopilot was dispatched with (written before the run).
+- `assistant` - your own distillation of what he asked for. This is the normal
+  case when the request arrived in conversation and was clarified along the way.
+  Say so honestly; do not upgrade your paraphrase to `captain` because you are
+  confident in it. The card and the reviewer are both told which it is, and a
+  paraphrase presented as his words is the one failure this field exists to stop.
+
+**A `core` or `critical` record with no intent is refused at write time**, so a
+task cannot reach review without it. `cosmetic` is allowed through and says on the
+card that nothing states the ask.
+
+### Why this exists, and why it is not the acceptance criteria
+
+They are two things and the difference is the whole point:
+
+- **intent** - what was asked, and why. Prose. Not checkable.
+- **AC** - how we will know it is met. One line, linked to a test step. Checkable.
+
+Work can satisfy every criterion it was given and still answer the wrong question,
+because the criteria were derived from the same misreading as the code. The intent is
+the only artifact that catches that - and only if it was written before the work.
+Written at handoff instead, it describes what was built and can never disagree with it.
+
+Measured 2026-08-21, which is why this is now a rule and not a suggestion: 242 Jot
+tasks carried exactly ONE `AC:` line, no instruction file mentioned criteria at all,
+and the independent reviewer's brief contained the title, the author's account, the
+evidence, the gaps and the checks - but never the ask. So "correct, but not what was
+asked" was not a finding the reviewer could physically report.
+
+### The intent is also Aidin's to correct
+
+It lives in the Jot description precisely so he can rewrite it before the work goes
+further. If the live `INTENT:` line has moved away from the one the record snapshotted,
+the review card says so and the reviewer is told to judge against the current wording.
+That is not a conflict to resolve quietly - it usually means he corrected the ask, which
+is the most useful thing that can happen to a task.
