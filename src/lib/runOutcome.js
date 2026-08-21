@@ -46,6 +46,10 @@ export const TERMINAL_REASONS = Object.freeze([
   "escalated",
   "quota_exhausted",
   "two_consecutive_failures",
+  // The only one that means the work is FINISHED rather than merely over. Added
+  // 2026-08-21; before it, the loop's six reasons were all endings, so a run that
+  // achieved its goal could only exit by converging or by hitting its iteration cap.
+  "goal_reached",
   "no_op_convergence",
   "max_iterations_reached",
 ]);
@@ -133,6 +137,29 @@ export function classifyRunOutcome({ stoppedReason = null, commitCount = 0, bran
         headline: "Ran out of iterations before reaching the goal.",
         needsCaptain: `Hit its iteration cap before finishing.${readyForReview ? ` ${readyForReview} They are partial work.` : " Nothing was committed."}`,
       };
+    case "goal_reached":
+      // The loop was TOLD the goal is met by the iteration that finished it, which is the
+      // only outcome that means what "done" is supposed to mean. Everything else here is
+      // an ending, not a completion.
+      //
+      // With no commits it is still not done, and the wording says which of the two it is
+      // rather than blaming the run: a goal that needed no code change is a real case
+      // (already satisfied, or satisfiable by reading), and it needs a human to say so.
+      return commits
+        ? {
+            status: OUTCOME_DONE,
+            headline: "Finished: it reports the goal is met.",
+            // Nothing went wrong, so nothing is alarmed. Whether the claim HOLDS is the
+            // review's question, and the record for an autonomous run is a `judgment`
+            // that says outright that nobody has checked it.
+            needsCaptain: null,
+            awaitingReview: readyForReview,
+          }
+        : {
+            status: "no_changes",
+            headline: "Reports the goal is met, but committed nothing.",
+            needsCaptain: "It says the goal is met and changed no files. Check whether it was already met, or whether it decided that wrongly.",
+          };
     case "no_op_convergence":
       // The loop's own comment: "either the goal is already satisfied or it's stuck."
       // With commits this is the closest thing the loop has to success; without any, it

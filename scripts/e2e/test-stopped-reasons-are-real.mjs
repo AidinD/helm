@@ -27,7 +27,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { TERMINAL_REASONS } from "../../src/lib/runOutcome.js";
+import { TERMINAL_REASONS, classifyRunOutcome } from "../../src/lib/runOutcome.js";
 
 const E2E = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(E2E, "..", "..");
@@ -59,12 +59,61 @@ ok(
   notEmitted.length === 0,
   `and nothing in TERMINAL_REASONS is stale${notEmitted.length ? ` - the loop never assigns: ${notEmitted.join(", ")}` : ""}`
 );
-// The absence that the whole outcome design rests on. If a goal-reached state is ever
-// added, classifyRunOutcome has to learn it and this assertion is where that surfaces.
+// This assertion used to say the loop had NO goal-reached state, and that it was the
+// reason "it stopped" must never render as "it succeeded". It was true for a long time and
+// stopped being true on 2026-08-21 - the loop can now be told the goal is met, and stops
+// for that reason. Which is what the assertion was FOR: it named the absence so that
+// closing it would show up here rather than quietly.
+//
+// It flips rather than being deleted, because the property that actually matters survives
+// the change: exactly ONE reason may mean success, and every other must be an ending.
+// Two reasons that both read as "done" is how a run that merely ran out of iterations
+// comes to look finished.
+ok(TERMINAL_REASONS.includes("goal_reached"), "the loop HAS a goal-reached state, so a finished run can say it finished");
+const successish = TERMINAL_REASONS.filter((r) => /^(done|completed|complete|success|succeeded|converged|finished|goal_reached)$/.test(r));
 ok(
-  !TERMINAL_REASONS.some((r) => /^(done|completed|complete|success|succeeded|converged|finished|goal_reached)$/.test(r)),
-  "the loop still has NO goal-reached state - which is why 'it stopped' must never render as 'it succeeded'"
+  successish.length === 1 && successish[0] === "goal_reached",
+  `and it is the only reason that can mean success - the rest are endings (${JSON.stringify(successish)})`
 );
+// It must also be classified, not merely listed. A reason in the list that
+// classifyRunOutcome does not know falls into the "unrecognised" branch and renders as a
+// warning, which for the one success outcome would be exactly backwards.
+const reached = classifyRunOutcome({ stoppedReason: "goal_reached", commitCount: 2, branchName: "helm/goal-x" });
+ok(reached.status === "done", `a goal-reached run with commits classifies as done (${reached.status})`);
+ok(reached.needsCaptain === null, "and raises no alarm - nothing went wrong");
+ok(!!reached.awaitingReview, "while still announcing that the commits want review");
+const reachedEmpty = classifyRunOutcome({ stoppedReason: "goal_reached", commitCount: 0 });
+ok(reachedEmpty.status !== "done", `but a goal-reached run that committed NOTHING is not done (${reachedEmpty.status})`);
+ok(!!reachedEmpty.needsCaptain, "and does raise an alarm - claiming success while changing nothing is the case worth checking");
+
+// --- 1b. goal_reached is WIRED, not just listed ---------------------------
+// Source-level, because reaching this branch for real needs a live model run (runGoal has
+// no test that drives it - see test-dispatch-loop, which does and costs tokens). So these
+// assert the wiring the branch depends on: without them, "goal_reached" could sit in the
+// list, classify correctly, and never once be assigned.
+{
+  // The agent has to be ASKED. A reason nothing can report is a reason nothing produces.
+  ok(/"goalReached"/.test(loopSrc), "the iteration schema has a goalReached field");
+  const required = loopSrc.match(/required:\s*\[([^\]]*)\]/);
+  ok(!!required && /goalReached/.test(required[1]), "and it is REQUIRED, so an iteration cannot quietly omit it");
+  ok(/goalReached:true ONLY when the WHOLE goal/.test(loopSrc), "the rules tell the agent it means the whole goal, not this step");
+
+  // Only an ACCEPTED iteration may claim it. A success:false iteration has its file
+  // changes discarded, so its opinion describes work that no longer exists.
+  // Assignments only - the `let ... = false` declaration is not a claim.
+  const claims = [...loopSrc.matchAll(/(^|[^t] )goalReachedClaimed = ([^;]+);/gm)].map((m) => m[2].trim()).filter((c) => c !== "false");
+  ok(claims.length === 2, `the claim is set in the two success branches and nowhere else (${claims.length})`);
+  ok(
+    claims.every((c) => c === "outcome.result.goalReached === true"),
+    `and only from the agent's own explicit true, never coerced from a truthy value (${JSON.stringify(claims)})`
+  );
+
+  // ORDER. A finished run whose last iteration also changed nothing would otherwise be
+  // reported as "it stopped making further changes" - the vaguer of two true statements.
+  const atGoal = loopSrc.indexOf('stoppedReason = "goal_reached"');
+  const atNoOp = loopSrc.indexOf('stoppedReason = "no_op_convergence"');
+  ok(atGoal > 0 && atNoOp > 0 && atGoal < atNoOp, "and it is checked BEFORE convergence, so 'done' wins over 'it stopped changing things'");
+}
 
 // --- 2. no fixture may invent one ----------------------------------------
 /** Strip line and block comments so the scan cannot match an explanation of the bug. */

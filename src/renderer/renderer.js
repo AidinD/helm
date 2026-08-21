@@ -13758,6 +13758,16 @@ function goalRunReport(run) {
     // decision - and until 2026-08-20 this branch put "N commits ready for review"
     // there, so every clean run counted toward the needs-you tally and the queue
     // flagged everything. The commits are still announced, on `waiting` instead.
+    // The only reason that means FINISHED rather than merely over (2026-08-21). Mirrored
+    // from src/lib/runOutcome.js, which this classic script cannot import;
+    // test-run-outcome-truthful pins the two copies against each other.
+    goal_reached: commitCount
+      ? { status: "done", why: "Finished: it reports the goal is met.", needs: null, waiting: ready }
+      : {
+          status: "no_changes",
+          why: "Reports the goal is met, but committed nothing.",
+          needs: "It says the goal is met and changed no files. Check whether it was already met, or whether it decided that wrongly.",
+        },
     no_op_convergence: commitCount
       ? { status: "done", why: "Converged: it stopped making further changes.", needs: null, waiting: ready }
       : { status: "no_changes", why: "Stopped without changing anything - either the goal was already met, or it was stuck.", needs: "Finished without committing anything. Check whether the goal was already met or the run was stuck." },
