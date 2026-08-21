@@ -62,6 +62,13 @@ export function reviewsDir(metaHome) {
  * trustworthy. If the folder ever gets big enough to matter, the honest fix is a single
  * directory-level generation counter, not a second place records can live.
  *
+ * And the orphans are worth MORE than the live records, not less, which is the opposite of
+ * what "orphan" suggests: 18 of the 71 are cited by id from a DECISIONS.md section heading
+ * (25%) against 2 of the 28 live ones (7%), because older work has had time to be written
+ * up. 70 of 71 carry a notVerified list. They are the only surviving account of that work -
+ * the card is gone, the record is not - so deleting them is the one option that is clearly
+ * wrong, and archiving is merely not urgent.
+ *
  * The folder is stat'ed rather than walked, and that rests on ONE property: records are
  * written atomically (writeJsonAtomicSync = write a temp file, then rename it into place),
  * and a rename changes the directory's mtime while an in-place rewrite does NOT. Verified
