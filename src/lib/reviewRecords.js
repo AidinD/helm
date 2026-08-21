@@ -47,8 +47,20 @@ export function reviewsDir(metaHome) {
  * question that decides correctness is "has anything it was computed FROM changed?".
  *
  * These are those inputs: Jot's todos.json decides what is in review, the review-records
- * folder carries the evidence. Two stat() calls, so this is safe to run on every tick -
- * about 0.1ms against the 2.2 seconds it guards.
+ * folder carries the evidence.
+ *
+ * COST, re-measured 2026-08-21: about 20ms per tick on the real Dropbox-backed folder at 99
+ * records, against the 2.2 seconds it guards. Still an easy trade, but this line used to say
+ * "two stat() calls, about 0.1ms" and that had been wrong by roughly 200x since the per-file
+ * stat change below - the description of two stats survived the edit that made it one stat
+ * per record. Worth noting in a file whose whole subject is not claiming more than it can
+ * show: a stale performance comment is the same species of defect as a stale test.
+ *
+ * It grows with the folder, and 71 of those 99 records belong to Jot cards that no longer
+ * exist, so ~14ms of it buys nothing. Deliberately NOT fixed by archiving them: 14ms once
+ * a minute is not worth a new file-moving mechanism in the one file whose job is to be
+ * trustworthy. If the folder ever gets big enough to matter, the honest fix is a single
+ * directory-level generation counter, not a second place records can live.
  *
  * The folder is stat'ed rather than walked, and that rests on ONE property: records are
  * written atomically (writeJsonAtomicSync = write a temp file, then rename it into place),
