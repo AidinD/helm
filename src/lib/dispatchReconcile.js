@@ -52,6 +52,8 @@ export function buildReportFromRecord(rec, now) {
     stoppedReason: rec.stoppedReason,
     commitCount,
     branchName: rec.branchName,
+    // Same as the live path: lets goal_reached say whether anything checked the claim.
+    verifyCommand: rec.verifyCommand || null,
     error: rec.status === "error" ? rec.error || "The dispatched run errored." : null,
     escalation: rec.escalation || null,
     interrupted: rec.status === "running",

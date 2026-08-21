@@ -82,6 +82,15 @@ const reached = classifyRunOutcome({ stoppedReason: "goal_reached", commitCount:
 ok(reached.status === "done", `a goal-reached run with commits classifies as done (${reached.status})`);
 ok(reached.needsCaptain === null, "and raises no alarm - nothing went wrong");
 ok(!!reached.awaitingReview, "while still announcing that the commits want review");
+// TWO things reach this outcome, and they must not read the same. One was checked by the
+// run's own command; the other is the machine's word and nothing else. Neither is an alarm
+// - flagging every run without a verify gate would make the needs-you queue mean "most
+// runs" again - but a reader has to be able to tell which one they are looking at.
+const checked = classifyRunOutcome({ stoppedReason: "goal_reached", commitCount: 2, branchName: "helm/goal-x", verifyCommand: "npm test" });
+ok(/its own check passed/.test(checked.headline) && /npm test/.test(checked.headline), `a checked claim names the command that backed it (${checked.headline})`);
+ok(/Nothing checked that/.test(reached.headline), `an unchecked claim says so outright (${reached.headline})`);
+ok(checked.headline !== reached.headline, "so the two cannot be mistaken for each other");
+ok(checked.needsCaptain === null && reached.needsCaptain === null, "and neither is an alarm - an unchecked self-report is not something going wrong");
 const reachedEmpty = classifyRunOutcome({ stoppedReason: "goal_reached", commitCount: 0 });
 ok(reachedEmpty.status !== "done", `but a goal-reached run that committed NOTHING is not done (${reachedEmpty.status})`);
 ok(!!reachedEmpty.needsCaptain, "and does raise an alarm - claiming success while changing nothing is the case worth checking");

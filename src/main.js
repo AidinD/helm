@@ -5650,12 +5650,15 @@ function buildDispatchReport({ dispatchId, mateId, request, result, meta }) {
   const lastImplement = [...(result.iterations || [])]
     .reverse()
     .find((r) => r.ok && r.result && r.phase === "implement");
-  // The loop has no goal-reached state, so "it stopped" is not "it succeeded" - see
-  // src/lib/runOutcome.js for what this replaced and what it was costing.
+  // Every stopped-reason but one is an ENDING, not a completion - see src/lib/runOutcome.js
+  // for what this replaced and what it was costing. The one exception, goal_reached, exists
+  // since 2026-08-21; verifyCommand is passed so it can say whether anything checked the
+  // claim or whether it is only the run's own word.
   const outcome = classifyRunOutcome({
     stoppedReason: result.stoppedReason,
     commitCount,
     branchName: result.branchName,
+    verifyCommand: result.verifyCommand || null,
     escalation: result.stoppedReason === "escalated" ? result.escalation || { detail: "Run paused for a human decision." } : null,
   });
   const summary = buildOutcomeSummary(outcome.headline, lastImplement?.result?.summary, outcome.status);

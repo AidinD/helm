@@ -92,7 +92,20 @@ export function isUnfinished(status) {
  *   nobody having read them. So a successful run still says its commits are waiting -
  *   just on a quiet line rather than as an alarm.
  */
-export function classifyRunOutcome({ stoppedReason = null, commitCount = 0, branchName = null, error = null, escalation = null, interrupted = false } = {}) {
+export function classifyRunOutcome({
+  stoppedReason = null,
+  commitCount = 0,
+  branchName = null,
+  error = null,
+  escalation = null,
+  interrupted = false,
+  // The run's own verify command, if it was configured with one. Used ONLY by the
+  // goal_reached branch, to say whether "it is done" was checked by anything or is just
+  // the machine's word. Derived from data the run record already carries rather than a new
+  // field threaded through three builders - a fourth copy of one fact is how the copies
+  // come to disagree.
+  verifyCommand = null,
+} = {}) {
   const commits = typeof commitCount === "number" && commitCount > 0 ? commitCount : 0;
   const where = branchName ? ` in ${branchName}` : "";
   const readyForReview = commits ? `${commits} commit${commits === 1 ? "" : "s"} ready for review${where}.` : null;
@@ -142,13 +155,27 @@ export function classifyRunOutcome({ stoppedReason = null, commitCount = 0, bran
       // only outcome that means what "done" is supposed to mean. Everything else here is
       // an ending, not a completion.
       //
-      // With no commits it is still not done, and the wording says which of the two it is
-      // rather than blaming the run: a goal that needed no code change is a real case
-      // (already satisfied, or satisfiable by reading), and it needs a human to say so.
+      // But TWO different things reach this branch, and reporting them identically is the
+      // same mistake as reporting a finished run and an exhausted one identically:
+      //
+      //   with a verify command - the run said done AND its own check passed on the
+      //     result. Two independent things agreeing.
+      //   without one - the run said done. That is the whole of it.
+      //
+      // So the headline says which. Neither raises an alarm: an unchecked self-report is
+      // not something going WRONG, and flagging every run that has no verify gate would
+      // make the needs-you queue mean "most runs" again. What it must not do is look the
+      // same as a checked one.
+      //
+      // With no commits it is not done either way, and the wording says which of the two
+      // it might be rather than blaming the run: a goal that needed no code change is a
+      // real case (already satisfied, or satisfiable by reading), and it needs a human.
       return commits
         ? {
             status: OUTCOME_DONE,
-            headline: "Finished: it reports the goal is met.",
+            headline: verifyCommand
+              ? `Finished: the goal is met and its own check passed (${verifyCommand}).`
+              : "Finished: it says the goal is met. Nothing checked that.",
             // Nothing went wrong, so nothing is alarmed. Whether the claim HOLDS is the
             // review's question, and the record for an autonomous run is a `judgment`
             // that says outright that nobody has checked it.
