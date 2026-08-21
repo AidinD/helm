@@ -352,6 +352,31 @@ console.log("\n-- stamping a check on a record that would fail the write gates -
   const after = readReviewRecord(home, ID);
   ok((after.checkRuns || []).some((r) => r.label === "suite" && r.exitCode === 0), "and the run is actually STORED - a check that really ran must never read as never run");
 
+  // The bypass covers PRESENTATION gates only. An INADMISSIBLE record - one that is not
+  // allowed to claim anything - must still be refused, or it quietly accumulates green
+  // ticks and its card reads "checks passing". This shipped wrong for a day: the bypass
+  // covered reviewRecordProblems too, so a critical record with no independent pass could
+  // be stamped. Caught by test-acceptance-gate, which is app-lane and so invisible to the
+  // fast suite I was running.
+  const CRIT = "99999999-9999-4999-8999-999999999999";
+  const inadmissible = {
+    ...legacy,
+    taskId: CRIT,
+    summary: "short and readable",
+    criticality: "critical",
+    intent: { text: "Make critical work impossible to stamp without a second opinion.", source: "captain" },
+    // critical requires an independent pass. Deliberately absent.
+  };
+  fs.writeFileSync(path.join(reviewsDir(home), `${CRIT}.json`), JSON.stringify(inadmissible, null, 2), "utf8");
+  ok(reviewRecordProblems(inadmissible).length > 0, "the fixture really is inadmissible - otherwise the next check proves nothing");
+  const critStamp = recordCheckRun(home, CRIT, { label: "suite", exitCode: 0 });
+  ok(critStamp.ok === false, `stamping a check on an inadmissible record is REFUSED (${critStamp.ok ? "ACCEPTED" : "refused"})`);
+  ok(
+    /independentReview|criticality|critical/i.test(String(critStamp.error || "")),
+    `and the refusal names why, so the card can say it (${String(critStamp.error).slice(0, 70)})`
+  );
+  ok((readReviewRecord(home, CRIT).checkRuns || []).length === 0, "and no green tick was stored on a record that may not claim one");
+
   // MUTATION, in the other direction. The bypass is granted from the content being
   // unchanged, not from the caller's flag - so the flag alone must not carry an edit.
   const smuggled = writeReviewRecord(home, { ...after, summary: "an edit riding in on the stamp flag" }, { isRunStamp: true });

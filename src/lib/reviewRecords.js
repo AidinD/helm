@@ -1258,16 +1258,36 @@ export function writeReviewRecord(metaHome, rec, { now = Date.now(), isRunStamp 
   // which is the exact failure this file's own comments call out twice. Proven by
   // stamping a passing check on a copy of a real record: refused, checkRuns empty after.
   //
-  // So a pure evidence stamp skips both gates. The permission is not the caller's flag
-  // alone - a flag is a convention, and this one would silently become a way to write
-  // any content past the gates. It is granted only when the content really is unchanged
-  // from what is already on disk, so the bypass can carry evidence and nothing else.
+  // So a pure evidence stamp skips the PRESENTATION gates. The permission is not the
+  // caller's flag alone - a flag is a convention, and this one would silently become a way
+  // to write any content past the gates. It is granted only when the content really is
+  // unchanged from what is already on disk, so the bypass can carry evidence and nothing
+  // else.
   const stampOnly = isRunStamp && existing !== null && onlyCheckRunsChanged(existing, rec);
+
+  // ADMISSIBILITY IS NOT A PRESENTATION GATE, and a stamp does NOT get past it.
+  //
+  // This was one gate too many inside the bypass when it first landed, and the mistake is
+  // worth naming because the two gates fail for opposite reasons:
+  //
+  //   readability / intent - the record's TEXT is too long, or does not state the ask.
+  //     Refusing a stamp for that destroys real proof over how something is WRITTEN. The
+  //     bypass exists for exactly this.
+  //   reviewRecordProblems - the record is INADMISSIBLE. A critical item with no
+  //     independent pass, a check with nowhere to run, an unusable project path. Refusing
+  //     the stamp is the entire point: otherwise a record that is not allowed to claim
+  //     anything quietly accumulates green ticks and its card reads "checks passing".
+  //
+  // Caught by test-acceptance-gate, whose assertion is exactly this - "a record that
+  // cannot be stamped must not produce a success message" - and which went red for a day
+  // because it is an app-lane test and the fast lane never runs it. 7 of 99 records fail
+  // admissibility against 89 that fail readability, so this costs almost nothing and buys
+  // back the one property the gauntlet is for.
+  const problems = reviewRecordProblems(rec);
+  if (problems.length > 0) {
+    return { ok: false, error: `Incomplete review record: ${problems.join("; ")}`, problems };
+  }
   if (!stampOnly) {
-    const problems = reviewRecordProblems(rec);
-    if (problems.length > 0) {
-      return { ok: false, error: `Incomplete review record: ${problems.join("; ")}`, problems };
-    }
     // Readability is enforced at the WRITE, not at the render - the limits would otherwise
     // mark ninety existing records incomplete at once, and noise is what they exist to
     // fix. Refusing here is the point: left as a convention, this was followed for exactly
