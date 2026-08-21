@@ -1252,12 +1252,55 @@ function reviewerModelLabelInRenderer(value) {
  */
 function independentReviewBrief(row, rec, notePath, priorVerdict = null, writingBrief = []) {
   const short = row.taskId.slice(0, 8);
+  const intent = row.intent || null;
   const lines = [
     `You are an INDEPENDENT reviewer. You did not write this work, and your job is not to agree with it.`,
     ``,
     `Task ${short}: ${row.title}`,
     `Criticality claimed: ${row.criticality || "not stated"}. Verdict claimed: ${rec.verdict || "none"}.`,
     ``,
+    // WHAT WAS ASKED FOR, and the order here is deliberate. The reviewer states what IT
+    // thinks was wanted before it is shown the answer, because a reviewer handed the ask
+    // and the work together reconciles them - it reads the intent through the code it just
+    // read, and "does this match?" becomes a formality. Asking first makes a mismatch a
+    // thing it noticed rather than a thing it was told.
+    //
+    // Measured 2026-08-21: nothing in this brief carried the ask at all, so "correct, but
+    // not what was asked" was not a finding the reviewer could physically report.
+    `FIRST, BEFORE READING ANY FURTHER: read the commits and the task title, then write down`,
+    `in one sentence what you believe was ASKED FOR. Do not skip this and do not revise it`,
+    `afterwards - it is the only part of your verdict that is not contaminated by having`,
+    `read the author's account.`,
+    ``,
+    ...(intent
+      ? [
+          `THEN compare it with what was actually asked:`,
+          intent.text,
+          intent.source === "captain"
+            ? `(the captain's own words.)`
+            : intent.source === "goal"
+              ? `(The goal the autopilot was given, written before the run.)`
+              : `(An assistant's paraphrase of the ask, NOT confirmed by the captain - so treat a mismatch between this and the commits as possibly a mis-stated intent rather than wrong code, and say which you think it is.)`,
+          ``,
+          `Work that is correct but does NOT answer this is a FINDING, and a serious one.`,
+          `Report it first, before any bug. Say plainly what was asked and what was built.`,
+          ``,
+        ]
+      : [
+          `NOBODY WROTE DOWN WHAT WAS ASKED FOR. There is no recorded intent for this task, so`,
+          `nothing here can be checked against it. Say so in your verdict, and say what the`,
+          `commits look like they were TRYING to do - that sentence is the missing intent and`,
+          `is worth more than anything else you can write about this item.`,
+          ``,
+        ]),
+    ...(row.intentDrift?.drifted
+      ? [
+          `THE ASK CHANGED after the record was written. It now reads:`,
+          row.intentDrift.live,
+          `Judge the work against the CURRENT one, and say whether the change invalidates it.`,
+          ``,
+        ]
+      : []),
     `What the author says was done:`,
     rec.summary || "(no summary)",
     ``,
@@ -1272,10 +1315,11 @@ function independentReviewBrief(row, rec, notePath, priorVerdict = null, writing
     ``,
     `Start with: git log --all --regexp-ignore-case --grep=${short} --format="%H %s"  then read those commits' patch.`,
     `Then, in order:`,
-    `1. Decide the criticality yourself before reading theirs again. If yours is higher, say so first.`,
-    `2. Name which commands would catch a regression here. A command they do not have is your most useful output.`,
-    `3. Try to BREAK one guard on purpose and check that a test notices. A guard whose removal leaves the suite green is not a guard.`,
-    `4. Report: what is wrong, what is unproven, and what you ran to find out. Cite file:line.`,
+    `1. Answer the intent question above: does this work do what was asked? Not "is it correct" - is it the RIGHT THING. A clean implementation of the wrong thing fails here.`,
+    `2. Decide the criticality yourself before reading theirs again. If yours is higher, say so first.`,
+    `3. Name which commands would catch a regression here. A command they do not have is your most useful output.`,
+    `4. Try to BREAK one guard on purpose and check that a test notices. A guard whose removal leaves the suite green is not a guard.`,
+    `5. Report: what is wrong, what is unproven, and what you ran to find out. Cite file:line.`,
     ``,
     // A SECOND opinion: the prior verdict goes in AFTER the instructions above, and
     // is framed as a claim to test rather than a conclusion to start from - the whole
@@ -1313,8 +1357,11 @@ function independentReviewBrief(row, rec, notePath, priorVerdict = null, writing
     `  ${notePath}`,
     ``,
     `Plain text or light markdown. Start with one line that is either CONFIRMED or NOT`,
-    `CONFIRMED and why, then the findings, then what you ran. Overwrite the file if it`,
-    `exists - the newest verdict is the one that counts.`,
+    `CONFIRMED and why. Then, as the SECOND line, "Asked for: ..." - your own sentence from`,
+    `step one, before you had read their account. That line is what makes this verdict`,
+    `worth having twice: it is the only place a wrong-intent bug can show up, and it must`,
+    `survive into the file rather than staying in your chat. Then the findings, then what`,
+    `you ran. Overwrite the file if it exists - the newest verdict is the one that counts.`,
     ``,
     `Do not change anything else. This is a review.`,
   ];
@@ -1610,7 +1657,61 @@ function reviewRowEl(row, band = null) {
     body.append(warn);
   }
 
+  // THE ASK CHANGED after the record was written - which here usually means the captain
+  // corrected it, so it is the most useful thing the card can say. Louder than the
+  // acceptance drift above only in placement: it comes first because if the question
+  // moved, every answer below it is answering the old one.
+  if (row.intentDrift?.drifted) {
+    const warn = document.createElement("div");
+    warn.className = "rev-warn";
+    warn.textContent = `What was asked for changed after this record was written. It now reads: "${row.intentDrift.live}" - the work below was measured against the old wording.`;
+    body.append(warn);
+  }
+
   const rec = row.record;
+
+  // WHAT WAS ASKED, above WHAT WAS DONE. Two short rows, read as a pair (the captain,
+  // 2026-08-21: "det ska stå i review en kort sammanfattning av vad intent var utöver
+  // vad som faktiskt gjordes"). The order carries the meaning: the ask is the question
+  // and the summary is the answer, and an answer read before its question is just a
+  // claim to agree with.
+  //
+  // Absence is rendered, not hidden. A card that silently omits the ask looks complete
+  // while missing the only thing the work can be judged wrong against.
+  const intent = row.intent || null;
+  // Class is `rev-intent`, NOT `rev-ask`: `.rev-ask` already exists and means the
+  // judgment question ("Needs you: ..."), i.e. the decision the captain has to make. Two
+  // different things that both read as "the ask" in English, so they do not get to share
+  // a name - a collision here would style one as the other and, worse, blur the two in
+  // every later conversation about the page.
+  const askRow = document.createElement("div");
+  askRow.className = "rev-intent" + (intent ? "" : " rev-intent-missing");
+  const askLabel = document.createElement("div");
+  askLabel.className = "rev-intent-label";
+  askLabel.textContent = intent ? "Asked for" : "Nobody wrote down what was asked for";
+  askRow.append(askLabel);
+  if (intent) {
+    const askText = document.createElement("div");
+    askText.className = "rev-intent-text";
+    askText.textContent = intent.text;
+    askRow.append(askText);
+    // Whose words these are. Only shown when it MATTERS - a paraphrase presented as the
+    // ask is the failure this field exists to prevent, while "the captain's own words" needs no
+    // caption. `fromTask` means the record predates intents and this was read live off the
+    // task, which the reader has to know: it was not what the work was handed over against.
+    if (intent.source !== "captain") {
+      const note = document.createElement("div");
+      note.className = "rev-intent-note";
+      note.textContent = intent.fromTask
+        ? "Read from the task just now - this record was written before the ask was being recorded, so the work was not handed over against it."
+        : intent.source === "goal"
+          ? "The goal the autopilot was given, written before the run."
+          : "My reading of the ask, not confirmed by the captain - correct it in the task if it is wrong.";
+      askRow.append(note);
+    }
+  }
+  body.append(askRow);
+
   const summary = document.createElement("p");
   summary.className = "rev-summary";
   summary.textContent = rec.summary;

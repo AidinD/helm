@@ -21,6 +21,7 @@
  * therefore no record. That page states the absence plainly instead of rendering a
  * confident empty card, for the same reason the in-app row does.
  */
+import { intentSourceNote } from "./intent.js";
 
 function esc(s) {
   return String(s ?? "")
@@ -280,6 +281,9 @@ const STYLE = `
   section.danger { background: #2c1c1e; border-left: 3px solid var(--red); }
   section.lead { background: transparent; padding: 0 2px; margin-bottom: 24px; }
   section.lead p { font-size: 18px; line-height: 1.6; margin: 0; }
+  /* Whose words the ask is in. Qualifies the sentence above it, so it must not compete
+     with it - dimmer and smaller, the same relationship the card uses. */
+  .provenance { font-size: 12.5px; color: var(--muted); margin: 6px 0 0; }
   ul, ol { margin: 0; padding-left: 22px; }
   li { margin-bottom: 7px; }
   p { margin: 0 0 12px; }
@@ -445,8 +449,53 @@ export function buildReviewHtml({
     );
   }
 
+  // THE ASK CHANGED after this was written - usually because the captain corrected it, which
+  // makes it the most useful line on the page. Above the summary, because if the question
+  // moved then everything below is answering the old one.
+  if (row?.intentDrift?.drifted) {
+    parts.push(
+      section(
+        "What was asked for changed",
+        `<p>It now reads: “${esc(row.intentDrift.live)}” — the work below was measured against the old wording.</p>`,
+        "warn"
+      )
+    );
+  }
+
+  // WHAT WAS ASKED, then WHAT WAS DONE - the question before its answer, the same pair
+  // and the same order as the card (task 10928bdf). Absence is printed, not skipped: a
+  // page that quietly omits the ask reads as complete while missing the only thing the
+  // work can be found WRONG against.
+  const intent = row?.intent || null;
+  if (intent) {
+    // The wording comes from intent.js, not from a copy here. Three spellings of this one
+    // sentence had already appeared while building this feature, and the card, this page
+    // and the reviewer's brief disagreeing about how honest an intent is would be worse
+    // than any of them being slightly clumsier. Only `fromTask` is local: it is a property
+    // of the QUEUE row, not of the source, so intent.js has nothing to say about it.
+    const note = intent.source === "captain"
+      ? ""
+      : intent.fromTask
+        ? "Read from the task, not snapshotted when the work was handed over — so this is not what it was reviewed against at the time."
+        : intentSourceNote(intent.source);
+    parts.push(
+      section(
+        "Asked for",
+        `<p>${esc(intent.text)}</p>${note ? `<p class="provenance">${esc(note)}</p>` : ""}`
+      )
+    );
+  } else {
+    parts.push(
+      section(
+        "Nobody wrote down what was asked for",
+        "<p>So nothing here was reviewed against the ask — only against what the author says they did.</p>",
+        "warn"
+      )
+    );
+  }
+
   if (rec.summary) {
-    parts.push(section("", `<p>${esc(rec.summary)}</p>`, "lead"));
+    parts.push(section("What was done", `<p>${esc(rec.summary)}</p>`, "lead"));
   }
   if (rec.verdict === "judgment" && rec.ask) {
     parts.push(section("Needs a decision from you", `<p>${esc(rec.ask)}</p>`, "warn"));

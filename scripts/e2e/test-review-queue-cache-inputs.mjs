@@ -57,6 +57,10 @@ try {
     lastSummary: "Did the thing.",
     verifyCommand: "npm test",
     stoppedReason: "no_op_convergence",
+    // The goal the run was dispatched with. A real auto record always has one, and
+    // without it the record carries no intent - which a `core` record is refused for,
+    // so this fixture would stop exercising the write path at all.
+    goal: "Make the badge rebuild when a record changes.",
   });
   const written = writeReviewRecord(home, rec);
   ok(written.ok, `the record wrote (${written.error || "ok"}) - the rest of this check depends on it`);

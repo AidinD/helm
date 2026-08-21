@@ -3,6 +3,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { parseAcceptanceCriteria, acceptanceCoverage, acceptanceProblems } from "./acceptance.js";
+import { normalizeIntent, intentSourceNote, intentDrift, parseIntent, clampIntentText, hasEmptyIntentLine, INTENT_MAX_CHARS } from "./intent.js";
 import { writeJsonAtomicSync } from "./atomicWrite.js";
 
 // Review records (task ce2d19ab).
@@ -173,6 +174,7 @@ export const CRITICALITY_LEVELS = Object.keys(CRITICALITY_TIERS);
  */
 export const READABILITY_LIMITS = Object.freeze({
   summary: 240,
+  intent: INTENT_MAX_CHARS,
   visibleLine: 120,
   step: 120,
   expect: 120,
@@ -180,6 +182,40 @@ export const READABILITY_LIMITS = Object.freeze({
   gapItems: 5,
   stepItems: 6,
 });
+
+/**
+ * Ways a record fails to say WHAT WAS ASKED FOR. Enforced on write only, alongside
+ * readability and for the same reason: 78 of 96 existing records carry no intent, and
+ * marking them all invalid would be the noise this whole effort is undoing.
+ *
+ * Graded by what being wrong costs, like everything else here:
+ *   core / critical - refused. These are the tiers where "correct, but not what was
+ *                     asked" is expensive, and where a reviewer needs the question.
+ *   cosmetic        - allowed, and surfaced by recordCaveats instead. Cosmetic buys
+ *                     speed; it does not buy silence.
+ *
+ * An intent that is only my paraphrase (`source: "assistant"`) still passes. Refusing it
+ * would be a gate nobody can clear: the captain does not hand-write a sentence per task, and a
+ * gate that cannot be cleared gets worked around rather than satisfied. What is required
+ * is that the ask was written down before the work and can be read back and corrected;
+ * whose words they are is reported, not gated.
+ */
+export function reviewRecordIntentProblems(rec) {
+  if (!rec || typeof rec !== "object") {
+    return [];
+  }
+  const criticality = String(rec.criticality || "").toLowerCase();
+  if (criticality !== "core" && criticality !== "critical") {
+    return [];
+  }
+  const intent = normalizeIntent(rec.intent);
+  if (!intent) {
+    return [
+      `a ${criticality} record must carry the intent - the ask it was written against - as intent: { text, source }. Put the same sentence on an "INTENT:" line in the Jot task so it can be corrected before the next round`,
+    ];
+  }
+  return [];
+}
 
 /** The line a reader sees before expanding anything. */
 function visibleLine(item) {
@@ -209,6 +245,14 @@ export function reviewRecordReadability(rec) {
   if (summary.length > L.summary) {
     problems.push(
       `summary is ${summary.length} characters (limit ${L.summary}) - say what changed in one or two short sentences and move the rest into an evidence entry's detail`
+    );
+  }
+  // The intent shares the summary's limit because the card shows them as two rows, read
+  // as a pair. Whichever one runs long is the one that turns the card back into homework.
+  const intentText = normalizeIntent(rec.intent)?.text || "";
+  if (intentText.length > L.intent) {
+    problems.push(
+      `intent is ${intentText.length} characters (limit ${L.intent}) - state the ask in one or two sentences; the reasoning behind it belongs in the task, not on the card`
     );
   }
   for (const [field, items, cap] of [
@@ -331,6 +375,22 @@ export function reviewRecordProblems(rec) {
       problems.push(
         `${homeless.length} check(s) have nowhere to run - set projectPath on the record, or cwd on each check. Without it the check fails for a missing directory, not for a real result.`
       );
+    }
+  }
+  // A Windows path whose separators were eaten. Found on 4 records from 2026-08-12
+  // (`D:RepoToolshelm`), which is what a JSON string like "D:\Repo\Tools\helm" collapses
+  // to - `\R`, `\T` and `\h` are not valid escapes, so the backslashes are simply dropped.
+  //
+  // Silent and total: every surface that needs the repo (See diff, Run checks, sending an
+  // independent reviewer, pinning a check to a commit) roots there, so all of them fail on
+  // a directory that cannot exist, and the card reports a missing repo rather than a
+  // corrupt field. Checked by SHAPE, not by existsSync: a repo that is merely moved or on
+  // an unplugged drive is a different problem, and refusing the record for it would put
+  // the evidence out of reach exactly when someone is trying to read it.
+  for (const [field, value] of [["projectPath", rec.projectPath], ...(Array.isArray(rec.checks) ? rec.checks.map((c, i) => [`checks[${i}].cwd`, c?.cwd]) : [])]) {
+    const p = String(value || "").trim();
+    if (p && /^[A-Za-z]:[^\\/]/.test(p)) {
+      problems.push(`${field} is "${p}" - a drive letter with no separator after it, so its backslashes were lost when the record was written. Nothing can be rooted there.`);
     }
   }
   problems.push(...criticalityProblems(rec));
@@ -480,9 +540,20 @@ export function recordCaveats(rec) {
   if (checks.length === 0) {
     caveats.push("No executed check at all - everything here rests on the author's word.");
   }
+  // What was ASKED FOR. Its absence is the one that hides best: a record with no intent
+  // reads as complete, and the question it should have been measured against simply is
+  // not on the page - so a reader agrees with work that answers something else.
+  const intent = normalizeIntent(rec.intent);
+  if (!intent) {
+    caveats.push("Nothing here says what was asked for, so nothing was reviewed against it - only against what the author says they did.");
+  } else if (intent.source === "assistant") {
+    caveats.push(`What was asked is stated in my words, not the captain's - ${intentSourceNote(intent.source).toLowerCase()}`);
+  }
   if (!Array.isArray(rec.acceptanceCriteria)) {
     // Distinct from an empty array, which is an explicit claim that the task had none.
-    caveats.push("No acceptance criteria were agreed before the work, so nothing here is checked against a stated intent.");
+    // Deliberately says "criteria", not "intent": they are two things (see intent.js), and
+    // this sentence used to blur them by calling the criteria a stated intent.
+    caveats.push("No acceptance criteria were agreed before the work, so nothing here is checked against a criterion written in advance.");
   } else if (rec.acceptanceCriteria.length === 0) {
     caveats.push("The task had no acceptance criteria (explicitly recorded as none).");
   }
@@ -1010,11 +1081,19 @@ export function reviewBand(row) {
  */
 function taskAcceptanceCaveats(description) {
   const problems = acceptanceProblems(description || "");
-  return problems.map((p) =>
+  const caveats = problems.map((p) =>
     /no acceptance criteria/.test(p)
       ? "The task itself never stated acceptance criteria, so there was no agreed definition of done to check against."
       : `The task's own acceptance criteria are weak: ${p}`
   );
+  // A blank `INTENT:` on the task is worse than none at all: it looks like the ask was
+  // recorded, so nobody goes looking for it. Distinguished from silence for the same
+  // reason acceptance.js distinguishes an empty `AC:` - someone gesturing at the idea
+  // without stating it is the failure being prevented, not evidence against it.
+  if (hasEmptyIntentLine(description || "")) {
+    caveats.push('The task has an "INTENT:" line that states nothing, so it looks like the ask was written down when it was not.');
+  }
+  return caveats;
 }
 
 /** Duplicate check labels are unscoreable, so they are a record-level defect. */
@@ -1076,10 +1155,27 @@ export function listReviewRecords(metaHome) {
  * exported so its VALIDITY (it must pass reviewRecordProblems, or writeReviewRecord
  * refuses it and the card stays blank) is directly testable.
  */
-export function buildAutoReviewRecord({ taskId, projectPath, outcome, where, branch, worktreePath, commits, lastSummary = null, verifyCommand = null, stoppedReason = null }) {
+export function buildAutoReviewRecord({ taskId, projectPath, outcome, where, branch, worktreePath, commits, lastSummary = null, verifyCommand = null, stoppedReason = null, goal = null, title = null }) {
   const runCwd = worktreePath || projectPath;
   return {
     taskId,
+    // The ask, for free and for real. An autopilot's goal is written BEFORE the run and
+    // is the literal instruction it worked from - so unlike a hand-written intent, this
+    // one cannot be a rationalisation of what the work turned out to be. Trimmed to the
+    // card's limit rather than dropped: a goal too long to show is still the ask.
+    //
+    // The card title is the fallback, NOT a refusal. This record is `core`, and a core
+    // record with no intent is refused - which here would mean no record at all, and a
+    // blank card is the exact dead end this whole function exists to prevent. So a run
+    // whose goal did not survive falls back to the board's own words for the task, marked
+    // `assistant` because a title is a weaker statement of the ask than a goal and must
+    // not be presented as an equal one. Nothing is ever invented: with neither, the
+    // record carries no intent and is refused, which is then a wiring bug worth failing on.
+    intent: goal
+      ? { text: clampIntentText(goal), source: "goal" }
+      : title
+        ? { text: clampIntentText(title), source: "assistant" }
+        : null,
     summary: `Autopilot run - ${outcome}. ${lastSummary ? `${lastSummary} ` : ""}The work is ${where}.`,
     verdict: "judgment",
     ask: "An autopilot produced this autonomously and did NOT verify it end to end. Review the worktree/branch, then decide: merge, send back, or discard.",
@@ -1111,26 +1207,75 @@ export function buildAutoReviewRecord({ taskId, projectPath, outcome, where, bra
 }
 
 /**
+ * True when `next` differs from `existing` in NOTHING but its check runs.
+ *
+ * This is what makes the gate bypass for a check stamp safe to grant: it is decided
+ * from the two records, not from the caller's promise about which kind of write this
+ * is. A caller that also edits the summary, the verdict, the evidence or the intent
+ * is writing content, whatever flag it passes, and goes through every gate.
+ *
+ * Timestamps are excluded because a write always moves them, and `title` is compared
+ * like any other field - anything not listed here is content.
+ */
+function onlyCheckRunsChanged(existing, next) {
+  const strip = (r) => {
+    const { checkRuns, createdAt, updatedAt, contentUpdatedAt, ...rest } = r || {};
+    // Stable key order, so a record whose fields were rebuilt in a different order by
+    // an object spread does not read as edited.
+    return JSON.stringify(rest, Object.keys(rest).sort());
+  };
+  return strip(existing) === strip(next);
+}
+
+/**
  * Write (replace) the record for a task. Refuses an incomplete record rather
  * than storing something that renders as a hollow card - the failure this whole
  * feature exists to prevent is a review item that looks reviewed and is not.
  * Atomic temp+rename.
  */
 export function writeReviewRecord(metaHome, rec, { now = Date.now(), isRunStamp = false } = {}) {
-  const problems = reviewRecordProblems(rec);
-  if (problems.length > 0) {
-    return { ok: false, error: `Incomplete review record: ${problems.join("; ")}`, problems };
-  }
-  // Readability is enforced at the WRITE, not at the render - the limits would otherwise
-  // mark ninety existing records incomplete at once, and noise is what they exist to
-  // fix. Refusing here is the point: left as a convention, this was followed for exactly
-  // one record before the habit came back.
-  const unreadable = reviewRecordReadability(rec);
-  if (unreadable.length > 0) {
-    return { ok: false, error: `Review record is too long to be read: ${unreadable.join("; ")}`, problems: unreadable };
-  }
   const file = reviewRecordPath(metaHome, rec.taskId);
   const existing = readReviewRecord(metaHome, rec.taskId);
+
+  // EVIDENCE IS NEVER REFUSED FOR BEING UGLY.
+  //
+  // The gates below judge what an AUTHOR wrote. A check stamp is the opposite thing:
+  // the app itself recording that a command really ran and what it exited with - the
+  // one piece of a record that is not the author's word, and the whole reason the
+  // gauntlet is worth anything.
+  //
+  // Measured 2026-08-21, the day after the readability limits landed: 89 of 96 existing
+  // records failed them, 93 declared a check, and recordCheckRun re-writes the WHOLE
+  // record through this function. So "Run checks" ran the command and then silently
+  // dropped the result on 89 records - a check that really passed reading as never run,
+  // which is the exact failure this file's own comments call out twice. Proven by
+  // stamping a passing check on a copy of a real record: refused, checkRuns empty after.
+  //
+  // So a pure evidence stamp skips both gates. The permission is not the caller's flag
+  // alone - a flag is a convention, and this one would silently become a way to write
+  // any content past the gates. It is granted only when the content really is unchanged
+  // from what is already on disk, so the bypass can carry evidence and nothing else.
+  const stampOnly = isRunStamp && existing !== null && onlyCheckRunsChanged(existing, rec);
+  if (!stampOnly) {
+    const problems = reviewRecordProblems(rec);
+    if (problems.length > 0) {
+      return { ok: false, error: `Incomplete review record: ${problems.join("; ")}`, problems };
+    }
+    // Readability is enforced at the WRITE, not at the render - the limits would otherwise
+    // mark ninety existing records incomplete at once, and noise is what they exist to
+    // fix. Refusing here is the point: left as a convention, this was followed for exactly
+    // one record before the habit came back.
+    const unreadable = reviewRecordReadability(rec);
+    if (unreadable.length > 0) {
+      return { ok: false, error: `Review record is too long to be read: ${unreadable.join("; ")}`, problems: unreadable };
+    }
+    // The ask behind the work, required before it can be handed over. Enforced here for
+    // the same reason as readability: it must not mark ninety existing records invalid.
+    const intentGaps = reviewRecordIntentProblems(rec);
+    if (intentGaps.length > 0) {
+      return { ok: false, error: `Review record does not say what was asked for: ${intentGaps.join("; ")}`, problems: intentGaps };
+    }
+  }
   const body = {
     ...rec,
     createdAt: existing?.createdAt || now,
@@ -1292,6 +1437,22 @@ export function buildReviewQueue(reviewTasks, records, metaHome = null) {
       caveats: [...(rec ? recordCaveats(rec) : []), ...taskAcceptanceCaveats(t.description)],
       // Did the task's acceptance criteria move after the record snapshotted them?
       drift: rec ? acceptanceDrift(rec, t.description || "") : { drifted: false, snapshot: [], live: [] },
+      // WHAT WAS ASKED FOR - the row's own copy, so the card can show it above what was
+      // done without reaching back into the record's shape. Falls back to the task's live
+      // `INTENT:` line when the record carries none, which is the common case for anything
+      // written before this existed: the ask is then at least on screen, marked as coming
+      // from the task rather than from a snapshot taken at handoff.
+      intent: (() => {
+        const snap = normalizeIntent(rec?.intent);
+        if (snap) {
+          return snap;
+        }
+        const live = parseIntent(t.description || "");
+        return live ? { text: live, source: "assistant", fromTask: true } : null;
+      })(),
+      // Did the ask itself move after the record snapshotted it? Usually this means the captain
+      // corrected it, which is the most useful thing the page can tell him.
+      intentDrift: rec ? intentDrift(rec, t.description || "") : { drifted: false, snapshot: "", live: "" },
       gauntlet: rec
         ? gauntletStatus(rec, metaHome, {
             // Staleness baseline is the record's OWN pinned commit (what the checks

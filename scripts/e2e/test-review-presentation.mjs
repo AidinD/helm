@@ -83,6 +83,10 @@ const row = {
   caveats: ["No executed check at all - everything here rests on the author's word."],
   whyNotCritical: "Front-end only.",
   drift: { drifted: true, snapshot: [1], live: [1, 2] },
+  // WHAT WAS ASKED FOR, and the fact that the ask itself has since moved (task 10928bdf).
+  // Both on the row, because the queue resolves them from the record plus the live task.
+  intent: { text: "Stop-knappen ska stoppa pipen, inte hänga sig.", source: "assistant" },
+  intentDrift: { drifted: true, snapshot: "Stop-knappen ska stoppa pipen, inte hänga sig.", live: "Stop-knappen ska stoppa pipen inom 6 sekunder." },
   gauntlet: {
     declared: 2,
     passed: 1,
@@ -127,6 +131,12 @@ const html = buildReviewHtml({
 
 for (const [needle, why] of [
   ["Sammanfattning av vad som gjordes.", "the record's summary is on the page"],
+  ["Asked for", "what was ASKED is a section of its own, not folded into the summary"],
+  ["Stop-knappen ska stoppa pipen, inte hänga sig.", "and the ask itself is printed"],
+  ["What was done", "the summary is labelled as the ANSWER, so the pair reads as question then answer"],
+  ["not confirmed by the captain", "a paraphrase is marked as one rather than presented as his stated ask"],
+  ["What was asked for changed", "and a corrected ask is a warning on the page, not only in the app"],
+  ["Stop-knappen ska stoppa pipen inom 6 sekunder.", "with the CURRENT wording, which is the one the work has to answer"],
   ["Needs a decision from you", "a judgment verdict's open question is a section of its own"],
   ["Vill du att den ska vänta 6 eller 10 sekunder?", "and the question itself is printed"],
   ["Resting on the author&#x27;s word".replace("&#x27;", "'"), "the caveats are shown"],

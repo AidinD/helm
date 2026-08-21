@@ -63,6 +63,16 @@ const complete = (over = {}) => ({
   // records that lacked it are exactly how a check came to fail for a missing
   // directory rather than for a result.
   projectPath: "D:\\Repo\\Tools\\helm",
+  // Required since 2026-08-21 for core and critical: the ask the work was written
+  // against (task 10928bdf). On the BASE fixture, at `cosmetic`, even though cosmetic
+  // does not require it - a real record has one at every tier, and the alternative was
+  // adding it to a dozen `criticality: "core"` overrides one at a time.
+  //
+  // The tier behaviour itself is NOT asserted through this fixture, deliberately: a
+  // default that satisfies the gate cannot show that the gate exists. test-intent.mjs
+  // drives reviewRecordIntentProblems directly, both ways, so the rule is pinned
+  // somewhere the fixture cannot quietly make it pass.
+  intent: { text: "Let a queued prompt wait for the quota reset instead of failing.", source: "captain" },
   ...over,
 });
 
@@ -322,7 +332,23 @@ try {
     verdict: "stamp",
     summary: "Two declared checks.",
     criticality: "core",
-    projectPath: "D:\Repo\Tools\helm",
+    // The test's OWN temp dir, not a real repo path.
+    //
+    // This used to read "D:\Repo\Tools\helm" with SINGLE backslashes, which JS silently
+    // collapses to "D:RepoToolshelm" - `\R` and `\T` are not escapes it knows, so it drops
+    // the backslash. That is how four real records on disk came to carry an unusable
+    // project path, and reviewRecordProblems now refuses the shape, which is what turned
+    // this fixture red.
+    //
+    // Spelling it correctly then broke it a SECOND way, and that is the interesting half:
+    // the mangled path pointed at nothing, so currentHead() returned null and staleness was
+    // never computed. A correct path to the real helm repo made it resolve, and every run
+    // scored stale against a HEAD that has nothing to do with this fixture's commits. This
+    // block is about gauntlet SCORING; commit pinning has its own block below with a real
+    // temp git repo. A non-repo directory is what keeps the two separate.
+    projectPath: metaHome,
+    // A `core` record is refused without the ask it was written against (task 10928bdf).
+    intent: { text: "Score a multi-check gauntlet correctly.", source: "captain" },
     evidence: [],
     notVerified: [],
     testSteps: [{ step: "Run it", expect: "It works" }],
@@ -331,7 +357,8 @@ try {
       { label: "second", cmd: "node -e \"process.exit(0)\"" },
     ],
   };
-  writeReviewRecord(metaHome, gRec);
+  const gWrote = writeReviewRecord(metaHome, gRec);
+  ok(gWrote.ok, `the gauntlet fixture wrote (${gWrote.ok ? "ok" : gWrote.error}) - every check below depends on it`);
   ok(gauntletStatus(readReviewRecord(metaHome, G), metaHome).state === "incomplete", "declared-but-unrun reads as incomplete, never as passing");
   ok(gauntletStatus(readReviewRecord(metaHome, G), metaHome).unrun === 2, "both unrun checks are counted");
 
@@ -431,8 +458,10 @@ try {
   writeReviewRecord(metaHome, complete({
     taskId: HEADID,
     criticality: "core",
-    projectPath: "D:\Repo\Tools\helm",
+    intent: { text: "Pin each check run to the commit it verified.", source: "captain" },
     checks: [{ label: "suite", cmd: "node -e 0" }],
+    // One projectPath, the real temp repo. There used to be a mangled
+    // "D:\Repo\Tools\helm" literal above this line, silently overridden by it.
     projectPath: repo,
   }));
   recordCheckRun(metaHome, HEADID, { label: "suite", exitCode: 0 });
@@ -671,7 +700,12 @@ try {
   writeReviewRecord(metaHome, complete({
     taskId: BIND,
     criticality: "core",
-    projectPath: "D:\Repo\Tools\helm",
+    // The temp dir, not a real repo - same reason as the gauntlet block above. This line
+    // used to be a single-backslash "D:\Repo\Tools\helm" that collapsed to nothing, so
+    // currentHead() never resolved and staleness never applied. Spelling it correctly made
+    // every run here score stale against the live helm HEAD, which this block is not about.
+    projectPath: metaHome,
+    intent: { text: "Bind each stamped run to the command that produced it.", source: "captain" },
     checks: [{ label: "e2e suite", cmd: "node scripts/e2e/test-real-thing.mjs" }],
   }));
   // A stamp for a label the record doesn't declare is refused outright.

@@ -6543,6 +6543,37 @@ button.primary {
   line-height: 1.6;
 }
 .rev-summary { margin: 10px 0 0; color: var(--text); font-size: 14px; line-height: 1.6; }
+
+/* WHAT WAS ASKED FOR, the row above the summary (task 10928bdf). Deliberately quieter
+   than .rev-summary rather than louder: the ask is context for reading the answer, so it
+   sits as a left-ruled aside in the same idiom as .rev-acceptance, which is the other
+   "written before the work" block on this card. Named rev-intent, not rev-ask - .rev-ask
+   is the judgment question ("Needs you"), a different thing entirely. */
+.rev-intent {
+  margin: 11px 0 0;
+  padding: 8px 10px;
+  border-left: 2px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--text) 3%, transparent);
+  border-radius: 0 4px 4px 0;
+}
+.rev-intent-label {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.rev-intent-text { font-size: 13px; color: var(--text); line-height: 1.55; }
+/* The provenance line. Dimmer and smaller than the ask itself - it qualifies the sentence
+   above it and must not compete with it for attention. */
+.rev-intent-note { margin-top: 5px; font-size: 11.5px; color: var(--text-faint); line-height: 1.45; }
+/* An absent ask is a real finding about the record, so it reads as one: the amber the
+   rest of the page already uses for a gap, and the label alone with no body. */
+.rev-intent-missing {
+  border-left-color: color-mix(in srgb, var(--waiting) 55%, var(--border));
+}
+.rev-intent-missing .rev-intent-label { color: var(--waiting); }
 .rev-ask {
   margin-top: 10px;
   padding: 9px 11px;
