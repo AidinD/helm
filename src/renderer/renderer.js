@@ -13710,6 +13710,10 @@ function goalRunReport(run) {
   const escalated = !!run.escalation;
   const commitCount = crewCommitCount(run);
   const branchName = run.result?.branchName || null;
+  // The run's own verify command, if it had one. Read only by the goal_reached outcome, to
+  // say whether "it is done" was checked by anything. Both spellings, because a live run
+  // carries it on its result and a rehydrated one on the record itself.
+  const verifyCommand = run.result?.verifyCommand || run.verifyCommand || null;
   // Newest implement-phase iteration's own one-sentence summary is the honest
   // "what changed" line (same source buildDispatchReport uses). Rehydrated runs
   // carry no iteration list, so this is absent for them and we fall back below.
@@ -13762,7 +13766,17 @@ function goalRunReport(run) {
     // from src/lib/runOutcome.js, which this classic script cannot import;
     // test-run-outcome-truthful pins the two copies against each other.
     goal_reached: commitCount
-      ? { status: "done", why: "Finished: it reports the goal is met.", needs: null, waiting: ready }
+      ? {
+          status: "done",
+          // Two different things reach this outcome and must not read the same: a run whose
+          // own check passed on the result, and a run that simply said so. Neither is an
+          // alarm; only one of them was checked by anything.
+          why: verifyCommand
+            ? `Finished: the goal is met and its own check passed (${verifyCommand}).`
+            : "Finished: it says the goal is met. Nothing checked that.",
+          needs: null,
+          waiting: ready,
+        }
       : {
           status: "no_changes",
           why: "Reports the goal is met, but committed nothing.",
