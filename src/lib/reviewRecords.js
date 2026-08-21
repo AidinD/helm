@@ -3,7 +3,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { parseAcceptanceCriteria, acceptanceCoverage, acceptanceProblems } from "./acceptance.js";
-import { normalizeIntent, intentSourceNote, intentDrift, parseIntent, clampIntentText, hasEmptyIntentLine, INTENT_MAX_CHARS } from "./intent.js";
+import { normalizeIntent, intentSourceNote, intentDrift, parseIntent, clampIntentText, hasEmptyIntentLine, hasOrphanedIntentContinuation, INTENT_MAX_CHARS } from "./intent.js";
 import { writeJsonAtomicSync } from "./atomicWrite.js";
 
 // Review records (task ce2d19ab).
@@ -1092,6 +1092,13 @@ function taskAcceptanceCaveats(description) {
   // without stating it is the failure being prevented, not evidence against it.
   if (hasEmptyIntentLine(description || "")) {
     caveats.push('The task has an "INTENT:" line that states nothing, so it looks like the ask was written down when it was not.');
+  }
+  // A wrapped intent loses its second half silently, which is worse than an empty one:
+  // the ask reads as complete and is not.
+  if (hasOrphanedIntentContinuation(description || "")) {
+    caveats.push(
+      'The task\'s "INTENT:" line looks like it continues onto the next line without the prefix, so only the first half of the ask was read.'
+    );
   }
   return caveats;
 }

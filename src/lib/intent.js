@@ -87,6 +87,48 @@ export function hasEmptyIntentLine(description) {
 }
 
 /**
+ * True when an `INTENT:` line looks like it CONTINUES onto the next line without the
+ * prefix - so half the ask is silently outside the intent.
+ *
+ * Found the hard way, on the first two cards ever written under this rule: I wrapped the
+ * sentence at the margin, prefixed only the first line, and the parser kept the first
+ * half. The drift detector caught it there only because a record already existed to
+ * disagree with; on a task at work-START, which is when intents are actually written,
+ * nothing would have said a word and the reviewer would have been handed half a question.
+ *
+ * Deliberately narrow, because a false positive here is a caveat nobody should see. All
+ * four conditions must hold: the intent line does not end in sentence punctuation, the
+ * next line is non-blank, it is not itself a trailer, and it starts LOWERCASE. That last
+ * one is what separates a wrapped sentence from the ordinary next paragraph - status
+ * notes in these descriptions start "LÖST", "BYGGT", "SLICE 2 KVAR".
+ */
+export function hasOrphanedIntentContinuation(description) {
+  if (!description || typeof description !== "string") {
+    return false;
+  }
+  const lines = description.split(/\r?\n/);
+  return lines.some((line, i) => {
+    const m = line.match(INTENT_LINE);
+    if (!m || !m[1].trim()) {
+      return false;
+    }
+    if (/[.!?:]$/.test(m[1].trim())) {
+      return false;
+    }
+    const next = lines[i + 1];
+    if (next === undefined) {
+      return false;
+    }
+    const t = next.trim();
+    // A trailer of any kind is a new statement, not a continuation.
+    if (!t || /^[A-Z][A-Z-]*\s*:/.test(t) || INTENT_LINE.test(next)) {
+      return false;
+    }
+    return /^\p{Ll}/u.test(t);
+  });
+}
+
+/**
  * Cut an intent down to what the card can show, on a word boundary.
  *
  * Only for text Helm did not author - an autopilot's goal, which is whatever length it
@@ -158,11 +200,21 @@ export function intentDrift(rec, taskDescription) {
   const snapshot = normalizeIntent(rec?.intent);
   const live = parseIntent(taskDescription);
   const norm = (s) => String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
-  // No live `INTENT:` line is NOT drift. Most tasks predate this, and reporting every one
-  // of them as "the ask moved" is the same noise that made the review page unreadable.
-  // Silence here means "nothing to compare", not "they agree".
-  if (!live) {
-    return { drifted: false, snapshot: snapshot?.text || "", live: "" };
+  // Drift needs BOTH sides. Two absences, each of which is not a change:
+  //
+  // No live `INTENT:` line - most tasks predate this, and reporting every one of them as
+  // "the ask moved" is the same noise that made the review page unreadable.
+  //
+  // No SNAPSHOT - a record written before intents existed never had an ask to move. Adding
+  // one to the task is the ask being WRITTEN DOWN, not rewritten, and the two are
+  // different. This was wrong on the first real use: backfilling an intent onto the five
+  // cards already in review lit all five with "what was asked for changed", which is false
+  // and is exactly the noise being removed. The card already carries the honest signal for
+  // this case - it marks the ask as read from the task rather than snapshotted at handoff.
+  //
+  // Either way, `drifted: false` here means "nothing to compare", never "they agree".
+  if (!live || !snapshot) {
+    return { drifted: false, snapshot: snapshot?.text || "", live };
   }
   return {
     drifted: norm(snapshot?.text) !== norm(live),

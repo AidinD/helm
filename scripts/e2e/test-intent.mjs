@@ -22,6 +22,7 @@ import path from "node:path";
 import {
   parseIntent,
   hasEmptyIntentLine,
+  hasOrphanedIntentContinuation,
   normalizeIntent,
   intentDrift,
   clampIntentText,
@@ -69,6 +70,25 @@ console.log("-- parsing INTENT: out of a task description --");
   ok(hasEmptyIntentLine("INTENT:") === true, "but it is REPORTED, so 'none written' and 'written blank' stay distinguishable");
   ok(hasEmptyIntentLine("INTENT: something") === false, "a stated intent is not a blank one");
   ok(hasEmptyIntentLine("no intent line here") === false, "and silence is not a blank one either");
+
+  // A WRAPPED intent loses its second half with no signal at all - worse than a blank
+  // one, because the ask reads as complete and is not. Found on the first two cards ever
+  // written under this rule: I wrapped at the margin and prefixed only the first line.
+  const wrapped = "INTENT: a check that really ran must always be able to prove it, even on an old\nrecord - the gates exist to keep new text short, not to throw evidence away.";
+  ok(parseIntent(wrapped) === "a check that really ran must always be able to prove it, even on an old", "a wrapped line really does lose its second half - this is the trap, not a hypothetical");
+  ok(hasOrphanedIntentContinuation(wrapped) === true, "so it is REPORTED, since nothing else would say a word on a task that has no record yet");
+  const prefixed = "INTENT: a check that really ran must always be able to prove it, even on an old\nINTENT: record - the gates exist to keep new text short.";
+  ok(hasOrphanedIntentContinuation(prefixed) === false, "prefixing the continuation clears it");
+  ok(parseIntent(prefixed).endsWith("keep new text short."), "and then the whole ask is read");
+
+  // Narrow on purpose: a caveat nobody should see is worse than no caveat. All four
+  // conditions must hold, so the ordinary next paragraph in these descriptions is not
+  // mistaken for a wrapped sentence.
+  ok(hasOrphanedIntentContinuation("INTENT: do the thing.\nand then something else") === false, "a completed sentence is not a continuation, whatever follows it");
+  ok(hasOrphanedIntentContinuation("INTENT: do the thing\nLÖST 2026-08-21, commit abc") === false, "a status note starting uppercase is a new statement, not a wrapped half");
+  ok(hasOrphanedIntentContinuation("INTENT: do the thing\nAC: it works") === false, "nor is another trailer");
+  ok(hasOrphanedIntentContinuation("INTENT: do the thing\n\nloose prose below") === false, "nor is prose after a blank line");
+  ok(hasOrphanedIntentContinuation("INTENT: do the thing") === false, "and a last line has nothing after it to orphan");
 }
 
 // ===========================================================================
@@ -252,7 +272,13 @@ console.log("\n-- drift --");
   // Silence must not read as a change. Most tasks predate this, and flagging all of them
   // is the same noise that made the review page unreadable in the first place.
   ok(intentDrift(rec, "a description with no INTENT line").drifted === false, "a task with no INTENT: line is 'nothing to compare', not drift");
-  ok(intentDrift({}, "INTENT: something").drifted === true, "but a record that snapshotted NO ask, against a task that now states one, IS drift");
+  // This assertion used to say the OPPOSITE, and the assertion was the bug. Backfilling an
+  // intent onto the five cards already in review lit every one of them with "what was asked
+  // for changed" - false, and exactly the noise this work is removing. A record that never
+  // had an ask has not had it CHANGED; it has had it written down. The card carries the
+  // honest signal for that case separately, by marking the ask as read from the task.
+  ok(intentDrift({}, "INTENT: something").drifted === false, "a record that never snapshotted an ask is not 'the ask moved' - it is the ask being written down");
+  ok(intentDrift({}, "INTENT: something").live === "something", "and the live ask still travels, so the card can show it");
 }
 
 // ===========================================================================
