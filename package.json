@@ -10,7 +10,8 @@
     "dist": "node scripts/build.mjs",
     "release": "node scripts/build.mjs --publish",
     "test": "node scripts/run-tests.mjs",
-    "test:fast": "node scripts/run-tests.mjs --fast"
+    "test:fast": "node scripts/run-tests.mjs --fast",
+  "test:reviews": "node scripts/run-tests.mjs review acceptance intent gauntlet"
   },
   "build": {
     "appId": "com.aidin.helm",
