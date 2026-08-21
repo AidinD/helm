@@ -48,10 +48,12 @@ process.env.HELM_CONFIG_PATH = path.join(tmp, "config.json");
 process.env.HELM_E2E_PORT = process.env.HELM_E2E_PORT || "9574";
 
 // A well-formed record pinned to the released commit, in the override meta-home the IPC reads.
-writeReviewRecord(metaHome, {
+const seedWrite = writeReviewRecord(metaHome, {
   taskId: TASK,
   projectPath: HELM_REPO,
   criticality: "core",
+  // A core record is refused without the ask it was written against (task 10928bdf).
+  intent: { text: "Show on the row which release a reviewed fix went out in.", source: "captain" },
   verdict: "stamp",
   commits: [RELEASED_COMMIT],
   summary: "A fix whose commit is in a released tag, for the shipped-version chip.",
@@ -60,6 +62,14 @@ writeReviewRecord(metaHome, {
   evidence: ["released commit"],
   notVerified: ["nothing"],
 });
+// Assert the SEED, not just use it. Every check below reads this record back through the
+// app, so a refused write turns them all into confident nonsense about a missing row -
+// which is exactly how this file reported four failures about the version chip when the
+// real cause was one missing field (2026-08-21).
+if (!seedWrite.ok) {
+  console.log(`FAIL - the seed record wrote (${seedWrite.error}) - every check below depends on it`);
+  process.exit(1);
+}
 
 const { launch } = await import("./harness.mjs");
 

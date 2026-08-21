@@ -70,6 +70,9 @@ const recWrite = writeReviewRecord(metaHome, {
   taskId: TASK,
   projectPath: scratch,
   criticality: "core",
+  // A core record is refused without the ask it was written against (task 10928bdf).
+  // Same reason as the check below: without it the binding silently never applies.
+  intent: { text: "Surface commits that no reviewed task accounts for.", source: "captain" },
   verdict: "stamp",
   commits: [c1],
   summary: "A recorded task binding one commit.",
