@@ -42,3 +42,5 @@ scripts/e2e/screenshots/flow-review/
 # moment such a branch was merged. The real artifacts are the code commits; the
 # notes are recoverable from the run's own transcript.
 .helm-goal/
+
+scripts/e2e/screenshots/frameless-header.png
