@@ -1,0 +1,14 @@
+# LF in the repository, whatever the working tree looks like. Jot, Nib and Loom
+# are LF; sibling projects have no business disagreeing about this.
+* text=auto eol=lf
+
+# Except the Windows shells, which are the one place the convention is not
+# cosmetic: cmd.exe mis-parses labels and `goto` in a batch file with LF endings,
+# so these must keep CRLF in the working tree.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Left alone byte for byte. A text filter here would corrupt them.
+*.png binary
+*.ico binary
+*.onnx binary
