@@ -1,0 +1,9 @@
+#!/bin/sh
+# Canonical pre-commit for the suite. Copied into each sibling's .githooks/
+# rather than loaded from node_modules, because a hook has to work in a clone
+# where nothing is installed yet.
+#
+# Activated by `npm install`, via the "prepare" script setting core.hooksPath.
+# Skip a single commit with: git commit --no-verify
+
+node .githooks/no-leaky-assets.mjs || exit 1
