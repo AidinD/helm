@@ -1,5 +1,41 @@
 # Decisions
 
+## 2026-08-23 - Auto-update was switched off by a belief nobody re-checked
+
+The captain: "kan du fixa autoupdate i helm på samma sätt som i jot och nib".
+
+It was not broken. It was **parked**, deliberately, and the reason had stopped being true.
+`initAutoUpdate` returned early unless `GH_TOKEN` was set, with the comment "AidinD/helm is PRIVATE, so electron-updater can't read releases without one".
+The repo is public - so are `jot` and `nib` - and nothing re-examined the gate when that changed.
+Every packaged build therefore shipped unable to update itself, and logged `auto-update parked` on each launch instead of doing anything.
+
+**Measured before touching the code, with no credentials of any kind:**
+
+    GET  /AidinD/helm/releases/latest/download/latest.yml   -> 200, version 0.2.82
+    HEAD /AidinD/helm/releases/latest/download/Helm-Setup... -> 200, 107,721,180 bytes
+
+Which is exactly the arrangement Jot and Nib use, and why theirs have always worked.
+Everything else was already in place: `electron-updater` is a runtime dependency, the publish target is right, the latest release carries `latest.yml` + the installer + its blockmap, and `build.mjs` stamps the same version into the app and the installer.
+
+**Decided.** The gate is gone. Nothing about the update mechanism itself changed.
+
+**What was copied from Jot and Nib, and it is the half that mattered:** every updater event is logged - `checking-for-update`, `update-available`, `update-not-available`, `download-progress`, `update-downloaded`, `error`.
+Helm logged only errors, which makes "there is nothing newer" and "the check never ran" produce the same silence.
+That silence is how this sat switched off for months: a feature present, documented, and doing nothing, with no line in any log to contradict it.
+
+**What was deliberately NOT copied.** Jot and Nib call `checkForUpdatesAndNotify()` and let the library install on quit.
+Helm keeps its own restart dialog, because Helm holds live sessions and dispatched runs: it is left open for days, so a downloaded update could sit unapplied indefinitely, and quitting at an arbitrary moment can land mid-run.
+Asking lets the restart happen when nothing is in flight.
+
+**If Helm is ever made private again**, do not embed a token in the installer.
+Anyone holding the installer can read it, and a token with `repo` scope reaches every other private repo on the account - the docs previously suggested embedding one, and that advice is now marked as wrong.
+Publish the installers to a separate public repo, or accept manual updates.
+
+**The honest limit, and the reason this cannot be called verified yet.**
+`scripts/e2e/test-auto-update.mjs` pins the wiring at source level and fetches the real feed unauthenticated, and six deliberate mutations all turn it red - including re-adding the credential gate.
+But reaching the actual update branch needs a packaged app, and there is nothing to update TO: the last release is 0.2.82 and `master` is now 0.2.102, so a packaged 0.2.82 would correctly report "already current".
+Proving it end to end takes one release, after which an installed copy should find the next one on its own. Until that happens this is a fix that has been argued for, not observed.
+
 ## 2026-08-21 - The goal loop can finally say "done"
 
 The loop had six terminal reasons and not one of them meant the work was finished: `cancelled`, `escalated`, `quota_exhausted`, `two_consecutive_failures`, `no_op_convergence`, `max_iterations_reached`.
