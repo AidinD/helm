@@ -374,6 +374,45 @@ header {
   padding: 10px 16px;
   background: var(--bg-sidebar);
   border-bottom: 1px solid var(--border);
+  /* The window is frameless, so this row is also the drag handle - the same
+     arrangement as Jot, Nib and Tend. */
+  -webkit-app-region: drag;
+}
+
+header button,
+header input,
+header select,
+header .view-toggle {
+  -webkit-app-region: no-drag;
+}
+
+.window-controls {
+  display: flex;
+  gap: 2px;
+  margin-left: 6px;
+}
+
+.window-controls button {
+  width: 28px;
+  height: 24px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim, #9b9ea7);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.window-controls button:hover {
+  background: var(--bg-hover, #2a2b30);
+  color: var(--text, #e7e8ec);
+}
+
+.window-controls button.danger:hover {
+  background: #e0705e;
+  color: #1b1c1f;
 }
 
 .brand {

@@ -374,6 +374,9 @@ function createWindow() {
     minHeight: 560,
     backgroundColor: "#1a1a1a",
     title: "Helm",
+    // Frameless, like Jot, Nib and Tend: the header row is the wordmark and
+    // the drag handle, and carries its own window buttons.
+    frame: false,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
@@ -503,6 +506,31 @@ ipcMain.handle("sessions:get", async () => {
 // not persist - and a `config:writeFailed` event tells the user why. Returning the
 // patched-but-unsaved config instead would show the setting as applied and then
 // lose it on the next restart, which is the worse of the two lies.
+// The window is frameless, so these three replace the title bar. Scoped to the
+// main window rather than the focused one: a <webview> or a child window must
+// not be able to close Helm out from under itself.
+ipcMain.handle("window:minimize", () => {
+  mainWindow?.minimize();
+  return { ok: true };
+});
+
+ipcMain.handle("window:toggleMaximize", () => {
+  if (!mainWindow) {
+    return { ok: false };
+  }
+  if (mainWindow.isMaximized()) {
+    mainWindow.unmaximize();
+  } else {
+    mainWindow.maximize();
+  }
+  return { maximized: mainWindow.isMaximized() };
+});
+
+ipcMain.handle("window:close", () => {
+  mainWindow?.close();
+  return { ok: true };
+});
+
 ipcMain.handle("config:set", (_event, patch) => {
   const current = loadConfig();
   try {

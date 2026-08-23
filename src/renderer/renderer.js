@@ -16408,6 +16408,20 @@ wirePageNav("dashboardSubnav");
 wirePageNav("headerUtilityNav");
 document.getElementById("settingsGear").addEventListener("click", () => navigateToPage("settings"));
 
+// The window is frameless, so the header's three buttons are the title bar.
+document.querySelectorAll("[data-window]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const which = btn.dataset.window;
+    if (which === "minimize") {
+      window.helm.minimizeWindow();
+    } else if (which === "maximize") {
+      window.helm.toggleMaximizeWindow();
+    } else {
+      window.helm.closeWindow();
+    }
+  });
+});
+
 // ============================== Settings page ==============================
 
 function settingsGroupHeading(text) {

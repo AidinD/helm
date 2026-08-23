@@ -2,6 +2,10 @@ const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
 // Minimal, explicit API surface exposed to the renderer. No Node access leaks.
 contextBridge.exposeInMainWorld("helm", {
+  // The window is frameless, so the header's buttons do the title bar's job.
+  minimizeWindow: () => ipcRenderer.invoke("window:minimize"),
+  toggleMaximizeWindow: () => ipcRenderer.invoke("window:toggleMaximize"),
+  closeWindow: () => ipcRenderer.invoke("window:close"),
   getSessions: () => ipcRenderer.invoke("sessions:get"),
   setConfig: (patch) => ipcRenderer.invoke("config:set", patch),
   // Away-from-desk attention delivery: notifyAttention fires an OS
