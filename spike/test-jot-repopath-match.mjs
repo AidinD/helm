@@ -19,7 +19,7 @@ const tmp = path.join(os.tmpdir(), `helm-jot-${randomUUID()}.json`);
 
 const cats = {
   helm: { id: "c-helm", name: "Helm", color: "#111", createdAt: 1, repoPath: "D:\\Repo\\Tools\\helm" },
-  skiff: { id: "c-skiff", name: "Skiff", color: "#222", createdAt: 2, repoPath: "D:/Repo/Northwind/Internal/nw-skiff" },
+  skiff: { id: "c-skiff", name: "Skiff", color: "#222", createdAt: 2, repoPath: "D:/Repo/Work/Internal/some-project" },
   // Nested INSIDE helm's repo, longer path -> should win for cwds under it.
   worker: { id: "c-worker", name: "Analytics Worker", color: "#333", createdAt: 3, repoPath: "D:\\Repo\\Tools\\helm\\infra\\worker" },
   // No repoPath: name-fuzzy-match only.
@@ -47,7 +47,7 @@ check("subfolder cwd -> repoPath", matchByTitle("whatever", "s2", "D:\\Repo\\Too
 
 // 3. Different separators + case still match (forward slashes, lowercase).
 check("mixed separators + case -> repoPath", matchByTitle("x", "s3", "d:/repo/tools/helm/src"), "c-helm");
-check("skiff forward-slash repoPath matches backslash cwd", matchByTitle("x", "s3b", "D:\\Repo\\Northwind\\Internal\\nw-skiff"), "c-skiff");
+check("skiff forward-slash repoPath matches backslash cwd", matchByTitle("x", "s3b", "D:\\Repo\\Work\\Internal\\some-project"), "c-skiff");
 
 // 4. Name fallback still works when NO repoPath applies (cwd unknown).
 check("name fallback (no cwd)", matchByTitle("Working on Jot capture", "s4"), "c-jot");

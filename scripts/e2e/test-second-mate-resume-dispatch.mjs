@@ -36,7 +36,7 @@ try {
   app = await launch();
   await app.waitForSelector("#pageToggle", 30000, { visible: true });
 
-  const PROJECT = "D:/Repo/Northwind-Internal/nw-halyard";
+  const PROJECT = "D:/Repo/Work/Internal/some-project";
   const res = await app.eval(`(() => {
     // An existing project session that is NOT bound to any second mate (a direct/derived
     // second mate - exactly the Halyard case). secondMateBySessionId is empty, so the OLD

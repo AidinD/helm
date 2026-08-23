@@ -19,7 +19,7 @@ const ok = (c, m) => {
   }
 };
 
-const PROJECT = "D:/Repo/Northwind-Internal/nw-halyard";
+const PROJECT = "D:/Repo/Work/Internal/some-project";
 const directId = secondMateId(DIRECT_FIRST_MATE, PROJECT);
 const autoId = secondMateId(AUTO_CAPTAIN, PROJECT);
 

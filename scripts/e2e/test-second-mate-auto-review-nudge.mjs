@@ -24,7 +24,7 @@ try {
   app = await launch();
   await app.waitForSelector("#pageToggle", 30000, { visible: true });
 
-  const P = "D:/Repo/Northwind-Internal/nw-halyard";
+  const P = "D:/Repo/Work/Internal/some-project";
   const res = await app.eval(`(() => {
     state.config = state.config || {};
     state.config.acknowledgedGoalRuns = [];
