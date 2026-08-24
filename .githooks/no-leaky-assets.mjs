@@ -36,7 +36,8 @@ const ALLOWED = [
 ]
 
 /** Extensions that carry pixels, frames or logs rather than source. */
-const SUSPECT_EXTENSION = /\.(png|jpe?g|gif|webp|bmp|ico|svg|mp4|mov|webm|pdf|jsonl)$/i
+const SUSPECT_EXTENSION =
+  /\.(png|jpe?g|gif|webp|bmp|tiff?|avif|ico|svg|mp4|mov|webm|pdf|jsonl|ndjson|csv|har|zip|db|sqlite3?|pem|key|p12|pfx)$/i
 
 /** Paths that are a screenshot whatever they are called. */
 const SUSPECT_PATH = /(^|\/)(screenshots?|captures?|recordings?)(\/|$)/i
@@ -56,12 +57,20 @@ function staged() {
 
 const offenders = []
 for (const path of staged()) {
+  // SUSPECT_PATH is checked BEFORE the allowlist, deliberately. It used to come
+  // after, and a screenshot committed to `build/` or `assets/` was never
+  // examined at all - proven by test, and made worse by the refusal message
+  // below, which tells people to move images into exactly those directories.
+  // The allowlist exists for icons and artwork, not for a captures folder that
+  // happens to sit inside it.
+  if (SUSPECT_PATH.test(path)) {
+    offenders.push([path, 'looks like a screenshot'])
+    continue
+  }
   if (ALLOWED.some((allow) => allow.test(path))) {
     continue
   }
-  if (SUSPECT_PATH.test(path)) {
-    offenders.push([path, 'looks like a screenshot'])
-  } else if (SUSPECT_NAME.test(path)) {
+  if (SUSPECT_NAME.test(path)) {
     offenders.push([path, 'configuration or data, not source'])
   } else if (SUSPECT_EXTENSION.test(path)) {
     offenders.push([path, 'a binary outside the asset directories'])
