@@ -15,6 +15,7 @@ import { writeFileSync, existsSync, readdirSync, unlinkSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { gitVersionString } from "../src/lib/version.js";
+import { ghToken, nodeExec } from "keel/release";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.join(__dirname, "..");
@@ -70,8 +71,18 @@ if (!existsSync(jotRenderer)) {
 console.log("[build] bundling Jot's built renderer from ../jot/out/renderer");
 
 const args = ["electron-builder", `--config.extraMetadata.version=${version}`];
+const env = { ...process.env };
+
 if (process.argv.includes("--publish")) {
   args.push("--publish", "always");
+
+  // The token comes from the logged-in gh CLI at release time, so no long-lived
+  // GH_TOKEN sits in a shell profile or a dotfile. Without this the whole build
+  // runs, packages an installer, and only then dies on "GitHub Personal Access
+  // Token is not set" - which is what happened on 2026-08-24. The other apps in
+  // the suite have taken this from keel/release for a while; Helm had not.
+  env.GH_TOKEN = ghToken(nodeExec(repoRoot));
 }
+
 console.log(`[build] electron-builder ${args.slice(1).join(" ")}`);
-execFileSync("npx", args, { cwd: repoRoot, stdio: "inherit", shell: true });
+execFileSync("npx", args, { cwd: repoRoot, stdio: "inherit", shell: true, env });
