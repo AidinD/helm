@@ -21,7 +21,7 @@ function assert(cond, msg) {
 }
 
 try {
-  const mates = ensureMates("<your-claude-home>");
+  const mates = ensureMates("D:/Sync/claude-home");
   assert(mates.length === 2, "ensureMates yields two active mates");
 
   const fresh = retireAndRespawn(mates[0].mateId, "HANDOFF: chose X because Y; next steps Z.");

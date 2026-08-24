@@ -31,7 +31,7 @@ function isAbsoluteMetaHome(metaHome) {
  * The guardrail's load-bearing invariant: the budget/kill-switch file must live
  * at a fixed ABSOLUTE location (one per meta-home), never a relative one.
  *
- * A metaHome whose separators got stripped - `<your-claude-home>`
+ * A metaHome whose separators got stripped - `D:/Sync/claude-home`
  * mangled to `DropboxDocumentsClaude` (drive + all backslashes gone) via a
  * bash heredoc / shell interpolation of a Windows path, then handed to
  * resolveMetaHome() (HELM_META_HOME_OVERRIDE) or persisted as dispatchMetaHome -

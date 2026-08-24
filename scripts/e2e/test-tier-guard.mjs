@@ -84,7 +84,7 @@ ok(allows("Bash", { command: "git log --oneline -20" }), "git log");
 ok(allows("Bash", { command: "git status --short" }), "git status");
 ok(allows("Bash", { command: "git diff HEAD~1" }), "git diff");
 ok(allows("Bash", { command: "ls -la /d/Repo/Tools" }), "ls");
-ok(allows("Bash", { command: "cat <your-jot-data-dir>/todos.json" }), "cat, reading the board - the single most common thing this tier does");
+ok(allows("Bash", { command: "cat D:/Sync/jot/todos.json" }), "cat, reading the board - the single most common thing this tier does");
 ok(allows("Bash", { command: "grep -rn 'TODO' src/ | head -20" }), "grep piped into head - a pipe is not a redirect");
 ok(allows("Bash", { command: "node --version" }), "node --version, which runs no program");
 ok(allows("Bash", { command: "npm ls --depth=0" }), "npm ls");

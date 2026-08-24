@@ -90,7 +90,7 @@ const build = new Function(
   "archiveWithHandoff",
   "state",
   `${nonRootedSrc}; ${builderSrc}; return archiveMenuItems;`
-)(archiveWithHandoff, { orchestratorHome: "<your-claude-home>" });
+)(archiveWithHandoff, { orchestratorHome: "D:/Sync/claude-home" });
 
 // --- 1. behaviour: the folderless session is the whole point --------------
 const folderless = { title: "Träning och kost (Hevy)", cwd: null };
@@ -107,7 +107,7 @@ ok(
 
 // Backslashes, a different case and a trailing separator on purpose: his real
 // sessions carry the Windows form, and the meta-home is stored forward-slashed.
-const metaRooted = build({ title: "Traning och kost", cwd: "D:\\DROPBOX\\Documents\\Claude\\" }, { plainArchive: () => {} });
+const metaRooted = build({ title: "Traning och kost", cwd: "D:\\SYNC\\claude-home\\" }, { plainArchive: () => {} });
 ok(
   /by topic/.test(metaRooted[0].label),
   `a session rooted AT the meta-home is by-topic too, not HANDOFF.md (${metaRooted[0].label})`

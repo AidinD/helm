@@ -146,7 +146,7 @@ const READERS = [
   "ls -la",
   "ls scripts/ | grep tar",
   "cat README.md",
-  "cat <your-jot-data-dir>/todos.json",
+  "cat D:/Sync/jot/todos.json",
   "cat README.md | grep -i install",
   "grep -rn install src/",
   "grep -rn rm src/",

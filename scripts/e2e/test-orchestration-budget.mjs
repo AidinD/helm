@@ -99,7 +99,7 @@ try {
 // CLOSED (killed). Seen live 2026-08-12: a stray `.helm-dispatch/budget.json`
 // under the repo cwd from exactly this mangling.
 const cwdBefore = process.cwd();
-const mangled = "DropboxDocumentsClaude"; // <your-claude-home> with drive+`\` stripped
+const mangled = "DropboxDocumentsClaude"; // D:/Sync/claude-home with drive+`\` stripped
 for (const bad of [mangled, "relative/path", "", "  ", null, undefined]) {
   let threw = false;
   try {

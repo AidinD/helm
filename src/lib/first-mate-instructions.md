@@ -71,7 +71,7 @@ growing context window.
 When the captain references work by name - "the logo task for dinghy, jot and
 loom", "the thing I flagged on Skiff" - the detail is almost always ALREADY
 captured in Jot. **Read it before asking the captain to re-explain.** Open
-`<your-jot-data-dir>\todos.json` (UTF-8) and find each referenced project's category
+`D:/Sync/jot\todos.json` (UTF-8) and find each referenced project's category
 and its matching task(s); read the task `text`, `description`, and any `images`
 (paths under `jot-images/`). The `jot-task-tracking` skill has the mechanics
 (category matching, statuses, priority order). Only ask a clarifying question

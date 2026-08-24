@@ -3047,7 +3047,7 @@ ipcMain.handle("jot:mount", async () => {
   }
   try {
     // Point the embedded Jot at the SAME board the user's standalone Jot uses.
-    // Helm knows that authoritatively via config.jot.path (e.g. <your-jot-data-dir>\
+    // Helm knows that authoritatively via config.jot.path (e.g. D:/Sync/jot\
     // todos.json); use its dir. Falls back to the portable resolver otherwise.
     const jotPathCfg = loadConfig().jot?.path;
     const dataDir = jotPathCfg && jotPathCfg.trim() ? path.dirname(jotPathCfg) : undefined;

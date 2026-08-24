@@ -48,7 +48,7 @@ function assert(cond, msg) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 
-const CLAUDE = "C:/Users/<you>/.local/bin/claude.exe";
+const CLAUDE = "C:/Users/dev/.local/bin/claude.exe";
 const REPO = "D:/Repo/Tools/helm";
 const SERVER = path.join(REPO, "src", "mcp", "helmDispatchServer.js");
 const SERVER_NAME = "helm-dispatch";

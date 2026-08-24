@@ -42,7 +42,7 @@ try {
   assert(!personas.isValidPersonaKey("bogus"), "unknown key rejected by isValidPersonaKey");
 
   // ---- mates.js persona threading ----
-  const mates = ensureMates("<your-claude-home>");
+  const mates = ensureMates("D:/Sync/claude-home");
   assert(mates.length === 2, "ensureMates yields two active mates");
   assert(mates.every((m) => m.persona === null), "a fresh mate starts with no persona");
 
