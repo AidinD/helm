@@ -125,12 +125,12 @@ function walkForSessionJson(dir, out, depth) {
 // Every non-alphanumeric character becomes a literal hyphen (1:1, never
 // collapsed) — verified 2026-07-03 against every real directory under
 // ~/.claude/projects (none contain anything outside [a-zA-Z0-9-]), e.g.
-// "<your-claude-home>" -> "D--Dropbox-Mina-Dokument-Claude".
+// "D:\A Folder\With Spaces" -> "D--A-Folder-With-Spaces".
 // The previous version only handled ":" and "\\", silently producing a
 // WRONG directory name (with a literal space preserved) for any path
 // containing a space or other special character — found live when it broke
-// orchestratorHelper.js's classifier-transcript cleanup for exactly this
-// folder, which has a space in "Documents".
+// orchestratorHelper.js's classifier-transcript cleanup for a real folder
+// whose name contains a space.
 export function encodeProjectDir(cwd) {
   return cwd.replace(/[^a-zA-Z0-9]/g, "-");
 }

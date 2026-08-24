@@ -42,6 +42,17 @@ const SUSPECT_EXTENSION =
 /** Paths that are a screenshot whatever they are called. */
 const SUSPECT_PATH = /(^|\/)(screenshots?|captures?|recordings?)(\/|$)/i
 
+/**
+ * Filenames that are a capture of a running app, wherever they sit.
+ *
+ * The allowlist exists for icons and artwork. A file called `01-dashboard.png`
+ * dropped straight into `build/` matched none of the other rules and committed
+ * cleanly - and `01-dashboard.png` is the exact name of one of the seven
+ * screenshots that caused the 2026 leak. Names beat directories here.
+ */
+const SUSPECT_FILENAME =
+  /(^|\/)[^/]*(dashboard|screen(shot)?|sidebar|window|dev-badge|preview|capture|now-view|\d{2}-[a-z]+)[^/]*\.(png|jpe?g|gif|webp|avif|bmp|tiff?)$/i
+
 /** Files that are configuration or data rather than code, and often secret. */
 const SUSPECT_NAME = /(^|\/)(\.env(\..*)?|todos\.json|prefs\.json|config\.json)$/i
 
@@ -65,6 +76,10 @@ for (const path of staged()) {
   // happens to sit inside it.
   if (SUSPECT_PATH.test(path)) {
     offenders.push([path, 'looks like a screenshot'])
+    continue
+  }
+  if (SUSPECT_FILENAME.test(path)) {
+    offenders.push([path, 'named like a capture of a running app'])
     continue
   }
   if (ALLOWED.some((allow) => allow.test(path))) {
