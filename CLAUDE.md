@@ -17,6 +17,25 @@ chronological reasoning but does not say where things stand.
 (captain / first mate / second mate / crew tiers; ephemeral by tier; the
 first-mate capability gap) - read it before any orchestration/dispatch work.
 
+## Helm depends on keel
+
+**keel** (github.com/AidinD/keel) is the suite's shared layer, linked as
+`file:../keel` — so it must be checked out at `D:\Repo\Tools\keel`. It is a real
+`dependency`, not a devDependency: Helm ships its source unbuilt, so the import is
+live at runtime and electron-builder has to pack it. Tend and Brief are the same
+case and have shipped that way.
+
+`npm install` does **not** fail when the sibling is missing — npm 11 links a
+missing `file:` dependency to a dangling symlink and exits 0. The failure lands at
+the first import, and here that is `src/lib/atomicWrite.js`, which every durable
+store goes through.
+
+That file is now a thin binding of `keel/storage`. The implementation is the one
+Helm wrote — it was the best in the suite, so it became the shared one — and the
+fourteen modules that import from `./atomicWrite.js` did not change. Editing keel
+changes Helm immediately with no rebuild step, so run `npm test` in keel before
+assuming a change there is fine.
+
 ## Moving a Jot task to review (do not skip the record)
 
 Flipping a Jot task's `status` to `"review"` is NOT enough - the captain's Review page

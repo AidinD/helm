@@ -32,10 +32,28 @@ Read it before touching anything about dispatch.
 
 ## Running it
 
+Helm depends on [**keel**](https://github.com/AidinD/keel), the shared layer under
+the suite, linked from the filesystem — so it has to be checked out **next to**
+this repo:
+
+```
+Tools/
+├── helm/
+└── keel/
+```
+
 ```bash
+git clone https://github.com/AidinD/keel ../keel
 npm install
 npm start
 ```
+
+Without the sibling checkout `npm install` still **exits 0** — npm links
+`file:../keel` to a dangling symlink and says nothing. What fails is the first
+import, and here that means `src/lib/atomicWrite.js`, which every durable store
+goes through. keel is a real dependency rather than a devDependency because Helm
+ships its source unbuilt, so the import is live at runtime and electron-builder
+has to pack it.
 
 Restarting during development goes through the script, not through killing Electron by name:
 

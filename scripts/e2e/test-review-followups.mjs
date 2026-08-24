@@ -315,7 +315,7 @@ console.log("\n-- dead exports --");
   // not licensing them, it is refusing to hide them while still failing the moment a
   // sixteenth appears. Delete one and remove its line - the list only shrinks.
   const KNOWN_DEAD = new Set([
-    "atomicWrite.js: sleepSync",
+
     "autoCaptain.js: stripAutoNotes",
     "config.js: configFilePath",
     "cron.js: parseCron",

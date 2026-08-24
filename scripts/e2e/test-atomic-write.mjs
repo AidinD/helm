@@ -11,12 +11,20 @@
 // store has a private rename left. The second half is the one that would have caught
 // the original mistake.
 //
+// The implementation moved to `keel/storage` on 2026-08-24 - this version was the
+// best in the suite, so it became the shared one, and Jot's and Nib's copies (which
+// only knew half of it) now come from here rather than the other way round.
+// `src/lib/atomicWrite.js` is still the import path every store uses, so both
+// halves of this test still apply; `isTransientLock` is imported from keel because
+// that is where the predicate lives now.
+//
 // Run: node scripts/e2e/test-atomic-write.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { writeFileAtomicSync, writeJsonAtomicSync, isTransientLock } from "../../src/lib/atomicWrite.js";
+import { isTransientLock } from "keel/storage";
+import { writeFileAtomicSync, writeJsonAtomicSync } from "../../src/lib/atomicWrite.js";
 
 let code = 0;
 const ok = (c, m) => {

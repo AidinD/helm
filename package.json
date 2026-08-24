@@ -93,6 +93,7 @@
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",
     "@jot/core": "file:../jot/dist-core",
-    "electron-updater": "^6.3.9"
+    "electron-updater": "^6.3.9",
+    "keel": "file:../keel"
   }
 }
