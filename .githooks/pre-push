@@ -1,0 +1,10 @@
+#!/bin/sh
+# Canonical pre-push for the suite. Copied into each sibling's .githooks/ rather
+# than loaded from node_modules, because a hook has to exist in a clone where
+# nothing is installed yet - the guard itself then reports and lets the push
+# through rather than crashing.
+#
+# Activated by `npm install`, via the "prepare" script setting core.hooksPath.
+# Skip a single push with: git push --no-verify
+
+node .githooks/no-private-names.mjs || exit 1

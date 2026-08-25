@@ -56,6 +56,42 @@ const SUSPECT_FILENAME =
 /** Files that are configuration or data rather than code, and often secret. */
 const SUSPECT_NAME = /(^|\/)(\.env(\..*)?|todos\.json|prefs\.json|config\.json)$/i
 
+/**
+ * Ids that only exist in a real notebook, in the text of a change.
+ *
+ * The hook was written for binaries, and prose walked straight past it: a comment
+ * explaining this app's reference feature shipped a colleague's name and the real
+ * note id it belonged to, into a public repo, as an example. An id like that is
+ * not sensitive on its own - it is that it points at one specific note in one
+ * specific person's notebook, and it invites the name of what it holds as the
+ * explanation.
+ *
+ * Matched on shape rather than on a list of names, because a list of the people
+ * who must not be mentioned is itself the thing it is trying to protect. Sixteen
+ * hex characters is what `newId` mints; the short ids in fixtures are untouched.
+ */
+const REAL_ID = /(?:note|drw|alert)-[0-9a-f]{16}/
+
+function stagedAdditions() {
+  const out = execFileSync('git', ['diff', '--cached', '--unified=0'], { encoding: 'utf-8' });
+  const hits = [];
+  let file = '';
+  for (const line of out.split('\n')) {
+    if (line.startsWith('+++ b/')) {
+      file = line.slice('+++ b/'.length);
+      continue;
+    }
+    if (!line.startsWith('+') || line.startsWith('+++')) {
+      continue;
+    }
+    const found = line.slice(1).match(REAL_ID);
+    if (found !== null) {
+      hits.push([file, found[0]]);
+    }
+  }
+  return hits;
+}
+
 function staged() {
   // ACR: added, copied, renamed. A file already tracked is not this hook's
   // business - it was reviewed once, and re-flagging it would train people to
@@ -92,6 +128,14 @@ for (const path of staged()) {
   }
 }
 
+for (const [where, id] of stagedAdditions()) {
+  // Deliberately not named after the obvious word: the suite's pre-push privacy
+  // guard derives its terms from private data, and an ordinary identifier can
+  // collide with one. Renaming costs nothing; bypassing the guard to keep a
+  // variable name teaches the bypass.
+  offenders.push([where, `mentions a real notebook id (${id})`]);
+}
+
 if (offenders.length > 0) {
   const width = Math.max(...offenders.map(([path]) => path.length))
   console.error('\nRefusing to commit - these carry content, not code:\n')
@@ -104,6 +148,9 @@ if (offenders.length > 0) {
       'A screenshot of your own app shows whatever was on screen: session names,',
       'client names, file paths, a board full of real work. Helm shipped seven of',
       'them to a public repo and it cost a history rewrite to take back.',
+      '',
+      'A real note id points at one note in one notebook, and the sentence',
+      'explaining it usually names what is in it. Write `note-<id>` instead.',
       '',
       'If it belongs in the repo, put it under resources/, build/ or assets/.',
       'If it is test output, add it to .gitignore.',
