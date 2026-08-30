@@ -192,6 +192,20 @@ console.log("\n-- the compaction deadline --");
   ok(/killChildTree\(child\)/.test(src), "and a timeout kills the process TREE - the bare kill left the compaction running and paying");
 }
 
+// --- 10. the model is chosen, not inherited --------------------------------
+console.log("\n-- which model summarises --");
+{
+  const src = fs.readFileSync(new URL("../../src/lib/orchestratorHelper.js", import.meta.url), "utf8");
+  const args = /const args = \["--resume"[\s\S]{0,240}?\];/.exec(src)?.[0] || "";
+  // Measured: 74 completed compactions read 52.5M tokens of context, averaging 710,122
+  // each - and with no --model they ran on the resumed session's own model, Opus 5 at high
+  // effort. Every sibling spawner in this file passes a model; this one passing none was an
+  // omission, not a decision, and it picked the most expensive option available.
+  ok(/"--model"/.test(args), "compaction asks for a model rather than inheriting the session's");
+  ok(/claude-sonnet-5/.test(args), `and the default is Sonnet - this is summarisation (${/claude-[a-z0-9-]+/.exec(args)?.[0]})`);
+  ok(/model \|\|/.test(args), "with a config override, because a compaction cannot be undone if its summaries come back thin");
+}
+
 fs.rmSync(tmp, { recursive: true, force: true });
 
 console.log(

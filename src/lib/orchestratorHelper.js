@@ -761,14 +761,29 @@ const COMPACT_TIMEOUT_MS = 300_000;
  * stream event's metadata, NOT file size (compaction APPENDS to the
  * append-only transcript, so bytes go up, not down).
  */
-export function compactSession({ cwd, cliSessionId, sessionId }) {
+export function compactSession({ cwd, cliSessionId, sessionId, model = null }) {
   return new Promise((resolve) => {
     const resumeId = cliSessionId || sessionId;
     if (!resumeId) {
       resolve(null);
       return;
     }
-    const args = ["--resume", resumeId, "-p", "/compact", "--output-format", "stream-json", "--verbose"];
+    // THE MODEL IS NOW A DECISION, not an omission.
+    //
+    // This spawner passed no --model while all three of its siblings in this file pass one,
+    // so compaction inherited the resumed session's model - Opus 5 at high effort, over the
+    // largest contexts on the machine, for a task that is summarisation. That was never
+    // chosen; it was the absence of a flag.
+    //
+    // Sonnet 5 by default (the captain, 2026-08-28: "borde inte sonnet duga för sammanfattningen?").
+    // He is right: this reads a transcript and writes a summary of it, which is squarely
+    // what Sonnet is good at, and the previous arrangement picked the most expensive
+    // possible model for it by accident.
+    //
+    // Overridable rather than hardcoded, because the summary IS the session's memory from
+    // then on and a compaction cannot be undone - so if a particular session's summaries
+    // ever come back thin, the answer is a config change, not an argument about defaults.
+    const args = ["--resume", resumeId, "-p", "/compact", "--model", model || "claude-sonnet-5", "--output-format", "stream-json", "--verbose"];
     const claudePath = resolveClaudeBinary();
     let child;
     try {

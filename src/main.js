@@ -5125,6 +5125,9 @@ async function runOrchestratorSweepBody(config, { classifyOn, compactOn, accurac
           cwd: session.cwd,
           cliSessionId: session.cliSessionId,
           sessionId: session.sessionId,
+          // Summarisation, not reasoning. Defaults to Sonnet inside compactSession; this
+          // is the escape hatch if a session's summaries ever come back thin.
+          model: config.autoCompact?.model || null,
         });
       } catch (err) {
         noteCompactFailure(session, tokens, String(err?.message || err));
