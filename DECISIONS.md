@@ -1,5 +1,27 @@
 # Decisions
 
+## 2026-08-30 - Voice had never worked in a packaged Helm, and only a packaged check could find that
+
+Written after publishing v0.2.115, because the check that found this was the last step before calling the release done rather than the first.
+
+**The finding.** `whisperRoot()` locates the speech engine by walking three levels up from its own file. In a checkout that is correct. In a packaged build the module sits inside `app.asar`, so three levels up is `app.asar/node_modules`, and there is no engine there. Computed against the real asar in `dist/win-unpacked`, not reasoned about.
+
+**It is not a regression, and that is the important half.** The previous code resolved to `app.asar/.whisper`, which never existed either, and `package.json` has carried `!.whisper/**/*` all along - the 1.5GB payload has never been inside an installer. Both versions were checked. Moving the folder out of the repo that morning did not break voice; it made a hole visible that had been there from the beginning.
+
+**Why nobody noticed for months.** Every check anyone ran was in the dev tree, where the relative walk resolves correctly. The failure mode is silent: `isAvailable()` returns false and the feature simply is not there. A build that finds nothing looks exactly like a build that works, until someone speaks into it.
+
+**And the thing that made it matter.** The captain runs the INSTALLED Helm as his daily driver, not the dev build - stated 2026-08-30, and visible in the data: the two usage logs were written fifteen minutes apart that morning. So this was not a theoretical gap in a build nobody uses. It was half of his actual usage, every day.
+
+**Decided: the payload lives at `%LOCALAPPDATA%\whisper`.**
+
+The alternatives were a setting pointing at a copy, and downloading 1.5GB on first use. The setting builds machinery to do what a move does for free. The download builds a distribution system for an app with one user, and turns a launch into a gigabyte-and-a-half fetch. `keel`'s search order already looks in `%LOCALAPPDATA%\whisper` before the checkout, so moving the folder there makes both the dev build and the installed build find it with no code change in Helm at all.
+
+Moved and verified: 47 files, 1,502.2 MB, identical count and byte total on both sides before the original was removed, and the new location resolves ahead of the old one for both languages.
+
+**The release timing lesson, which cost a second build.** v0.2.115 was built at 11:59. keel's candidate search was committed at 12:06. Seven minutes, and the shipped `app.asar` contains no `whisperCandidates` at all - so the release that prompted all of this could not have used the moved folder. A `file:` dependency is resolved at BUILD time, and a build is a photograph of the sibling checkout at that instant. Checking what is inside the asar is the only way to know which photograph you took.
+
+**The general rule this leaves behind.** For anything that resolves a path, reads from disk, or comes from a bundled dependency, a dev-tree check proves nothing about the installed app. `dist/win-unpacked/resources/app.asar` can be listed and searched directly, and that is now part of finishing a release rather than something to do when a user reports the feature missing.
+
 ## 2026-08-28 - Auto-compact could not observe its own successes, so it paid for the same work forever
 
 The captain: "jag tror att helm passivt drar tokens så länge den är öppnad. Ganska mycket tokens". He was right, and about the part that mattered: **while open**, not per restart.
