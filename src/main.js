@@ -51,6 +51,7 @@ import { projectKey } from "./lib/commitReview.js";
 import { buildReviewQueuePayload } from "./lib/reviewQueueBuild.js";
 import { runHeavy, stopHeavyWorker, heavyWorkerStatus } from "./lib/heavyWorker.js";
 import { killChildTree } from "./lib/processTree.js";
+import { createSingleFlight } from "./lib/singleFlight.js";
 import { recommendReviewer, diffStats, REVIEWER_MODELS } from "./lib/reviewerModel.js";
 import { buildReviewHtml, buildCommitReviewHtml } from "./lib/reviewHtml.js";
 import { reviewWritingBriefLines } from "./lib/reviewLanguage.js";
@@ -6050,7 +6051,26 @@ let reviewQueueCache = null; // { at, payload, inputs }
 // Review visit to a single build (scripts/e2e/test-view-switch-cost.mjs).
 let reviewQueueBuilds = 0;
 // The build currently running, so concurrent callers join it instead of starting a second.
-let reviewQueueInFlight = null;
+// One build at a time. Two callers arriving on a cold cache each started their own - there
+// was no cache to hit yet and nothing else to stop them - so the single most expensive thing
+// Helm does could run twice concurrently for one answer. The badge tick and a Review-page
+// visit landing together is exactly that (second review, 2026-08-12).
+//
+// The join is fingerprinted, which is the part that took nine days to find: see
+// lib/singleFlight.js for why an unconditional join hands a stale payload to whoever just
+// wrote something, and what that looked like in the app.
+const reviewQueueSingleFlight = createSingleFlight({
+  fingerprint: () => reviewQueueInputs(),
+  // The fingerprint is taken BEFORE the build and is the one stored with the result: a board
+  // edit landing mid-build must invalidate the answer it was not included in, rather than
+  // being stamped as already accounted for.
+  run: async (inputs) => {
+    const payload = await buildReviewsPayload();
+    reviewQueueBuilds += 1;
+    reviewQueueCache = { at: Date.now(), payload, inputs };
+    return { ...payload, builds: reviewQueueBuilds };
+  },
+});
 const REVIEW_QUEUE_DEFAULT_MAX_AGE_MS = 20_000;
 
 // See reviewQueueInputsFingerprint in reviewRecords.js for what this covers and, more
@@ -6091,32 +6111,9 @@ ipcMain.handle("reviews:list", async (_e, opts = {}) => {
       return { ...reviewQueueCache.payload, cached: true, builds: reviewQueueBuilds };
     }
   }
-  // One build at a time. Two callers arriving on a cold cache each started their own -
-  // there was no cache to hit yet and nothing else to stop them - so the single most
-  // expensive thing Helm does could run twice concurrently for one answer. The badge tick
-  // and a Review-page visit landing together is exactly that (second review, 2026-08-12),
-  // and it also made the cold-build counter genuinely racy rather than only theoretically.
-  //
-  // Joining an in-flight build rather than queueing behind it: both callers want the same
-  // payload, and the fingerprint taken before it started is the one that governs it.
-  if (reviewQueueInFlight) {
-    return reviewQueueInFlight;
-  }
-  // Fingerprint BEFORE the build, not after: a board edit that lands while the build is
-  // running must invalidate the result it was not included in, rather than being stamped
-  // as already accounted for.
-  const inputs = reviewQueueInputs();
-  reviewQueueInFlight = (async () => {
-    try {
-      const payload = await buildReviewsPayload();
-      reviewQueueBuilds += 1;
-      reviewQueueCache = { at: Date.now(), payload, inputs };
-      return { ...payload, builds: reviewQueueBuilds };
-    } finally {
-      reviewQueueInFlight = null;
-    }
-  })();
-  return reviewQueueInFlight;
+  // Cold or moved: build, single-flighted. See reviewQueueSingleFlight above for why the
+  // join is conditional on the fingerprint rather than unconditional.
+  return reviewQueueSingleFlight();
 });
 
 /**
