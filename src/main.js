@@ -51,11 +51,12 @@ import { resolveTaskCommits, diffForCommits, shippedVersionForCommits } from "./
 import { projectKey } from "./lib/commitReview.js";
 import { buildReviewQueuePayload } from "./lib/reviewQueueBuild.js";
 import { runHeavy, stopHeavyWorker, heavyWorkerStatus } from "./lib/heavyWorker.js";
+import { killChildTree } from "./lib/processTree.js";
 import { recommendReviewer, diffStats, REVIEWER_MODELS } from "./lib/reviewerModel.js";
 import { buildReviewHtml, buildCommitReviewHtml } from "./lib/reviewHtml.js";
 import { reviewWritingBriefLines } from "./lib/reviewLanguage.js";
 import { listHandoffCategories, writeHandoff, readHandoff, planHandoffFiling, handoffPath } from "./lib/handoffStore.js";
-import { classifySessionStatus, classifyHandoffCategory, expectsUserInputHeuristic, estimateSessionContextTokens, compactSession, getTranscriptSize, triageAutoTask } from "./lib/orchestratorHelper.js";
+import { classifySessionStatus, classifyHandoffCategory, expectsUserInputHeuristic, estimateSessionContextTokens, compactSession, getTranscriptSize, shouldCompact, triageAutoTask } from "./lib/orchestratorHelper.js";
 import { savePastedImage, prunePastedImages } from "./lib/images.js";
 import { computeVersionString, captureRunningBuildIdentity, checkForNewerBuild } from "./lib/version.js";
 import { checkModelFreshness } from "./lib/modelFreshness.js";
@@ -324,45 +325,54 @@ const sessionClassifications = new Map();
 // row surface a "was auto-compacted" note until the next real activity.
 const sessionCompactions = new Map();
 
-// child.kill() only signals the top-level claude.exe — it does NOT kill the
-// process tree. claude.exe spawns its own children (the model runtime, any
-// MCP servers, Task-tool subagents), and on Windows those are not
-// automatically terminated when their parent dies. Left running, they keep
-// executing (and consuming subscription usage) after a Stop click or even
-// after Helm itself quits. `taskkill /T` recurses through the whole tree.
-// `sync: true` runs the kill synchronously — required from the "before-quit"
-// sweep, where an async execFile would very likely lose the race against the
-// process actually exiting (nothing awaits it, so the app tears down before
-// the async taskkill has run, leaving exactly the orphaned tree this is
-// meant to prevent). The Stop-button path uses the default async form since
-// the app keeps running there and blocking the main thread is pointless.
-function killChildTree(child, { sync = false } = {}) {
-  if (!child || child.killed || !child.pid) {
-    return;
-  }
-  if (process.platform === "win32") {
-    const args = ["/pid", String(child.pid), "/T", "/F"];
-    if (sync) {
-      try {
-        execFileSync("taskkill", args, { stdio: "ignore" });
-      } catch {
-        // Process may have already exited on its own — taskkill then reports
-        // an error, which is fine and nothing to act on.
-      }
-      return;
-    }
-    execFile("taskkill", args, (err) => {
-      if (err) {
-        // Best-effort: the process may have already exited on its own
-        // between the check above and this call, which taskkill reports as
-        // an error — nothing more useful to do with it here.
-        console.error(`[helm] taskkill failed for pid ${child.pid}:`, err.message);
-      }
-    });
-    return;
-  }
-  child.kill();
+// Compaction failures, and what they cost. sessionId -> { attempts, nextAt }.
+//
+// Auto-compact had no failure memory at all: a timed-out compaction was a bare `continue`,
+// so the next sweep tried the same session again fifteen minutes later, forever. Measured
+// 2026-08-28: 634 /compact calls on disk against 5 rows in the usage log. The timeout was
+// 90s while the median real compaction takes 145s, so 86% of attempts on a session worth
+// compacting looked like failures - and each one still paid full price, because the kill
+// did not reach the process underneath.
+//
+// Deliberately in memory, unlike the persisted things around it. It is a RATE LIMITER, not
+// a record: forgetting it on restart costs one extra attempt per session, and the estimate
+// is now the thing that decides whether an attempt happens at all.
+const compactRetry = new Map();
+
+/** Same shape as triageBackoffMs: 2, 4, 8 ... capped, so a stuck session backs off fast. */
+function compactBackoffMs(attempts) {
+  return Math.min(60, 2 ** Math.min(attempts, 5)) * 60 * 1000;
 }
+
+/**
+ * Record a failed compaction: log what it cost, and hold the session back.
+ *
+ * The log row matters as much as the backoff. A failure that leaves no trace is
+ * indistinguishable from a mechanism that never ran, which is exactly how this went
+ * unnoticed - and it is the same reason auto-update sat parked for months.
+ */
+function noteCompactFailure(session, tokens, why) {
+  const prev = compactRetry.get(session.sessionId);
+  const attempts = (prev?.attempts || 0) + 1;
+  const waitMs = compactBackoffMs(attempts);
+  compactRetry.set(session.sessionId, { attempts, nextAt: Date.now() + waitMs });
+  appendUsageLog({
+    type: "orchestratorAutoCompactFailed",
+    sessionId: session.sessionId,
+    timestamp: Date.now(),
+    preTokens: tokens ?? null,
+    attempts,
+    retryInMinutes: Math.round(waitMs / 60000),
+    why,
+  });
+  console.error(
+    `[helm] auto-compact failed for ${String(session.title || session.sessionId).slice(0, 40)} (attempt ${attempts}): ${why}. Next try in ${Math.round(waitMs / 60000)}m.`
+  );
+}
+
+// killChildTree moved to src/lib/processTree.js on 2026-08-28 so orchestratorHelper's
+// compactSession could reach it - its timeout was calling the bare child.kill(), which
+// left the real compaction running underneath. Same function, one home.
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -5094,9 +5104,18 @@ async function runOrchestratorSweepBody(config, { classifyOn, compactOn, accurac
           continue;
         }
       }
-      const tokens = estimateSessionContextTokens(session.cliSessionId, session.sessionId);
-      if (tokens !== null && tokens > threshold) {
-        toCompact.push({ session, tokens });
+      // Still serving a backoff from an earlier failure? Skipped BEFORE the estimate, so a
+      // session that keeps timing out costs nothing at all while it waits - the whole point
+      // of a backoff is that a failure gets cheaper, not just recorded.
+      const held = compactRetry.get(session.sessionId);
+      if (held && now < held.nextAt) {
+        continue;
+      }
+      // One decision, in one testable place. This used to be inline here, which is why a
+      // mechanism that fired 634 times and logged 5 of them had no test at all.
+      const verdict = shouldCompact(session, { threshold, idleMs, now });
+      if (verdict.compact) {
+        toCompact.push({ session, tokens: verdict.tokens });
       }
     }
     for (const { session, tokens } of toCompact.slice(0, MAX_COMPACTIONS_PER_SWEEP)) {
@@ -5108,12 +5127,22 @@ async function runOrchestratorSweepBody(config, { classifyOn, compactOn, accurac
           sessionId: session.sessionId,
         });
       } catch (err) {
-        console.error("[helm] auto-compact failed:", err);
+        noteCompactFailure(session, tokens, String(err?.message || err));
         continue;
       }
       if (!result || !result.ok) {
+        // A FAILURE MUST COST LESS THAN A SUCCESS OVER TIME, and until 2026-08-28 it cost
+        // exactly the same and repeated forever: this branch was a bare `continue`, so a
+        // compaction that timed out was neither logged nor remembered, and the next sweep
+        // queued the same session again fifteen minutes later. The identical disease was
+        // already diagnosed and cured for auto-triage (see noteTriageFailure); auto-compact
+        // never got the cure.
+        noteCompactFailure(session, tokens, "no confirmed compaction boundary before the deadline");
         continue;
       }
+      // A success clears the backoff - the next real growth should be treated on its merits,
+      // not held back by a streak that has since been broken.
+      compactRetry.delete(session.sessionId);
       // Sample the transcript size AFTER compaction (its own append already
       // included) — any later growth is real new activity, which re-enables
       // compaction and clears the row note.

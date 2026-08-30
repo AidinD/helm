@@ -1,5 +1,44 @@
 # Decisions
 
+## 2026-08-28 - Auto-compact could not observe its own successes, so it paid for the same work forever
+
+The captain: "jag tror att helm passivt drar tokens så länge den är öppnad. Ganska mycket tokens". He was right, and about the part that mattered: **while open**, not per restart.
+
+**The mechanism, and it is not the one this investigation started with.**
+`COMPACT_TIMEOUT_MS` was 90 seconds, set from a ~13-second spike on a small session. Measured across every real `compact_boundary` on this machine: 74 compactions, **median 145,097 ms, max 245,132 ms, and 64 of 74 (86%) longer than the deadline**. A session big enough to be worth compacting is precisely one that takes longer than 90 seconds.
+
+So Helm killed the child at 90s, resolved `null`, and hit a bare `continue` - writing neither the success bookkeeping nor the usage log. The next sweep, fifteen minutes later, found the same session and tried again. No restart required.
+
+And it was worse than a wasted call: `child.kill()` signals only the top-level `claude.exe`. Helm's own code already knows this - `killChildTree` exists because "child.kill() does NOT kill the process tree" - but `compactSession` was not using it. So the compaction **completed in the background**, wrote its boundary, and spent the tokens. Helm paid full price, got the benefit, recorded nothing, and queued it again.
+
+**The scale, from the transcripts rather than from reasoning: 634 `/compact` calls on disk against 5 rows in the usage log. Under 1% of the spend was ever booked.**
+
+**The second defect, which is what let it repeat.**
+`estimateSessionContextTokens` reads the newest usage block in the transcript tail. On a freshly compacted session that block is the compaction's OWN summarization call, which read the entire pre-compaction context. The estimator was not lagging reality - it was reading the receipt for the operation that made it obsolete. One session reported 879,644 tokens when its real context was 17,189, and therefore stayed over every threshold no matter how often it was compacted.
+
+**Decided.**
+
+- The estimate is boundary-aware: if a real `compact_boundary` appears in the tail with no usage block after it, return that boundary's own `postTokens`. Verified present on all 74 real boundaries here, from 6,214 up against pre-sizes to 1,000,403. (`transcript.js` claims the interactive format has no `postTokens`. That comment is wrong, and is probably why this was not obvious years earlier.)
+- Every uncertain case returns `null`, never a number, and `shouldCompact` turns `null` into "do not compact". A wrong `false` costs one sweep; a wrong `true` costs a model call over the largest context on the machine.
+- The boundary is found by `JSON.parse` plus `type`/`subtype`, never a text match. A session that reads this repository quotes `compact_boundary` back into its own transcript: one file here has 12 lines containing the string and 8 real boundaries.
+- `COMPACT_TIMEOUT_MS` is 300,000, clearing the observed maximum. Not tuning - the old value guaranteed failure on its target population.
+- `killChildTree` moved from `main.js` to `src/lib/processTree.js` so `compactSession` can reach it. Behaviour unchanged; one home, two importers, rather than a third copy of the rule.
+- A failure now writes an `orchestratorAutoCompactFailed` usage row and backs the session off (2, 4, 8 ... minutes, capped at 60), checked BEFORE the estimate so a failing session costs nothing at all while it waits. A failure must cost strictly less than a success over time; it cost exactly the same and repeated forever. The identical disease was diagnosed and cured for auto-triage months ago; auto-compact never got the cure.
+- The decision moved out of the sweep body into `shouldCompact`, which is why it can be tested at all.
+
+**Rejected, and both were my own first instincts.**
+
+- **Persisting the compaction guard across restarts.** It is only written on SUCCESS, after the `continue` that the failure path takes - so it was empty for every session in the loop. Persisting an empty map persists nothing. It would also key a durable guard by `sessionId` while guarding a FILE, and the file is not stable: `switchSessionRootFolder` copies a transcript into a second project directory under the same name, and two such pairs exist right now.
+- **An age ceiling.** Its clock is self-resetting - a successful compaction bumps `lastActivityAt` within 311 ms - so it can never retire a session compacted more often than the ceiling. And it points the wrong way: a 352,445-token session untouched for 26 days, never compacted, is the single best candidate in the fleet, and a ceiling would exempt exactly that one.
+
+**Left as a decision rather than an omission.** `compactSession` passes no `--model`, while all three sibling spawners in the same file do, so compaction runs on the session's own model - Opus 5 at high effort, over the biggest contexts here. Deliberately unchanged: compaction is lossy and irreversible for the resumed session, and quietly downgrading the model that writes those summaries is not a cost decision to make on someone's behalf. Once the loop is gone the volume falls from 634 calls to a handful, which is where most of the money was.
+
+**Verified against the real data, not only fixtures.** Before: 4 sessions over threshold, 2,237,260 tokens, including one at 880,241 that had already been compacted four times. After: that session drops out entirely and the remaining four are genuine first-time candidates. Eight deliberate mutations all turn the new test red, each restored byte-identical.
+
+**One test passed for the wrong reason and had to be fixed.** `paths.js` caches its transcript index, so fixtures written after the first lookup were invisible - three cases returned `null` because the file could not be found, and two more "passed" because they expect `null` anyway. A test that cannot tell "correctly declined" from "could not find the file" is not testing anything. Mutation-testing also showed the phantom-marker case passing on an ordering check rather than on the parse it was meant to pin, so a second fixture puts the phantom last.
+
+**The independent review is why this entry is not about something else.** The first diagnosis - in-memory guard lost on restart, stale estimate - was wrong about the mechanism and would have shipped three changes that between them fixed nothing. Every number in the critique reproduced exactly when checked.
+
 ## 2026-08-23 - Auto-update was switched off by a belief nobody re-checked
 
 The captain: "kan du fixa autoupdate i helm på samma sätt som i jot och nib".

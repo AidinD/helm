@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { resolveClaudeBinary } from "./launcher.js";
 import { findTranscriptPath, projectsRoot, encodeProjectDir } from "./paths.js";
 import { readTranscript } from "./transcript.js";
+import { killChildTree } from "./processTree.js";
 
 // Fas 3's "sensor": a periodic, stateless classifier over sessions that
 // today's status heuristic (deriveStatus in sessions.js — purely "who spoke
@@ -618,7 +619,99 @@ export function estimateSessionContextTokens(cliSessionId, sessionId) {
   const cacheCreationMatch = windowText.match(/"cache_creation_input_tokens":(\d+)/);
   const input = inputMatch ? parseInt(inputMatch[1], 10) : 0;
   const cacheCreation = cacheCreationMatch ? parseInt(cacheCreationMatch[1], 10) : 0;
-  return input + cacheCreation + cacheRead;
+  const fromUsage = input + cacheCreation + cacheRead;
+
+  // A COMPACTION MAKES THE LAST USAGE BLOCK A RECEIPT FOR ITS OWN OBSOLESCENCE.
+  //
+  // The block above reads the newest usage record in the tail. On a session that has just
+  // been compacted, that record is the compaction's OWN summarization call - which read the
+  // entire pre-compaction context. So the number is not stale, it is the size of the thing
+  // that no longer exists. Measured on the real transcripts: a session whose context is
+  // 17,189 tokens after compaction reports 879,644 here, and therefore stays over any
+  // threshold forever, however many times it is compacted.
+  //
+  // The boundary line the CLI writes carries the answer directly - `postTokens`, its own
+  // statement of the size after compaction. Verified across all 74 real boundaries on this
+  // machine: every one carries it, in a range of 6,214 to 22,508 against pre-sizes up to
+  // 1,000,403. (src/lib/transcript.js's comment says the interactive format has no
+  // postTokens. That comment is wrong, and is probably why this was not obvious sooner.)
+  //
+  // So: if a boundary appears in this tail and NO usage block follows it, the usage block
+  // above is pre-compaction and the boundary is the truth.
+  const boundary = lastCompactBoundaryInTail(text);
+  if (boundary && boundary.index > last.index) {
+    const post = boundary.meta?.postTokens ?? boundary.meta?.post_tokens;
+    // No usable post size on a boundary we can see is "cannot tell", never "it is huge".
+    return typeof post === "number" ? post : null;
+  }
+  return fromUsage;
+}
+
+/**
+ * The newest REAL compaction boundary in a transcript tail, or null.
+ *
+ * Parsed, never text-matched. A session that reads this repository quotes the string
+ * `compact_boundary` back into its own transcript inside tool results - measured: one
+ * transcript has 12 lines containing it, of which only 8 are real system lines. A text scan
+ * cannot tell a boundary from a session that talked about boundaries, and the difference
+ * decides whether a 900,000-token compaction fires.
+ *
+ * @param {string} text a transcript, or its tail
+ * @returns {{index: number, meta: object}|null}
+ */
+function lastCompactBoundaryInTail(text) {
+  const lines = text.split("\n");
+  let offset = text.length;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    offset -= lines[i].length + (i > 0 ? 1 : 0);
+    const line = lines[i];
+    if (!line.includes("compact_boundary")) {
+      continue;
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      // A tail read can start mid-line, so the first line is routinely truncated JSON.
+      continue;
+    }
+    if (parsed?.type === "system" && parsed?.subtype === "compact_boundary") {
+      return { index: offset, meta: parsed.compactMetadata || parsed.compact_metadata || {} };
+    }
+  }
+  return null;
+}
+
+/**
+ * Should this session be compacted right now?
+ *
+ * Pulled out of main.js's sweep so it can be tested without booting Electron - the decision
+ * lived inline in the sweep body, which is why a mechanism that fired 634 times and recorded
+ * 5 of them had no test at all.
+ *
+ * Every uncertain answer is `false`. The asymmetry is deliberate and measured: a wrong
+ * `false` costs a session staying large until the next sweep; a wrong `true` costs a
+ * model call over the largest contexts on the machine.
+ *
+ * @param {{cliSessionId?: string, sessionId?: string, lastActivityAt?: number}} session
+ * @param {{threshold: number, idleMs: number, now: number}} opts
+ * @returns {{compact: boolean, reason: string, tokens: number|null}}
+ */
+export function shouldCompact(session, { threshold, idleMs, now }) {
+  const idleFor = now - (session?.lastActivityAt || 0);
+  if (idleFor < idleMs) {
+    return { compact: false, reason: "still active", tokens: null };
+  }
+  const tokens = estimateSessionContextTokens(session?.cliSessionId, session?.sessionId);
+  if (tokens === null) {
+    // Cannot tell. Includes a tail with no usage block and no boundary - which is what a
+    // session buried under thousands of queued-command lines looks like.
+    return { compact: false, reason: "context size unknown", tokens: null };
+  }
+  if (tokens <= threshold) {
+    return { compact: false, reason: "under the threshold", tokens };
+  }
+  return { compact: true, reason: "over the threshold", tokens };
 }
 
 /**
@@ -641,9 +734,24 @@ export function getTranscriptSize(cliSessionId, sessionId) {
   }
 }
 
-// Compaction took ~13s in the spike; give it generous headroom for a large
-// session before treating a silent hang as failure.
-const COMPACT_TIMEOUT_MS = 90_000;
+// THE TIMEOUT WAS BELOW THE MEDIAN COMPACTION TIME, so Helm structurally could not observe
+// its own successes.
+//
+// It was 90s, set from a ~13s spike on a small session. Measured 2026-08-28 across every
+// real compact_boundary on this machine: 74 compactions, median 145,097 ms, max 245,132 ms,
+// and 64 of 74 (86%) longer than 90s. A session big enough to be worth compacting is
+// exactly one that takes longer than that.
+//
+// What that cost: Helm killed the child at 90s, resolved null, and skipped both the
+// success bookkeeping and the usage log - so it retried the same session on the next sweep,
+// every 15 minutes, indefinitely. 634 /compact calls are recorded on disk against 5 rows in
+// the usage log: under 1% of the spend was ever booked. And because the compaction itself
+// completed in the background (see the tree-kill note below), Helm paid full price and got
+// the benefit every time, while believing it had failed.
+//
+// 300s clears the observed maximum with headroom. This is not tuning - the old value
+// guaranteed failure on the population it was aimed at.
+const COMPACT_TIMEOUT_MS = 300_000;
 
 /**
  * Runs the CLI's built-in /compact on a session headlessly (verified
@@ -693,7 +801,11 @@ export function compactSession({ cwd, cliSessionId, sessionId }) {
       resolve(result);
     };
     const timeoutId = setTimeout(() => {
-      child.kill();
+      // The TREE, not just the top-level process. child.kill() signals claude.exe alone
+      // and leaves the model runtime beneath it running - so a compaction that overran the
+      // deadline kept going, finished, and spent the tokens, while this resolved null and
+      // the sweep queued it again. That is how 634 compaction calls produced 5 log rows.
+      killChildTree(child);
       finish(null);
     }, COMPACT_TIMEOUT_MS);
 
