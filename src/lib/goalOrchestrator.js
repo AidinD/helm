@@ -421,6 +421,71 @@ function readPlan(worktreePath) {
   return fs.readFileSync(file, "utf8");
 }
 
+/**
+ * How many steps a plan lays out.
+ *
+ * Counted from headings, because that is the shape the plan phase is told to produce - one
+ * step per heading, one heading per implement iteration. Measured against two real plans
+ * written independently on 2026-08-30: both used `## Step N - ...` and both had eleven.
+ *
+ * Deliberately conservative. An unparseable plan returns null, and null means "do not
+ * block" - a run that cannot be counted must not be stopped on a guess. The cost of missing
+ * a too-big plan is what happens today; the cost of falsely blocking a fine one is a run
+ * that never starts, which is worse.
+ *
+ * @param {string} plan
+ * @returns {number|null}
+ */
+export function countPlanSteps(plan) {
+  if (!plan || typeof plan !== "string") {
+    return null;
+  }
+  // Headings only, and only ones that name a step. A plan's prose can say "step" freely;
+  // a heading is the author committing to a unit of work.
+  const headings = plan.match(/^#{2,4}\s+(?:Step|STEG|Steg)\s*\d+/gm);
+  if (headings && headings.length > 0) {
+    return headings.length;
+  }
+  // Fall back to a numbered list at the top level, which is the other shape a plan takes.
+  const numbered = plan.match(/^\s{0,3}\d+\.\s+\S/gm);
+  if (numbered && numbered.length >= 3) {
+    return numbered.length;
+  }
+  return null;
+}
+
+/**
+ * Can the plan be finished in the iterations that are left?
+ *
+ * THE FAILURE THIS EXISTS FOR, measured on 2026-08-30. DEFAULT_MAX_ITERATIONS is 5. The
+ * first goes to research and the second to planning, so three remain. Two separate runs
+ * each wrote an eleven-step plan in iteration two and started executing it anyway - one
+ * reached step 4, the other step 3, and between them they spent $17 to arrive at "partial
+ * work" that nobody asked for. Nothing compared the plan to the budget, because nothing
+ * ever had.
+ *
+ * The point is not to guess a better cap. Setting maxIterations correctly requires knowing
+ * the answer in advance, which is exactly what the research and plan phases exist to find
+ * out. So the check belongs HERE - after the plan is written and before a single
+ * implement iteration is paid for.
+ *
+ * @param {string|null} plan
+ * @param {number} iterationsLeft
+ * @returns {{fits: true} | {fits: false, steps: number, left: number, needed: number}}
+ */
+export function planFitsBudget(plan, iterationsLeft) {
+  const steps = countPlanSteps(plan);
+  if (steps === null || iterationsLeft < 0) {
+    return { fits: true };
+  }
+  if (steps <= iterationsLeft) {
+    return { fits: true };
+  }
+  // `needed` is what the run would have to be given to finish, counted the same way the
+  // run itself counts: the steps that remain plus the two already spent getting here.
+  return { fits: false, steps, left: iterationsLeft, needed: steps + 2 };
+}
+
 function truncate(text, max) {
   if (!text) {
     return "";
@@ -1670,6 +1735,31 @@ export async function runGoal({
       // it also gates plan -> implement on plan.md actually existing.
       phase = advancePhaseAfterSuccess(worktreePath, phase);
       writePhase(worktreePath, phase);
+    }
+
+    // THE PLAN JUST LANDED - check it against what is left before paying for a single
+    // implement iteration. Placed here rather than inside either success branch because
+    // both of them advance the phase, and one copy of a rule is one place to get it wrong.
+    //
+    // See planFitsBudget for the $17 this exists to stop: two runs each wrote an eleven-step
+    // plan with three iterations left and started executing it anyway.
+    if (iterationPhase === "plan" && phase === "implement") {
+      const verdict = planFitsBudget(readPlan(worktreePath), maxIterations - i);
+      if (!verdict.fits) {
+        escalation = {
+          iteration: i,
+          signal: "plan_exceeds_budget",
+          detail:
+            `The plan written this iteration has ${verdict.steps} steps and ${verdict.left === 1 ? "is" : "are"} ` +
+            `${verdict.left} iteration${verdict.left === 1 ? "" : "s"} left. Finishing it needs about ` +
+            `${verdict.needed} in total. Nothing has been implemented yet, so this stops before spending the ` +
+            `budget on a fraction of the work: re-run with maxIterations ${verdict.needed}, or narrow the goal.`,
+          worktreePath,
+          branchName,
+        };
+        stoppedReason = "escalated";
+        break;
+      }
     }
 
     // Context-budget guard (praktiker #2): if THIS iteration's own fill
