@@ -23,6 +23,7 @@ import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { whisperRoot } from "keel/whisper";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -30,7 +31,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // see the setup instructions this module's caller followed. Resolved
 // relative to this file (not process.cwd()) so it works regardless of the
 // Electron process's working directory.
-const WHISPER_ROOT = path.join(__dirname, "..", "..", ".whisper");
+// Resolved by keel, not by walking up from this file. The payload moved out
+// of this repo on 2026-08-30 so that Nib could use it too: 1.3GB of CUDA DLLs
+// and model weights belong outside every repository, and one copy serves the
+// suite. `WHISPER_DIR` overrides it; the default is the folder beside the
+// checked-out repos.
+const WHISPER_ROOT = whisperRoot();
 const WHISPER_CLI_PATH = path.join(WHISPER_ROOT, "Release", "whisper-cli.exe");
 const MODEL_PATH = path.join(WHISPER_ROOT, "ggml-model-q5_0.bin");
 
