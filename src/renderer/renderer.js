@@ -6616,8 +6616,9 @@ function inlineFormat(text) {
   return nodes;
 }
 
-const MODEL_FIT_ICON = { too_weak: "⬆", appropriate: "⚖", too_strong: "⬇" };
-const MODEL_FIT_LABEL = { too_weak: "Underpowered", appropriate: "Good fit", too_strong: "Overkill" };
+// MODEL_FIT_ICON / MODEL_FIT_LABEL lived here until 2026-08-30, for the judge's verdict
+// line under the composer. The judge is gone; the historical tally it produced is in
+// DECISIONS.md and in the analysis view.
 
 // Renders a user turn's text into `bubble`, turning `[Attached image: <path>]`
 // marker lines into inline thumbnails (click → lightbox) so pasted images show
@@ -8898,9 +8899,6 @@ function paneComposerEl(index) {
   // Model-fit judge verdict lives here, under the composer — not in the chat
   // scrollback — per the captain's ask, and to keep the conversation itself
   // uncluttered. Cleared on each new send, filled in once the judge resolves.
-  const modelFitLine = document.createElement("div");
-  modelFitLine.className = "model-fit-line";
-  wrap.append(modelFitLine);
 
   const els = { cwdInput, promptEl, modelDD, effortDD, permissionDD, sendBtn, renderAttachments, renderQueuedPrompt, renderContextGauge };
   // Lets the "done" event handler (which only has the pane object, not this
@@ -9128,22 +9126,13 @@ function setPaneBusyUI(index, statusText) {
   }
 }
 
-function setModelFitLine(index, text, verdict) {
-  const paneEl = document.querySelector(`.pane[data-pane="${index}"]`);
-  const line = paneEl?.querySelector(".model-fit-line");
-  if (!line) {
-    return;
-  }
-  line.textContent = text || "";
-  line.className = "model-fit-line" + (verdict ? ` model-fit-${verdict}` : "");
-}
-
 // Surfaces what "Auto" actually resolved to, at the moment it's resolved for
 // THIS send - replacing the as-you-type guess (which can go stale between
 // typing and hitting Send) so the last thing shown before the run starts is
 // the real pick, not a debounced heuristic. Per PLAN.md 9/10: suggest AND let
 // the user choose, which requires seeing the resolved choice before paying
-// for the run, not only in setModelFitLine's post-hoc verdict.
+// for the run. (This used to add "not only in the model-fit judge's post-hoc verdict" -
+// that judge was removed on 2026-08-30.)
 function setResolvedAutoHint(index, modelLabel, effort) {
   const paneEl = document.querySelector(`.pane[data-pane="${index}"]`);
   const hint = paneEl?.querySelector(".suggest-hint");
@@ -9217,7 +9206,6 @@ async function sendFromPane(index, els) {
   pane.liveTokens = 0;
   startLiveStatsTicker(index);
   setPaneBusyUI(index, "Working…");
-  setModelFitLine(index, "");
   renderPane(index);
 
   // Resolved fresh from the FINAL prompt text at send time (not the debounced
@@ -9723,10 +9711,9 @@ async function rehydrateGoalRuns() {
   }
 }
 
-// The modelFit event is the normal way launchPaneHistory entries get cleaned
-// up, but if the judge is disabled (config.modelFitJudge.enabled: false) or
-// errors before emitting one, that never happens — this is the backstop so
-// the map doesn't grow forever over a long-running session.
+// This is now the ONLY thing that cleans up launchPaneHistory. It was written as a backstop
+// for the model-fit judge failing to emit its event; the judge was removed on 2026-08-30, so
+// the backstop is the mechanism. Nothing else bounds this map over a long-running session.
 //
 // This map is now also the ONLY routing table for every live event
 // (session/tool_use/assistant/error/done), so pruning by age alone would be
@@ -16748,19 +16735,6 @@ function renderSettingsPage() {
 
   passiveGroup.append(
     settingsToggleRow(
-      "Model-fit judge",
-      "Runs a cheap Haiku call after every completed prompt to flag whether the model/effort choice was too weak, too strong, or appropriate. Adds ~$0.015 per prompt. Shown under the composer, not in the chat history.",
-      state.config.modelFitJudge?.enabled !== false,
-      async (checked) => {
-        state.config = await window.helm.setConfig({
-          modelFitJudge: { ...(state.config.modelFitJudge || {}), enabled: checked },
-        });
-      }
-    )
-  );
-
-  passiveGroup.append(
-    settingsToggleRow(
       "Notify when a prompt finishes",
       "Shows a native Windows notification (with its default sound) when a session completes a run, so you can switch away while it works.",
       state.config.notifyOnComplete !== false,
@@ -16830,19 +16804,7 @@ function renderSettingsPage() {
     sweepStatusEl.textContent = `Background sweep: last ran ${relTime(status.lastRunAt)}${countNote}`;
   });
 
-  passiveGroup.append(
-    settingsToggleRow(
-      "Proactively check suggestion accuracy",
-      "Periodically re-checks the same \"Suggestion accuracy\" comparison shown on the Analysis page (no extra cost — it's the existing usage log, no model call) and surfaces a dismissible note there when overriding the model/effort suggestion has been judged \"appropriate\" meaningfully more often than following it. Checked on the same sweep as the items above, after enough new judged runs accumulate. Never changes the suggestion heuristic itself — only tells you it might be worth revisiting.",
-      state.config.suggestionAccuracyCheck?.enabled === true,
-      async (checked) => {
-        state.config = await window.helm.setConfig({
-          suggestionAccuracyCheck: { ...(state.config.suggestionAccuracyCheck || {}), enabled: checked },
-        });
-      }
-    )
-  );
-
+  
   // (appended into the two-column layout at the end)
 
   // Active group: these mutate a session's state on their own, unattended.
@@ -17264,7 +17226,7 @@ async function renderAnalysisPage() {
   totals.className = "analysis-totals";
   totals.textContent =
     `${summary.totalRuns} runs · $${summary.totalCostUsd.toFixed(2)} total` +
-    (summary.judgeCostUsd ? ` · $${summary.judgeCostUsd.toFixed(2)} spent on model-fit judging` : "");
+    (summary.judgeCostUsd ? ` · $${summary.judgeCostUsd.toFixed(2)} spent on model-fit judging before it was removed` : "");
   page.append(totals);
 
   // Fas 3's proactive suggestion-accuracy finding (main.js's periodic
@@ -17351,8 +17313,12 @@ async function renderAnalysisPage() {
   const fitBlock = document.createElement("div");
   fitBlock.className = "analysis-block";
   const fitH = document.createElement("h3");
-  fitH.textContent = "Model fit (judged)";
-  fitH.title = "A cheap Haiku judge reviews each completed prompt for whether the model/effort choice fit the task.";
+  // Labelled as CLOSED, not live. The judge that produced these was removed on 2026-08-30,
+  // so this block can never gain another row - and a panel that quietly stops updating while
+  // still looking current is the exact failure this app spent a day removing elsewhere.
+  fitH.textContent = "Model fit (judged until 2026-08-30)";
+  fitH.title =
+    "A Haiku judge used to review every completed prompt for whether the model/effort choice fit the task. It was removed for costing about 24,000 tokens of input per run - on one measured turn, more than the work it was judging. These are its final numbers.";
   fitBlock.append(fitH);
   const fitModels = Object.keys(summary.modelFit || {});
   if (fitModels.length === 0) {
@@ -17377,9 +17343,12 @@ async function renderAnalysisPage() {
   const accuracyBlock = document.createElement("div");
   accuracyBlock.className = "analysis-block";
   const accuracyH = document.createElement("h3");
-  accuracyH.textContent = "Suggestion accuracy";
+  // Frozen for the same reason as the block above: it is joined against the judge's
+  // verdicts, and the judge is gone. Saying so in the heading rather than letting it read
+  // as current.
+  accuracyH.textContent = "Suggestion accuracy (frozen 2026-08-30)";
   accuracyH.title =
-    "Joins each run's followed-vs-overridden auto-suggestion with the judge's verdict for that SAME run (by launchId) — not just a same-model coincidence. Runs from before this tracking existed, or with no judge verdict, are excluded rather than estimated.";
+    "Joined each run's followed-vs-overridden auto-suggestion with the model-fit judge's verdict for that SAME run, by launchId. The judge was removed on 2026-08-30, so no new runs can be added - these are the final numbers.";
   accuracyBlock.append(accuracyH);
   const acc = summary.suggestionAccuracy || { followed: {}, overridden: {} };
   const followedTotal = (acc.followed.too_weak || 0) + (acc.followed.appropriate || 0) + (acc.followed.too_strong || 0);
@@ -17954,19 +17923,16 @@ window.helm.onSessionEvent((evt) => {
     return;
   }
 
-  // Handled separately from the main switch below because this is the ONE
-  // event kind that fully retires an entry — the judge resolves well after
-  // "done" and is the last thing that will ever need this launchId.
-  if (evt.kind === "modelFit") {
-    const entry = launchPaneHistory.get(evt.launchId);
-    launchPaneHistory.delete(evt.launchId); // this is the only consumer; always one-shot
-    if (!entry || panes[entry.index] !== entry.pane) {
-      return; // pane was reused for a different session in the meantime
-    }
-    const text = `${MODEL_FIT_ICON[evt.verdict] || "⚖"} ${MODEL_FIT_LABEL[evt.verdict] || evt.verdict}: ${evt.reason}`;
-    setModelFitLine(entry.index, text, evt.verdict);
-    return;
-  }
+  // The "modelFit" event was removed with the model-fit judge on 2026-08-30. It used to be
+  // handled here because it was the ONE event kind that fully retired a launchPaneHistory
+  // entry - the judge resolved well after "done" and was the last thing that ever needed
+  // the launchId.
+  //
+  // Nothing retires an entry eagerly any more, and that is fine rather than a leak:
+  // pruneStaleLaunchHistory already removes any entry whose pane is no longer busy once it
+  // is ten minutes old, and it was written precisely as the backstop for the judge being
+  // switched off. So entries now live a few minutes longer than they did and are still
+  // bounded. Checked before removing this, not assumed.
 
   // Background Task-tool subagents — app-wide, not tied to a single pane.
   if (evt.kind === "task_started") {

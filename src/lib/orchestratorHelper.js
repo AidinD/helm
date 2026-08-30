@@ -58,7 +58,7 @@ const CLASSIFIER_SYSTEM_PROMPT = (() => {
   return raw.trim();
 })();
 
-// This mirrors judgeModelFit's exact cost-optimized recipe (judge.js) almost
+// This mirrors the recipe the model-fit judge used (judge.js, removed 2026-08-30) almost
 // line for line: --system-prompt + --allowed-tools "" + empty
 // --strict-mcp-config strips the MCP/tool defs a structured-output-only call
 // never needs, which is what actually drives the ~78% cost reduction (not

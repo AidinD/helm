@@ -1,5 +1,42 @@
 # Decisions
 
+## 2026-08-30 - The model-fit judge cost more than the work it judged, and had already answered its own question
+
+Found by following one prompt. The captain ran a training check-in in Helm and asked whether it leaked tokens. The session did not. What was attached to it did.
+
+**One turn, measured:**
+
+| | model | input written | read |
+|---|---|---|---|
+| the actual work | Sonnet | 89,391 | 315,878 |
+| two judge runs | Haiku | **91,576** | 167,946 |
+
+The judging cost more input than the work.
+
+**And it was systematic.** 429 judge runs on disk: 10.3M tokens of input written, 26.8M read, averaging 24,100 written per run against a prompt of 778 bytes.
+
+**41% of them paid twice for one answer.** In 177 of 429 the model replied correctly but inside a fenced code block instead of calling the required tool, so the CLI rejected it with `[structured-output-enforce]` and made it redo the whole thing. Runs that retried read 89,197 on average; runs that did not, 43,653.
+
+**The code claimed otherwise, and I repeated the claim.** Its own comment said "user-requested, cost-verified (~$0.015-0.02/call after stripping MCP servers + tool defs the judge never needs)". That number was in a comment, not in a measurement - and earlier the same day, auditing everything that could spend tokens passively, I quoted it rather than measuring it and moved on. That made the judge the second-largest consumer after the auto-compact loop, dismissed in passing by the very sweep meant to find such things.
+
+**What it had already concluded, harvested before removal.** 112 recorded verdicts:
+
+| model | too weak | appropriate | too strong |
+|---|---|---|---|
+| Sonnet 5 | 9 | 21 | **33** |
+| Haiku 4.5 | 0 | **47** | 0 |
+| Opus 4.8 | 0 | 0 | 2 |
+
+Haiku was appropriate 47 times out of 47. Sonnet was too strong in over half its runs. That is a real finding and it is the finding the feature existed to produce - which is exactly why the feature can go. A conclusion belongs in a decision log; a mechanism that keeps re-asking a settled question is just a recurring bill.
+
+**Decided: removed, not disabled.** `judge.js`, the call site, the config key, the settings toggle, the verdict line under the composer, and the `modelFit` event. A feature left switched off is a feature nobody trusts and nobody deletes.
+
+**And everything that could only be fed by it went too.** The periodic suggestion-accuracy check joined each run against a judge verdict by launchId. With no new verdicts it can only ever re-derive the same numbers, so it was dropped from the sweep along with `computeSuggestionAccuracyVerdict`, whose only caller it was. Dead exports went from 15 to 14, which is how that was confirmed rather than assumed.
+
+**What was deliberately KEPT.** Both analysis blocks still render their historical figures, relabelled "judged until 2026-08-30" and "frozen 2026-08-30". The data is real and it is his; what would have been wrong is leaving headings that read as current. That is the same defect - a panel that quietly stops updating while still looking live - that this codebase spent the same day removing in three other places.
+
+**One thing checked before cutting, because it was not obvious.** The `modelFit` event was the only thing that eagerly retired a `launchPaneHistory` entry. Removing it looked like a slow memory leak in a long-running window. It is not: `pruneStaleLaunchHistory` already drops any entry whose pane is no longer busy once it is ten minutes old, and it was written precisely as the backstop for the judge being switched off. Entries now live a few minutes longer and stay bounded.
+
 ## 2026-08-30 - Voice had never worked in a packaged Helm, and only a packaged check could find that
 
 Written after publishing v0.2.115, because the check that found this was the last step before calling the release done rather than the first.

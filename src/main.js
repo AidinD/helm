@@ -27,8 +27,7 @@ import { readTranscript } from "./lib/transcript.js";
 import { liveSubAgents } from "./lib/subAgents.js";
 import { invalidateTranscriptIndex, findTranscriptPath, projectsRoot, encodeProjectDir } from "./lib/paths.js";
 import { listSkills, skillMdPath } from "./lib/skills.js";
-import { appendUsageLog, readUsageSummary, computeSuggestionAccuracyVerdict } from "./lib/usage.js";
-import { judgeModelFit } from "./lib/judge.js";
+import { appendUsageLog, readUsageSummary } from "./lib/usage.js";
 import {
   listScheduledPrompts,
   pendingScheduledPrompts,
@@ -2939,41 +2938,25 @@ ipcMain.handle(
           }).show();
         }
 
-        // Model-fit judge: user-requested, cost-verified (~$0.015-0.02/call
-        // after stripping MCP servers + tool defs the judge never needs).
-        // Fire-and-forget so it never delays the real response; only runs on a
-        // genuinely completed turn (skipped if the process was killed early —
-        // sawResult false — since there is nothing meaningful to judge then).
-        const config = loadConfig();
-        if (summary.sawResult && config.modelFitJudge?.enabled !== false) {
-          judgeModelFit({
-            cwd,
-            taskPrompt: prompt,
-            model: meta.actualModel,
-            effort,
-            toolsUsed: meta.toolsUsed,
-            numTurns: meta.numTurns,
-            finalText: meta.lastAssistantText,
-          })
-            .then((result) => {
-              if (!result) {
-                return;
-              }
-              appendUsageLog({
-                type: "modelFitVerdict",
-                launchId,
-                timestamp: Date.now(),
-                model: meta.actualModel,
-                verdict: result.verdict,
-                reason: result.reason,
-                judgeCostUsd: result.costUsd,
-              });
-              send({ kind: "modelFit", verdict: result.verdict, reason: result.reason });
-            })
-            .catch((err) => {
-              console.error("[helm] model-fit judge failed:", err);
-            });
-        }
+        // The model-fit judge was REMOVED on 2026-08-30. It ran a Haiku call after every
+        // completed turn to say whether the model choice fit the task, and its own comment
+        // claimed "~$0.015-0.02/call after stripping MCP servers + tool defs".
+        //
+        // Measured rather than claimed: 429 judge runs on disk, 10.3M tokens of input
+        // written and 26.8M read - about 24,100 written per run against a prompt of 778
+        // bytes. On one real turn it cost MORE input than the work it was judging (91,576
+        // against 89,391). And 177 of the 429 (41%) paid twice for one answer: the model
+        // replied correctly in a fenced code block instead of calling the required tool, so
+        // the CLI made it redo the whole thing.
+        //
+        // It had also already answered the question it existed to ask. Across 112 recorded
+        // verdicts: Haiku was appropriate 47 times out of 47, and Sonnet was "too strong"
+        // 33 times out of 63. That finding is in DECISIONS.md, which is where a conclusion
+        // belongs once it has been reached - a mechanism that keeps re-asking a settled
+        // question is just an ongoing bill.
+        //
+        // the captain, 2026-08-30: "det är verkligen inte värt 85 000 tokens".
+
       } catch (err) {
         // Purely post-run bookkeeping (usage log, notification, judge
         // kickoff) — the renderer already has its "done" event above and
@@ -4988,13 +4971,16 @@ async function runOrchestratorSweep() {
   const config = loadConfig();
   const classifyOn = config.orchestratorHelper?.enabled === true;
   const compactOn = config.autoCompact?.enabled === true;
-  const accuracyCheckOn = config.suggestionAccuracyCheck?.enabled === true;
-  if (!classifyOn && !compactOn && !accuracyCheckOn) {
+  // The suggestion-accuracy check was dropped from the sweep on 2026-08-30. It joined each
+  // run against the model-fit judge's verdict, and the judge is gone - so it can only ever
+  // re-derive the same frozen numbers. Its historical result still renders on the Analysis
+  // page, labelled as final.
+  if (!classifyOn && !compactOn) {
     return;
   }
   sweepInFlight = true;
   try {
-    const classifiedCount = await runOrchestratorSweepBody(config, { classifyOn, compactOn, accuracyCheckOn });
+    const classifiedCount = await runOrchestratorSweepBody(config, { classifyOn, compactOn });
     lastSweepStatus = { lastRunAt: Date.now(), ok: true, classifiedCount: classifiedCount || 0, error: null };
   } catch (err) {
     lastSweepStatus = { lastRunAt: Date.now(), ok: false, classifiedCount: 0, error: String(err?.message || err) };
@@ -5004,7 +4990,7 @@ async function runOrchestratorSweep() {
   }
 }
 
-async function runOrchestratorSweepBody(config, { classifyOn, compactOn, accuracyCheckOn }) {
+async function runOrchestratorSweepBody(config, { classifyOn, compactOn }) {
   const attentionWindowMs = (config.attentionWindowHours || 24) * 60 * 60 * 1000;
   const { sessions } = readAllSessions({ attentionWindowMs });
   // "active" sessions have work genuinely in flight — never touch them.
@@ -5164,61 +5150,14 @@ async function runOrchestratorSweepBody(config, { classifyOn, compactOn, accurac
     }
   }
 
-  if (accuracyCheckOn) {
-    runSuggestionAccuracyCheck(config);
-  }
-
   return classifiedCount;
 }
 
-// Fas 3's proactive model/effort suggestion-accuracy review (PLAN.md Phase
-// 3 — "infogas i Fas 3:s orkestrator-helper istället för en egen separat
-// loop", 2026-07-02). Deliberately reuses computeSuggestionAccuracyVerdict
-// (usage.js) — the SAME metric the on-demand "Suggestion accuracy" report on
-// the Analysis page already computes — rather than inventing a new one; this
-// only changes WHEN the check happens (piggybacking on the existing sweep),
-// never what's being measured. No model call, no network, just parsing the
-// local usage-log.jsonl already read for the on-demand report — cheap enough
-// to check every sweep, gated below on data volume rather than time so it
-// doesn't re-nag on unchanged data.
-function runSuggestionAccuracyCheck(config) {
-  const summary = readUsageSummary();
-  const verdict = computeSuggestionAccuracyVerdict(summary);
-  if (!verdict) {
-    return;
-  }
-  const totalNow = verdict.followedTotal + verdict.overriddenTotal;
-  const checkState = config.suggestionAccuracyCheck || {};
-  const totalAtLastCheck = (checkState.lastCheckedFollowedTotal || 0) + (checkState.lastCheckedOverriddenTotal || 0);
-  if (totalNow - totalAtLastCheck < SUGGESTION_ACCURACY_CHECK_EVERY_N_RUNS) {
-    return;
-  }
-  const next = { ...config };
-  next.suggestionAccuracyCheck = {
-    ...checkState,
-    lastCheckedFollowedTotal: verdict.followedTotal,
-    lastCheckedOverriddenTotal: verdict.overriddenTotal,
-  };
-  // Only surface a notice when the heuristic looks meaningfully OFF
-  // (overriding did better than following — the "suggested Sonnet but Opus
-  // was used successfully" style signal) — a positive/neutral diff just
-  // confirms the heuristic is fine and isn't worth interrupting the captain about.
-  // A fresh finding always REPLACES a prior dismissed one (new data volume
-  // means a genuinely new read, not the same stale nag), but only when the
-  // verdict is actually still negative — this can also CLEAR a previously
-  // surfaced notice if enough new data flipped the verdict positive.
-  if (verdict.diffPoints < 0) {
-    next.suggestionAccuracyNotice = {
-      message: verdict.message,
-      diffPoints: verdict.diffPoints,
-      totalAtCheck: totalNow,
-      dismissed: false,
-    };
-  } else {
-    next.suggestionAccuracyNotice = null;
-  }
-  writeConfig(next);
-}
+// runSuggestionAccuracyCheck was removed on 2026-08-30 along with the model-fit judge that
+// fed it. It was free to run - local arithmetic over the usage log, no model call - but it
+// can only ever re-derive the same frozen numbers now, and a periodic check that cannot
+// change its answer is a mechanism pretending to work. The historical result still renders
+// on the Analysis page, labelled as final.
 
 // Stale-build indicator: how often to re-check the on-disk git HEAD against
 // the identity captured at boot. Cheap (a single `git rev-parse`, no model

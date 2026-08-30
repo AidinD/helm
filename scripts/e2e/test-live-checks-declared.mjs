@@ -58,7 +58,8 @@ const REACHES_MODEL = [
   { re: /claude\.(exe|cmd)\b/, what: "names the claude executable" },
   { re: /\brunGoal\s*\(|\bsummarizeSession\s*\(/, what: "runs a goal / a summarize call" },
   { re: /\bsendFromPane\s*\(/, what: "sends a real turn through the composer (sendFromPane)" },
-  { re: /\btriageAutoTask\s*\(|\bjudgeModelFit\s*\(/, what: "calls a helper that asks a model (triage / model-fit judge)" },
+  // judgeModelFit was in this list until 2026-08-30, when the model-fit judge was removed.
+  { re: /\btriageAutoTask\s*\(/, what: "calls a helper that asks a model (auto-captain triage)" },
   { re: /\bsummarizeForHandoff\s*\(|\bsummarizeAndCarryOver\s*\(/, what: "asks for a summary" },
 ];
 

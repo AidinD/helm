@@ -49,11 +49,6 @@ const DEFAULT_CONFIG = {
   // meta: { sessionId, cliSessionId, cwd, model, effort, permissionMode, title,
   // createdAt, lastActivityAt, isArchived }.
   helmSessions: {},
-  // Runs a cheap Haiku judge after every completed prompt to flag whether the
-  // model/effort choice was too weak/too strong (~$0.015-0.02 extra per run,
-  // after stripping MCP/tool defs the judge doesn't need). User-requested;
-  // set enabled:false here to turn it off if the recurring cost isn't worth it.
-  modelFitJudge: { enabled: true },
   notifyOnComplete: true, // native OS notification (+ its default sound) when a prompt finishes
   // Off by default: manual "Archive" (context menu) is always available.
   // When on, idle sessions with no open Jot work get a "Suggest: archive"
@@ -73,8 +68,14 @@ const DEFAULT_CONFIG = {
   // Fas 3's periodic session-status classifier (PLAN.md "orchestrator
   // helper"). Off by default — it's a recurring background cost (one cheap
   // Haiku call per eligible session per sweep), same opt-in posture as
-  // modelFitJudge/archiveSuggestions. Its output only ever sharpens an
-  // existing suggestion (the archive-suggest pill) — never acts on its own.
+  // archiveSuggestions. Its output only ever sharpens an existing suggestion
+  // (the archive-suggest pill) — never acts on its own.
+  //
+  // The model-fit judge used to be named here as the other example of that posture. It
+  // was removed on 2026-08-30 for costing 24,100 tokens of input per run against a
+  // 778-byte prompt - which is the warning this comment should now carry instead: "a
+  // cheap Haiku call" is a claim about a model, not about a call, and only a measurement
+  // tells you which.
   orchestratorHelper: { enabled: false },
   // Fas 3 auto-compact: when on, the same periodic sweep runs the CLI's
   // built-in /compact on idle/waiting sessions whose estimated context has
@@ -189,7 +190,6 @@ export function loadConfig() {
     return {
       ...DEFAULT_CONFIG,
       ...parsed,
-      modelFitJudge: { ...DEFAULT_CONFIG.modelFitJudge, ...parsed.modelFitJudge },
       archiveSuggestions: { ...DEFAULT_CONFIG.archiveSuggestions, ...parsed.archiveSuggestions },
       orchestratorHelper: { ...DEFAULT_CONFIG.orchestratorHelper, ...parsed.orchestratorHelper },
       autoCompact: { ...DEFAULT_CONFIG.autoCompact, ...parsed.autoCompact },
