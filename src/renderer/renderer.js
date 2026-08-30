@@ -17127,13 +17127,6 @@ function skillListEl(title, source, origin, cwd, opts = {}) {
   return section;
 }
 
-function fitPill(kind, count) {
-  const pill = document.createElement("span");
-  pill.className = `fit-pill fit-pill-${kind}`;
-  const shortLabel = { too_weak: "weak", appropriate: "ok", too_strong: "strong" }[kind];
-  pill.textContent = `${count} ${shortLabel}`;
-  return pill;
-}
 
 // Two overlapping renders used to BOTH append their grid: this function clears the
 // page, then awaits four IPC calls, and only appends at the end - so a second call
@@ -17229,33 +17222,10 @@ async function renderAnalysisPage() {
     (summary.judgeCostUsd ? ` · $${summary.judgeCostUsd.toFixed(2)} spent on model-fit judging before it was removed` : "");
   page.append(totals);
 
-  // Fas 3's proactive suggestion-accuracy finding (main.js's periodic
-  // runSuggestionAccuracyCheck, folded into the orchestrator sweep — see
-  // PLAN.md Phase 3 / DECISIONS.md). Surfaced right above the "Suggestion
-  // accuracy" block it's about, since that's where the captain already looks to
-  // check this manually — the proactive version just means he doesn't have
-  // to remember to. Same "propose, never auto-act" posture as the archive
-  // pill: dismissing only hides THIS finding; a new one (computed from
-  // meaningfully more data) replaces it automatically.
-  const notice = state.config.suggestionAccuracyNotice;
-  if (notice && !notice.dismissed) {
-    const banner = document.createElement("div");
-    banner.className = "analysis-notice";
-    const text = document.createElement("span");
-    text.textContent = `◎ ${notice.message}`;
-    const dismiss = document.createElement("button");
-    dismiss.type = "button";
-    dismiss.className = "analysis-notice-dismiss";
-    dismiss.textContent = "Dismiss";
-    dismiss.addEventListener("click", async () => {
-      state.config = await window.helm.setConfig({
-        suggestionAccuracyNotice: { ...notice, dismissed: true },
-      });
-      renderAnalysisPage();
-    });
-    banner.append(text, dismiss);
-    page.append(banner);
-  }
+  // The suggestion-accuracy notice was removed on 2026-08-30. It was written by a periodic
+  // check that joined runs against the model-fit judge's verdicts; with the judge gone,
+  // nothing can ever produce one again, so rendering it was a banner waiting for a sender
+  // that no longer exists.
 
   const grid = document.createElement("div");
   grid.className = "analysis-grid";
@@ -17310,89 +17280,12 @@ async function renderAnalysisPage() {
     skillEntries.forEach(([s, c]) => skillUsageBlock.append(barRow(s, c, skillMax)));
   }
 
-  const fitBlock = document.createElement("div");
-  fitBlock.className = "analysis-block";
-  const fitH = document.createElement("h3");
-  // Labelled as CLOSED, not live. The judge that produced these was removed on 2026-08-30,
-  // so this block can never gain another row - and a panel that quietly stops updating while
-  // still looking current is the exact failure this app spent a day removing elsewhere.
-  fitH.textContent = "Model fit (judged until 2026-08-30)";
-  fitH.title =
-    "A Haiku judge used to review every completed prompt for whether the model/effort choice fit the task. It was removed for costing about 24,000 tokens of input per run - on one measured turn, more than the work it was judging. These are its final numbers.";
-  fitBlock.append(fitH);
-  const fitModels = Object.keys(summary.modelFit || {});
-  if (fitModels.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "pane-empty";
-    empty.textContent = "No verdicts yet.";
-    fitBlock.append(empty);
-  } else {
-    fitModels.forEach((m) => {
-      const counts = summary.modelFit[m];
-      const row = document.createElement("div");
-      row.className = "fit-row";
-      const label = document.createElement("span");
-      label.className = "fit-model-label";
-      label.textContent = m.replace("claude-", "");
-      row.append(label);
-      row.append(fitPill("too_weak", counts.too_weak), fitPill("appropriate", counts.appropriate), fitPill("too_strong", counts.too_strong));
-      fitBlock.append(row);
-    });
-  }
-
-  const accuracyBlock = document.createElement("div");
-  accuracyBlock.className = "analysis-block";
-  const accuracyH = document.createElement("h3");
-  // Frozen for the same reason as the block above: it is joined against the judge's
-  // verdicts, and the judge is gone. Saying so in the heading rather than letting it read
-  // as current.
-  accuracyH.textContent = "Suggestion accuracy (frozen 2026-08-30)";
-  accuracyH.title =
-    "Joined each run's followed-vs-overridden auto-suggestion with the model-fit judge's verdict for that SAME run, by launchId. The judge was removed on 2026-08-30, so no new runs can be added - these are the final numbers.";
-  accuracyBlock.append(accuracyH);
-  const acc = summary.suggestionAccuracy || { followed: {}, overridden: {} };
-  const followedTotal = (acc.followed.too_weak || 0) + (acc.followed.appropriate || 0) + (acc.followed.too_strong || 0);
-  const overriddenTotal = (acc.overridden.too_weak || 0) + (acc.overridden.appropriate || 0) + (acc.overridden.too_strong || 0);
-  if (followedTotal + overriddenTotal === 0) {
-    const empty = document.createElement("div");
-    empty.className = "pane-empty";
-    empty.textContent = "No judged runs with a suggestion yet.";
-    accuracyBlock.append(empty);
-  } else {
-    const followedRow = document.createElement("div");
-    followedRow.className = "fit-row";
-    const followedLabel = document.createElement("span");
-    followedLabel.className = "fit-model-label";
-    followedLabel.textContent = `Followed suggestion (${followedTotal})`;
-    followedRow.append(followedLabel);
-    followedRow.append(fitPill("too_weak", acc.followed.too_weak || 0), fitPill("appropriate", acc.followed.appropriate || 0), fitPill("too_strong", acc.followed.too_strong || 0));
-    accuracyBlock.append(followedRow);
-
-    const overriddenRow = document.createElement("div");
-    overriddenRow.className = "fit-row";
-    const overriddenLabel = document.createElement("span");
-    overriddenLabel.className = "fit-model-label";
-    overriddenLabel.textContent = `Overrode suggestion (${overriddenTotal})`;
-    overriddenRow.append(overriddenLabel);
-    overriddenRow.append(fitPill("too_weak", acc.overridden.too_weak || 0), fitPill("appropriate", acc.overridden.appropriate || 0), fitPill("too_strong", acc.overridden.too_strong || 0));
-    accuracyBlock.append(overriddenRow);
-
-    // A plain read of what the numbers say, not a persuasive spin — if
-    // overriding does better, that's a real signal the heuristic in
-    // suggest.js should change, not something to word around.
-    const followedRate = followedTotal ? (acc.followed.appropriate || 0) / followedTotal : null;
-    const overriddenRate = overriddenTotal ? (acc.overridden.appropriate || 0) / overriddenTotal : null;
-    if (followedRate !== null && overriddenRate !== null) {
-      const note = document.createElement("div");
-      note.className = "suggest-hint";
-      const diff = Math.round((followedRate - overriddenRate) * 100);
-      note.textContent =
-        diff >= 0
-          ? `Following the suggestion was judged "appropriate" ${diff} points more often than overriding it.`
-          : `Overriding the suggestion was judged "appropriate" ${Math.abs(diff)} points more often than following it — worth revisiting suggest.js's heuristic.`;
-      accuracyBlock.append(note);
-    }
-  }
+  // The "Model fit" and "Suggestion accuracy" blocks were removed on 2026-08-30 with the
+  // judge that produced them. Keeping them relabelled as historical was the first instinct
+  // and the wrong one: the raw verdicts are still in usage-log.jsonl and the conclusion is
+  // in DECISIONS.md, so two frozen panels added nothing except something to scroll past
+  // that would get staler every day. (the captain, 2026-08-30: "da borde kanske motsvarande del
+  // i analysis ocksa rensas".)
 
   // Pure analytics on how the captain handles review, not the board's current state
   // (the captain, task 76790f23, round 2: "Jag vill bara ha analytics datan, inte
@@ -17487,7 +17380,7 @@ async function renderAnalysisPage() {
     pathList.forEach((t) => pathsBlock.append(barRow(t.path, t.count, pathMax)));
   }
 
-  grid.append(modelBlock, toolBlock, skillUsageBlock, fitBlock, accuracyBlock, reviewBlock, usageBlock, pathsBlock);
+  grid.append(modelBlock, toolBlock, skillUsageBlock, reviewBlock, usageBlock, pathsBlock);
   grid.append(skillListEl("Global skills (~/.claude/skills)", global, "global", cwd));
   // Project skills, PER PROJECT. This used to be "this pane's project skills", which
   // could not be read: Analysis is a page you reach by leaving the pane, so the panel
