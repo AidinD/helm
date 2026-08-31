@@ -3998,6 +3998,68 @@ function writeDispatchedReviewRecord({ request, result, report }) {
 }
 
 /**
+ * Persist the "running" -> "interrupted" correction for dead runs (bug
+ * ef0764e0). Until now, the ONLY place that ever reclassified a stale
+ * "running" record was the goal:history IPC handler - and it did that on the
+ * copy it returns to the renderer, never writing the correction back to
+ * goal-run-history.json. So the UI looked right on every read while the file
+ * on disk kept saying "running" forever - found live as records 18-27 days
+ * old, dead pid, worktree long gone. Anything that reads the raw file
+ * directly (this reconciliation, a human opening the JSON) saw the stale lie.
+ *
+ * Runs once at startup, in the same deferred housekeeping pass as
+ * reconcileStrandedAutoCards (before it, so that pass's own reload of the
+ * history sees the corrected state too). For every "running" record:
+ *   - genuinely live in ANOTHER Helm instance (isForeignLiveRun) -> untouched,
+ *     full stop. Reclassifying a run someone else is actively driving would
+ *     be worse than leaving a stale dead record (ticket's explicit warning).
+ *   - no live process behind it in THIS process, or its worktree no longer
+ *     exists on disk -> reclassify to "interrupted" and WRITE it back.
+ * A record whose worktree is gone can never be resumed no matter what
+ * `resumable` says, so that case also clears `resumable` here - tightening,
+ * not changing, the semantics resumeGoalRunById already enforces (it refuses
+ * a missing worktree independently; this just keeps the on-disk flag honest
+ * too). A restart-interrupted run whose worktree still exists keeps whatever
+ * `resumable` it already had (startGoalRun's onWorktree sets that; see the
+ * "App-RESTART-interrupted runs are now resumable too" comment above
+ * resumeGoalRunById) - this function only ever narrows it, never widens it.
+ */
+function reconcileStaleRunningRecords() {
+  let records;
+  try {
+    records = loadGoalRunHistory();
+  } catch (err) {
+    console.error("[helm] could not load goal-run history for reconciliation:", err?.message || err);
+    return { checked: false, fixed: 0 };
+  }
+  let fixed = 0;
+  for (const rec of records) {
+    if (!rec || rec.status !== "running") {
+      continue;
+    }
+    if (isForeignLiveRun(rec)) {
+      continue; // owned+driven by another instance right now - leave it alone
+    }
+    const liveHere = liveGoalRuns.has(rec.goalRunId);
+    const worktreeGone = !rec.worktreePath || !fs.existsSync(rec.worktreePath);
+    if (liveHere && !worktreeGone) {
+      continue; // still genuinely running in this process
+    }
+    const patch = { goalRunId: rec.goalRunId, status: "interrupted", updatedAt: Date.now() };
+    if (worktreeGone) {
+      patch.resumable = false;
+    }
+    try {
+      upsertGoalRunRecord(patch);
+      fixed += 1;
+    } catch (err) {
+      console.error("[helm] could not persist a stale-running reconciliation:", err?.message || err);
+    }
+  }
+  return { checked: records.length, fixed };
+}
+
+/**
  * Take the "auto-running" stripe off cards whose run did not survive a restart.
  *
  * Runs once at startup. A card is left alone if a run record links it to work that
@@ -5798,6 +5860,20 @@ function startDispatchWatcher() {
     } catch (err) {
       worktreeSweepPending = false;
       console.error("[helm] worktree housekeeping failed:", err?.message || err);
+    }
+    // Same deferral, same reason (main-thread file I/O before first paint). Runs
+    // BEFORE reconcileStrandedAutoCards so that pass's own loadGoalRunHistory()
+    // read already sees the corrected on-disk status (bug ef0764e0 - a stale
+    // "running" record with a dead process/deleted worktree must not keep lying
+    // on disk forever, just because the old read-time-only downgrade never
+    // persisted it).
+    try {
+      const { checked, fixed } = reconcileStaleRunningRecords();
+      if (fixed > 0) {
+        console.log(`[helm] reconciled ${fixed} stale "running" goal-run record(s) out of ${checked}`);
+      }
+    } catch (err) {
+      console.error("[helm] stale goal-run reconciliation failed:", err?.message || err);
     }
     // Same deferral, same reason (board file I/O before first paint), and it has to
     // run whether or not the auto-captain is switched on: a card stranded by an
