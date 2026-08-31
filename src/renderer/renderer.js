@@ -10548,6 +10548,9 @@ function augmentSecondMatesWithSessions(secondMates, mates = []) {
     return bound?.startedBy ? { ...s, startedBy: bound.startedBy } : s;
   });
   const boundIds = new Set(list.map((s) => s.sessionId).filter(Boolean));
+  // Projects that already have a REGISTERED node. A second session in one of those is
+  // not a second seat - see the guard further down for what that was costing.
+  const registeredProjects = list.map((s) => s.projectPath).filter(Boolean);
   // A first mate's OWN session IS that mate (its card's "jump in" resumes it),
   // not a piece of Direct work - so exclude it, or a session started while
   // inside a first mate (e.g. jumping into Sinbad and typing a prompt) wrongly
@@ -10563,7 +10566,23 @@ function augmentSecondMatesWithSessions(secondMates, mates = []) {
     .sort((a, b) => (b.lastActivityAt || 0) - (a.lastActivityAt || 0));
   for (const sess of sessions) {
     const sid = sess.cliSessionId || sess.sessionId;
-    if (boundIds.has(sid) || secondMateForSession(sess)) {
+    // A project that already has a registered second mate does not get a second node
+    // for another session in it.
+    //
+    // The old behaviour produced two nodes for one project, and the list is sorted by
+    // last activity - so which one the Captain widget showed moved as he worked, and a
+    // session appeared to vanish when it had only been displaced (the captain 2026-08-18, with
+    // screenshots: "sessioner roterar mellan vissa när jag går in och ut ur en session").
+    //
+    // The synthetic node was also a claim that is not true. A plain session started in a
+    // project has no helm-dispatch MCP at all - verified on the real one that caused this
+    // - so it cannot orchestrate crew. Giving it a seat row said it could.
+    //
+    // Nothing is hidden by this. The session is still in the session list and still
+    // reaches the needs-you queue; it just does not pretend to be a seat of its own. A
+    // project with NO registered mate still gets its session node, which is the case that
+    // makes the Direct lane visible at all.
+    if (boundIds.has(sid) || secondMateForSession(sess) || registeredProjects.some((p) => samePath(p, sess.cwd))) {
       // Skip if already a first mate's own session, OR if this session resolves
       // to a REGISTERED second mate. boundIds only holds the single sm.sessionId
       // form, but secondMateForSession matches on cliSessionId OR sessionId - so

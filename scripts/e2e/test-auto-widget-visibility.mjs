@@ -72,7 +72,11 @@ function extractFunction(source, name) {
   return null;
 }
 
-const fnNames = ["isLiveWorkNode", "isAutoStartedNode", "augmentSecondMatesWithSessions"];
+// samePath joined this list on 2026-08-31: augmentSecondMatesWithSessions started using
+// it to refuse a second node for a project that already has one, and lifting a function
+// without what it calls gives a ReferenceError at the moment the new branch is reached -
+// which is to say, on the case the new guard exists for.
+const fnNames = ["isLiveWorkNode", "isAutoStartedNode", "samePath", "augmentSecondMatesWithSessions"];
 const bodies = {};
 for (const n of fnNames) {
   bodies[n] = extractFunction(src, n);
@@ -99,6 +103,7 @@ const makeHarness = (sessions) =>
     const registered = sessionsFixture.__registered || [];
     const secondMateForSession = (sess) =>
       registered.find((r) => r.sessionId === (sess.cliSessionId || sess.sessionId)) || null;
+    ${bodies.samePath}
     ${bodies.isLiveWorkNode}
     ${bodies.isAutoStartedNode}
     ${bodies.augmentSecondMatesWithSessions}
