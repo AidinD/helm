@@ -13062,6 +13062,21 @@ async function widgetEl(widget, data) {
       danger: true,
       onClick: async () => {
         await saveWidgetLayout(layout.filter((w) => w.id !== widget.id));
+        // Say when the seat is still taken.
+        //
+        // The focus mechanism agreed on 2026-08-31 is a trade rather than a cap: one
+        // widget per first mate, and a busier dashboard is the price of another one.
+        // That only works while the widget is an honest readout of the cost. Removing
+        // just the widget makes the board calmer while the mate stays on watch - the
+        // benefit kept, the price hidden - which is the mechanism upside down. Nothing
+        // is prevented here; it is only said out loud, and Dismiss is named because
+        // that is the thing that actually gives the seat back.
+        if (widget.type === "firstMate" && widget.mateId) {
+          const mate = (data.mates || []).find((m) => m.mateId === widget.mateId);
+          if (mate) {
+            showToast(`Widget removed. ${mate.name} is still on watch - use Dismiss to give the seat back.`);
+          }
+        }
         await renderDashboardPage();
       },
     });

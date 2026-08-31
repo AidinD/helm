@@ -36,10 +36,20 @@ const matesPath = process.env.HELM_MATES_PATH || path.join(__dirname, "..", ".."
 // first mates som helst, men jag är begränsad till två". Callers pass a count;
 // this is what they get when nothing is configured.
 export const MATE_SLOT_COUNT = 2;
-// An upper bound only so a stray value can't spawn a hundred mates. Each mate is
-// a real coordinator with its own session and cost, so a large number is a
-// mistake, not a preference.
-export const MATE_SLOT_MAX = 8;
+// A guard against a corrupt config value, NOT a limit on what the captain may choose.
+//
+// It was 8, and 8 was doing both jobs at once. On 2026-08-31 the focus mechanism
+// changed shape: a hard cap was rejected as the way to keep session count down -
+// he would route around it, and a constraint that gets routed around hides the
+// problem rather than solving it (2026-08-16 direction entry, failure mode 3).
+// What replaces it is a cost he feels instead of a rule that refuses him: one
+// widget per first mate, on a dashboard that gets busier and longer to scroll the
+// more of them there are. He makes the trade; the trade answers back immediately.
+//
+// So this number must never be the thing that stops him - it exists only so a
+// garbled `firstMateSlots` cannot spawn a hundred coordinators, each of which is a
+// real session with a real cost. Set high enough that the clutter argues first.
+export const MATE_SLOT_MAX = 24;
 
 /** Clamp a requested slot count to something sane; anything unusable falls back to the default. */
 export function clampMateSlots(n) {
