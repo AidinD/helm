@@ -66,7 +66,13 @@ const slice = (marker, chars = 2600) => {
     /if \(wasLive && \(wait\.reports \|\| wait\.alarm\)\)/.test(region),
     "it fires on live -> finished, so a mate that never had crew stays quiet"
   );
-  ok(/notifyAttention\(crewSettledNotice\(mate, wait\)\)/.test(region), "and it actually notifies");
+  ok(/notifyAttention\(notice\)/.test(region), "and it actually notifies");
+  // The OS toast is gated on the window NOT being focused (main.js attention:notify),
+  // so on its own it says nothing at all while he is looking straight at Helm - which
+  // is a likely moment for crew to come back. The in-app notice is what covers that,
+  // and it is the same pair a failed goal run already fires.
+  ok(/showNotice\(/.test(region), "and posts an in-app notice too, which the focus gate cannot swallow");
+  ok(/navigateToPage\("dashboard"\)/.test(region), "with somewhere to go from it");
 }
 
 // --- it must stay free -------------------------------------------------------------

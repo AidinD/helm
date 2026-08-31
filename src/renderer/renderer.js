@@ -9649,7 +9649,15 @@ async function refresh() {
     }
     const wasLive = matesWithLiveCrew.delete(mate.mateId);
     if (wasLive && (wait.reports || wait.alarm)) {
-      window.helm.notifyAttention(crewSettledNotice(mate, wait));
+      const notice = crewSettledNotice(mate, wait);
+      // BOTH, the same way a failed run already does it. The OS toast is gated on the
+      // window not being focused - deliberately, so it does not nag while he is already
+      // looking at Helm - which means it says nothing at all when he IS looking. An
+      // in-app notice is what covers that, and it can carry somewhere to go.
+      showNotice(`${notice.title.replace(/^Helm - /, "")}: ${notice.body}`, {
+        actions: [{ label: "Open Dashboard", onClick: () => navigateToPage("dashboard") }],
+      });
+      window.helm.notifyAttention(notice);
     }
   }
 
