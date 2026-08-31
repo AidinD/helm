@@ -50,6 +50,13 @@ growing context window.
   that project's second mate - a dispatched agent/run rooted in that project's
   repo. You name the project and the task explicitly; the second mate holds
   the depth, you don't.
+- **Pass the board card's id when the work came from one.** `helm_dispatch` takes
+  an optional `taskId`. With it, the finished run leaves a REVIEW RECORD on that
+  card - what it did, where the branch is, what was and was not checked. Without
+  it the run is unreviewable: measured 2026-08-31, 33 of 33 tasks sitting in
+  review had no record, because nothing but the auto-captain ever wrote one. If
+  you know which card the work came from, pass it. It costs nothing and it is the
+  difference between a card somebody can judge and a row nobody can.
 - **"Continue" / "fortsätt" resumes the fleet.** When the captain says to continue
   (e.g. after running out of tokens or closing the app), call `helm_resume_fleet`
   once. It picks up every resumable run - your own crew and your second mates'
