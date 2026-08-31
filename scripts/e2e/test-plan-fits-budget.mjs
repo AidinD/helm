@@ -78,25 +78,23 @@ console.log("\n-- failing open, on purpose --");
 // --- against the two plans that actually caused this -----------------------
 console.log("\n-- the real plans from 2026-08-30 --");
 {
-  // If these worktrees are still on disk, use the genuine articles. A synthetic fixture
-  // proves the arithmetic; the real file proves the PARSER matches what a plan phase
-  // actually writes, which is the half a fixture cannot show.
-  const real = [
-    "D:/Repo/Tools/tend-worktrees/goal-75d9b0be-aaa6-46c3-9437-10546f26454c/.helm-goal/plan.md",
-    "D:/Repo/Tools/tend-worktrees/goal-4a896089-b642-44a4-99d7-31cbf3f36c9f/.helm-goal/plan.md",
-  ].filter((p) => fs.existsSync(p));
+  // A synthetic fixture proves the arithmetic; a REAL plan proves the parser matches
+  // what a plan phase actually writes, which is the half a fixture cannot show. So the
+  // real one is kept as a fixture rather than read from the worktree it was written in.
+  //
+  // It used to read the worktrees directly, and on 2026-08-31 those were removed during
+  // a cleanup - after which this whole section skipped itself, quietly, while the card
+  // it was the evidence for had already been closed citing it. A check whose evidence
+  // can be deleted by unrelated housekeeping is a check that will be green when it
+  // matters least. Recovered from the tend repo's history (commit e6981fe) and pinned
+  // here, where nothing else has a reason to touch it.
+  const plan = fs.readFileSync(new URL("./fixtures/real-goal-plan-2026-08-30.md", import.meta.url), "utf8");
 
-  if (real.length === 0) {
-    console.log("SKIPPED - the worktrees those plans lived in are gone; the checks above still ran.");
-  } else {
-    for (const p of real) {
-      const steps = countPlanSteps(fs.readFileSync(p, "utf8"));
-      ok(steps !== null && steps >= 10, `a real plan parses to ${steps} steps - the parser matches what a plan phase writes`);
-      const v = planFitsBudget(fs.readFileSync(p, "utf8"), 3);
-      ok(v.fits === false, "and with the three iterations it really had, it would have been stopped");
-      ok(v.needed >= 12, `telling the caller to give it ${v.needed} instead`);
-    }
-  }
+  const steps = countPlanSteps(plan);
+  ok(steps !== null && steps >= 10, `a real plan parses to ${steps} steps - the parser matches what a plan phase writes`);
+  const v = planFitsBudget(plan, 3);
+  ok(v.fits === false, "and with the three iterations it really had, it would have been stopped");
+  ok(v.needed >= 12, `telling the caller to give it ${v.needed} instead`);
 }
 
 // --- the wiring, since the decision is worthless unless it runs ------------
