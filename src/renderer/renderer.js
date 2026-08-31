@@ -28,6 +28,8 @@ let mateBySessionId = new Map();
 // the arrival of finished crew is silent - measured on a real day, crew finished at
 // 12:41 and 13:10 and nothing said so.
 let matesWithLiveCrew = new Set();
+// Said once per Helm run - see where it is used.
+let tierGuardWarned = false;
 let secondMateBySessionId = new Map();
 // CLI session ids with a turn CURRENTLY running (from the "session" event until
 // the process "closed"), tracked independently of any pane so it survives
@@ -9662,6 +9664,24 @@ async function refresh() {
       });
       window.helm.notifyAttention(notice);
     }
+  }
+
+  // The tier guard being OFF has to keep announcing itself.
+  //
+  // Not a toast: a toast is for something that just happened, and this is a condition
+  // that persists for as long as Helm runs. Said once per Helm run rather than once per
+  // poll, because a notice every few seconds is noise somebody learns to dismiss without
+  // reading - which is the same as not saying it.
+  //
+  // The failure this guards against is not the hatch being used. It is the hatch being
+  // opened one afternoon for one false block and then forgotten, with every session
+  // afterwards reading as supervised when nothing is checking them.
+  if (data.tierGuardOverridden && !tierGuardWarned) {
+    tierGuardWarned = true;
+    showNotice(
+      "The tier guard is OFF - HELM_TIER_OVERRIDE is set, so no session is being checked. Unset it and restart Helm to turn the guard back on.",
+      { tone: "warn" }
+    );
   }
 
   state.sessions = data.sessions;

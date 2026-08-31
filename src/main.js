@@ -521,6 +521,19 @@ ipcMain.handle("sessions:get", async () => {
     quotaAt: latestQuota ? latestQuotaAt : config.lastQuotaAt || null,
     // Accumulated per-window readings for the usage panel (bc6786c7): each { info, at }.
     quotaWindows: quotaWindowsSnapshot(),
+    /*
+     * Is the tier guard switched off right now?
+     *
+     * Sent on every poll rather than read once, because a guard that is off has to keep
+     * saying so. The whole reason the hatch exists is that a guard with no way out gets
+     * deleted at the first false block - and the way that goes wrong instead is a hatch
+     * opened one afternoon and forgotten, with everything downstream still reading as
+     * supervised. It cannot be forgotten while the app keeps repeating it.
+     *
+     * Derived from Helm's own process env, the same place the hook's copy comes from, so
+     * the banner cannot say "on" while the guard is actually enforcing or the reverse.
+     */
+    tierGuardOverridden: process.env.HELM_TIER_OVERRIDE === "1",
     generatedAt: Date.now(),
   };
 });
@@ -1905,6 +1918,20 @@ function tierGuardLaunchConfig(tier, { sessionId, metaHome }) {
       HELM_TIER: tier,
       HELM_TIER_SESSION: sessionId || "",
       HELM_META_HOME: metaHome || "",
+      /*
+       * The tier guard's escape hatch, copied from HELM'S OWN process environment.
+       *
+       * This line is the security property, so it is worth being blunt about what it is
+       * not. It does not read config.json, and it must never be changed to. A supervised
+       * agent can write files; a guard it can switch off by editing one is decoration.
+       * Helm's process env is set before Helm starts and nothing inside a session can
+       * reach it, so turning the hatch on means setting a variable and restarting the
+       * app - deliberate by construction rather than by policy.
+       *
+       * Omitted entirely when it is not exactly "1", so a stray or empty value cannot
+       * arrive at the hook looking like an intention.
+       */
+      ...(process.env.HELM_TIER_OVERRIDE === "1" ? { HELM_TIER_OVERRIDE: "1" } : {}),
     },
   };
 }

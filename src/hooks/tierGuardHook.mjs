@@ -18,6 +18,7 @@
 //   HELM_TIER_SESSION  session id, for the per-turn counter
 //   HELM_META_HOME     where the counter lives
 //   HELM_TIER_BUDGET   optional override of the second mate's per-turn write budget
+//   HELM_TIER_OVERRIDE "1" switches the guard off entirely - see below
 //
 // Contract with the harness: exit 0 always. An allow prints nothing; a deny prints
 // the PreToolUse hookSpecificOutput object on stdout. A hook that crashes must not
@@ -62,6 +63,38 @@ try {
 
 const tier = process.env.HELM_TIER || "";
 if (!tier) {
+  allow();
+}
+
+/*
+ * The escape hatch, and why it is shaped like this.
+ *
+ * The policy is a positive list, which GUARANTEES false blocks - nine were measured and
+ * fixed before it shipped, and the next one turns up in the middle of real work. Until
+ * now the only way past one was to edit the source and restart. A guard with no way out
+ * is a guard that gets deleted at the first irritation, and then everything built around
+ * it was built for nothing.
+ *
+ * Read from the ENVIRONMENT, never from config or any other file. That is the whole
+ * security property: main.js copies this in from HELM'S OWN process env when it builds a
+ * launch, so switching it on means setting a variable and restarting Helm. A session
+ * cannot reach it. An agent that can write files - which is most of them - could edit a
+ * config value, and a guard a supervised agent can switch off is decoration.
+ *
+ * Exactly "1", not any truthy string: an empty or stray value must read as off.
+ *
+ * It expires by itself. A process env var lives as long as the Helm that was started with
+ * it, so a hatch opened for one afternoon closes when Helm next restarts - unless it was
+ * deliberately put in a shell profile, which is a different and equally deliberate act.
+ *
+ * And it is never silent. A guard that is off without saying so is worse than no guard,
+ * because everything downstream still reads as supervised.
+ */
+if (process.env.HELM_TIER_OVERRIDE === "1") {
+  process.stderr.write(
+    `[helm-tier-guard] OVERRIDDEN - HELM_TIER_OVERRIDE is set, so this ${tier} call is NOT being checked. ` +
+      "The guard is off for every session of this Helm until it restarts.\n"
+  );
   allow();
 }
 
