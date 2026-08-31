@@ -85,7 +85,7 @@ const FIRST_MATE_HOT_TURNS = 60;
 const firstMateHandoffNotified = new Set();
 
 // launchId -> { index, pane, startedAt }. The ONE map every launch-scoped
-// event (session/tool_use/assistant/error/done/modelFit) is routed through,
+// event (session/tool_use/assistant/error/done) is routed through,
 // always gated on `panes[index] === pane` before being applied. Storing the
 // pane OBJECT (not just its index) is what makes that check meaningful: if
 // the user resets/reopens that pane slot before a launch's events arrive,
@@ -5387,10 +5387,9 @@ function summarizeSession(session) {
       resumeSessionId: session.cliSessionId || session.sessionId,
       // Helm-internal launch (the hidden carry-over summary), not a real
       // user turn — keeps it out of the usage log, the "prompt finished"
-      // notification, and the model-fit judge, which would otherwise spend a
-      // real judge call on it AND contaminate the By-model / Model-fit /
-      // Suggestion-accuracy analytics with a synthetic run the user never
-      // initiated (model forced to sonnet-5, a hidden prompt).
+      // notification, and out of the By-model analytics, which would otherwise
+      // carry a synthetic run the user never initiated (model forced to
+      // sonnet-5, a hidden prompt).
       internal: true,
     });
     if (!res.ok) {
@@ -8896,10 +8895,6 @@ function paneComposerEl(index) {
   shell.append(handoffEl);
   wrap.append(shell);
 
-  // Model-fit judge verdict lives here, under the composer — not in the chat
-  // scrollback — per the captain's ask, and to keep the conversation itself
-  // uncluttered. Cleared on each new send, filled in once the judge resolves.
-
   const els = { cwdInput, promptEl, modelDD, effortDD, permissionDD, sendBtn, renderAttachments, renderQueuedPrompt, renderContextGauge };
   // Lets the "done" event handler (which only has the pane object, not this
   // composer's closure) trigger a queued prompt through the exact same send
@@ -9131,8 +9126,7 @@ function setPaneBusyUI(index, statusText) {
 // typing and hitting Send) so the last thing shown before the run starts is
 // the real pick, not a debounced heuristic. Per PLAN.md 9/10: suggest AND let
 // the user choose, which requires seeing the resolved choice before paying
-// for the run. (This used to add "not only in the model-fit judge's post-hoc verdict" -
-// that judge was removed on 2026-08-30.)
+// for the run.
 function setResolvedAutoHint(index, modelLabel, effort) {
   const paneEl = document.querySelector(`.pane[data-pane="${index}"]`);
   const hint = paneEl?.querySelector(".suggest-hint");
@@ -9303,7 +9297,7 @@ async function sendFromPane(index, els) {
   }
   pane.currentLaunchId = res.launchId;
   // Stores the pane OBJECT, not just the index — every launch-scoped event
-  // (session/tool_use/assistant/error/done/modelFit) is routed through this
+  // (session/tool_use/assistant/error/done) is routed through this
   // one map with an identity check, so a pane reused before a late event
   // arrives can never have that event misattributed to it.
   launchPaneHistory.set(res.launchId, { index, pane, startedAt: Date.now() });

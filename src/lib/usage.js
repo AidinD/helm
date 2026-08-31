@@ -86,5 +86,5 @@ export function readUsageSummary() {
 
 // computeSuggestionAccuracyVerdict was removed on 2026-08-30. Its only caller was the
 // periodic suggestion-accuracy check, which went with the model-fit judge that fed both.
-// The summary block it read (summary.suggestionAccuracy) is still built here, because the
-// Analysis page still shows the historical figures - labelled as final rather than live.
+// The summary block it read (summary.suggestionAccuracy) went with it too - readUsageSummary
+// no longer builds it, and nothing left in the app reads it.
