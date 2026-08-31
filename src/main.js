@@ -52,6 +52,7 @@ import { buildReviewQueuePayload } from "./lib/reviewQueueBuild.js";
 import { runHeavy, stopHeavyWorker, heavyWorkerStatus } from "./lib/heavyWorker.js";
 import { killChildTree } from "./lib/processTree.js";
 import { createSingleFlight } from "./lib/singleFlight.js";
+import { createTurnLifecycle } from "./lib/turnLifecycle.js";
 import { resolveMetaHome as resolveMetaHomeFrom } from "./lib/metaHome.js";
 import { buildRunDebrief } from "./lib/runDebrief.js";
 import { recommendReviewer, diffStats, REVIEWER_MODELS } from "./lib/reviewerModel.js";
@@ -267,6 +268,22 @@ const runningBuildIdentity = captureRunningBuildIdentity();
 // whenever the periodic check (see runStaleBuildCheck) flips it.
 let latestBuildStatus = { stale: false, runningVersion: runningBuildIdentity.version, runningCommit: runningBuildIdentity.commit, currentVersion: runningBuildIdentity.version };
 const liveChildren = new Map(); // launchId -> child process, for the Stop button
+/**
+ * What each live launch is HOLDING, so a turn can be finished by something other than
+ * the promise that started it.
+ *
+ * The turn lock and the live marks were released in exactly one place: `done.then(...)`.
+ * A turn whose promise never settles - a process that died without emitting its closing
+ * event - therefore held both forever. The session read "working" for the rest of the
+ * app's life, every new prompt was refused by the lock, and Stop could not help because
+ * it only knew how to kill a tracked child and there was none. Hit live on 2026-08-17:
+ * "den verkar fortfarande bara tugga på och jag kan varken prompta eller stoppa", with
+ * the process list confirming nothing was running at all. The only way out was to
+ * restart Helm.
+ *
+ * Keyed by launchId because that is the only handle Stop is given.
+ */
+const launchHolds = new Map(); // launchId -> { resumeSessionId, liveTurnId }
 // Fas 3 Point 11 (goal orchestrator) — one entry per in-flight goal run,
 // goalRunId -> { cancelToken, currentChild }. The orchestrator checks
 // cancelToken.cancelled BETWEEN iterations, so "goal:cancel" flips the flag
@@ -2794,20 +2811,22 @@ ipcMain.handle(
       throw err;
     }
     liveChildren.set(launchId, child);
+    // What this launch is holding, so Stop and the dead-turn sweep can let go of it too.
+    // Recorded here rather than where the lock is taken because for a FRESH session
+    // liveTurnId is not known until the CLI reports its id; the hold is refreshed on
+    // completion, by which time it is.
+    launchHolds.set(launchId, { resumeSessionId: resumeSessionId || null, liveTurnId });
     // Headless -p expands a leading "/skill-name" in the prompt text before
     // running it, so a leading slash-token is a reasonable (if not perfect —
     // it's a text-pattern guess, not a real event from the CLI) proxy for
     // "which skill was invoked," which the stream itself doesn't expose.
     const skillMatch = /^\/(\S+)/.exec(prompt.trim());
     done.then((summary) => {
-      liveChildren.delete(launchId);
-      markSessionDone(liveTurnId);
-      liveSessions.clearLaunching(launchId);
-      // Release the per-session turn lock (Slice 4) now the turn is over, so the
-      // next turn (pane or relay) on this session can proceed.
-      if (resumeSessionId) {
-        sessionTurnLocks.delete(resumeSessionId);
-      }
+      // The same release Stop and the sweep use. This used to be four inline steps, and
+      // being the ONLY place that knew them is why nothing else could end a turn. The
+      // hold is rewritten first because liveTurnId may only have become known mid-stream.
+      launchHolds.set(launchId, { resumeSessionId: resumeSessionId || null, liveTurnId });
+      finishLaunch(launchId, null);
       // Send "done" FIRST, before any of the bookkeeping below that could
       // throw (a corrupt config.json, a disk-full usage-log write, etc).
       // Previously this came after appendUsageLog — if that threw, the
@@ -2958,14 +2977,41 @@ ipcMain.handle(
 );
 
 // --- Stop a running session ---
+// Ending a turn lives in lib/turnLifecycle.js so it can be checked by building a stuck
+// turn and looking at what was let go of, rather than by grepping this file. See that
+// module for the live failure it exists for.
+const { finishLaunch, sweepDeadTurns } = createTurnLifecycle({
+  liveChildren,
+  launchHolds,
+  sessionTurnLocks,
+  liveSessions,
+  markSessionDone,
+  notify: (launchId, why) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("session:event", { launchId, kind: "done", stoppedBy: why, summary: { sawResult: false } });
+    }
+  },
+  log: (m) => console.warn(m),
+});
+
 ipcMain.handle("session:stop", (_event, { launchId }) => {
   const child = liveChildren.get(launchId);
-  if (!child) {
-    return { ok: false, error: "no running process for that launch" };
+  // "There is nothing to kill" used to be an ERROR, which is the wrong shape: it is
+  // the answer, and the state still needed clearing. A turn whose process died without
+  // its closing event left the lock held and the session reading "working" forever, and
+  // Stop - the one button pointed at exactly that - refused to act because the process
+  // it wanted to kill was already gone. Stop is now about ending the TURN; killing a
+  // process is just one of the things that may be required to do it.
+  if (child) {
+    killChildTree(child);
   }
-  killChildTree(child);
-  liveChildren.delete(launchId);
-  return { ok: true };
+  const held = finishLaunch(launchId, child ? "stopped" : "stopped (its process was already gone)");
+  if (!child && !held) {
+    // Nothing to kill AND nothing held - this launch is genuinely unknown, so say so
+    // rather than reporting a cleanup that did not happen.
+    return { ok: false, error: "no such launch" };
+  }
+  return { ok: true, killed: Boolean(child) };
 });
 
 // --- Embedded Jot tab (one Jot, two mounts) ---
@@ -7122,6 +7168,15 @@ app.whenReady().then(() => {
   repairDisplayKeyBindings();
   createWindow();
   setInterval(runOrchestratorSweep, ORCHESTRATOR_SWEEP_INTERVAL_MS);
+  // Turns whose process has already exited but whose bookkeeping still says they run.
+  // Every 15 seconds, because the cost of a false wait is a session that cannot be
+  // prompted or stopped until Helm is restarted, and the check is a read of an exit
+  // code on a map that is almost always empty.
+  // Turns whose process has already exited but whose bookkeeping still says they run.
+  // Every 15 seconds, because the cost of a false wait is a session that cannot be
+  // prompted or stopped until Helm is restarted, and the check is a read of an exit
+  // code on a map that is almost always empty.
+  setInterval(sweepDeadTurns, 15 * 1000);
   setInterval(runStaleBuildCheck, STALE_BUILD_CHECK_INTERVAL_MS);
   runModelFreshnessCheck();
   setInterval(runModelFreshnessCheck, MODEL_FRESHNESS_CHECK_INTERVAL_MS);
