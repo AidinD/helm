@@ -52,6 +52,7 @@ import { buildReviewQueuePayload } from "./lib/reviewQueueBuild.js";
 import { runHeavy, stopHeavyWorker, heavyWorkerStatus } from "./lib/heavyWorker.js";
 import { killChildTree } from "./lib/processTree.js";
 import { createSingleFlight } from "./lib/singleFlight.js";
+import { resolveMetaHome as resolveMetaHomeFrom } from "./lib/metaHome.js";
 import { recommendReviewer, diffStats, REVIEWER_MODELS } from "./lib/reviewerModel.js";
 import { buildReviewHtml, buildCommitReviewHtml } from "./lib/reviewHtml.js";
 import { reviewWritingBriefLines } from "./lib/reviewLanguage.js";
@@ -1649,28 +1650,13 @@ ipcMain.handle("app:isDev", () => !app.isPackaged);
 // orchestrator:info and the first-mate launch detection / dispatch watcher all
 // agree on the exact same path (a first mate is, by definition, a session
 // rooted here).
+// The rule itself now lives in lib/metaHome.js so a plain script can use it too -
+// the review-record writer runs with no app around it. Kept as a wrapper rather
+// than changing 41 call sites, and because the packaged-build refusal is main's
+// own decision to make: a stray env var must not be able to relocate the queue in
+// production (review finding L5).
 function resolveMetaHome() {
-  // Test seam: HELM_META_HOME_OVERRIDE lets an E2E point the dispatch queue
-  // (and first-mate detection) at an isolated temp dir, so a test dispatch is
-  // never raced/consumed by a separately-running dev instance watching the real
-  // meta-home. Honored ONLY in dev (never a packaged build), so a stray env var
-  // can't silently relocate the queue in production (review finding L5).
-  if (process.env.HELM_META_HOME_OVERRIDE && !app.isPackaged) {
-    return process.env.HELM_META_HOME_OVERRIDE;
-  }
-  try {
-    const stub = fs.readFileSync(path.join(os.homedir(), ".claude", "CLAUDE.md"), "utf8");
-    const importMatch = stub.match(/^@(.+?CLAUDE\.md)\s*$/m);
-    if (importMatch) {
-      const metaHome = path.dirname(importMatch[1].trim());
-      if (fs.existsSync(metaHome)) {
-        return metaHome;
-      }
-    }
-  } catch {
-    // fall through to the home dir
-  }
-  return os.homedir();
+  return resolveMetaHomeFrom({ allowOverride: !app.isPackaged });
 }
 
 // True when a session cwd is the meta home, i.e. this launch is a FIRST MATE

@@ -1556,5 +1556,10 @@ export function reviewQueueTally(rows) {
     // one", because it needs a different reaction.
     incomplete: rows.filter((r) => r.verdict === "incomplete").length,
     critical: rows.filter((r) => r.criticality === "critical").length,
+    // How many rows have a record at all - i.e. how much of this queue can be judged.
+    // A different question from the bands: they say what to do about a row, this says
+    // whether there is anything to do it with. Kept here as well as in the renderer's
+    // own tally so the two cannot disagree; test-review-coverage pins them together.
+    withEvidence: rows.filter((r) => r.verdict !== "unrecorded").length,
   };
 }

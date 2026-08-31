@@ -2569,7 +2569,54 @@ function reviewTallyFromRows(rows) {
     const b = bandOf(r);
     tally[b] = (tally[b] || 0) + 1;
   }
+  // How much of this page can be judged at all. Counted apart from the bands because
+  // it is a different question: the bands say what to do about a row, this says
+  // whether there is anything to do it WITH. Measured on the real board 2026-08-31 it
+  // was 0 of 33 - every row a task nobody could assess - and that fact was invisible,
+  // because "no record" read as one bucket among six rather than as the state of the
+  // whole page.
+  tally.withEvidence = tally.total - tally.unrecorded;
   return tally;
+}
+
+/**
+ * The one line under "Review" - and what it leads with depends on the page.
+ *
+ * It used to always open with "N need your judgment", which is the right lead when
+ * there is something to judge. When most of the page has no record at all, that
+ * opening is a lie of omission: it reports on the sliver that can be assessed and
+ * says nothing about the rest, and the "with no record" clause sat last, after
+ * three optional ones, where it read as a footnote.
+ *
+ * So when coverage is poor the coverage IS the headline. Nothing else on this page
+ * means anything until it improves.
+ */
+function reviewHeaderLine(tally) {
+  const parts = [];
+  const bad = tally.withEvidence === 0 || tally.withEvidence * 2 < tally.total;
+  if (bad) {
+    parts.push(
+      tally.withEvidence === 0
+        ? `Nothing here can be reviewed - none of the ${tally.total} has a record`
+        : `Only ${tally.withEvidence} of ${tally.total} can be reviewed - the rest have no record`
+    );
+  }
+  if (tally.judgment > 0 || !bad) {
+    parts.push(`${tally.judgment} need your judgment`);
+  }
+  if (tally.stamp > 0 || !bad) {
+    parts.push(`${tally.stamp} ready to stamp`);
+  }
+  if (tally.unconfirmed > 0) {
+    parts.push(`${tally.unconfirmed} claimed but unconfirmed`);
+  }
+  if (tally.incomplete > 0) {
+    parts.push(`${tally.incomplete} below the bar`);
+  }
+  if (!bad && tally.unrecorded > 0) {
+    parts.push(`${tally.unrecorded} with no record`);
+  }
+  return parts.join(" · ");
 }
 
 /**
@@ -2811,7 +2858,7 @@ function paintReviewPage(res, { refreshing = false } = {}) {
   sub.textContent =
     tally.total === 0
       ? "Nothing is waiting on your review."
-      : `${tally.judgment} need your judgment · ${tally.stamp} ready to stamp${tally.unconfirmed > 0 ? ` · ${tally.unconfirmed} claimed but unconfirmed` : ""}${tally.incomplete > 0 ? ` · ${tally.incomplete} below the bar` : ""}${tally.unrecorded > 0 ? ` · ${tally.unrecorded} with no record` : ""}`;
+      : reviewHeaderLine(tally);
   heading.append(h2, sub);
   // Said out loud, not implied. This is the last-known queue, drawn at once so the page is
   // not blank for seconds; the real one is being built right now and will replace it. A
@@ -2883,7 +2930,10 @@ function paintReviewPage(res, { refreshing = false } = {}) {
     },
     stamp: { label: "Ready to stamp", hint: "the evidence holds up - read it and move on" },
     incomplete: { label: "Below the bar", hint: "a record exists, but it does not meet the bar for its criticality - read it, do not trust it" },
-    unrecorded: { label: "No review record", hint: "in review, but nothing was written down to check" },
+    unrecorded: {
+      label: "Nothing to review",
+      hint: "in review, but no record was ever written - there is nothing here to judge, and approving it would say 'reviewed' about work nobody looked at",
+    },
   };
 
 
