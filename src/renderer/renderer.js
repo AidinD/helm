@@ -21,6 +21,13 @@ let mateSessionIds = new Set();
 // "this is first mate X" instead of the cryptic prompt-derived title a
 // first-mate session gets after its first turn. Rebuilt each refresh().
 let mateBySessionId = new Map();
+// Mates whose crew was still RUNNING on the previous poll. The transition that
+// matters is the crew's, not the session's: a mate ends its turn while its crew is
+// still going, so by the time the crew finishes the session has long since settled
+// into "waiting" and no session-level transition will ever fire again. Without this
+// the arrival of finished crew is silent - measured on a real day, crew finished at
+// 12:41 and 13:10 and nothing said so.
+let matesWithLiveCrew = new Set();
 let secondMateBySessionId = new Map();
 // CLI session ids with a turn CURRENTLY running (from the "session" event until
 // the process "closed"), tracked independently of any pane so it survives
@@ -9617,14 +9624,35 @@ async function refresh() {
       session.lifecycleState === "waiting" &&
       !previouslyWaiting.has(session.sessionId) &&
       !hiddenNow.has(session.sessionId) &&
-      // A first mate that ends its turn only to await its dispatched crew (live,
-      // reported, or errored) isn't waiting on you - don't fire the intrusive
-      // "needs input" OS toast for it (bug 9c0c7209).
-      !mateCrewWait(firstMateForSession(session)).has
+      // A first mate that ends its turn only to await crew that is STILL RUNNING
+      // isn't waiting on you - don't fire the intrusive "needs input" toast for it
+      // (bug 9c0c7209).
+      //
+      // Keyed on `live`, not `has`. `has` is also true once the crew has FINISHED,
+      // which suppressed the toast at exactly the moment there was something to say.
+      // Finished crew is announced separately below, because by then this session
+      // transition has usually already happened and cannot fire twice.
+      !mateCrewWait(firstMateForSession(session)).live
     ) {
       window.helm.notifyAttention({ title: "Helm - session needs input", body: sessionDisplayName(session) });
     }
   }
+  // Crew that has just SETTLED - the arrival the card calls "0 tokens": Helm already
+  // knows, because it wrote the report itself the moment the run ended. Nothing was
+  // doing anything with that. No model is asked anything here; this only says that
+  // something came back and whether it looks like trouble.
+  for (const mate of activeMatesForBinding) {
+    const wait = mateCrewWait(mate);
+    if (wait.live) {
+      matesWithLiveCrew.add(mate.mateId);
+      continue;
+    }
+    const wasLive = matesWithLiveCrew.delete(mate.mateId);
+    if (wasLive && (wait.reports || wait.alarm)) {
+      window.helm.notifyAttention(crewSettledNotice(mate, wait));
+    }
+  }
+
   state.sessions = data.sessions;
   state.config = data.config;
   state.quota = data.quota;
@@ -10100,6 +10128,32 @@ function mateCrewWait(mate) {
   const terminal = terminalRunsBy(mate.mateId);
   const alarm = terminal.some((r) => r.status === "error" || !!r.escalation);
   return { has: live || terminal.length > 0, live, alarm, reports: !live && !alarm && terminal.length > 0 };
+}
+
+/**
+ * What to say when a mate's crew has come back.
+ *
+ * Deliberately says whether it looks like trouble, and nothing more. Reading the
+ * reports to decide what they MEAN is the next step in the design and it costs a
+ * model call; this one is free, and free is what makes it safe to fire every time.
+ *
+ * @param {any} mate
+ * @param {{ alarm: boolean, reports: boolean }} wait
+ */
+function crewSettledNotice(mate, wait) {
+  const runs = terminalRunsBy(mate.mateId);
+  const bad = runs.filter((r) => r.status === "error" || !!r.escalation).length;
+  const where = mate.name ? ` (${mate.name})` : "";
+  const many = runs.length === 1 ? "A crew run" : `${runs.length} crew runs`;
+  return wait.alarm
+    ? {
+        title: "Helm - crew came back with a problem",
+        body: `${many} finished${where}; ${bad} needs a decision.`,
+      }
+    : {
+        title: "Helm - crew finished",
+        body: `${many} finished${where} and nobody has read the report yet.`,
+      };
 }
 
 // A small themed, centered confirm modal (never the native window.confirm -
