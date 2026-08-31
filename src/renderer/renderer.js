@@ -17211,9 +17211,13 @@ async function renderAnalysisPage() {
 
   const totals = document.createElement("div");
   totals.className = "analysis-totals";
-  totals.textContent =
-    `${summary.totalRuns} runs · $${summary.totalCostUsd.toFixed(2)} total` +
-    (summary.judgeCostUsd ? ` · $${summary.judgeCostUsd.toFixed(2)} spent on model-fit judging before it was removed` : "");
+  // The model-fit judge's spend used to render here as a third clause. readUsageSummary
+  // stopped building summary.judgeCostUsd on 2026-08-30 with the judge itself, so the clause
+  // was a ternary that could never be true; deleted 2026-08-31. The historical
+  // modelFitVerdict rows are still in usage-log.jsonl (112 verdicts, $2.87 in judgeCostUsd)
+  // if the figure is ever wanted back - it has to be summed from entry.judgeCostUsd, not
+  // entry.costUsd, which those rows do not carry.
+  totals.textContent = `${summary.totalRuns} runs · $${summary.totalCostUsd.toFixed(2)} total`;
   page.append(totals);
 
   // The suggestion-accuracy notice was removed on 2026-08-30. It was written by a periodic
