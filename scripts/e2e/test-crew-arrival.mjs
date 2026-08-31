@@ -57,11 +57,22 @@ const slice = (marker, chars = 2600) => {
 // --- half two: watch the crew's own transition ------------------------------------
 {
   ok(/let matesWithLiveCrew = new Set\(\)/.test(src), "the previous poll's live crew is remembered");
+  // Measured across 49 real crew runs: 7 came from a first mate, 42 from second mates and
+  // bare session ids. Keying on the bound first mates covered a seventh of the traffic -
+  // and the first-mate tier is the one the 2026-08-16 direction decision puts on notice,
+  // while project seats are what survives it. So the watch is keyed on the id in the run
+  // record, which every dispatcher has.
+  ok(
+    /new Set\(\[\.\.\.goalRuns\.values\(\)\]\.map\(\(r\) => r\.dispatchedBy\)\.filter\(Boolean\)\)/.test(src),
+    "every dispatcher is watched, not only the bound first mates"
+  );
+  ok(!/for \(const mate of activeMatesForBinding\)/.test(src), "the first-mate-only loop is gone");
+  ok(/function crewWaitFor\(ownerId\)/.test(src), "and the crew-wait question takes a plain dispatcher id");
 
   const region = slice("Crew that has just SETTLED");
   ok(region.length > 0, "the poll looks for crew that has just settled");
-  ok(/matesWithLiveCrew\.add\(mate\.mateId\)/.test(region), "a mate with running crew is remembered as such");
-  ok(/const wasLive = matesWithLiveCrew\.delete\(mate\.mateId\)/.test(region), "and the transition out of that is what is detected");
+  ok(/matesWithLiveCrew\.add\(ownerId\)/.test(region), "a dispatcher with running crew is remembered as such");
+  ok(/const wasLive = matesWithLiveCrew\.delete\(ownerId\)/.test(region), "and the transition out of that is what is detected");
   ok(
     /if \(wasLive && \(wait\.reports \|\| wait\.alarm\)\)/.test(region),
     "it fires on live -> finished, so a mate that never had crew stays quiet"
@@ -85,6 +96,24 @@ const slice = (marker, chars = 2600) => {
   ok(!/invoke\(|startSession|runRelayTurn|claude/i.test(body), "it asks no model anything - the arrival is free", body.slice(0, 60));
   ok(/wait\.alarm/.test(body), "it says whether the crew came back with a problem");
   ok(/nobody has read the report yet/.test(body), "and otherwise that something is waiting to be read");
+  // A second mate and a bare session id have no display name - "sm_d0f280be8b39 finished"
+  // tells nobody anything - so the notice names the PROJECT the runs touched.
+  ok(/projects\.slice\(0, 2\)/.test(body), "it names the project rather than the dispatcher's id");
+  // The separator class must contain BOTH, and it is written here as a literal because a
+  // heredoc ate the backslash once already and left it splitting forward slashes only -
+  // which on Windows paths means the label was the entire path.
+  // Checked by RUNNING the expression rather than matching its text: the escaping is
+  // exactly what went wrong (a heredoc ate the backslash and left it splitting forward
+  // slashes only, so on a Windows path the label became the whole path), and a regex that
+  // matches a regex is the last place to trust an eyeballed escape.
+  const labelExpr = body.match(/const label = \(r\) => (.+);/);
+  ok(labelExpr !== null, "the label expression is findable");
+  if (labelExpr) {
+    const label = new Function("r", `return ${labelExpr[1]};`);
+    ok(label({ projectPath: "D:\\Repo\\Tools\\tend" }) === "tend", "a Windows path yields the project name, not the whole path");
+    ok(label({ projectPath: "D:/Repo/Tools/helm" }) === "helm", "and a forward-slash path still works");
+    ok(label({ projectPath: null }) === null, "and a missing path yields nothing rather than throwing");
+  }
 }
 
 // --- why the existing event was not enough ----------------------------------------

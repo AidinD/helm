@@ -9641,15 +9641,18 @@ async function refresh() {
   // knows, because it wrote the report itself the moment the run ended. Nothing was
   // doing anything with that. No model is asked anything here; this only says that
   // something came back and whether it looks like trouble.
-  for (const mate of activeMatesForBinding) {
-    const wait = mateCrewWait(mate);
+  // Every id that has ever dispatched crew, not the bound first mates: 42 of 49 real
+  // dispatches came from second mates or bare session ids, and a signal that covers a
+  // seventh of the traffic is a signal you learn to ignore.
+  for (const ownerId of new Set([...goalRuns.values()].map((r) => r.dispatchedBy).filter(Boolean))) {
+    const wait = crewWaitFor(ownerId);
     if (wait.live) {
-      matesWithLiveCrew.add(mate.mateId);
+      matesWithLiveCrew.add(ownerId);
       continue;
     }
-    const wasLive = matesWithLiveCrew.delete(mate.mateId);
+    const wasLive = matesWithLiveCrew.delete(ownerId);
     if (wasLive && (wait.reports || wait.alarm)) {
-      const notice = crewSettledNotice(mate, wait);
+      const notice = crewSettledNotice(ownerId, wait);
       // BOTH, the same way a failed run already does it. The OS toast is gated on the
       // window not being focused - deliberately, so it does not nag while he is already
       // looking at Helm - which means it says nothing at all when he IS looking. An
@@ -10129,11 +10132,26 @@ function mateHasLiveCrew(mate) {
 // a mate genuinely awaiting your reply with NO crew to explain the wait is
 // "needs input". Returns { has, live, alarm, reports }.
 function mateCrewWait(mate) {
-  if (!mate || !mate.mateId) {
+  return crewWaitFor(mate?.mateId);
+}
+
+/**
+ * The same question about ANY dispatcher, not only a first mate.
+ *
+ * Measured 2026-08-31 across 49 crew runs: 7 were dispatched by a first mate. The other
+ * 42 came from second mates and from bare session ids. So anything keyed on first mates
+ * covers the smallest path - and the first-mate tier is the one the 2026-08-16 direction
+ * decision puts on notice, while project seats are what survives. Keying on the id in the
+ * run record covers every dispatcher there is, today and after that change.
+ *
+ * @param {string|null|undefined} ownerId
+ */
+function crewWaitFor(ownerId) {
+  if (!ownerId) {
     return { has: false, live: false, alarm: false, reports: false };
   }
-  const live = mateHasLiveCrew(mate);
-  const terminal = terminalRunsBy(mate.mateId);
+  const live = [...goalRuns.values()].some((r) => r.dispatchedBy === ownerId && crewRunning(r));
+  const terminal = terminalRunsBy(ownerId);
   const alarm = terminal.some((r) => r.status === "error" || !!r.escalation);
   return { has: live || terminal.length > 0, live, alarm, reports: !live && !alarm && terminal.length > 0 };
 }
@@ -10148,10 +10166,18 @@ function mateCrewWait(mate) {
  * @param {any} mate
  * @param {{ alarm: boolean, reports: boolean }} wait
  */
-function crewSettledNotice(mate, wait) {
-  const runs = terminalRunsBy(mate.mateId);
+function crewSettledNotice(ownerId, wait) {
+  const runs = terminalRunsBy(ownerId);
   const bad = runs.filter((r) => r.status === "error" || !!r.escalation).length;
-  const where = mate.name ? ` (${mate.name})` : "";
+  // The project, not the dispatcher's id. A first mate has a display name; a second mate
+  // and a bare session id have nothing a person would recognise, and "sm_d0f280be8b39
+  // finished" tells nobody anything. What the runs touched is the recognisable part.
+  // Same derivation the Goal page already uses (renderer.js ~14526): the last path
+  // segment. Not a shared helper because there is not one - and inventing a second
+  // labelling rule for one notice is how two surfaces start disagreeing about a name.
+  const label = (r) => String(r.projectPath || "").split(/[\\/]/).filter(Boolean).pop() || null;
+  const projects = [...new Set(runs.map(label).filter(Boolean))];
+  const where = projects.length > 0 ? ` in ${projects.slice(0, 2).join(" and ")}` : "";
   const many = runs.length === 1 ? "A crew run" : `${runs.length} crew runs`;
   return wait.alarm
     ? {
