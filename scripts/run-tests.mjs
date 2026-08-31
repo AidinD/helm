@@ -37,6 +37,92 @@ const fastOnly = args.includes("--fast");
 const live = args.includes("--live");
 const terms = args.filter((a) => !a.startsWith("--"));
 
+/*
+ * ONE RUN AT A TIME, and a second one is told rather than left to guess.
+ *
+ * Two concurrent runs of this suite corrupt each other's results, silently, in both
+ * directions. Observed for real on 2026-08-18 while a parallel session ran the suite
+ * during a debugging session: a test that failed and then passed with no code change
+ * between the two attempts, and a new check that was red on six points against CORRECT
+ * code because the harness had attached to an Electron the other run had started.
+ *
+ * The direction that matters is the other one. The same collision can just as easily
+ * produce GREEN on a fix that is not there, and nothing about that looks wrong.
+ *
+ * 69 of the 145 app checks do not point the meta-home at a temp directory, so they share
+ * real state - and fixing 69 files would leave the 70th to be written without it. A lock
+ * fixes it once, at the only place both runs pass through, and turns "quietly wrong" into
+ * "refused with a reason".
+ *
+ * The lock carries a pid so a crashed run cannot block the next one forever: a lock whose
+ * process is gone is stale and simply taken. --force exists for the case where that
+ * judgement is wrong, and says so in the output rather than being silent about it.
+ */
+// The path is overridable so the check that exercises this lock can use its own file.
+// Without that seam it had to drive the REAL lock - which meant that running the suite,
+// which holds this lock, ran a test that overwrote and then deleted it. The check passed
+// by destroying the protection it was checking, and left the rest of that run unguarded.
+//
+// Not a way around the lock: pointing it elsewhere takes a deliberate env var, and the
+// thing being protected is a developer's own suite run, not anybody's data.
+const LOCK = process.env.HELM_TEST_LOCK || path.join(os.tmpdir(), "helm-test-suite.lock");
+const forced = args.includes("--force");
+
+function pidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    // EPERM means it exists and belongs to somebody else - alive for our purposes.
+    return err?.code === "EPERM";
+  }
+}
+
+function takeLock() {
+  try {
+    const held = JSON.parse(fs.readFileSync(LOCK, "utf8"));
+    if (held?.pid && held.pid !== process.pid && pidAlive(held.pid)) {
+      if (!forced) {
+        console.error(`
+Another run of this suite is already going (pid ${held.pid}, started ${held.at}).`);
+        console.error("Two at once overwrite each other's fixtures and can attach to each other's");
+        console.error("Electron - which shows up as a red result on correct code, or worse, a green");
+        console.error("one on a fix that is not there.");
+        console.error("\nWait for it, or pass --force if you are certain that process is not running this.");
+        process.exit(2);
+      }
+      console.log(`[run-tests] --force: taking the lock from pid ${held.pid} anyway.`);
+    }
+  } catch {
+    // No lock, or an unreadable one. Either way it is ours to take.
+  }
+  try {
+    fs.writeFileSync(LOCK, JSON.stringify({ pid: process.pid, at: new Date().toISOString() }), "utf8");
+  } catch {
+    // A lock we cannot write is a lock we cannot enforce. Say so and carry on rather than
+    // refusing to run the suite over its own bookkeeping.
+    console.warn("[run-tests] could not write the run lock; a concurrent run will not be detected");
+  }
+}
+
+function releaseLock() {
+  try {
+    const held = JSON.parse(fs.readFileSync(LOCK, "utf8"));
+    if (held?.pid === process.pid) {
+      fs.rmSync(LOCK, { force: true });
+    }
+  } catch {
+    /* already gone, or never ours */
+  }
+}
+
+takeLock();
+process.on("exit", releaseLock);
+process.on("SIGINT", () => {
+  releaseLock();
+  process.exit(130);
+});
+
 // A test "launches the app" if it imports the CDP harness, and it "costs" if it calls the
 // shared live gate. Both are read from the source rather than kept in a list here: a list
 // is a second place to forget, and forgetting is what made the suite spend tokens quietly.
