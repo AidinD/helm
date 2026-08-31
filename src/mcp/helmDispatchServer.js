@@ -98,6 +98,11 @@ const TOOLS = [
           type: "string",
           description: "Optional independent verify gate, e.g. 'npm test'. See the Helm-self caveat above.",
         },
+        taskId: {
+          type: "string",
+          description:
+            "The Jot task id this run is for, when the work came from a board card. Pass it and the finished run leaves a REVIEW RECORD on that card - what it did, where the branch is, what was and was not checked. Leave it out and the run is unreviewable: measured 2026-08-31, 33 of 33 tasks sitting in review had no record, because nothing but the auto-captain ever wrote one.",
+        },
       },
       required: ["project", "goal", "model"],
     },
@@ -244,6 +249,8 @@ async function toolDispatch(args) {
     effort: args.effort || null,
     maxIterations: typeof args.maxIterations === "number" ? args.maxIterations : null,
     verifyCommand: args.verifyCommand || null,
+    // Carried so the finished run can leave a review record on the card it came from.
+    taskId: typeof args.taskId === "string" && args.taskId.trim() ? args.taskId.trim() : null,
     dispatchedBy: MATE_ID,
     callerTier: CALLER_TIER,
   };

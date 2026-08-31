@@ -53,6 +53,7 @@ import { runHeavy, stopHeavyWorker, heavyWorkerStatus } from "./lib/heavyWorker.
 import { killChildTree } from "./lib/processTree.js";
 import { createSingleFlight } from "./lib/singleFlight.js";
 import { resolveMetaHome as resolveMetaHomeFrom } from "./lib/metaHome.js";
+import { buildRunDebrief } from "./lib/runDebrief.js";
 import { recommendReviewer, diffStats, REVIEWER_MODELS } from "./lib/reviewerModel.js";
 import { buildReviewHtml, buildCommitReviewHtml } from "./lib/reviewHtml.js";
 import { reviewWritingBriefLines } from "./lib/reviewLanguage.js";
@@ -3945,6 +3946,58 @@ function finishAutoRun(taskId, result = null, meta = null) {
 }
 
 /**
+ * A review record for a DISPATCHED run, on the card it was dispatched for.
+ *
+ * Only when the mate passed a taskId (the run has no other way to know which card it
+ * belongs to) and only when something was committed - a run with no commits has
+ * nothing to review, and the report already says so.
+ *
+ * Best-effort throughout: a failure here must never take down the dispatch path. A
+ * missing record is a blank card; a thrown error in this callback would be a run whose
+ * report never gets written.
+ */
+function writeDispatchedReviewRecord({ request, result, report }) {
+  const taskId = request?.taskId || null;
+  const commits = typeof result?.commitCount === "number" ? result.commitCount : 0;
+  if (!taskId || commits <= 0) {
+    return;
+  }
+  try {
+    const wt = result?.worktreePath || null;
+    const branch = result?.branchName || null;
+    const where = wt
+      ? `in ${wt}${branch ? ` on branch ${branch}` : ""} (an isolated worktree, not merged)`
+      : `in ${result?.projectPath || request.project}`;
+    const lastSummary =
+      [...(result?.iterations || [])].reverse().find((it) => it?.result?.summary)?.result?.summary || null;
+    writeReviewRecord(
+      resolveMetaHome(),
+      buildAutoReviewRecord({
+        taskId,
+        projectPath: result?.projectPath || null,
+        // The report's own summary, so the card and the mate's report cannot disagree
+        // about what happened - they are the same sentence.
+        outcome: report?.summary || "Finished",
+        where,
+        branch,
+        worktreePath: wt,
+        commits,
+        lastSummary,
+        verifyCommand: result?.verifyCommand || request?.verifyCommand || null,
+        stoppedReason: result?.stoppedReason || null,
+        // The brief IS the intent for a dispatched run, and a record with no intent is
+        // refused - which would put the card back to the blank dead end this exists to
+        // prevent.
+        goal: request?.goal || null,
+        title: request?.goal || null,
+      })
+    );
+  } catch (err) {
+    console.error("[helm] could not write a review record for the dispatched run:", err?.message || err);
+  }
+}
+
+/**
  * Take the "auto-running" stripe off cards whose run did not survive a restart.
  *
  * Runs once at startup. A card is left alone if a run record links it to work that
@@ -5588,6 +5641,16 @@ function processDispatchRequests(metaHome) {
             onComplete: (result, meta) => {
               const report = buildDispatchReport({ dispatchId, mateId, request, result, meta });
               writeReport(metaHome, report);
+              // Leave a review record on the card this run came from, the same way the
+              // auto-captain does. Until 2026-08-31 the auto-captain was the ONLY writer
+              // in the whole app, so a dispatched crew run - the bulk of the autonomous
+              // work - left the card blank and unreviewable. Measured that morning: 33 of
+              // 33 tasks in review had no record at all.
+              //
+              // Same builder as the auto path on purpose. A second record shape would be
+              // a second set of rules to keep in step with the admissibility gate, and it
+              // is that gate that decides whether the card is readable at all.
+              writeDispatchedReviewRecord({ request, result, report });
               // Count this run's cost against the orchestration budget (Slice 0).
               addSpend(metaHome, report.costUsd);
               writeFleetStateSnapshot(metaHome); // a run finished - refresh the cross-mate view
@@ -5648,7 +5711,15 @@ function buildDispatchReport({ dispatchId, mateId, request, result, meta }) {
     escalation: result.stoppedReason === "escalated" ? result.escalation || { detail: "Run paused for a human decision." } : null,
   });
   const summary = buildOutcomeSummary(outcome.headline, lastImplement?.result?.summary, outcome.status);
-  const needsCaptain = outcome.needsCaptain;
+  // A run that did not reach its goal owes three answers: why it stopped, where the
+  // work is, and how much of the plan was paid for. The stopped reason alone names the
+  // RULE that fired, which is not something anybody can act on - see lib/runDebrief.js
+  // for the run this was written after, where the useful sentence took half an hour of
+  // transcript reading to reconstruct.
+  const debrief = buildRunDebrief({ result });
+  const needsCaptain = outcome.needsCaptain
+    ? [outcome.needsCaptain, ...debrief.lines].join(" ")
+    : outcome.needsCaptain;
   const totalCost = (result.iterations || []).reduce((sum, r) => sum + (typeof r.costUsd === "number" ? r.costUsd : 0), 0);
   return {
     dispatchId,
@@ -5675,6 +5746,9 @@ function buildDispatchReport({ dispatchId, mateId, request, result, meta }) {
     // unread.
     awaitingReview: outcome.awaitingReview || null,
     stoppedReason: result.stoppedReason || null,
+    // The same three answers as structured fields, for anything that wants to render
+    // them apart rather than as one paragraph.
+    debrief: debrief.lines.length > 0 ? debrief : null,
     costUsd: Number(totalCost.toFixed(4)),
     iterations: (result.iterations || []).length,
   };
