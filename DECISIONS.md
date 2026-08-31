@@ -1,5 +1,43 @@
 # Decisions
 
+## 2026-08-31 - The focus constraint will not be tested, because the answer arrived without it
+
+**Decided.** The week-long behaviour test from the 2026-08-16 direction entry - turn the
+Direct lane off and force every session to take one of N seats - is cancelled. Build the
+structure and evaluate it in use instead.
+
+**Why, and it is not impatience.** Asked to run it, the captain said: it might well be good, but it
+does not fit how he works. That sentence IS the test's result. The 2026-08-16 entry recorded,
+in advance, what would make the direction fail, and its third item was: "A constraint that is
+routed around is worse than none, because it hides the problem." A constraint he already knows
+he would fight is a constraint that gets routed around. Running it for a week would have cost
+a week to reach a conclusion that one sentence reached.
+
+**The consequence for the design, which is the part worth carrying.** A hard cap is the wrong
+mechanism for this user, on any tier. That does not retire the scarcity idea - the 2026-08-16
+reasoning that Helm's focus problem is unlimited parallel sessions still stands, and it came
+from the captain. It retires *prohibition* as the way to deliver it. Whatever replaces it has to
+work by making the cost of another session visible rather than by refusing it, because a
+refusal will be worked around and then nobody learns anything.
+
+**A contradiction inside the earlier entry, found while trying to run its next step.** It says
+both "turn the Direct lane off" and "seat count is the whole mechanism". Those point in
+different directions, and only the second one is about the hypothesis. Turning off Direct tests
+the plumbing; capping the count tests the idea. Worth knowing if the scarcity question is ever
+picked up again: cap the number, do not move the tiers.
+
+**And the test could not have been run as written anyway.** Verified in the code the same day:
+a project seat exists in exactly two ways. Either under the synthetic `DIRECT_FIRST_MATE`
+parent - which is the Direct lane the test turns off - or created by a real first mate through
+`helm_create_second_mate`. There is no `secondMates:create` in the app at all. So turning off
+Direct leaves the first-mate tier as the only route to a seat, and that is the tier the
+direction puts on notice. The test as written required the doomed tier, or the refactor it was
+meant to precede.
+
+**What this does not change.** The direction itself - captain, project seats, crew - is
+unchanged, along with the mock-first rule for the Fleet shape. What is gone is the gate in
+front of it.
+
 ## 2026-08-30 - The model-fit judge cost more than the work it judged, and had already answered its own question
 
 Found by following one prompt. The captain ran a training check-in in Helm and asked whether it leaked tokens. The session did not. What was attached to it did.
