@@ -22,7 +22,7 @@
     "files": [
       "**/*",
       "!.whisper/**/*",
-      "!.claude/**/*",
+      "!**/.claude/**/*",
       "!pasted-images/**/*",
       "!docs/**/*",
       "!spike/**/*",
