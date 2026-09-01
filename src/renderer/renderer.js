@@ -17033,7 +17033,14 @@ function renderSettingsPage() {
   engineTitle.className = "settings-toggle-title";
   const engineDesc = document.createElement("div");
   engineDesc.className = "settings-toggle-desc";
-  engineDesc.textContent = "\"whisper.cpp\" is faster (needs the local CUDA binary+model, see docs/transcription-research.md) but not every machine has it installed; \"transformers.js\" always works as a fallback.";
+  // "always works as a fallback" until 2026-09-01, which was a claim nobody had
+  // tested: the fallback had never run on any machine (whisper.cpp works here,
+  // and voiceEngine defaults to it), and its model cache resolved inside the
+  // read-only app.asar in a packaged build. Both fixed and exercised now - see
+  // src/lib/voiceModelCache.js - so this says what was actually measured,
+  // including the part a person needs to know before switching: the first
+  // transcription pays for a download.
+  engineDesc.textContent = "\"whisper.cpp\" is faster (needs the local CUDA binary+model, see docs/transcription-research.md) but not every machine has it installed. \"transformers.js\" needs nothing installed: the first transcription downloads a ~300MB model into Helm's data folder and every one after that reuses it from disk.";
   engineLabel.append(engineTitle, engineDesc);
   const engineDD = dropdownPill(
     state.config?.voiceEngine || "whispercpp",

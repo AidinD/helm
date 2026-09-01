@@ -13,7 +13,20 @@
 // and this module now runs inside a dedicated worker process, not the
 // Electron main process - see voiceWorker.js - so loading/inference never
 // blocks the app's UI/IPC event loop.)
-import { pipeline } from "@huggingface/transformers";
+import { env as transformersEnv, pipeline } from "@huggingface/transformers";
+import { voiceModelCacheDir } from "./voiceModelCache.js";
+
+// WHERE THE DOWNLOADED WEIGHTS LAND. Left alone, @huggingface/transformers
+// caches them beside its own module - which in a packaged Helm is inside the
+// read-only app.asar, so the ~300MB model can never be stored and gets
+// re-downloaded on every app start (the metadata files fail silently; the
+// .onnx weights throw, but only after the download has been paid for). See
+// voiceModelCache.js for the full reasoning and the resolution order.
+//
+// Assigned at module load, before getTranscriber() can run: transformers.js
+// reads env.cacheDir when it builds its FileCache during the first pipeline()
+// call, so anything set before that call is in force.
+transformersEnv.cacheDir = voiceModelCacheDir();
 
 // Swedish-SPECIALIZED model. Progression: "whisper-tiny.en" (English-only,
 // couldn't do Swedish at all) → "whisper-tiny" (generic multilingual, "väldigt

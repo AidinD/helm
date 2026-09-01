@@ -1,5 +1,49 @@
 # Decisions
 
+## 2026-09-01 - The fallback that had never run, and where its model goes now
+
+**What was wrong, in two parts.** `config.voiceEngine` defaults to `whispercpp`, and
+whisper.cpp works on this machine, so the transformers.js fallback in `src/lib/voice.js`
+had never executed anywhere: there was no model cache under
+`node_modules/@huggingface/transformers` even in the dev checkout. And it could not have
+worked in an installed build. transformers.js derives its cache directory from its own
+module location, which once packaged is inside `resources/app.asar` - a file, not a
+directory. `mkdir` there fails with ENOTDIR (checked against `dist/win-unpacked`, and
+`@huggingface` is not in the asarUnpack list; only `@img` and `onnxruntime-node` are).
+Meanwhile Settings called it the engine that "always works as a fallback".
+
+**Decided: the cache goes in Helm's data directory, derived from `HELM_CONFIG_PATH`.**
+`src/lib/voiceModelCache.js` resolves it - `HELM_VOICE_CACHE_DIR` first, then the directory
+holding `HELM_CONFIG_PATH` (which `packagedPaths.js` already points at `HELM_DATA_DIR` or
+`~/.helm`), then `~/.helm` in dev. `voice.js` assigns it to `env.cacheDir` at import.
+
+**Why not the repo root in dev, which was the obvious choice.** It is 300MB of downloaded
+weights. That belongs outside the checkout for the same reason keel keeps whisper.cpp's
+1.5GB payload outside it: the code is versioned, the content is not. Pointing dev at the
+same folder the installed app uses also means the download is paid for once per machine
+rather than once per checkout - and every git worktree would otherwise have been its own
+checkout.
+
+**Why a test seam was needed on top of that.** The E2E harness points `HELM_CONFIG_PATH` at
+a throwaway temp config, so without `HELM_VOICE_CACHE_DIR` every voice check would download
+the model into a directory it then deletes.
+
+**How it was verified, because reading the code is what produced the bug.** Twice through
+`spike/test-transformers-fallback.mjs`: the first run downloaded 303.3MB into
+`~/.helm/voice-models` and transcribed; the second ran with
+`env.allowRemoteModels = false`, transcribed identically, and added nothing to the cache.
+That flag is the point - transformers.js consults its cache before it considers the
+network, so a run that refuses remote files and still works proves every weight came off
+disk. "It was faster the second time" would not have.
+Then through the real app (`scripts/e2e/test-voice-transformers-fallback.mjs`), with
+`voiceEngine` set to `transformers`, over the actual renderer -> main -> utilityProcess ->
+voiceWorker path.
+
+**Silence is in that spike on purpose.** Whisper answers silence with a confident
+hallucination - measured here as "Jag kunde inte släppa banden." A run that only ever fed it
+speech could not tell "it heard the audio" from "it emitted its priors", so the checks that
+matter assert on words that were actually spoken.
+
 ## 2026-08-31 - The focus constraint will not be tested, because the answer arrived without it
 
 **Decided.** The week-long behaviour test from the 2026-08-16 direction entry - turn the
