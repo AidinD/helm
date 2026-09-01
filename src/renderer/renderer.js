@@ -18687,6 +18687,16 @@ window.helm.onSessionEvent((evt) => {
     return;
   }
 
+  // A first mate that did the project's work itself instead of delegating it. App-wide for
+  // the same reason quota is: it is news about the fleet, not about whichever pane happens
+  // to be showing. An in-app notice rather than an OS one - the turn has just finished, so
+  // Helm is almost certainly the window he is looking at, and this is a thing to notice
+  // rather than a thing to interrupt for.
+  if (evt.kind === "turnEndGuard" && evt.verdict) {
+    showNotice(`${evt.verdict.reason} ${evt.verdict.whatToDo}`, { tone: "warn" });
+    return;
+  }
+
   // App-wide, not tied to any one pane — must never be gated behind a pane
   // lookup (a stale/missing launch entry shouldn't also swallow quota news).
   if (evt.kind === "quota") {

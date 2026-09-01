@@ -74,6 +74,7 @@ import { checkModelFreshness } from "./lib/modelFreshness.js";
 import { runGoal } from "./lib/goalOrchestrator.js";
 import { loadGoalRunHistory, upsertGoalRunRecord, removeGoalRunRecord } from "./lib/goalRunHistory.js";
 import { findStalledWork, workersFromSnapshot, summariseStalls } from "./lib/watchdog.js";
+import { judgeTurnEnd } from "./lib/turnEndGuard.js";
 import {
   removeWorktree,
   isBranchMerged,
@@ -3189,6 +3190,36 @@ ipcMain.handle(
       // callback resolves on it), so that's sent unconditionally first.
       if (internal) {
         return;
+      }
+
+      // Did this turn do the project's work instead of handing it out?
+      //
+      // The tier guard stops a first mate WRITING to a project, and that was always the
+      // smaller half: Haddock's signature was 82 Bash calls from the coordinator's seat
+      // with zero delegations. Under the write guard alone the same run would have read
+      // its way through the whole project for just as long, only unable to save the
+      // result. Nothing here blocks - the turn is already over - it just stops that
+      // going unremarked until a bill arrives. See turnEndGuard.js for the threshold and
+      // the 597-turn measurement behind it.
+      try {
+        const verdict = judgeTurnEnd({ seat: firstMateId ? "first-mate" : "captain", toolsUsed: meta.toolsUsed });
+        if (verdict) {
+          console.warn(`[helm] turn-end guard: ${verdict.reason}`);
+          send({ kind: "turnEndGuard", verdict });
+          // Logged as well as shown, because a signal nobody can count is a signal nobody
+          // can tune. The threshold was set from this log and will be revisited from it.
+          appendUsageLog({
+            type: "turnEndUndelegated",
+            launchId,
+            timestamp: Date.now(),
+            cwd,
+            seat: verdict.seat,
+            actionCalls: verdict.actionCalls,
+            tools: verdict.tools,
+          });
+        }
+      } catch (err) {
+        console.error("[helm] turn-end guard failed:", err);
       }
 
       try {
