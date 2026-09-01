@@ -61,6 +61,9 @@ contextBridge.exposeInMainWorld("helm", {
   // Resolves { ok, engine, fallback, oneShot: { ready, why, root, source },
   // streaming: { ... } }.
   voiceStatus: () => ipcRenderer.invoke("voice:status"),
+  // Creates the folder the engine belongs in and opens it, so there is somewhere to put
+  // the files. Fetches nothing - see main.js for why the app does not name download URLs.
+  revealVoiceEngineFolder: () => ipcRenderer.invoke("voice:revealEngineFolder"),
   // True real-time streaming transcription (continuous voice input via
   // whisper-stream.exe, see src/lib/whisperStream.js). startVoiceStream
   // resolves with { ok, streamId } (or { ok: false, error } if the binary/

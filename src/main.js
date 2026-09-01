@@ -1475,6 +1475,31 @@ ipcMain.handle("voice:transcribe", async (_event, { samples, language }) => {
 // engine looked exactly like one that could - until somebody spoke into it. The
 // two engines are reported separately because a machine really can have the
 // one-shot binary and not the streaming one.
+// Make the folder the engine is supposed to live in, and show it.
+//
+// The 1.5GB payload is deliberately not in the installer and should not be: it is CUDA
+// DLLs and model weights, and shipping it would multiply the download for everybody who
+// never dictates. But "not shipped" turned into "no way in" - the only route was knowing
+// to set an environment variable nobody had written down.
+//
+// This is the smallest honest affordance: somewhere to put the files, opened. It does NOT
+// fetch anything. Naming download URLs in the app would be a claim about other people's
+// release assets that nothing here can keep true, and this app has a standing problem with
+// exactly that kind of claim.
+ipcMain.handle("voice:revealEngineFolder", () => {
+  const target = whisperCliStatus().root;
+  if (!target) {
+    return { ok: false, error: "There is no folder to open - nothing is configured and no candidate was found." };
+  }
+  try {
+    fs.mkdirSync(target, { recursive: true });
+  } catch (err) {
+    return { ok: false, error: `Could not create ${target}: ${err.message}` };
+  }
+  shell.openPath(target);
+  return { ok: true, path: target };
+});
+
 ipcMain.handle("voice:status", () => {
   const cli = whisperCliStatus();
   const stream = whisperStreamStatus();

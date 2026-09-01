@@ -17087,7 +17087,18 @@ function renderSettingsPage() {
   enginePathPick.className = "icon-btn";
   enginePathPick.textContent = "…";
   enginePathPick.title = "Pick the folder holding Release/ and the models";
-  enginePathControls.append(enginePathInput, enginePathPick);
+  const enginePathOpen = document.createElement("button");
+  enginePathOpen.className = "icon-btn";
+  enginePathOpen.textContent = "Open folder";
+  enginePathOpen.title = "Create the folder the engine belongs in and show it, so the files have somewhere to go";
+  enginePathOpen.style.display = "none";
+  enginePathOpen.addEventListener("click", async () => {
+    const result = await window.helm.revealVoiceEngineFolder();
+    if (!result?.ok) {
+      enginePathDesc.textContent = result?.error || "Could not open that folder.";
+    }
+  });
+  enginePathControls.append(enginePathInput, enginePathPick, enginePathOpen);
   enginePathRow.append(enginePathLabel, enginePathControls);
   voiceGroup.append(enginePathRow);
 
@@ -17117,8 +17128,21 @@ function renderSettingsPage() {
       // it has now been run - see voiceModelCache.js - so the sentence states the
       // cost instead, which is the part somebody needs before relying on it.
       parts.push("The mic falls back to transformers.js, which is slower and downloads a ~300MB model the first time.");
+      // What actually has to be in the folder, by name and by size. The payload is
+      // deliberately not in the installer - 1.5GB of CUDA DLLs and model weights would
+      // be paid for by everyone who never dictates - so "not shipped" has to come with
+      // "and here is what goes there", or it is just a dead end with a nice error message.
+      //
+      // No download URLs. They point at somebody else's release assets, and a link baked
+      // into the app is a claim that nothing here can keep true.
+      parts.push(
+        "To use whisper.cpp instead: the folder needs Release\\ (whisper.cpp's own Windows CUDA build, ~1.2GB, including whisper-cli.exe and whisper-stream.exe) and the GGML model file ggml-model-q5_0.bin beside it. Open folder makes the folder and shows it."
+      );
     }
     enginePathDesc.textContent = parts.join(" ");
+    // Only offered when there is something to do about it. A button that opens an empty
+    // folder next to "everything is ready" is noise.
+    enginePathOpen.style.display = status.oneShot.ready ? "none" : "";
   }
 
   enginePathPick.addEventListener("click", async () => {
