@@ -3423,6 +3423,68 @@ function paintReviewPage(res, { refreshing = false } = {}) {
   // those filter Jot categories, and these rows are keyed by repo, so they always show,
   // clearly labelled by project.
   const unboundGroups = res?.unboundCommits || [];
+
+  // Draw a line under all of them at once.
+  //
+  // The per-project "Seen all" is the right size for a handful and the wrong size for what
+  // this list actually holds: 535 commits across 13 projects when it was measured, several
+  // truncated at the display cap, none of which anybody is going to read one at a time. The
+  // list is only there because almost no commit carries a task id, so it refills by itself -
+  // which makes "start from here" a thing worth being able to do more than once.
+  //
+  // It says will not be reviewed, never were reviewed. Nothing about this writes a record.
+  // And it hands back what it replaced, so the toast can offer the way out; a bulk clear with
+  // no undo is one nobody should be asked to press.
+  const unboundTotal = unboundGroups.reduce((n, g) => n + g.commits.length, 0);
+  if (unboundTotal > 0) {
+    const baseline = document.createElement("div");
+    baseline.className = "rev-baseline";
+    const text = document.createElement("div");
+    text.className = "rev-baseline-text";
+    text.textContent =
+      `${unboundTotal} commit${unboundTotal === 1 ? "" : "s"} across ${unboundGroups.length} project${unboundGroups.length === 1 ? "" : "s"} are not tied to any card. ` +
+      "Clearing them records that they will not be reviewed - not that they were, and nothing is written that could later be read as evidence.";
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "text-btn";
+    btn.textContent = "Start from here";
+    btn.title = "Marks every listed commit as one you will not go through, in every project at once.";
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      const res2 = await window.helm.baselineUnboundCommits();
+      if (!res2?.ok) {
+        btn.disabled = false;
+        showToast(res2?.error || "Could not set the baseline.");
+        return;
+      }
+      // The undo is a button in this row, not an action on the toast: showToast takes text
+      // and a sticky flag and nothing else, so passing it a handler would have produced an
+      // undo that is visible in the code and absent on the screen.
+      const undo = res2.previous;
+      btn.remove();
+      text.textContent =
+        `Cleared ${res2.cleared.length} project${res2.cleared.length === 1 ? "" : "s"}. Anything committed from now on still shows up here. ` +
+        "These commits are still offered as candidates when you bind a card - clearing the list said you will not read it, not that they belong to nothing.";
+      const undoBtn = document.createElement("button");
+      undoBtn.type = "button";
+      undoBtn.className = "text-btn";
+      undoBtn.textContent = "Undo";
+      undoBtn.title = "Put the list back exactly as it was.";
+      undoBtn.addEventListener("click", async () => {
+        undoBtn.disabled = true;
+        const back = await window.helm.restoreCommitAcks(undo);
+        if (!back?.ok) {
+          undoBtn.disabled = false;
+          showToast(back?.error || "Could not put those back.");
+          return;
+        }
+        renderReviewPage();
+      });
+      baseline.append(undoBtn);
+    });
+    baseline.append(text, btn);
+    frag.append(baseline);
+  }
   for (const group of unboundGroups) {
     const h = document.createElement("h3");
     h.className = "rev-group";

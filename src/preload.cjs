@@ -103,6 +103,11 @@ contextBridge.exposeInMainWorld("helm", {
   // passes nothing and always recomputes.
   listReviews: (opts) => ipcRenderer.invoke("reviews:list", opts || {}),
   acknowledgeNoRecord: (taskId) => ipcRenderer.invoke("reviews:acknowledgeNoRecord", { taskId }),
+  // Draw a line under every commit not tied to a card, in every project at once. Records
+  // that they will not be reviewed, NOT that they were. Resolves { ok, cleared, skipped,
+  // previous } - `previous` is what restoreCommitAcks needs to undo it.
+  baselineUnboundCommits: () => ipcRenderer.invoke("reviews:baselineUnbound"),
+  restoreCommitAcks: (previous) => ipcRenderer.invoke("reviews:restoreAcks", { previous }),
   setReviewStatus: (taskId, status, note) => ipcRenderer.invoke("reviews:setStatus", { taskId, status, note }),
   // Send a review back to in-progress with optional images (task 1116b7ef).
   // images: [{ base64, ext }].

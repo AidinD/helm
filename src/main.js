@@ -53,6 +53,7 @@ import { ask as askClaude } from "keel/claude";
 // this import turned that handler into a ReferenceError (found by review, 2026-08-12).
 import { projectKey } from "./lib/commitReview.js";
 import { buildReviewQueuePayload } from "./lib/reviewQueueBuild.js";
+import { baselineUnboundCommits } from "./lib/reviewBaseline.js";
 import { runHeavy, stopHeavyWorker, heavyWorkerStatus } from "./lib/heavyWorker.js";
 import { killChildTree } from "./lib/processTree.js";
 import { createSingleFlight } from "./lib/singleFlight.js";
@@ -6566,6 +6567,54 @@ ipcMain.handle("reviews:acknowledgeCommit", (_event, { projectPath, sha, shas } 
     }
     acks[key] = [...set];
     writeConfig({ ...cfg, commitReviewAcks: acks });
+    invalidateReviewQueueCache();
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err) };
+  }
+});
+
+// Draw a line under every unbound commit at once and start from here.
+//
+// The per-project "Seen all" exists and is the right size for a handful. It is the wrong size
+// for 510 across 16 projects, several of them truncated at the display cap, when the person
+// has said he is not going to read them: sixteen clicks, each clearing only what the page had
+// room to show.
+//
+// It records that these will not be reviewed, NOT that they were. No record is written, no
+// verdict, nothing that a month from now could be mistaken for evidence. The reply carries
+// the previous acks so the caller can offer an undo, because a bulk clear that cannot be
+// undone is one nobody should be asked to press.
+ipcMain.handle("reviews:baselineUnbound", () => {
+  try {
+    const cfg = loadConfig();
+    const metaHome = resolveMetaHome();
+    // The same project set the page itself scans, taken from the payload it just built rather
+    // than re-derived here - a second implementation of "which projects" would drift, and the
+    // one that drifted would be the one leaving commits behind.
+    const built = buildReviewQueuePayload({ metaHome, config: cfg });
+    const projectPaths = (built.payload.unboundCommits || []).map((section) => section.projectPath);
+    if (projectPaths.length === 0) {
+      return { ok: true, cleared: [], skipped: [], previous: cfg.commitReviewAcks || {}, note: "Nothing was listed, so there was nothing to clear." };
+    }
+    const result = baselineUnboundCommits({ projectPaths, acks: cfg.commitReviewAcks || {} });
+    writeConfig({ ...cfg, commitReviewAcks: result.acks });
+    invalidateReviewQueueCache();
+    return { ok: true, cleared: result.cleared, skipped: result.skipped, previous: result.previous };
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err) };
+  }
+});
+
+// Put back the acks as they were before a baseline. The undo half, and the reason the bulk
+// clear is safe to offer at all.
+ipcMain.handle("reviews:restoreAcks", (_event, { previous } = {}) => {
+  if (!previous || typeof previous !== "object") {
+    return { ok: false, error: "Nothing was handed back to restore." };
+  }
+  try {
+    const cfg = loadConfig();
+    writeConfig({ ...cfg, commitReviewAcks: previous });
     invalidateReviewQueueCache();
     return { ok: true };
   } catch (err) {

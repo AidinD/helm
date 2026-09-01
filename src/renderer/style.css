@@ -7236,3 +7236,23 @@ button.primary {
 .docv-filelist-attention {
   margin-bottom: 6px;
 }
+
+/* "Start from here": the one control that clears a list nobody is going to read. Quiet
+   rather than prominent - it is a way out of the page's noise, not the page's purpose. */
+.rev-baseline {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 26px 0 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-inset);
+}
+.rev-baseline-text {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-dim);
+  max-width: 78ch;
+}
