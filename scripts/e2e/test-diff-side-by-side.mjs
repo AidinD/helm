@@ -148,7 +148,19 @@ try {
     return { before, afterA, afterAll };
   })()`);
   ok(!fl.before.hidden, "the file-list column shows itself when the diff touches more than one file");
-  ok(JSON.stringify(fl.before.labels) === JSON.stringify(["All files (2)", "a.js", "b.js"]), `it lists "All files (N)" plus each changed file, in order (${JSON.stringify(fl.before.labels)})`);
+  // The files, in order, ignoring the view entries beside them. Pinning the WHOLE list broke
+  // the day a second view was added next to "All files" - which is a layout change, not a
+  // regression, and a check that cannot tell those apart gets edited to match whatever it
+  // finds. What actually has to hold is that every changed file is offered, in diff order.
+  const fileLabels = fl.before.labels.filter((l) => /\.js$/.test(l));
+  ok(
+    JSON.stringify(fileLabels) === JSON.stringify(["a.js", "b.js"]),
+    `it offers each changed file, in order (${JSON.stringify(fl.before.labels)})`
+  );
+  ok(
+    fl.before.labels.some((l) => l.startsWith("All files")),
+    "alongside a way back to the whole diff"
+  );
   ok(
     fl.before.blocks.every((b) => !b.hidden),
     "everything is visible before picking a file"
@@ -168,12 +180,24 @@ try {
     preamble.length > 0 && preamble.every((b) => !b.hidden),
     "the commit-message/--stat preamble is not a file block, so picking a.js never hides it"
   );
-  ok(fl.afterA.selected[1] === true && fl.afterA.selected[0] === false, "the a.js item is marked selected, All files is not");
+  // By name. This read selected[1] and selected[0], which meant "a.js" and "All files" until
+  // an entry was inserted between them, and then it was asserting about the wrong buttons
+  // while still passing its own sentence. An index into a list somebody else can add to is
+  // not an identity.
+  const selectedAfterA = fl.before.labels.filter((_, i) => fl.afterA.selected[i]);
+  ok(
+    JSON.stringify(selectedAfterA) === JSON.stringify(["a.js"]),
+    `picking a.js selects it and nothing else (${JSON.stringify(selectedAfterA)})`
+  );
   ok(
     fl.afterAll.blocks.every((b) => !b.hidden),
     "clicking All files again shows everything"
   );
-  ok(fl.afterAll.selected[0] === true, "and re-selects All files");
+  const selectedAfterAll = fl.before.labels.filter((_, i) => fl.afterAll.selected[i]);
+  ok(
+    selectedAfterAll.length === 1 && selectedAfterAll[0].startsWith("All files"),
+    `and going back re-selects the whole diff (${JSON.stringify(selectedAfterAll)})`
+  );
 
   const singleFile = await app.eval(`(() => {
     document.querySelectorAll("#docvFileList .docv-filelist-item").forEach((n) => n.remove());
@@ -181,9 +205,26 @@ try {
     const oneFileDiff = ["diff --git a/x.js b/x.js", "index 111..222 100644", "--- a/x.js", "+++ b/x.js", "@@ -1,1 +1,1 @@", "-old", "+new"].join("\\n");
     const res = { commits: [{ sha: "def", subject: "One file" }], text: oneFileDiff, source: "record", truncated: false };
     openDiffViewer(row, res);
-    return document.getElementById("docvFileList").classList.contains("hidden");
+    const list = document.getElementById("docvFileList");
+    return {
+      hidden: list.classList.contains("hidden"),
+      labels: [...list.querySelectorAll(".docv-filelist-item")].map((b) => b.textContent),
+    };
   })()`);
-  ok(singleFile, "a diff touching only one file gets no column - it would only ever offer 'All files'");
+  // CHANGED 2026-09-01. This used to require NO column for a one-file diff, on the reasoning
+  // that it "would only ever offer 'All files'" - a list with one entry is not a choice, and
+  // that was right. It stopped being right when a second VIEW arrived: a one-file change now
+  // has something to pick between, and a one-file diff is a common shape, so hiding the
+  // column would have made the second view unreachable exactly where it is cheapest to use.
+  ok(!singleFile.hidden, `a one-file diff still gets the column, because there is now a view to choose (${JSON.stringify(singleFile.labels)})`);
+  ok(
+    singleFile.labels.some((l) => /second opinion/i.test(l)),
+    "and the thing it is there to offer is in it"
+  );
+  ok(
+    !singleFile.labels.some((l) => /\.js$/.test(l)),
+    "with no per-file entry, since there is only the one file"
+  );
 
   const consoleErrors = app.getConsoleErrors();
   ok(consoleErrors.length === 0, `no console errors (${consoleErrors.length})`);

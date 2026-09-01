@@ -7674,3 +7674,95 @@ Now `!**/.claude/**/*`, with `test-packer-excludes-agent-worktrees.mjs` assertin
 is depth-independent rather than asserting against a built archive, which would pass on any
 checkout where nobody happens to have a worktree open. Mutated back to the root-anchored
 form: the check goes red on exactly that assertion.
+
+## 2026-09-01 - Reviews became usable, and four things turned out to be described rather than enforced
+
+A long day on the reliability block. The through-line is one shape, found five separate
+times: a sentence that reads like a mechanism, with nothing behind it. Each was found by
+measuring rather than by reading, and each measurement is written here because the numbers
+are the only part that does not age into an opinion.
+
+### The review page had one row, under five hundred
+
+Measured through the app, because reading the payload got it wrong twice - the payload has
+thirty rows, the renderer filters, and the filters are the page.
+
+    before   526 rows   1 unconfirmed,  0 unrecorded, 10 skipped, 510 unbound commits
+    after     20 rows   3 unconfirmed,  7 unrecorded, 10 skipped,   0 unbound commits
+
+**Five cards were hidden as though nothing had been done.** The rule reads `hasCommits ===
+false`, and its comment calls that "a POSITIVE statement - git was asked and found nothing".
+The question git is asked is narrower: does a commit subject carry the task's 8-character id,
+or does a record list one. One board's repo has zero commits mentioning any task id in its
+whole history, so every card on it vanished behind a filter meant to hide noise. The intent
+stands - no commit, no card needed - only the evidence for "no commit" has to be evidence.
+
+**Matching a card to its commits cannot be lexical here.** Cards are written in Swedish and
+commits in English, so a card and its own commit routinely share not one token. That rules
+out every cheap scoring approach and is why the model pass exists at all.
+
+**A binding is not a review record.** That was the obvious place and it is wrong: the record
+gate requires testSteps with an expected result, and saying which commits are a card's says
+nothing about testing, so writing one as a record would mean inventing test steps to pass a
+gate that exists to stop exactly that. Bindings got their own small store - task id, shas,
+and who said so. An unattributed one is refused, because a binding with no author is an
+inference wearing a person's clothes.
+
+**510 unbound commits, cleared to a baseline on the captain's instruction.** It records that they
+will not be reviewed, not that they were, and the wording in the module, the IPC and the
+button all carry that distinction - a cleared list and an approved list are indistinguishable
+a month later. One ack at HEAD clears a project exactly, because the scan is
+`git log HEAD --not <acks>` and never looks past HEAD.
+
+### Four claims that nothing enforced
+
+**Voice worked by accident.** The card said an installed Helm has never found whisper.cpp,
+and the diagnosis held - keel's last-resort candidate walks up from its own file, which lands
+inside app.asar packaged. What had changed is worse: a Windows user environment variable
+points WHISPER_DIR at the payload, so it worked through a setting Helm does not own, read,
+display or repair. Now `config.whisperDir` is Helm's own answer, resolution moved out of the
+module bodies where no config can reach it, and the failure says why instead of the feature
+vanishing.
+
+**The verify gate had never been used.** 56 runs, 108 review records, and not one carries the
+check a declared `verifyCommand` writes; the dispatch requests, the reports and the records
+all show nothing. An optional control with no observed use across a whole history is a
+setting. So a crew run's own diff is now read by a model that did not write it, before the
+worktree is cleaned - and that ordering is the feature, since a finished worktree is not
+guaranteed to survive.
+
+**A crew run could push.** Its permission bypass is justified in a comment reading "SAFE
+precisely because every iteration runs inside the isolated, never-pushed worktree", and the
+tool description says the same to a first mate. Both were true of the module and false of the
+run: crew has a shell, bypassed permissions and a worktree sharing the repository's remotes,
+and the tier guard said in as many words that crew is untouched. Removing the sentence would
+have removed the justification and left the risk, so there is a crew tier now that closes the
+exits and nothing else.
+
+**The privacy guard did not read commit messages.** GITHUB-PUSH.md has warned about that
+since it was written - `git log -S` searches diffs, so a term living only in a message returns
+zero and the repo reads clean - and the guard built afterwards inherited the blind spot. It
+also treated a full stop as part of a word, so a name at the end of a sentence, which is how
+names appear in prose, matched nothing. And keel, which owns the canonical hooks and asserts
+eight siblings byte for byte, had no pre-push hook of its own.
+
+### Seven repositories were silently unwritable
+
+git leaves `.git/index.lock` behind when a process is killed mid-write, and then refuses every
+writing command. Swept the tree: seven, one of them twelve days old, one a work repository.
+Confirmed by asking git rather than by counting files, and confirmed writable afterwards. The
+2026-08-20 card blamed killed Helm runs; two of today's came from interrupted shell commands,
+which is wider.
+
+The sweep only removes a lock that is empty, older than five minutes, and unattended by any
+git process - and when the process list cannot be read, every repository counts as busy. An
+unreadable answer must not become permission to delete.
+
+### What the day is really about
+
+Every one of these was believed. The instruction files say "is refused" and "the report
+records"; the comments say "SAFE precisely because"; the card said the engine was never found.
+Reading any of them tells you nothing about whether they are true, and five of five were not.
+`scripts/e2e/test-instructions-tell-the-truth.mjs` now pins each claim to the code that makes
+it true and fails both when the mechanism goes and when the sentence does - a claim is only
+pinned while it is still being made.
