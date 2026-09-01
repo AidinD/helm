@@ -7559,3 +7559,74 @@ Made mandatory in that shape it becomes another unmeasurable mechanism, and a re
 So the reviewer must record its findings and their disposition - fixed, escalated, or dismissed with a reason - and a review with zero findings on a non-trivial change is itself a signal to distrust.
 
 **Not built yet, tracked separately:** the max-two "look at these parts" field, and the quiet awaiting-review surface.
+
+## 2026-09-01 - Voice worked in the installed app by accident, and the packer's exclusion named a folder instead of a class
+
+Two findings from the same afternoon, both the same shape: a rule written against the case
+that bit, holding by luck everywhere else.
+
+### The engine was found by an ambient variable Helm does not own
+
+The card said the installed Helm has never located whisper.cpp, and its diagnosis was right:
+keel's last-resort candidate walks three levels up from its own file, which is the folder
+holding the repos in a checkout and `app.asar\node_modules\.whisper` in an installed build -
+a folder that cannot exist, since the 1.5GB payload is deliberately excluded from the
+installer.
+
+Measured against a real packaged layout on 2026-09-01, that walk still lands nowhere. What
+has changed since the card was written is that keel grew a candidate list, and that on this
+machine a Windows **user** environment variable sets `WHISPER_DIR` to `D:\whisper`, where the
+payload really is. So the installed app has been working - through a setting Helm does not
+own, does not read, does not display, and cannot repair. Nothing in the app would change if
+that variable disappeared, except that transcription would quietly stop.
+
+That is worse than the bug it masks, because it is invisible in exactly the way the
+reliability block is about. So the fix is not a better guess:
+
+- `config.whisperDir` is Helm's own answer, and the search falls back to Helm's data
+  directory (`~/.helm/whisper` when installed) before anything ambient.
+- **An explicit setting is an answer, not a hint.** A wrong `whisperDir` fails, and the
+  message names that setting. There is deliberately no search past it. keel argues the same
+  case in its own module and this suite has paid for the alternative twice: somebody
+  repoints an app, sees no error because a fallback quietly found the old copy, and keeps
+  using the old copy for days.
+- Resolution moved out of module bodies. Both engine modules computed their root once, at
+  import, where no config exists yet - so a setting could not have fixed anything even after
+  it existed, and a payload installed while the app was running was never noticed.
+- The failure stopped being silent. `voice:status` reports each engine separately, with the
+  reason, and Settings shows it. A build that cannot find its engine used to look exactly
+  like one that could, until somebody spoke into it.
+
+`scripts/e2e/test-whisper-engine-packaged.mjs` reproduces the packaged **layout** on disk -
+keel's module copied to the depth a packaged app puts it at - rather than inspecting a built
+asar, which would only work after a build, on the machine that built it. It builds its
+environment explicitly in every case, because this machine's own `WHISPER_DIR` would
+otherwise make every case pass and the test would assert nothing. Three mutations were run
+against it: root frozen at import, a wrong setting falling back to the search, and the
+setting cached after first read. All three were caught.
+
+**Not fixed, and flagged rather than claimed:** the transformers.js fallback. Its model cache
+resolves to `path.join(dirname__, '/.cache/')` inside the read-only asar, and a failed cache
+write is caught and logged rather than thrown - so it would re-download the ~500MB model on
+every start instead of failing. It also has no `.cache` directory in the dev checkout either,
+which suggests it has never actually run. The Settings string therefore says the fallback is
+unverified rather than that the mic still works. Claiming otherwise would be precisely the
+kind of unenforced statement about the system that this block exists to remove.
+
+### The packer excluded `.claude/` only at the repo root
+
+Build 0.2.78 shipped an app that would not start because a live agent worktree was packed
+while an agent wrote in it, putting every file after it at the wrong asar offset. Two fixes
+followed: `verifyAsar.mjs` re-hashing every packed file against the header, and an exclusion
+`!.claude/**/*`.
+
+The verifier generalises. The exclusion did not: it is anchored at the repo root, and
+`node_modules` is packed. Measured in the v0.2.139 installer, 109 files from
+`node_modules/keel/.claude/worktrees/silly-khayyam-855151` were inside the asar. Nothing was
+corrupt - the verifier passed and that release is sound - but a live worktree in a dependency
+is the same loaded gun, and this repo is public, so whatever sits in one is downloadable.
+
+Now `!**/.claude/**/*`, with `test-packer-excludes-agent-worktrees.mjs` asserting the pattern
+is depth-independent rather than asserting against a built archive, which would pass on any
+checkout where nobody happens to have a worktree open. Mutated back to the root-anchored
+form: the check goes red on exactly that assertion.
