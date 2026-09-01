@@ -16,7 +16,7 @@ import { loadJot, loadGoals, addSubtask, formatJotSummaryForClassifier, projectB
 import { resolveJotDataDir, resolveJotTodosPath } from "./lib/jotDataDir.js";
 import { loadConfig, writeConfig } from "./lib/config.js";
 import { startSession, resolveClaudeBinary } from "./lib/launcher.js";
-import { turnCounterPath, TIER_FIRST_MATE, TIER_SECOND_MATE } from "./lib/tierGuard.js";
+import { turnCounterPath, TIER_FIRST_MATE, TIER_SECOND_MATE, TIER_CREW } from "./lib/tierGuard.js";
 import { createLiveSessionRegistry } from "./lib/liveSessions.js";
 import { sessionLifecycleState, applyStatusOverrides, sessionStateSource } from "./lib/sessionState.js";
 import { createJotHostStore } from "./lib/jotHostStore.js";
@@ -3527,6 +3527,11 @@ function startGoalRun({
       loadConfig().crewReview?.enabled === false
         ? null
         : (args) => reviewCrewRun({ ...args, ask: askClaude }),
+    // Crew's own tier guard. Same hook and same policy module as the mates get; the policy
+    // itself is what differs by tier, and for crew it closes only the ways work leaves the
+    // worktree. Keyed by the run id so the hook's per-turn bookkeeping cannot collide with
+    // a session's.
+    guard: tierGuardLaunchConfig(TIER_CREW, { sessionId: goalRunId, metaHome: resolveMetaHome() }),
     cancelToken,
     // Track each freshly-spawned iteration/verify child so before-quit can
     // sweep its tree (L1) and goal:cancel can kill the in-flight one

@@ -139,7 +139,7 @@ const TOOLS = [
   {
     name: "helm_create_second_mate",
     description:
-      "FIRST MATES ONLY: register a second mate for a project. Use it for BOTH the daily-loop 'lay out A, B, C' step AND, crucially, as your response whenever the captain names a single project to work on ('I want to work on dinghy') - reach for this INSTEAD of exploring the repo or implementing yourself. It ALSO covers work that has no project yet ('build me a new app'): pass an absolute path plus create:true and the folder is created for you, so a brand-new build is still a second mate's job and never yours. It does NOT spin up a session: it lazily registers the assignment so the second mate appears in the Fleet, and its Opus session spins up only when the captain jumps into it (or you relay to it). So the pattern is: create it, then tell the captain to jump into it in the Fleet. Idempotent per project.",
+      "FIRST MATES ONLY: register a second mate for a project. Use it for BOTH the daily-loop 'lay out A, B, C' step AND, crucially, as your response whenever the captain names a single project to work on ('I want to work on dinghy') - reach for this INSTEAD of exploring the repo or implementing yourself. It ALSO covers work that has no project yet ('build me a new app'): pass an absolute path plus create:true and the folder is created for you, so a brand-new build is still a second mate's job and never yours. It does NOT spin up a session: it lazily registers the assignment so the second mate appears in the Fleet, and its session spins up only when the captain jumps into it (or you relay to it). So the pattern is: create it, then tell the captain to jump into it in the Fleet. Idempotent per project.",
     inputSchema: {
       type: "object",
       properties: {

@@ -38,6 +38,24 @@ import path from "node:path";
 
 export const TIER_FIRST_MATE = "first-mate";
 export const TIER_SECOND_MATE = "second-mate";
+/**
+ * Crew. Guarded for ONE thing only: leaving the worktree.
+ *
+ * The other two tiers are guarded for who does the work. Crew IS the work, so nothing here
+ * touches writing, committing, building or testing - that would be making Helm a permission
+ * system, which this guard deliberately is not.
+ *
+ * What it does touch is the claim the rest of the design rests on. A crew iteration runs with
+ * `--permission-mode bypassPermissions`, and the comment justifying that says in as many words:
+ * "Bypassing is SAFE precisely because every iteration runs inside the isolated, never-pushed
+ * worktree - that isolation is what earns the bypass." The tool description a first mate reads
+ * says the same: "never pushes/merges".
+ *
+ * Both were true of the MODULE, which never pushes, and false of the RUN, which has a shell,
+ * bypassed permissions and a worktree sharing the repository's remotes. Nothing stopped
+ * `git push`. So the property that earns the bypass is now enforced rather than described.
+ */
+export const TIER_CREW = "crew";
 
 // A second mate orchestrates crew and compiles what comes back. The captain, 2026-08-14:
 // "jag vill att 2nd mate orkestrerar crew mates att göra jobb som 2nd mate sedan
@@ -677,6 +695,76 @@ export function shellMutatesFile(command) {
   return !isSupervisionCommand(command);
 }
 
+/*
+ * Publishing, as opposed to working.
+ *
+ * Deliberately a SHORT list of the ways work leaves an isolated worktree, not another
+ * attempt at "is this dangerous". Crew is meant to write, commit, build and test freely;
+ * the isolation is what makes that safe, and these are the commands that end it.
+ */
+const GIT_PUBLISHES = new Set(["push", "remote", "submodule"]);
+const PUBLISHING_RUNNERS = new Set(["gh", "glab", "hub"]);
+
+/**
+ * Would this command move work out of the worktree it runs in?
+ *
+ * @param {string} command
+ * @returns {string|null} the reason, or null when it stays local
+ */
+export function shellLeavesWorktree(command) {
+  const text = String(command ?? "");
+  if (!text.trim()) {
+    return null;
+  }
+  const { nodes, error } = readShell(text);
+  if (error) {
+    // FAIL CLOSED, same trade as the read-only question: a false block costs one command,
+    // a miss costs work landing on a remote that nobody reviewed.
+    return "this command could not be read well enough to prove it stays in the worktree";
+  }
+  for (const words of nodes) {
+    for (let i = 0; i < words.length; i++) {
+      const w = words[i];
+      if (!w.quoted && /^[A-Za-z_][A-Za-z0-9_]*=/.test(w.value)) {
+        continue; // leading VAR=value assignment
+      }
+      const name = commandName(w.value);
+      if (!name) {
+        continue;
+      }
+      if (PUBLISHING_RUNNERS.has(name)) {
+        return `\`${name}\` talks to the forge, which is outside this worktree`;
+      }
+      if (name === "git") {
+        /*
+         * The first word after git that is neither a flag nor a flag's VALUE is the
+         * subcommand. The value part is not pedantry: `git -C . push` slipped straight
+         * through the first version of this, because -C takes a path, the path is not a
+         * flag, and the scan stopped there having decided "." was the subcommand. Found by
+         * this module's own check rather than in the wild, which is the only reason it is
+         * not a story about a push instead of a paragraph.
+         */
+        const TAKES_A_VALUE = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--config-env"]);
+        for (let k = i + 1; k < words.length; k++) {
+          const sub = String(words[k].value || "");
+          if (TAKES_A_VALUE.has(sub)) {
+            k += 1; // step over the value it consumes
+            continue;
+          }
+          if (sub.startsWith("-")) {
+            continue; // a plain flag, or --flag=value which carries its own
+          }
+          if (GIT_PUBLISHES.has(sub.toLowerCase())) {
+            return `\`git ${sub.toLowerCase()}\` moves work outside this worktree`;
+          }
+          break;
+        }
+      }
+    }
+  }
+  return null;
+}
+
 const FIRST_MATE_DENIAL = [
   "HELM TIER GUARD: a first mate does not write files. Anywhere - not a project's, not the",
   "meta-home's, not a skill or a note, and not a document the captain asked for directly.",
@@ -694,6 +782,19 @@ const FIRST_MATE_DENIAL = [
   "needs to start without re-interviewing the captain: what he actually said in his own words,",
   "why he wants it, where the output belongs, and anything you have already gathered.",
 ].join("\n");
+
+function crewDenial(why) {
+  return [
+    `HELM TIER GUARD: ${why}.`,
+    "",
+    "This run is isolated on purpose: it works in its own worktree on its own branch, and the",
+    "whole reason it is allowed to write, commit and run commands without asking is that",
+    "nothing it does leaves that worktree until a person has looked at it.",
+    "",
+    "Commit your work as normal - that is how it gets reviewed. Landing it is the captain's",
+    "call, and it happens after somebody reads the branch, not from in here.",
+  ].join("\n");
+}
 
 function secondMateDenial(used, budget) {
   return [
@@ -749,8 +850,21 @@ export function decideToolCall({ tier, tool, input = {}, writesThisTurn = 0, bud
     return { decision: "allow", isWrite: true };
   }
 
-  // Crew, the captain's own sessions, and anything untiered are untouched. This guard is
-  // about who does the work, not about making Helm a permission system.
+  if (tier === TIER_CREW) {
+    // Writing, committing, building, testing: all crew's job, none of this guard's business.
+    // Only the exits are closed - see TIER_CREW for why that one property is different.
+    if (!isShell) {
+      return { decision: "allow", isWrite: isMutatingTool };
+    }
+    const why = shellLeavesWorktree(input.command);
+    if (why) {
+      return { decision: "deny", isWrite: false, reason: crewDenial(why) };
+    }
+    return { decision: "allow", isWrite: shellMutatesFile(input.command) };
+  }
+
+  // The captain's own sessions and anything untiered are untouched. This guard is about who
+  // does the work, not about making Helm a permission system.
   return { decision: "allow", isWrite: false };
 }
 

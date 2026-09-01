@@ -269,7 +269,7 @@ const PHASE_PROMPTS = {
  * function so the flag set, especially the MCP stripping, is unit-testable without
  * spawning a real subprocess (task 07cd4fc9).
  */
-export function buildIterationArgs({ schema, systemPrompt, model, effort }) {
+export function buildIterationArgs({ schema, systemPrompt, model, effort, guardSettings = null }) {
   const args = [
     "-p",
     // The prompt goes on STDIN, not here as an argv value. It accumulates the goal, prior
@@ -308,6 +308,20 @@ export function buildIterationArgs({ schema, systemPrompt, model, effort }) {
     '{"mcpServers":{}}',
     "--strict-mcp-config",
   ];
+  // The tier guard, for the one property that earns this run its bypassed permissions.
+  //
+  // The comment above --permission-mode says bypassing is safe "precisely because every
+  // iteration runs inside the isolated, never-pushed worktree". That was a description, not
+  // a mechanism: crew has a shell, bypassed permissions, and a worktree that shares the
+  // repository's remotes, so nothing stopped a push. The guard now closes the exits and
+  // nothing else - crew still writes, commits, builds and tests freely, because that is the
+  // work. See TIER_CREW in tierGuard.js.
+  //
+  // Passed in rather than built here: resolving the hook's path needs to know whether the
+  // app is packaged, and this module cannot import electron.
+  if (guardSettings) {
+    args.push("--settings", JSON.stringify(guardSettings));
+  }
   if (model) {
     args.push("--model", model);
   }
@@ -707,7 +721,7 @@ function runIteration({ worktreePath, goal, notesContent, planContent, repoMapCo
     // Argv built by a pure helper (buildIterationArgs) so the flag set - including the
     // MCP stripping that keeps a crew iteration from inheriting the global servers - is
     // unit-testable without a real spawn. The prompt is fed on stdin below, not in argv.
-    const args = buildIterationArgs({ schema: ITERATION_SCHEMA, systemPrompt, model, effort });
+    const args = buildIterationArgs({ schema: ITERATION_SCHEMA, systemPrompt, model, effort, guardSettings: guard?.settings || null });
 
     // Spawn WITHOUT a shell: the prompt, JSON schema, and system prompt all go
     // as discrete argv elements. runGoal guarantees claudePath is a native .exe
@@ -720,7 +734,10 @@ function runIteration({ worktreePath, goal, notesContent, planContent, repoMapCo
       child = spawn(claudePath, args, {
         cwd: worktreePath,
         shell: false,
-        env: process.env,
+        // The guard's own variables ride along - the hook reads HELM_TIER from the
+        // environment, so settings without env is a hook that runs and classifies the
+        // session as untiered, which allows everything.
+        env: { ...process.env, ...(guard?.extraEnv || {}) },
       });
     } catch (err) {
       resolve({ ok: false, error: `Failed to spawn claude: ${err.message}`, contract });
@@ -1379,6 +1396,10 @@ export async function runGoal({
   // Null means the run ends the way it always did - the builder's own word that it is done -
   // which is the state that produced 22 done-but-not-done reports in one day.
   reviewer = null,
+  // { settings, extraEnv } from the app's tierGuardLaunchConfig, so a crew iteration cannot
+  // push its worktree to a remote. Null leaves the run exactly as it was - and exactly as
+  // unguarded, which is worth saying out loud rather than defaulting quietly.
+  guard = null,
 }) {
   if (!projectPath || !goal) {
     throw new Error("runGoal requires both projectPath and goal.");
