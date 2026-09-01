@@ -7125,3 +7125,44 @@ button.primary {
     transition: none;
   }
 }
+
+/* The ask/bind pair on an unrecorded row. Both are text buttons rather than anything
+   emphatic: one spends a little money, the other writes a fact, and neither is the primary
+   action on the page - reading the change is. */
+.rev-candidate-ask {
+  margin-top: 10px;
+  font-size: 12px;
+}
+.rev-candidate-result {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+/* A proposal is a claim with a reason attached, so the reason gets its own line rather than
+   trailing the subject - a reason nobody reads is a reason nobody can disagree with. */
+.rev-proposal {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: 10px;
+  align-items: start;
+  font-size: 12px;
+  padding: 4px 0;
+  cursor: pointer;
+}
+.rev-proposal input[type="checkbox"] {
+  margin-top: 2px;
+}
+.rev-proposal-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.rev-proposal-subject {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.rev-proposal-why {
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}

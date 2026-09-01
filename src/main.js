@@ -44,6 +44,9 @@ import {
 } from "./lib/scheduledPrompts.js";
 import { reviewQueueInputsFingerprint, readReviewRecord, writeReviewRecord, buildAutoReviewRecord, recordCheckRun, gauntletStatus, currentHead, codeChangedBetween } from "./lib/reviewRecords.js";
 import { resolveTaskCommits, diffForCommits, shippedVersionForCommits } from "./lib/reviewDiff.js";
+import { boundCommits, writeBinding, removeBinding } from "./lib/commitBindings.js";
+import { buildMatchPrompt, shapeMatchAnswer, MATCH_SCHEMA, MATCH_SYSTEM } from "./lib/commitMatch.js";
+import { ask as askClaude } from "keel/claude";
 // projectKey stays imported here even though the review BUILD moved to reviewQueueBuild.js:
 // `reviews:acknowledgeCommit` keys its acks by the same normalized project key, and dropping
 // this import turned that handler into a ReferenceError (found by review, 2026-08-12).
@@ -405,6 +408,19 @@ function createWindow() {
     minHeight: 560,
     backgroundColor: "#1a1a1a",
     title: "Helm",
+    // A test run must not take the screen off him.
+    //
+    // 146 of the suite's checks launch this app, because the renderer is a classic script
+    // that cannot be imported - anything about what the page SHOWS can only be asked by
+    // driving the real thing. Each one opened a window and took focus, so a full sweep
+    // meant a couple of hundred windows appearing over whatever he was doing (the captain,
+    // 2026-09-01: "de stör i mitt övriga arbete när appen poppar upp hela tiden").
+    //
+    // Hidden, not merely unfocused: the renderer still lays out, so everything the checks
+    // read - the DOM, computed styles, offsetParent, capturePage - works exactly as before.
+    // What stops is the window appearing. A check that genuinely needs a visible window can
+    // clear the variable for itself.
+    show: process.env.HELM_E2E_HIDDEN !== "1",
     // Frameless, like Jot, Nib and Tend: the header row is the wordmark and
     // the drag handle, and carries its own window buttons.
     frame: false,
@@ -6673,7 +6689,7 @@ ipcMain.handle("reviews:diff", (_event, { taskId, projectPath: fallbackProject }
   if (!projectPath) {
     return { ok: false, error: "No project folder is known for that task, so nothing says where its code lives." };
   }
-  const resolved = resolveTaskCommits(projectPath, taskId, rec?.commits || []);
+  const resolved = resolveTaskCommits(projectPath, taskId, boundCommits(metaHome, taskId, rec).shas);
   if (resolved.commits.length === 0) {
     return { ok: false, error: resolved.error || "No commits found for this task.", source: resolved.source };
   }
@@ -6721,7 +6737,7 @@ ipcMain.handle("reviews:presentReview", async (_event, { taskId } = {}) => {
   }
   const projectPath = rec?.projectPath || row?.repoPath || null;
   const resolved = projectPath
-    ? resolveTaskCommits(projectPath, taskId, rec?.commits || [])
+    ? resolveTaskCommits(projectPath, taskId, boundCommits(metaHome, taskId, rec).shas)
     : { source: "none", commits: [], error: "No project folder is known for this task." };
   let diff = { ok: false, text: "", truncated: false };
   if (resolved.commits.length > 0) {
@@ -6852,7 +6868,7 @@ ipcMain.handle("reviews:reviewerPlan", (_event, { taskId, sample, projectPath: f
   if (!projectPath) {
     return { ok: false, error: "No project folder is known for that task, so there is nowhere to root a reviewer." };
   }
-  const resolved = resolveTaskCommits(projectPath, taskId, rec?.commits || []);
+  const resolved = resolveTaskCommits(projectPath, taskId, boundCommits(metaHome, taskId, rec).shas);
   // No commits is not a refusal: a reviewer can still read the record and the working
   // tree. It just means the recommendation has less to go on, and says so.
   let stats = { files: 0, added: 0, removed: 0, changedLines: 0, commits: 0, paths: [] };
@@ -6891,6 +6907,64 @@ ipcMain.handle("reviews:reviewerPlan", (_event, { taskId, sample, projectPath: f
     writingBrief: reviewWritingBriefLines(sample || ""),
   };
 });
+
+// Ask a model which of a card's candidate commits are actually its work.
+//
+// ON DEMAND ONLY, one call per click. Deliberately not part of the queue build: that runs on
+// every visit to the Review page and every refresh, so a model call in it would spend tokens
+// for as long as the window is open - the passive drain this app has been accused of once
+// already and had to be measured to disprove.
+//
+// The answer is a PROPOSAL. Nothing here writes a binding; see commitMatch.js for why a
+// wrong pairing accepted silently is worse than the blank page this replaces.
+ipcMain.handle("reviews:matchCommits", async (_event, { taskId, projectPath, card, commits } = {}) => {
+  const offered = (Array.isArray(commits) ? commits : []).filter((c) => c && c.shortSha && c.sha);
+  if (offered.length === 0) {
+    return { ok: false, error: "No commits were offered, so there is nothing to read." };
+  }
+  const prompt = buildMatchPrompt(card || {}, offered);
+  const model = "claude-haiku-4-5-20251001";
+  const answer = await askClaude({
+    prompt,
+    model,
+    system: MATCH_SYSTEM,
+    schema: MATCH_SCHEMA,
+  });
+  if (!answer.ok) {
+    // keel's ask never throws; a failure is data, and the page says it plainly rather than
+    // leaving a spinner running.
+    return { ok: false, error: answer.reason };
+  }
+  const shaped = shapeMatchAnswer(answer.value, offered);
+  return {
+    ok: true,
+    taskId,
+    projectPath: projectPath || null,
+    model: answer.model || model,
+    costUsd: answer.costUsd ?? null,
+    considered: offered.length,
+    ...shaped,
+  };
+});
+
+// Bind commits to a card, on a person's say-so.
+//
+// `by` is stamped here rather than taken from the renderer: the whole value of a binding is
+// that somebody decided, and a caller that could name its own author could write an
+// inference and sign it as a person.
+ipcMain.handle("reviews:bindCommits", (_event, { taskId, projectPath, shas, proposedBy, note } = {}) => {
+  const metaHome = resolveMetaHome();
+  const result = writeBinding(metaHome, taskId, {
+    projectPath: projectPath || null,
+    shas,
+    by: "captain",
+    proposedBy: proposedBy || null,
+    note: note || null,
+  });
+  return result;
+});
+
+ipcMain.handle("reviews:unbindCommits", (_event, { taskId } = {}) => removeBinding(resolveMetaHome(), taskId));
 
 // The reviewer's own verdict, read back. It writes a file rather than calling into Helm -
 // an agent can always write a file, and this is the same files-as-memory shape the rest of

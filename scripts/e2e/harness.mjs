@@ -104,6 +104,17 @@ export async function launch(opts = {}) {
     env.HELM_CONFIG_PATH = path.join(configTmpDir, "config.json");
   }
 
+  // Launched hidden by default. A sweep starts this app 146 times, and every one of them
+  // used to open a window and take focus over whatever the captain was doing at the time - which
+  // is what made running the suite something he had to schedule around rather than just do.
+  // The renderer still lays out when the window is hidden, so nothing a check reads changes.
+  //
+  // Set HELM_E2E_HIDDEN=0 to watch a run, which is worth doing when a check fails in a way
+  // the DOM does not explain.
+  if (env.HELM_E2E_HIDDEN === undefined) {
+    env.HELM_E2E_HIDDEN = "1";
+  }
+
   // Never launch onto a debug port somebody else is already serving. Chromium
   // does not fail when it cannot bind one - it logs "Cannot start http server
   // for devtools" and runs on, headless of any debugger. The harness then found

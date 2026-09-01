@@ -110,6 +110,14 @@ contextBridge.exposeInMainWorld("helm", {
   runReviewChecks: (taskId) => ipcRenderer.invoke("reviews:runChecks", { taskId }),
   // The change behind a review item: its commits' patch, read-only.
   getReviewDiff: (taskId, projectPath) => ipcRenderer.invoke("reviews:diff", { taskId, projectPath }),
+  // Ask a model which candidate commits are this card's work. On demand, one call per
+  // click - never on a queue build. Resolves { ok, proposals, unmatched, considered,
+  // invented, model, costUsd }; a proposal is never a binding.
+  matchReviewCommits: (payload) => ipcRenderer.invoke("reviews:matchCommits", payload),
+  // Record that these commits ARE this card's, on the captain's say-so. Separate from a
+  // review record on purpose: a binding claims identity, not that anything was reviewed.
+  bindReviewCommits: (payload) => ipcRenderer.invoke("reviews:bindCommits", payload),
+  unbindReviewCommits: (taskId) => ipcRenderer.invoke("reviews:unbindCommits", { taskId }),
   // Renders the WHOLE review as a standalone HTML page and opens it in the OS browser.
   presentReview: (taskId) => ipcRenderer.invoke("reviews:presentReview", { taskId }),
   // The same page for a commit with no Jot task - git's facts, and a plain statement

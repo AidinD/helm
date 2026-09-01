@@ -1693,6 +1693,124 @@ function reviewRowEl(row, band = null) {
         list.append(line);
       }
       box.append(list);
+
+      // Ask a model which of these are the card's work.
+      //
+      // A button rather than something the page does on its own: the queue rebuilds on every
+      // visit and every refresh, so doing this automatically would spend tokens for as long
+      // as the window is open. One click, one call, and the answer is a proposal that has to
+      // be accepted before anything is written.
+      const ask = document.createElement("button");
+      ask.type = "button";
+      ask.className = "text-btn rev-candidate-ask";
+      ask.textContent = "Ask which of these is this card";
+      ask.title = "One model call over the commit subjects above. It proposes; you decide.";
+      const result = document.createElement("div");
+      result.className = "rev-candidate-result";
+      const chosen = new Set();
+
+      ask.addEventListener("click", async () => {
+        ask.disabled = true;
+        ask.textContent = "Reading the commits...";
+        result.textContent = "";
+        const res = await window.helm.matchReviewCommits({
+          taskId: row.taskId,
+          projectPath: row.repoPath,
+          card: { title: row.title, description: row.description, category: row.category },
+          commits: candidates.map((c) => ({ sha: c.sha, shortSha: c.shortSha, subject: c.subject })),
+        });
+        ask.disabled = false;
+        ask.textContent = "Ask again";
+        if (!res?.ok) {
+          result.textContent = res?.error || "The model could not be reached.";
+          return;
+        }
+        result.textContent = "";
+        const head = document.createElement("div");
+        head.className = "rev-candidate-note";
+        // The model and the cost are stated, not hidden. This spends money on a click, and
+        // the person clicking is entitled to know how much and on what.
+        const spend = typeof res.costUsd === "number" ? ` · ${res.costUsd.toFixed(4)}` : "";
+        if (res.proposals.length === 0) {
+          head.textContent = `${res.unmatched || "None of these look like this card."} (${res.model}${spend})`;
+          result.append(head);
+          return;
+        }
+        head.textContent =
+          `${res.proposals.length} of ${res.considered} look like this card. Tick the ones that are, then bind them - ` +
+          `nothing is written until you do. (${res.model}${spend})`;
+        result.append(head);
+        if (res.invented > 0) {
+          // A model naming a commit that was not offered means the answer is about something
+          // other than the question. Dropped, and said out loud rather than swallowed.
+          const warn = document.createElement("div");
+          warn.className = "rev-candidate-note";
+          warn.textContent = `${res.invented} answer${res.invented === 1 ? "" : "s"} named a commit that was not in the list, and ${res.invented === 1 ? "was" : "were"} dropped.`;
+          result.append(warn);
+        }
+        chosen.clear();
+        for (const prop of res.proposals) {
+          const line = document.createElement("label");
+          line.className = "rev-proposal";
+          const tick = document.createElement("input");
+          tick.type = "checkbox";
+          // Pre-ticked only at high confidence, and still nothing is written until the bind
+          // button is pressed. A medium guess pre-ticked is how a wrong pairing gets accepted
+          // by somebody scanning rather than reading.
+          tick.checked = prop.confidence === "high";
+          if (tick.checked) {
+            chosen.add(prop.sha);
+          }
+          tick.addEventListener("change", () => {
+            if (tick.checked) {
+              chosen.add(prop.sha);
+            } else {
+              chosen.delete(prop.sha);
+            }
+          });
+          const meta = document.createElement("span");
+          meta.className = "rev-candidate-sha";
+          meta.textContent = `${prop.shortSha} · ${prop.confidence}`;
+          const text = document.createElement("span");
+          text.className = "rev-proposal-text";
+          const subject = document.createElement("span");
+          subject.className = "rev-proposal-subject";
+          subject.textContent = prop.subject;
+          const why = document.createElement("span");
+          why.className = "rev-proposal-why";
+          why.textContent = prop.why;
+          text.append(subject, why);
+          line.append(tick, meta, text);
+          result.append(line);
+        }
+        const bind = document.createElement("button");
+        bind.type = "button";
+        bind.className = "text-btn rev-candidate-ask";
+        bind.textContent = "Bind the ticked commits to this card";
+        bind.addEventListener("click", async () => {
+          if (chosen.size === 0) {
+            showToast("Nothing is ticked, so there is nothing to bind.");
+            return;
+          }
+          bind.disabled = true;
+          const r = await window.helm.bindReviewCommits({
+            taskId: row.taskId,
+            projectPath: row.repoPath,
+            shas: [...chosen],
+            proposedBy: res.model,
+          });
+          if (!r?.ok) {
+            bind.disabled = false;
+            showToast(r?.error || "Could not bind those.");
+            return;
+          }
+          showToast(`Bound ${r.shas.length} commit${r.shas.length === 1 ? "" : "s"} to this card. Its diff is available now.`);
+          renderReviewPage();
+        });
+        result.append(bind);
+      });
+
+      box.append(ask, result);
       body.append(box);
     }
     // The actions come along even here. They used to be built AFTER this return, so
