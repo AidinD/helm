@@ -1,7 +1,8 @@
 // Task 860b4661 came back "kan inte se versionen". This is the live proof the feature
-// actually renders: a review record pinned to a REAL released commit (9de4b66, which is in
-// tag v0.1.624 of this very repo) must show a "shipped in vX" chip on the review ROW head -
-// visible without expanding. It drives the real reviews:shippedVersion IPC end to end
+// actually renders: a review record pinned to a REAL released commit of this very repo -
+// looked up from the newest release tag at run time, see releasedCommit() below - must show
+// a "shipped in vX" chip on the review ROW head, visible without expanding. It drives the
+// real reviews:shippedVersion IPC end to end
 // (record on disk -> resolveTaskCommits -> git tag --contains) against the real helm repo,
 // then renders the actual reviewRowEl and reads the chip out of the collapsed head.
 //
@@ -26,18 +27,52 @@ const ok = (c, m) => {
 };
 
 const HELM_REPO = path.resolve(fileURLToPath(new URL("../../", import.meta.url)));
-// A commit that IS in a released tag of this repo (the send-back-images fix, released in
-// v0.1.624). If the repo's history is ever rewritten this test will say so loudly rather
-// than pass vacuously.
-const RELEASED_COMMIT = "9de4b66";
 const TASK = "ffffffff-0000-4000-8000-00000000860b";
 
+// A commit that IS in a released tag of this repo - FOUND, not written down.
+//
+// It was written down until 2026-09-01: a sha pinned in this file, with a comment
+// promising that a history rewrite would make the check "say so loudly rather than pass
+// vacuously". The rewrite happened on 2026-08-23 (git-filter-repo, to strip screenshots
+// before making the repo public again), every sha changed, and the check said so loudly
+// into an empty room for ten days. Four red assertions in every full run, and a suite
+// that is permanently red on something nobody intends to fix is a suite whose red stops
+// meaning anything.
+//
+// So it asks the repo. The newest release tag names a commit that is by definition in a
+// released tag, whatever the history looks like today.
+function releasedCommit() {
+  const tags = execFileSync("git", ["-C", HELM_REPO, "tag", "--list", "v*", "--sort=v:refname"], { encoding: "utf8" })
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => /^v\d/.test(line));
+  if (tags.length === 0) {
+    return null;
+  }
+  return execFileSync("git", ["-C", HELM_REPO, "rev-parse", "--short", `${tags[tags.length - 1]}^{commit}`], {
+    encoding: "utf8",
+  }).trim();
+}
+
+let RELEASED_COMMIT = null;
 let expectedTag = null;
 try {
-  const out = execFileSync("git", ["-C", HELM_REPO, "tag", "--contains", RELEASED_COMMIT, "--sort=v:refname"], { encoding: "utf8" });
-  expectedTag = out.split(/\r?\n/).map((l) => l.trim()).find((t) => /^v\d/.test(t)) || null;
+  RELEASED_COMMIT = releasedCommit();
+  if (RELEASED_COMMIT) {
+    // Derived the same way the IPC derives it, so the expectation cannot agree with the
+    // feature by having been computed differently.
+    const out = execFileSync("git", ["-C", HELM_REPO, "tag", "--contains", RELEASED_COMMIT, "--sort=v:refname"], { encoding: "utf8" });
+    expectedTag = out.split(/\r?\n/).map((l) => l.trim()).find((t) => /^v\d/.test(t)) || null;
+  }
 } catch {
   expectedTag = null;
+}
+
+if (!RELEASED_COMMIT) {
+  // A clone with no release tags cannot exercise this feature at all. Saying that is very
+  // different from reporting the feature broken, and both are different from passing.
+  console.log("SKIP - this repo has no v* release tags, so there is no shipped version to render");
+  process.exit(0);
 }
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "helm-shipver-"));
