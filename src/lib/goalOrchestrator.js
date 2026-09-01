@@ -239,10 +239,21 @@ const PHASE_PROMPTS = {
     "   actionable implementation plan to `.helm-goal/plan.md`. Create the",
     "   file if it does not exist, or replace it if it does — plan.md always",
     "   reflects the current, single best plan, not a history of revisions.",
-    "2. The plan should break the goal into a sequence of small, concrete",
-    "   implementation steps an `implement`-phase iteration (which only ever",
-    "   works on one smallest-next-step at a time, with no memory beyond",
-    "   notes.md and this plan) can follow one at a time.",
+    "2. Break the goal into steps sized by what ONE ITERATION can finish, not by",
+    "   what fits on a line. An iteration is a fresh session with no memory beyond",
+    "   notes.md and this plan, it has a HARD 15-MINUTE limit, and it pays a cold",
+    "   start of roughly 40,000 tokens before it does anything at all.",
+    "   Two consequences, and they pull in opposite directions:",
+    "   - A step that takes minutes is too small. It spends more starting up than",
+    "     working. Writing a DECISIONS.md paragraph, ticking a checklist, running",
+    "     three commands: those belong WITH the step they finish, not on their own.",
+    "   - A step that cannot finish inside 15 minutes is too big, and no number of",
+    "     iterations rescues it - it will time out every time. Writing AND running a",
+    "     slow end-to-end suite is the usual example. Split it, or say in the step",
+    "     that it only writes the tests and a later one runs them.",
+    "   Aim for steps that deliver something committable in a few minutes of real",
+    "   work, and count them: if the plan has more steps than the iteration budget",
+    "   you were given, it cannot be carried out as written. Merge the small ones.",
     "3. Do NOT make any other code changes this iteration. This phase's only",
     "   deliverable is `.helm-goal/plan.md` itself.",
     "4. Set success:true once `.helm-goal/plan.md` has been written with a",
@@ -257,8 +268,14 @@ const PHASE_PROMPTS = {
     "",
     "Rules specific to this phase:",
     "1. A plan already exists at `.helm-goal/plan.md` (included below).",
-    "   Work on the SMALLEST next logical step from that plan, not the whole",
-    "   goal at once. Leave the rest for future iterations.",
+    "   Take the next step from that plan, and CARRY ON into the following ones",
+    "   while they genuinely fit in this iteration - you have about 15 minutes.",
+    "   Doing several small steps in one go is correct and is not a deviation:",
+    "   three steps that each take two minutes should not cost three cold starts.",
+    "   Stop and leave the rest when the next step is substantial, when you are",
+    "   running short of time, or when it depends on something you cannot verify",
+    "   here. Never start something you cannot finish and commit in this iteration.",
+    "   Say in your summary which steps you completed, so the next one knows.",
     "2. Run any relevant build/test/lint yourself and fix what you find before",
     "   finishing — don't leave broken code for the next iteration to inherit.",
   ].join("\n"),
@@ -1146,6 +1163,45 @@ export function isOwnWorktreeRoot(worktreePath) {
  * confirmed to be its own worktree root (see `isOwnWorktreeRoot`) — a defense
  * against ever pointing a destructive reset/clean at a parent checkout.
  */
+/**
+ * Put an iteration's unfinished work somewhere it can be found, instead of deleting it.
+ *
+ * A timed-out iteration is not the same thing as a failed one, and treating them the same
+ * threw real work away. Measured on run d2d121c2: iteration 6 made 61 tool calls including
+ * edits, and the clock ran out during StructuredOutput - the REPORTING step. It had done the
+ * work; it died writing down that it had. The tree was then reset --hard and the work was
+ * gone.
+ *
+ * A stash rather than a commit. The branch is what a person reads when the run ends, and
+ * putting half-finished work on it as a commit would present it as delivered - the one thing
+ * this project keeps having to stop. A stash keeps the tree clean for the next iteration,
+ * which is what makes fresh-context iterations work at all, and keeps the work recoverable.
+ *
+ * Invisible unless somebody is told, so the caller writes it into notes.md, which is the
+ * thing designed to survive a context loss.
+ *
+ * @returns {{ stashed: boolean, ref: string | null, why: string | null }}
+ */
+function stashWorktreeChanges(worktreePath, label) {
+  if (!isOwnWorktreeRoot(worktreePath)) {
+    return { stashed: false, ref: null, why: "not confirmed as its own git worktree root" };
+  }
+  try {
+    const dirty = runGit(worktreePath, ["status", "--porcelain"]).trim();
+    if (!dirty) {
+      return { stashed: false, ref: null, why: "there was nothing uncommitted to keep" };
+    }
+    // -u so a newly created file is kept too: a timed-out iteration that added a file and
+    // never committed it is exactly the case this exists for.
+    runGit(worktreePath, ["stash", "push", "-u", "-m", label]);
+    const first = runGit(worktreePath, ["stash", "list"]).split("\n")[0] || "";
+    const ref = first.split(":")[0] || "stash@{0}";
+    return { stashed: true, ref, why: null };
+  } catch (err) {
+    return { stashed: false, ref: null, why: err.message };
+  }
+}
+
 function discardWorktreeChanges(worktreePath) {
   if (!isOwnWorktreeRoot(worktreePath)) {
     console.error(
@@ -1619,18 +1675,45 @@ export async function runGoal({
 
     let record;
     if (!outcome.ok) {
-      // Hard process error (timeout, spawn failure, bad JSON, schema
-      // mismatch) — treat exactly like success:false: discard whatever the
-      // process may have left behind and keep going.
-      discardWorktreeChanges(worktreePath);
+      // Hard process error: spawn failure, bad JSON, schema mismatch - or a TIMEOUT, which
+      // is not the same thing and used to be treated as one.
+      //
+      // "discard whatever the process may have left behind" is right for a run that never
+      // got started or produced garbage. It is wrong for a clock that ran out: an iteration
+      // can have done its whole job and died in the reporting step. Not a guess - run
+      // d2d121c2's sixth iteration made 61 tool calls including edits and timed out during
+      // StructuredOutput, and the reset threw all of it away.
+      //
+      // So a timeout keeps the work in a stash and says so in notes.md; everything else still
+      // discards. The tree ends clean either way, which is what the next fresh-context
+      // iteration needs.
+      const timedOut = /timed out/i.test(String(outcome.error || ""));
+      let kept = { stashed: false, ref: null, why: null };
+      if (timedOut) {
+        kept = stashWorktreeChanges(worktreePath, `helm: iteration ${i} timed out with work in progress`);
+      }
+      if (!kept.stashed) {
+        discardWorktreeChanges(worktreePath);
+      }
+      const keptNote = kept.stashed
+        ? `Iteration ${i} ran out of time while reporting. Its unfinished work was NOT discarded - it is in ${kept.ref} in this worktree ("git stash list" to see it, "git stash pop ${kept.ref}" to bring it back). Read it before redoing this step: the edits may already be most of the way there.`
+        : null;
       const syntheticResult = {
         success: false,
         summary: `Iteration failed with a process error: ${outcome.error}`,
         keyChanges: [],
-        keyLearnings: [`Iteration ${i} hard-failed: ${outcome.error}`],
+        keyLearnings: [`Iteration ${i} hard-failed: ${outcome.error}`, ...(keptNote ? [keptNote] : [])],
       };
       appendNotes(worktreePath, i, syntheticResult);
-      record = { iteration: i, phase: iterationPhase, ok: false, error: outcome.error, committed: false };
+      record = {
+        iteration: i,
+        phase: iterationPhase,
+        ok: false,
+        error: outcome.error,
+        committed: false,
+        // Non-null exactly when a timed-out iteration's work was kept rather than deleted.
+        stashedWork: kept.stashed ? kept.ref : null,
+      };
       consecutiveFailures += 1;
       // A rate-limit/quota/overload/token-exhaustion error is a RESUMABLE stop,
       // not a real failure - flag it so the loop stops with stoppedReason
