@@ -292,12 +292,20 @@ export function reconcileSweepReport({ removed = [], kept = [] } = {}) {
 export function describeSweep({ removed = [], kept = [], failed = [] } = {}) {
   const wt = removed.filter((r) => r.kind === "worktree").length;
   const br = removed.filter((r) => r.kind === "branch").length;
+  // Finished crew a mate cleared away by itself (crewCleanup.js). Counted here rather than
+  // left out because a sweep whose only work was clearing runs would otherwise report
+  // "nothing to clean" - and a clearance nobody can see is indistinguishable from work
+  // going missing, which is why the clearing was held back until now.
+  const cr = removed.filter((r) => r.kind === "crewRun").length;
   const parts = [];
   if (wt) {
     parts.push(`removed ${wt} finished worktree${wt === 1 ? "" : "s"}`);
   }
   if (br) {
     parts.push(`deleted ${br} merged branch${br === 1 ? "" : "es"}`);
+  }
+  if (cr) {
+    parts.push(`cleared ${cr} finished crew run${cr === 1 ? "" : "s"}`);
   }
   if (!parts.length) {
     parts.push("nothing to clean");

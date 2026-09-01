@@ -75,6 +75,7 @@ import { runGoal } from "./lib/goalOrchestrator.js";
 import { loadGoalRunHistory, upsertGoalRunRecord, removeGoalRunRecord } from "./lib/goalRunHistory.js";
 import { findStalledWork, workersFromSnapshot, summariseStalls } from "./lib/watchdog.js";
 import { judgeTurnEnd } from "./lib/turnEndGuard.js";
+import { runsToAutoAcknowledge } from "./lib/crewCleanup.js";
 import {
   removeWorktree,
   isBranchMerged,
@@ -5082,6 +5083,43 @@ function sweepFinishedGoalWorktrees() {
       continue;
     }
     kept.push(...plan.keep);
+
+    // A mate clearing away its own finished crew.
+    //
+    // HERE, and not when the run finishes, for a reason that is the whole safety argument:
+    // the condition is that the run's commits are already reachable from the project's HEAD,
+    // and a branch is never merged at the moment its run ends. The review queue lists unbound
+    // commits with `git log HEAD --not <floors>`, so a commit on an unmerged helm/goal-*
+    // branch is not in it - acknowledging then would erase the only trace of the run instead
+    // of tidying up after it. Once the branch is merged the same commits show up as review
+    // rows on their own. See crewCleanup.js.
+    //
+    // BEFORE the branch deletions below, which is load-bearing: this sweep deletes merged
+    // branches, and after that the merge question can no longer be asked.
+    try {
+      const toAck = runsToAutoAcknowledge({
+        runs: allRuns.filter((r) => r?.projectPath === projectPath),
+        isMerged: (run) => isBranchMerged(projectPath, run.branchName, primary),
+        alreadyAcknowledged: loadConfig().acknowledgedGoalRuns || [],
+      });
+      if (toAck.length > 0) {
+        const current = loadConfig();
+        const acked = [...new Set([...(current.acknowledgedGoalRuns || []), ...toAck.map((a) => a.goalRunId)])];
+        // Read-modify-write of the whole config, the way every other main-process writer
+        // here does it - writeConfig takes a full config, not a patch.
+        writeConfig({ ...current, acknowledgedGoalRuns: acked });
+        for (const a of toAck) {
+          console.log(`[helm]   cleared crew run ${a.goalRunId.slice(0, 8)}: ${a.why}`);
+          // On the sweep report too, so the Goal page's housekeeping line says what was
+          // tidied. A cleanup nobody can see is indistinguishable from work going missing,
+          // which is the exact thing this feature was held back for.
+          removed.push({ kind: "crewRun", target: a.goalRunId, reason: a.why });
+        }
+      }
+    } catch (err) {
+      console.error("[helm] auto-clearing finished crew failed:", err?.message || err);
+    }
+
     // Worktrees first: git refuses to delete a branch that is still checked out.
     let prunedAny = false;
     for (const action of plan.remove.filter((a) => a.kind === "worktree")) {

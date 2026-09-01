@@ -14810,6 +14810,13 @@ function housekeepingLineEl() {
     if (removedBr) {
       bits.push(`deleted ${removedBr} merged branch${removedBr === 1 ? "" : "es"}`);
     }
+    // Crew a mate cleared away by itself once its branch was merged, so the work is in the
+    // review queue. Said out loud for the same reason the rest of this line is: a tidy-up
+    // nobody can see reads as work going missing.
+    const clearedRuns = (report.removed || []).filter((x) => x.kind === "crewRun").length;
+    if (clearedRuns) {
+      bits.push(`cleared ${clearedRuns} finished crew run${clearedRuns === 1 ? "" : "s"}`);
+    }
     line.append(document.createTextNode(`Housekeeping: ${bits.length ? bits.join(", ") : "nothing to clean"}. `));
     line.append(sweepBtn);
 

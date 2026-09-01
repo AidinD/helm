@@ -97,7 +97,7 @@ try {
     `its first paint does not claim no sweep has run when one has (${JSON.stringify(line.initial.slice(0, 60))})`
   );
   ok(
-    /nothing to clean|removed|deleted/.test(line.text) && !/checking/i.test(line.text),
+    /nothing to clean|removed|deleted|cleared/.test(line.text) && !/checking/i.test(line.text),
     `and it settles on the real result (${JSON.stringify(line.text.slice(0, 90))})`
   );
   ok(line.hasButton, "with a control to run a sweep now, so the report can never be stale-and-unfixable");
