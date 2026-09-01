@@ -689,7 +689,7 @@ function truncateNotesIfNeeded(worktreePath) {
  * it is empty for a repo-map build that failed or found nothing to map, in
  * which case that section is simply omitted from the prompt.
  */
-function runIteration({ worktreePath, goal, notesContent, planContent, repoMapContent, phase, model, effort, onChild }) {
+function runIteration({ worktreePath, goal, notesContent, planContent, repoMapContent, phase, model, effort, onChild, guard = null }) {
   return new Promise((resolve) => {
     const promptLines = [`Overall goal: ${goal}`, ""];
     if (repoMapContent) {
@@ -1652,6 +1652,11 @@ export async function runGoal({
       model,
       effort,
       onChild,
+      // Without this the crew tier guard is not merely absent - `guard` is a free variable
+      // inside runIteration, so every iteration threw ReferenceError and the run died. It
+      // is in the run history as error "guard is not defined": the guard shipped, the
+      // argument did not, and no test ran a real iteration.
+      guard,
     });
 
     // The verification gate only makes sense once there is code to verify —
