@@ -8,6 +8,7 @@ import { listUnboundCommits, initialWatermark, makeIsBound, projectKey } from ".
 import { loadGoalRunHistory } from "./goalRunHistory.js";
 import { normalizeFsPath } from "./fsPath.js";
 import { candidateCommitsByRepo } from "./commitCandidates.js";
+import { readBinding } from "./commitBindings.js";
 
 /**
  * The whole review queue, computed WITHOUT electron.
@@ -92,7 +93,14 @@ export function buildReviewQueuePayload({ metaHome, config }) {
   }
   for (const row of rows) {
     const recCommits = row.record?.commits || [];
-    row.hasCommits = recCommits.length > 0 || (searchResults.get(row.taskId)?.commits.length || 0) > 0;
+    // A binding counts, and forgetting it made the whole bind flow a dead end for an hour
+    // on 2026-09-01: binding said "its diff is available now", main.js really did resolve
+    // the commits through it, and the page's diff button never appeared because it gates on
+    // this flag and this flag only knew about records and subject searches. A feature that
+    // works everywhere except where somebody looks is not a working feature.
+    const binding = readBinding(metaHome, row.taskId);
+    row.boundCommitCount = binding ? binding.shas.length : 0;
+    row.hasCommits = recCommits.length > 0 || row.boundCommitCount > 0 || (searchResults.get(row.taskId)?.commits.length || 0) > 0;
   }
 
   // For a row that belongs to a repo but names no commits, the commits it is PROBABLY
@@ -115,6 +123,15 @@ export function buildReviewQueuePayload({ metaHome, config }) {
       if (sha) {
         claimed.add(sha);
       }
+    }
+  }
+  // A commit somebody has already bound to one card must stop being offered under every
+  // other card in the same repo. Without this the list stops narrowing the moment the
+  // feature starts being used, which is the worst possible time for it to stop.
+  for (const row of rows) {
+    const binding = row.boundCommitCount > 0 ? readBinding(metaHome, row.taskId) : null;
+    for (const sha of binding?.shas || []) {
+      claimed.add(sha);
     }
   }
   const candidatesByRepo = new Map();

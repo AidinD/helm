@@ -1003,7 +1003,11 @@ function openDiffViewer(row, res) {
   // shows every one of those blocks together rather than just the first.
   const paths = [...new Set(files.map(diffFileBlockPath).filter(Boolean))];
   fileList.innerHTML = "";
-  if (paths.length > 1) {
+  // Was `> 1`, on the reasoning that a column offering only "All files" is a control with
+  // nothing to pick between. That was true until the second view arrived: a single-file
+  // change now has something to choose too, and a one-file diff is a common shape. The
+  // per-file buttons stay conditional; the column itself no longer is.
+  if (paths.length > 0) {
     const blocksFor = (path) => [...body.querySelectorAll(".diff-file-block")].filter((b) => b.dataset.file === path);
     // A preamble block (a commit's message + --stat summary) has no dataset.file at
     // all, so it is never touched by the hide logic below - it always stays visible,
@@ -1023,10 +1027,146 @@ function openDiffViewer(row, res) {
     const allBtn = document.createElement("button");
     allBtn.type = "button";
     allBtn.className = "docv-filelist-item docv-filelist-all selected";
-    allBtn.textContent = `All files (${paths.length})`;
+    allBtn.textContent = paths.length > 1 ? `All files (${paths.length})` : "The whole diff";
     allBtn.addEventListener("click", () => select(null, allBtn));
     fileList.append(allBtn);
-    for (const p of paths) {
+
+    // The second view the captain asked for: "en diff med bara de delar som AI bedömt som behöver
+    // second opinion". It sits beside the file filter because it is the same act - choosing
+    // which part of this diff to read - and putting it anywhere else would make it a feature
+    // rather than a way of looking.
+    //
+    // Behind a click, and one call per click. It reads the whole diff with a model chosen by
+    // reviewerModel.js from what is measurable about the change, so it is the most expensive
+    // thing on this page; doing it on open would spend that every time somebody glanced.
+    const attentionBtn = document.createElement("button");
+    attentionBtn.type = "button";
+    attentionBtn.className = "docv-filelist-item docv-filelist-attention";
+    attentionBtn.textContent = "Needs a second opinion";
+    attentionBtn.title = "Reads this diff and points at the parts worth looking at first. One model call.";
+    let attention = null;
+    const showAttention = () => {
+      fileList.querySelectorAll(".docv-filelist-item").forEach((b) => b.classList.toggle("selected", b === attentionBtn));
+      // Every file block hidden; the findings are rendered above them instead.
+      for (const pth of paths) {
+        blocksFor(pth).forEach((b) => b.classList.add("hidden"));
+      }
+      body.querySelector(".diff-attention")?.remove();
+      const panel = document.createElement("div");
+      panel.className = "diff-attention";
+
+      const head = document.createElement("div");
+      head.className = "diff-attention-head";
+      const spend = typeof attention.costUsd === "number" ? ` · ${attention.costUsd.toFixed(4)}` : "";
+      head.textContent =
+        attention.findings.length === 0
+          ? `${attention.nothingStandsOut || "Nothing in this diff stood out."} (${attention.model}${spend})`
+          : `${attention.findings.length} place${attention.findings.length === 1 ? "" : "s"} to look first, across ${attention.changedLines} changed lines. (${attention.model}${spend})`;
+      panel.append(head);
+
+      // The sentence that keeps this view honest. Nothing read the rest of the diff and
+      // approved it; the question asked was "what stands out", and the parts not named here
+      // are simply parts nobody looked at yet.
+      const caveat = document.createElement("div");
+      caveat.className = "diff-attention-caveat";
+      caveat.textContent =
+        "This is where to start, not a verdict, and it says nothing about the rest of the diff - the parts not listed were not reviewed either. Switch to All files to read the whole change.";
+      panel.append(caveat);
+
+      if (attention.unanchored > 0) {
+        // A finding pointing at a line this change does not contain is about something else.
+        // Dropped, and said out loud, the same way an invented commit sha is.
+        const dropped = document.createElement("div");
+        dropped.className = "diff-attention-caveat";
+        dropped.textContent = `${attention.unanchored} finding${attention.unanchored === 1 ? "" : "s"} pointed at a line this diff does not contain, and ${attention.unanchored === 1 ? "was" : "were"} dropped.`;
+        panel.append(dropped);
+      }
+      if (attention.truncated) {
+        const cut = document.createElement("div");
+        cut.className = "diff-attention-caveat";
+        cut.textContent = `The diff was too long to send whole; only the first ${attention.sentChars.toLocaleString()} characters were read.`;
+        panel.append(cut);
+      }
+
+      for (const f of attention.findings) {
+        const item = document.createElement("div");
+        item.className = `diff-finding sev-${f.severity}`;
+        const where = document.createElement("div");
+        where.className = "diff-finding-where";
+        where.textContent = `${f.severity} · ${f.file}`;
+        const code = document.createElement("pre");
+        code.className = "diff-finding-line";
+        code.textContent = f.line;
+        const why = document.createElement("div");
+        why.className = "diff-finding-why";
+        why.textContent = f.why;
+        // Straight to the line in the full diff, because a finding you cannot get to is a
+        // finding you have to go looking for.
+        const jump = document.createElement("button");
+        jump.type = "button";
+        jump.className = "text-btn diff-finding-jump";
+        jump.textContent = "Show it in the diff";
+        jump.addEventListener("click", () => {
+          const btn = [...fileList.querySelectorAll(".docv-filelist-item")].find((b) => b.title === f.file);
+          if (btn) {
+            btn.click();
+          } else {
+            allBtn.click();
+          }
+          const needle = f.line.replace(/\s+/g, " ").trim();
+          // .diff-cell and nothing else: that is the element diffRowCells builds for a line's
+          // text, and its textContent is exactly that text with no line number in it. The
+          // first version also listed .diff-line, td and .diff-text, none of which this
+          // renderer produces - selectors for elements that do not exist are how a control
+          // comes to silently do nothing.
+          const cell = [...body.querySelectorAll(".diff-cell")].find(
+            (el) => el.textContent.replace(/\s+/g, " ").trim() === needle
+          );
+          if (cell) {
+            cell.scrollIntoView({ block: "center" });
+            cell.classList.add("diff-found");
+            setTimeout(() => cell.classList.remove("diff-found"), 2500);
+          }
+        });
+        item.append(where, code, why, jump);
+        panel.append(item);
+      }
+      body.prepend(panel);
+      body.scrollTop = 0;
+    };
+
+    attentionBtn.addEventListener("click", async () => {
+      if (attention) {
+        // Already paid for. Switching back and forth must not re-spend.
+        showAttention();
+        return;
+      }
+      attentionBtn.disabled = true;
+      const was = attentionBtn.textContent;
+      attentionBtn.textContent = "Reading the diff...";
+      const res = await window.helm.reviewDiffAttention({
+        taskId: row.taskId,
+        projectPath: row.repoPath,
+        card: { title: row.title, description: row.description },
+      });
+      attentionBtn.disabled = false;
+      attentionBtn.textContent = was;
+      if (!res?.ok) {
+        showNotice(res?.error || "Could not read that diff.");
+        return;
+      }
+      attention = res;
+      attentionBtn.textContent = res.findings.length > 0 ? `Needs a second opinion (${res.findings.length})` : "Nothing stood out";
+      showAttention();
+    });
+    fileList.append(attentionBtn);
+
+    // Choosing a file again clears the findings panel, so the two views never overlap.
+    const clearAttention = () => body.querySelector(".diff-attention")?.remove();
+    allBtn.addEventListener("click", clearAttention);
+    // Only worth listing when there is more than one to pick between; with a single file the
+    // "whole diff" entry above is already that file.
+    for (const p of paths.length > 1 ? paths : []) {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "docv-filelist-item";
@@ -1037,9 +1177,8 @@ function openDiffViewer(row, res) {
     }
     fileList.classList.remove("hidden");
   } else {
-    // One file (or none, e.g. a commit-only record with no diffable change) isn't
-    // worth a column that only ever offers "All files" - the column would be a
-    // control with nothing to actually pick between.
+    // No diffable change at all - a commit-only record, an empty patch. Then there really is
+    // nothing to choose between, and the column would be a control that does nothing.
     fileList.classList.add("hidden");
   }
 

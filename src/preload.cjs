@@ -117,6 +117,11 @@ contextBridge.exposeInMainWorld("helm", {
   // Record that these commits ARE this card's, on the captain's say-so. Separate from a
   // review record on purpose: a binding claims identity, not that anything was reviewed.
   bindReviewCommits: (payload) => ipcRenderer.invoke("reviews:bindCommits", payload),
+  // The second diff view: which parts of this card's change deserve a second pair of eyes.
+  // On demand, one call per click. Resolves { ok, findings, unanchored, nothingStandsOut,
+  // model, costUsd, truncated }. A finding is a place to look, never a verdict, and the
+  // parts it does NOT name were not reviewed either.
+  reviewDiffAttention: (payload) => ipcRenderer.invoke("reviews:diffAttention", payload),
   unbindReviewCommits: (taskId) => ipcRenderer.invoke("reviews:unbindCommits", { taskId }),
   // Renders the WHOLE review as a standalone HTML page and opens it in the OS browser.
   presentReview: (taskId) => ipcRenderer.invoke("reviews:presentReview", { taskId }),

@@ -46,6 +46,7 @@ import { reviewQueueInputsFingerprint, readReviewRecord, writeReviewRecord, buil
 import { resolveTaskCommits, diffForCommits, shippedVersionForCommits } from "./lib/reviewDiff.js";
 import { boundCommits, writeBinding, removeBinding } from "./lib/commitBindings.js";
 import { buildMatchPrompt, shapeMatchAnswer, MATCH_SCHEMA, MATCH_SYSTEM } from "./lib/commitMatch.js";
+import { buildAttentionPrompt, shapeAttentionAnswer, ATTENTION_SCHEMA, ATTENTION_SYSTEM } from "./lib/diffAttention.js";
 import { ask as askClaude } from "keel/claude";
 // projectKey stays imported here even though the review BUILD moved to reviewQueueBuild.js:
 // `reviews:acknowledgeCommit` keys its acks by the same normalized project key, and dropping
@@ -6943,6 +6944,70 @@ ipcMain.handle("reviews:matchCommits", async (_event, { taskId, projectPath, car
     model: answer.model || model,
     costUsd: answer.costUsd ?? null,
     considered: offered.length,
+    ...shaped,
+  };
+});
+
+// Which parts of a card's diff deserve a second pair of eyes.
+//
+// The second of the two diff views the captain asked for. On demand, one call per click, for the
+// same reason as the commit match: this must never sit in a path the page takes on its own.
+//
+// A heavier model than the commit match uses, and deliberately so. Pairing a card against
+// commit subjects is reading comprehension; deciding what in a diff could go wrong is the
+// job Helm sends an independent reviewer in for, and reviewerModel.js already encodes how
+// much to spend on that from what is measurable about the change. Its recommendation is used
+// rather than a fixed choice, so a one-line change to a permission gate still gets the
+// expensive reader.
+ipcMain.handle("reviews:diffAttention", async (_event, { taskId, projectPath, card } = {}) => {
+  const metaHome = resolveMetaHome();
+  const rec = readReviewRecord(metaHome, taskId);
+  const project = rec?.projectPath || projectPath || null;
+  if (!project) {
+    return { ok: false, error: "No project folder is known for that task, so there is no diff to read." };
+  }
+  const resolved = resolveTaskCommits(project, taskId, boundCommits(metaHome, taskId, rec).shas);
+  if (resolved.commits.length === 0) {
+    return { ok: false, error: resolved.error || "Nothing ties a commit to this card yet, so there is no diff to read." };
+  }
+  const diff = diffForCommits(project, resolved.commits);
+  if (!diff.ok || !diff.text.trim()) {
+    return { ok: false, error: diff.error || "The commits produced no patch." };
+  }
+
+  const stats = diffStats(diff.text);
+  const recommendation = recommendReviewer({
+    criticality: rec?.criticality || "core",
+    files: stats.files,
+    changedLines: stats.changedLines,
+    commits: resolved.commits.length,
+    paths: stats.paths,
+  });
+
+  const { prompt, truncated, sentChars } = buildAttentionPrompt(diff.text, card || {});
+  const answer = await askClaude({
+    prompt,
+    model: recommendation.model,
+    system: ATTENTION_SYSTEM,
+    schema: ATTENTION_SCHEMA,
+    effort: recommendation.effort,
+    // A diff is a lot more to read than a list of subjects, and the default would cut a big
+    // one off mid-thought and report it as a failure.
+    timeoutMs: 240_000,
+  });
+  if (!answer.ok) {
+    return { ok: false, error: answer.reason };
+  }
+  const shaped = shapeAttentionAnswer(answer.value, diff.text);
+  return {
+    ok: true,
+    taskId,
+    model: answer.model || recommendation.model,
+    why: recommendation.why,
+    costUsd: answer.costUsd ?? null,
+    truncated,
+    sentChars,
+    changedLines: stats.changedLines,
     ...shaped,
   };
 });
