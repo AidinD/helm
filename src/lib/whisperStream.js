@@ -46,22 +46,23 @@
 // final trailing partial appended once more on stop) as the authoritative
 // text when the stream is stopped.
 import { spawn, execFile, execFileSync } from "node:child_process";
-import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { resolveLanguageCode } from "./whisperCpp.js";
-import { whisperRoot } from "keel/whisper";
+import { whisperEngineStatus } from "./whisperEngine.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const BINARY_NAME = "whisper-stream.exe";
 
-// Resolved by keel, not by walking up from this file. The payload moved out
-// of this repo on 2026-08-30 so that Nib could use it too: 1.3GB of CUDA DLLs
-// and model weights belong outside every repository, and one copy serves the
-// suite. `WHISPER_DIR` overrides it; the default is the folder beside the
-// checked-out repos.
-const WHISPER_ROOT = whisperRoot();
-const WHISPER_STREAM_PATH = path.join(WHISPER_ROOT, "Release", "whisper-stream.exe");
-const MODEL_PATH = path.join(WHISPER_ROOT, "ggml-model-q5_0.bin");
+/**
+ * Where the streaming binary and model are right now, and why not when they are
+ * nowhere. Asked per call, not resolved at import - see whisperEngine.js.
+ *
+ * A separate binary from whisper-cli.exe, and a machine really can have one and
+ * not the other, so this is asked separately rather than inferred from the
+ * one-shot engine's answer.
+ */
+export function engineStatus() {
+  return whisperEngineStatus(BINARY_NAME);
+}
 
 // Tuning: --step is how often a new window is transcribed (responsiveness —
 // smaller = more frequent partial updates, but more GPU work per second).
@@ -90,7 +91,7 @@ const DEFAULT_KEEP_MS = 200;
  * when this is false instead of spawning a binary that doesn't exist.
  */
 export function isAvailable() {
-  return fs.existsSync(WHISPER_STREAM_PATH) && fs.existsSync(MODEL_PATH);
+  return engineStatus().ready;
 }
 
 // ANSI "clear entire line" + carriage return, whisper-stream's own boundary
@@ -216,8 +217,14 @@ function applyPartial(state, events, text) {
  *   "english"/…) or "auto"/null/empty — same convention as whisperCpp.js.
  */
 export function startStream(language, onEvent) {
+  // One resolution for this stream's whole life, so the binary and the model it
+  // runs with cannot come from two different roots.
+  const engine = engineStatus();
+  if (!engine.ready) {
+    throw new Error(engine.why);
+  }
   const args = [
-    "-m", MODEL_PATH,
+    "-m", engine.model,
     "--step", String(DEFAULT_STEP_MS),
     "--length", String(DEFAULT_LENGTH_MS),
     "--keep", String(DEFAULT_KEEP_MS),
@@ -226,8 +233,8 @@ export function startStream(language, onEvent) {
   const langCode = resolveLanguageCode(language);
   args.push("-l", langCode || "auto");
 
-  const child = spawn(WHISPER_STREAM_PATH, args, {
-    cwd: path.dirname(WHISPER_STREAM_PATH),
+  const child = spawn(engine.binary, args, {
+    cwd: path.dirname(engine.binary),
     windowsHide: true,
   });
 

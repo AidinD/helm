@@ -56,6 +56,11 @@ contextBridge.exposeInMainWorld("helm", {
   copyToClipboard: (text) => ipcRenderer.invoke("clipboard:write", text),
   saveImage: (base64Data, ext) => ipcRenderer.invoke("image:save", { base64Data, ext }),
   transcribeVoice: (samples, language) => ipcRenderer.invoke("voice:transcribe", { samples, language }),
+  // Whether the fast engine is actually there, and when it is not, the reason -
+  // so the Settings page can say it instead of the feature quietly degrading.
+  // Resolves { ok, engine, fallback, oneShot: { ready, why, root, source },
+  // streaming: { ... } }.
+  voiceStatus: () => ipcRenderer.invoke("voice:status"),
   // True real-time streaming transcription (continuous voice input via
   // whisper-stream.exe, see src/lib/whisperStream.js). startVoiceStream
   // resolves with { ok, streamId } (or { ok: false, error } if the binary/

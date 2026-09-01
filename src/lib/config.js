@@ -113,6 +113,17 @@ const DEFAULT_CONFIG = {
   // requested but missing, so this value mainly matters as an explicit
   // opt-out).
   voiceEngine: "whispercpp",
+  // Where the whisper.cpp payload lives - the folder holding Release/ and the
+  // GGML models. Empty means "search"; see src/lib/whisperEngine.js for the
+  // order and for why an explicit value here is an answer rather than a hint.
+  //
+  // This exists because the search alone cannot work in an installed build. Its
+  // last resort walks up from keel's own file, which inside app.asar points at a
+  // folder that cannot exist, and the 1.5GB payload is deliberately not shipped
+  // in the installer. Until 2026-09-01 the installed app happened to work only
+  // because a Windows user environment variable on this one machine pointed at
+  // the payload - an ambient setting Helm did not own, read, or show.
+  whisperDir: "",
   // model name -> real context-window size, LEARNED from the CLI's own
   // result events (evt.modelUsage[model].contextWindow) as sessions run
   // through Helm. Authoritative per model; the gauge prefers this over

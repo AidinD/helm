@@ -136,7 +136,8 @@ import { assembleFleetState } from "./lib/fleetState.js";
 import { widthCapExceeded, depthCapExceeded, isForeignDispatch } from "./lib/dispatchCaps.js";
 import { listRoutines, createRoutine, updateRoutine, removeRoutine, dueRoutines, markRoutineFired } from "./lib/helmRoutines.js";
 import { buildArtifactSrcdoc, formatAnnotationsAsPrompt } from "./lib/lavishSdk.js";
-import { isAvailable as whisperStreamAvailable, startStream as startWhisperStream, stopStream as stopWhisperStream } from "./lib/whisperStream.js";
+import { engineStatus as whisperStreamStatus, startStream as startWhisperStream, stopStream as stopWhisperStream } from "./lib/whisperStream.js";
+import { engineStatus as whisperCliStatus } from "./lib/whisperCpp.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -1466,6 +1467,27 @@ ipcMain.handle("voice:transcribe", async (_event, { samples, language }) => {
   }
 });
 
+// Whether transcription can actually run, and when it cannot, why.
+//
+// Exists because the failure was silent: isAvailable() returned false, the mic
+// fell back to the slow path or did nothing, and a build that could not find its
+// engine looked exactly like one that could - until somebody spoke into it. The
+// two engines are reported separately because a machine really can have the
+// one-shot binary and not the streaming one.
+ipcMain.handle("voice:status", () => {
+  const cli = whisperCliStatus();
+  const stream = whisperStreamStatus();
+  return {
+    ok: true,
+    engine: loadConfig().voiceEngine || "whispercpp",
+    // The fallback is always there, so "voice works" is true even when whisper
+    // is missing - it is just the slow path. Saying so is the point.
+    fallback: "transformers",
+    oneShot: { ready: cli.ready, why: cli.why, root: cli.root, source: cli.source },
+    streaming: { ready: stream.ready, why: stream.why, root: stream.root, source: stream.source },
+  };
+});
+
 // --- True real-time streaming transcription (continuous voice input) ---
 // See src/lib/whisperStream.js for the full design rationale. Unlike
 // voice:transcribe (one-shot, routed through the dedicated utility process
@@ -1482,8 +1504,13 @@ ipcMain.handle("voice:transcribe", async (_event, { samples, language }) => {
 const liveVoiceStreams = new Map(); // streamId -> child process
 
 ipcMain.handle("voice:streamStart", (_event, { language }) => {
-  if (!whisperStreamAvailable()) {
-    return { ok: false, error: "whisper-stream.exe or the GGML model is not installed" };
+  const engine = whisperStreamStatus();
+  if (!engine.ready) {
+    // The reason, not "not installed". A person reading "not installed" cannot
+    // act; a person reading which folder was looked in, and which setting points
+    // there, can. This used to be a fixed sentence and the feature simply
+    // disappeared instead of explaining itself.
+    return { ok: false, error: engine.why };
   }
   const streamId = crypto.randomUUID();
   const send = (payload) => {

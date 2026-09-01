@@ -9,44 +9,47 @@
 // generic model.
 //
 // This module shells out to the prebuilt whisper-cli.exe binary (no native
-// Node addon, no compile step — see voice.js's header comment for why a
+// Node addon, no compile step - see voice.js's header comment for why a
 // from-source whisper.cpp binding was rejected earlier) rather than linking
-// against whisper.cpp directly. The binary + model live outside the repo
-// (see .whisper/, gitignored — ~1.5GB of CUDA DLLs + model weights, not
-// something to commit) and must be installed manually; isAvailable() below
-// lets the caller fall back to the transformers.js path when they are
-// missing, e.g. on a machine that hasn't had the .whisper/ folder populated
-// yet.
+// against whisper.cpp directly. The binary + model live outside every repo -
+// ~1.5GB of CUDA DLLs and model weights, not something to commit - and must be
+// installed manually; isAvailable() below lets the caller fall back to the
+// transformers.js path when they are missing.
+//
+// WHERE they live is whisperEngine.js's problem, and a harder one than it looks:
+// the answer that works in a checkout is wrong in an installed build, and this
+// module used to decide it once at import time where no setting could reach it.
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
-import { fileURLToPath } from "node:url";
-import { whisperRoot } from "keel/whisper";
+import { whisperEngineStatus } from "./whisperEngine.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const BINARY_NAME = "whisper-cli.exe";
 
-// .whisper/ sits at the repo root (sibling of src/), not inside src/lib —
-// see the setup instructions this module's caller followed. Resolved
-// relative to this file (not process.cwd()) so it works regardless of the
-// Electron process's working directory.
-// Resolved by keel, not by walking up from this file. The payload moved out
-// of this repo on 2026-08-30 so that Nib could use it too: 1.3GB of CUDA DLLs
-// and model weights belong outside every repository, and one copy serves the
-// suite. `WHISPER_DIR` overrides it; the default is the folder beside the
-// checked-out repos.
-const WHISPER_ROOT = whisperRoot();
-const WHISPER_CLI_PATH = path.join(WHISPER_ROOT, "Release", "whisper-cli.exe");
-const MODEL_PATH = path.join(WHISPER_ROOT, "ggml-model-q5_0.bin");
+/**
+ * Where the binary and model are right now, and why not when they are nowhere.
+ *
+ * Asked per call rather than resolved once at import. That is not tidiness: the
+ * import-time version could not see a setting (config is not loaded yet when a
+ * module body runs) and could not notice a payload installed while the app was
+ * up. See whisperEngine.js for the packaged-build failure that made this matter.
+ */
+export function engineStatus() {
+  return whisperEngineStatus(BINARY_NAME);
+}
 
 /**
  * True when both the whisper-cli binary and the GGML model are present on
  * disk. Callers should fall back to the transformers.js path when this is
  * false instead of spawning a binary that doesn't exist.
+ *
+ * Kept as a bare boolean because that is what the fallback decision needs;
+ * anything reporting to a person should use engineStatus() and say the reason.
  */
 export function isAvailable() {
-  return fs.existsSync(WHISPER_CLI_PATH) && fs.existsSync(MODEL_PATH);
+  return engineStatus().ready;
 }
 
 // Maps the app's language values (same ones voice.js's DEFAULT_TRANSCRIBE_LANGUAGE
@@ -163,11 +166,19 @@ export function writeWavFile(filePath, float32Samples, sampleRate = 16000) {
 export async function transcribeAudio(float32Samples, language) {
   const langCode = resolveLanguageCode(language);
 
+  // Resolved once per transcription and passed down, so the binary and the model
+  // a single run uses are guaranteed to come from the same root even if the
+  // setting changes underneath us mid-run.
+  const engine = engineStatus();
+  if (!engine.ready) {
+    throw new Error(engine.why);
+  }
+
   const tempPath = path.join(os.tmpdir(), `helm-voice-${crypto.randomUUID()}.wav`);
   writeWavFile(tempPath, float32Samples, 16000);
   try {
-    const args = ["-m", MODEL_PATH, "-f", tempPath, "-bo", "1", "-bs", "1", "-nt", "-l", langCode || "auto"];
-    const stdout = await runWhisperCli(args);
+    const args = ["-m", engine.model, "-f", tempPath, "-bo", "1", "-bs", "1", "-nt", "-l", langCode || "auto"];
+    const stdout = await runWhisperCli(engine.binary, args);
     return stdout.trim();
   } finally {
     fs.promises.unlink(tempPath).catch(() => {
@@ -178,10 +189,10 @@ export async function transcribeAudio(float32Samples, language) {
   }
 }
 
-function runWhisperCli(args) {
+function runWhisperCli(binaryPath, args) {
   return new Promise((resolve, reject) => {
-    const child = spawn(WHISPER_CLI_PATH, args, {
-      cwd: path.dirname(WHISPER_CLI_PATH),
+    const child = spawn(binaryPath, args, {
+      cwd: path.dirname(binaryPath),
       windowsHide: true,
     });
     let stdout = "";

@@ -17048,6 +17048,90 @@ function renderSettingsPage() {
   engineRow.append(engineLabel, engineDD.el);
   voiceGroup.append(engineRow);
 
+  // Where the engine is, and when it is nowhere, why.
+  //
+  // This row exists because the failure mode was silence. The engine resolved to
+  // a folder that cannot exist in an installed build (see whisperEngine.js), the
+  // availability check returned a bare false, and the app fell back to the slow
+  // path without saying anything - so a build that could not find its engine
+  // looked exactly like one that could, until somebody spoke into it. The status
+  // is asked of the main process rather than guessed here, because the renderer
+  // cannot see the filesystem the engine lives on.
+  const enginePathRow = document.createElement("div");
+  enginePathRow.className = "settings-select-row";
+  const enginePathLabel = document.createElement("div");
+  enginePathLabel.className = "settings-toggle-text";
+  const enginePathTitle = document.createElement("div");
+  enginePathTitle.className = "settings-toggle-title";
+  enginePathTitle.textContent = "whisper.cpp folder";
+  const enginePathDesc = document.createElement("div");
+  enginePathDesc.className = "settings-toggle-desc";
+  enginePathDesc.textContent = "Checking…";
+  enginePathLabel.append(enginePathTitle, enginePathDesc);
+
+  const enginePathControls = document.createElement("div");
+  enginePathControls.className = "goal-cwd-row";
+  const enginePathInput = document.createElement("input");
+  enginePathInput.type = "text";
+  enginePathInput.className = "cwd-input";
+  enginePathInput.placeholder = "Leave empty to search the usual places";
+  enginePathInput.value = state.config?.whisperDir || "";
+  const enginePathPick = document.createElement("button");
+  enginePathPick.className = "icon-btn";
+  enginePathPick.textContent = "…";
+  enginePathPick.title = "Pick the folder holding Release/ and the models";
+  enginePathControls.append(enginePathInput, enginePathPick);
+  enginePathRow.append(enginePathLabel, enginePathControls);
+  voiceGroup.append(enginePathRow);
+
+  async function refreshVoiceStatus() {
+    let status;
+    try {
+      status = await window.helm.voiceStatus();
+    } catch (err) {
+      enginePathDesc.textContent = `Could not read the engine status: ${err.message}`;
+      return;
+    }
+    // Reported per engine, because having the one-shot binary without the
+    // streaming one is a real state and "voice does not work" would be wrong.
+    const parts = [];
+    parts.push(status.oneShot.ready ? `One-shot transcription is ready (${status.oneShot.root}).` : status.oneShot.why);
+    if (status.streaming.ready) {
+      parts.push("Live streaming is ready.");
+    } else if (status.oneShot.ready) {
+      // Same folder, one binary short - saying the whole sentence again here
+      // would bury the one fact that differs.
+      parts.push("Live streaming is not: whisper-stream.exe is missing from that folder.");
+    }
+    if (!status.oneShot.ready) {
+      // Deliberately NOT "the mic still works". It falls back to transformers.js,
+      // and that path has never been observed running here: its model cache
+      // resolves inside the read-only app bundle in an installed build, so it
+      // would re-download the model on every start rather than cache it. Saying
+      // "still works" would be exactly the kind of claim about the system that
+      // nothing enforces - the thing this app is trying to stop doing.
+      parts.push("The mic falls back to transformers.js, which is slower and has not been verified in an installed build.");
+    }
+    enginePathDesc.textContent = parts.join(" ");
+  }
+
+  enginePathPick.addEventListener("click", async () => {
+    const folder = await window.helm.pickFolder();
+    if (folder) {
+      enginePathInput.value = folder;
+      state.config = await window.helm.setConfig({ whisperDir: folder });
+      await refreshVoiceStatus();
+    }
+  });
+  // On blur rather than on every keystroke: a half-typed path is a wrong
+  // setting, and a wrong setting is an answer here, not a hint - it would report
+  // a failure for every character typed.
+  enginePathInput.addEventListener("change", async () => {
+    state.config = await window.helm.setConfig({ whisperDir: enginePathInput.value.trim() });
+    await refreshVoiceStatus();
+  });
+  refreshVoiceStatus();
+
   const languageRow = document.createElement("div");
   languageRow.className = "settings-select-row";
   const languageLabel = document.createElement("div");
