@@ -1,4 +1,5 @@
 import path from "node:path";
+import { resolveSecondMateId } from "./secondMates.js";
 
 // Fleet-aware focus survey (e07a2c5d). The two first mates are independent
 // sessions with no shared context, and helm_collect_reports is scoped to a
@@ -31,7 +32,10 @@ export function assembleFleetState(mates, runHistory, now) {
       const status = r.status === "running" ? "running" : r.status || "unknown";
       const needsCaptain = !!r.escalation || status === "error" || (status === "done" && commits > 0);
       return {
-        mate: r.dispatchedBy,
+        // Translated on the way out, not passed through. History still holds rows written
+        // before the writer normalised, and this file is the picture OTHER mates read - so a
+        // display key here would keep spreading through readers that never saw the run.
+        mate: resolveSecondMateId(r.dispatchedBy, r.projectPath) || r.dispatchedBy,
         project: basename(r.projectPath),
         status,
         commits,

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { writeJsonAtomicSync } from "./atomicWrite.js";
+import { resolveSecondMateId } from "./secondMates.js";
 
 // Persistent index of goal-orchestrator runs (Fas 3 Point 11), so the Goal
 // page still shows what happened after a restart — Helm is restarted
@@ -65,8 +66,45 @@ export function loadGoalRunHistory() {
  * purely additive - old records simply have them undefined, and no read path
  * needs to change.
  */
+/**
+ * Swap a renderer display key for the durable identity it stands for.
+ *
+ * Returns the record unchanged when there is nothing to translate, and - deliberately - also
+ * when the key cannot be resolved: `resolveSecondMateId` needs the project to work out which
+ * node a session belongs to, and inventing one at an unknown path would be worse than
+ * recording the key. A record with no projectPath keeps what it had.
+ *
+ * @param {object} record
+ * @returns {object}
+ */
+function normaliseDispatcher(record) {
+  const raw = record?.dispatchedBy;
+  if (!raw || !record?.projectPath) {
+    return record;
+  }
+  const resolved = resolveSecondMateId(raw, record.projectPath);
+  if (!resolved || resolved === raw) {
+    return record;
+  }
+  return { ...record, dispatchedBy: resolved };
+}
+
 export function upsertGoalRunRecord(record) {
   const records = readAll();
+  // A display key never reaches durable state.
+  //
+  // The renderer identifies a captain's own project session by `sess_<id>`, which is a way
+  // of naming a node on screen, not an identity. It kept arriving here as `dispatchedBy` and
+  // being written down. The fix on 2026-08-17 taught the READ side to route them, which
+  // cleared the symptom and made two id namespaces permanent - and left the count growing:
+  // measured 2026-08-18 and again on 2026-09-01, eleven runs in the installed store are keyed
+  // that way, and fleet-state carried all eleven into the picture other mates read.
+  //
+  // Here rather than at the three places that build a record, because this is the one writer.
+  // Three copies of a translation drift, and the one that drifts is the one still writing the
+  // wrong key. Touching an old record normalises it on the way past, so the count can only
+  // shrink from here.
+  record = normaliseDispatcher(record);
   const idx = records.findIndex((r) => r.goalRunId === record.goalRunId);
   if (idx >= 0) {
     records[idx] = { ...records[idx], ...record };
