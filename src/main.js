@@ -48,6 +48,7 @@ import { boundCommits, writeBinding, removeBinding } from "./lib/commitBindings.
 import { buildMatchPrompt, shapeMatchAnswer, MATCH_SCHEMA, MATCH_SYSTEM } from "./lib/commitMatch.js";
 import { buildAttentionPrompt, shapeAttentionAnswer, ATTENTION_SCHEMA, ATTENTION_SYSTEM } from "./lib/diffAttention.js";
 import { reviewCrewRun } from "./lib/crewReview.js";
+import { clearStaleIndexLocks } from "./lib/gitLocks.js";
 import { ask as askClaude } from "keel/claude";
 // projectKey stays imported here even though the review BUILD moved to reviewQueueBuild.js:
 // `reviews:acknowledgeCommit` keys its acks by the same normalized project key, and dropping
@@ -7457,8 +7458,69 @@ function repairDisplayKeyReports(projectPathForSession) {
   return { migrated, skipped };
 }
 
+/**
+ * Clear index locks left behind by processes that were killed mid-write.
+ *
+ * git takes `.git/index.lock` before writing its index and releases it after; kill the
+ * process in between and the lock stays forever, and git then refuses every writing command
+ * in that repository. Found 2026-08-20: four repositories across the tree from one afternoon,
+ * two of them work repositories silently unable to accept a commit for two days. Nothing
+ * warns, and the eventual error is about a lock file rather than about a run that died.
+ *
+ * At startup and only at startup. Helm is the thing that kills processes, and a restart is
+ * both the moment nothing of Helm's is running and the moment somebody is about to work -
+ * a periodic sweep would keep paying the process query for a case that arises after a crash.
+ *
+ * Every repository Helm knows about, not just the ones it ran in: the 2026-08-20 locks were
+ * in projects unrelated to what was running, because the processes that died were spread
+ * across the machine.
+ *
+ * Best-effort and quiet unless it did something. It removes only a lock that is empty, older
+ * than the grace period, and unattended by any git process - see gitLocks.js for why each of
+ * those is load-bearing and why an unreadable process list means "leave everything alone".
+ */
+function sweepStaleGitLocks() {
+  try {
+    const repos = new Set();
+    for (const r of loadGoalRunHistory()) {
+      if (r.projectPath) {
+        repos.add(r.projectPath);
+      }
+    }
+    for (const s of readAllSessions()?.sessions || []) {
+      if (s.cwd) {
+        repos.add(s.cwd);
+      }
+    }
+    const paths = [...repos].filter((dir) => {
+      try {
+        return fs.existsSync(path.join(dir, ".git"));
+      } catch {
+        return false;
+      }
+    });
+    if (paths.length === 0) {
+      return;
+    }
+    const result = clearStaleIndexLocks(paths);
+    for (const entry of result.removed) {
+      // Said out loud. A repository that has been silently unwritable for two days is worth
+      // a line in the log, and a sweep that fixes things invisibly teaches nobody that this
+      // failure mode exists.
+      console.log(`[helm] cleared an abandoned git index.lock (${Math.round(entry.ageMs / 60000)} min old) in ${entry.repoPath}`);
+    }
+    for (const entry of result.failed) {
+      console.error(`[helm] could not clear the index.lock in ${entry.repoPath}: ${entry.error}`);
+    }
+  } catch (err) {
+    // A startup helper must never stop the app from starting.
+    console.error("[helm] the git-lock sweep could not run:", err?.message || err);
+  }
+}
+
 app.whenReady().then(() => {
   prunePastedImages();
+  sweepStaleGitLocks();
   seedQuotaWindows();
   repairDisplayKeyBindings();
   createWindow();
