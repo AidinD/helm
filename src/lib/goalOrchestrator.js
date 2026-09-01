@@ -375,6 +375,12 @@ function readOrCreateNotes(worktreePath) {
 /** Appends one iteration's structured summary to notes.md. */
 function appendNotes(worktreePath, iterationNumber, result) {
   const file = notesPath(worktreePath);
+  // appendFileSync will create the FILE but not its parent directory, and this is called
+  // straight after the discard on every failure path. The discard no longer removes
+  // .helm-goal/, so this should never fire - but the cost of being wrong here is the whole
+  // run dying on an uncaught ENOENT with no stoppedReason, which is what actually happened.
+  // One mkdir is a cheap way never to lose a run to bookkeeping again.
+  fs.mkdirSync(path.dirname(file), { recursive: true });
   const lines = [
     "",
     `## Iteration ${iterationNumber} — ${result.success ? "success" : "DISCARDED (success:false)"}`,
@@ -1249,7 +1255,23 @@ function discardWorktreeChanges(worktreePath) {
   }
   try {
     runGit(worktreePath, ["reset", "--hard"]);
-    runGit(worktreePath, ["clean", "-fd"]);
+    // .helm-goal/ is EXCLUDED, and that exclusion is the whole point of this line.
+    //
+    // This discard exists to throw away the AGENT's work after a failed iteration.
+    // .helm-goal/ is not the agent's work - it is the orchestrator's own log, and the only
+    // thing carrying knowledge from one fresh-context iteration to the next. Deleting it
+    // here is backwards: a failure is exactly when the next iteration most needs to be told
+    // what was tried.
+    //
+    // It also killed runs outright, which is how it was found. Until the first successful
+    // iteration commits, .helm-goal/ is UNTRACKED, so `reset --hard` leaves it and
+    // `clean -fd` removes the directory - and the appendNotes call on the very next line
+    // then throws ENOENT, which nothing catches, so the run dies with status "error" and no
+    // stoppedReason at all. Four runs in the installed history died that way on 2026-07-12,
+    // three of them dispatched within four seconds of each other; the real reason their
+    // first iterations failed was destroyed along with the notes that would have said.
+    // Reproduced end to end before this line was written, not inferred from reading it.
+    runGit(worktreePath, ["clean", "-fd", "-e", NOTES_DIR]);
     return true;
   } catch (err) {
     console.error(`[goalOrchestrator] Failed to reset/clean worktree ${worktreePath}: ${err.message}`);
