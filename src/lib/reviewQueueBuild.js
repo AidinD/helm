@@ -7,6 +7,7 @@ import { resolveTaskCommitsBatch } from "./reviewDiff.js";
 import { listUnboundCommits, initialWatermark, makeIsBound, projectKey } from "./commitReview.js";
 import { loadGoalRunHistory } from "./goalRunHistory.js";
 import { normalizeFsPath } from "./fsPath.js";
+import { candidateCommitsByRepo } from "./commitCandidates.js";
 
 /**
  * The whole review queue, computed WITHOUT electron.
@@ -92,6 +93,51 @@ export function buildReviewQueuePayload({ metaHome, config }) {
   for (const row of rows) {
     const recCommits = row.record?.commits || [];
     row.hasCommits = recCommits.length > 0 || (searchResults.get(row.taskId)?.commits.length || 0) > 0;
+  }
+
+  // For a row that belongs to a repo but names no commits, the commits it is PROBABLY
+  // about. Not a binding and never presented as one - see commitCandidates.js for the
+  // measurement that made this necessary and for why matching on the words is not an
+  // option here. Without it those rows are hidden outright, and on the real board that
+  // was five of the six repo-rooted cards.
+  const claimed = new Set();
+  for (const rec of records) {
+    for (const c of rec.commits || []) {
+      const sha = typeof c === "string" ? c : c?.sha;
+      if (sha) {
+        claimed.add(String(sha).trim().split(/\s+/)[0]);
+      }
+    }
+  }
+  for (const [, result] of searchResults) {
+    for (const c of result?.commits || []) {
+      const sha = typeof c === "string" ? c : c?.sha;
+      if (sha) {
+        claimed.add(sha);
+      }
+    }
+  }
+  const candidatesByRepo = new Map();
+  for (const row of rows) {
+    if (!row.repoPath || row.hasCommits) {
+      continue;
+    }
+    const key = normalizeFsPath(row.repoPath);
+    if (!candidatesByRepo.has(key)) {
+      candidatesByRepo.set(key, { projectPath: row.repoPath, tasks: [] });
+    }
+    candidatesByRepo.get(key).tasks.push({ taskId: row.taskId, createdAt: row.createdAt });
+  }
+  const candidateResults = new Map();
+  for (const { projectPath, tasks } of candidatesByRepo.values()) {
+    for (const [taskId, result] of candidateCommitsByRepo(projectPath, tasks, { claimed })) {
+      candidateResults.set(taskId, result);
+    }
+  }
+  for (const row of rows) {
+    const found = candidateResults.get(row.taskId);
+    row.candidateCommits = found?.commits || [];
+    row.candidateMore = found?.more || 0;
   }
   // The audit half: work that reached done without ever being recorded. A direct
   // board write cannot be prevented from here, only detected - and it has to surface

@@ -623,6 +623,12 @@ export function reviewTasks(jotConfig = {}) {
         const cat = catById.get(t.categoryId);
         return cat && typeof cat.repoPath === "string" && cat.repoPath.trim() ? cat.repoPath.trim() : null;
       })(),
+      // When the card was created, which is the only end of its life the board records
+      // reliably. `updatedAt` moves on every edit - a comment added a week later included -
+      // so it cannot stand for "when the work happened". Used to open a window on the
+      // repo's commits for a card that names none; see commitCandidates.js for why that
+      // window has a start and no end.
+      createdAt: typeof t.createdAt === "number" ? t.createdAt : null,
     }));
   return { ok: true, path: jotPath, tasks };
 }

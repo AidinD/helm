@@ -1485,6 +1485,25 @@ function independentVerdictFixBrief(row, verdictText) {
 const reviewExpanded = new Set();
 
 /**
+ * Which "commits without a task" groups are open. Empty by default, so every one starts
+ * collapsed - the same argument as the rows above, one level up.
+ *
+ * Measured on the real board 2026-09-01: 510 such commits across 16 projects, several of
+ * them at the per-project cap of 50, so the true number is higher. Each row is one line
+ * rather than a wall, but five hundred of them under sixteen headings buries the part of
+ * the page that is about work waiting on a decision - which on the same board was six rows.
+ *
+ * Nothing is hidden by this: the heading already carries the count, and "Seen all" still
+ * sits on it, so a project can be cleared without opening it. It changes how much of the
+ * page you have to scroll past, not what the page knows.
+ *
+ * A group of a few is left open. Collapsing two commits behind a click costs a click and
+ * saves nothing.
+ */
+const reviewGroupsOpen = new Set();
+const COLLAPSE_GROUP_ABOVE = 3;
+
+/**
  * Which manual test steps the captain has personally walked through, per task.
  *
  * taskId -> Set of step indices. In memory only, like `reviewExpanded` above - ticking
@@ -1635,6 +1654,46 @@ function reviewRowEl(row, band = null) {
       renderMarkdownInto(txt, row.description.trim());
       note.append(lab, txt);
       body.append(note);
+    }
+    // What is in the repo that could be this card, when nothing says which commits are.
+    //
+    // Stated as a count and a window, never as a match. Nothing here knows which of these
+    // commits belongs to this card, and pretending otherwise would send somebody to review
+    // the wrong diff - worse than sending them nowhere. The reason it is worth showing at
+    // all is that the alternative was hiding the card completely: for a repo whose commits
+    // do not carry task ids, which is every work repo here, the page had no way to tell
+    // "nothing was done" from "nobody wrote the id down".
+    const candidates = row.candidateCommits || [];
+    const more = row.candidateMore || 0;
+    if (candidates.length > 0) {
+      const box = document.createElement("div");
+      box.className = "rev-unrecorded-note";
+      const lab = document.createElement("div");
+      lab.className = "rev-candidate-note";
+      const total = candidates.length + more;
+      lab.textContent =
+        `No commit names this card. ${total} commit${total === 1 ? "" : "s"} in ${row.category || "this repo"} since it was created ` +
+        `${more > 0 ? `(newest ${candidates.length} shown)` : ""} - which of them is this card is yours to say, not something Helm can work out:`;
+      box.append(lab);
+      const list = document.createElement("div");
+      list.className = "rev-candidate-list";
+      for (const c of candidates) {
+        const line = document.createElement("div");
+        line.className = "rev-candidate";
+        const sha = document.createElement("span");
+        sha.className = "rev-candidate-sha";
+        sha.textContent = c.shortSha;
+        const when = document.createElement("span");
+        when.className = "rev-candidate-when";
+        when.textContent = new Date(c.at).toISOString().slice(0, 10);
+        const subj = document.createElement("span");
+        subj.className = "rev-candidate-subject";
+        subj.textContent = c.subject;
+        line.append(sha, when, subj);
+        list.append(line);
+      }
+      box.append(list);
+      body.append(box);
     }
     // The actions come along even here. They used to be built AFTER this return, so
     // this band had no controls at all and could never be cleared (f2ab6a5a). Marking
@@ -2536,7 +2595,24 @@ let reviewHideNoCommits = true;
 // real work, not noise. `r.hasCommits === false` is a POSITIVE statement from
 // buildReviewsPayload ("git was asked and found nothing"); undefined (an older
 // payload, or a row a test built by hand) is not treated as a confirmed absence.
-const rowNeedsNoCommitsCard = (r) => r.verdict !== "unrecorded" || r.hasCommits !== false;
+//
+// CORRECTED 2026-09-01. The claim above - that `hasCommits === false` means "git was asked
+// and found nothing" - is true about the question git was asked and false about the
+// conclusion drawn from it. The question is "does any commit subject carry this task's
+// 8-character id, or does a record list one", and for a repo whose commits are written as
+// ordinary prose the answer is always no. One board's repo has zero commits mentioning any
+// task id in its whole history - its subjects are conventional-commit prose, "fix(scope):
+// what changed". So five of the six repo-rooted cards on the real board were hidden, and the
+// work behind every one of them plainly exists; a person reading a card next to that repo's
+// log can pair them at a glance.
+//
+// The intent stands: no commit means no card is needed. Only the evidence for "no commit"
+// has to be evidence. A row is now hidden only when nothing in its repo could be it either -
+// no unclaimed commit since the card was created. When such commits DO exist, git was asked
+// and found something; it just found nothing that names this card, which is a statement
+// about the commit convention and not about whether work happened.
+const rowNeedsNoCommitsCard = (r) =>
+  r.verdict !== "unrecorded" || r.hasCommits !== false || (r.candidateCommits?.length || 0) > 0 || (r.candidateMore || 0) > 0;
 
 // Which band a row belongs to. The queue's own module decides this and sends it as
 // row.band; the fallback is for a row from an older payload. At module scope so the page,
@@ -3128,7 +3204,36 @@ function paintReviewPage(res, { refreshing = false } = {}) {
       });
       h.append(ackAll);
     }
+    // Collapsed unless it is small or has been opened. The heading stays a heading - it
+    // carries the count and the "Seen all" action either way - and clicking it toggles.
+    const groupKey = group.projectPath || group.projectName;
+    const groupOpen = group.commits.length <= COLLAPSE_GROUP_ABOVE || reviewGroupsOpen.has(groupKey);
+    if (group.commits.length > COLLAPSE_GROUP_ABOVE) {
+      h.classList.add("rev-group-toggle");
+      h.classList.toggle("rev-group-open", groupOpen);
+      h.setAttribute("role", "button");
+      h.setAttribute("tabindex", "0");
+      h.setAttribute("aria-expanded", groupOpen ? "true" : "false");
+      const toggle = () => {
+        if (reviewGroupsOpen.has(groupKey)) {
+          reviewGroupsOpen.delete(groupKey);
+        } else {
+          reviewGroupsOpen.add(groupKey);
+        }
+        renderReviewPage();
+      };
+      h.addEventListener("click", toggle);
+      h.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          toggle();
+        }
+      });
+    }
     frag.append(h);
+    if (!groupOpen) {
+      continue;
+    }
     for (const c of group.commits) {
       const el = document.createElement("section");
       el.className = "rev-item unbound-commit";
@@ -17492,6 +17597,28 @@ async function renderAnalysisPage() {
   page.innerHTML = "";
   const myToken = ++analysisRenderToken;
 
+  // Paint something before the awaits, not after them.
+  //
+  // This function cleared the page and then waited on five IPC round-trips - sessions,
+  // skills across every project root, usage, context, review actions - before appending a
+  // single element. For however long that took, the page was EMPTY: not "loading", not a
+  // header with nothing under it, but zero elements, which looks exactly like a page that
+  // failed to render. Found on 2026-09-01 because test-chat-sidebar-removed polls for three
+  // seconds and still found nothing, and it is the same problem the Review page was already
+  // given a two-step render for ("it used to show nothing at all until a multi-second build
+  // finished").
+  //
+  // The header goes up immediately and the note below it is replaced by the real content.
+  // A stale render returning early leaves them standing, which is correct: the newer render
+  // cleared the page and is painting its own.
+  const header = document.createElement("h2");
+  header.textContent = "Analysis";
+  page.append(header);
+  const loading = document.createElement("div");
+  loading.className = "rev-commit-note";
+  loading.textContent = "Reading sessions, skills and usage…";
+  page.append(loading);
+
   const cwd = panes[focusedPaneIndex]?.cwd || "";
   // Project skills are asked for PER PROJECT, from the folders Helm knows sessions in.
   // Sessions are re-fetched rather than read out of renderer memory: this page can be
@@ -17511,9 +17638,8 @@ async function renderAnalysisPage() {
     return; // a newer render already owns the page
   }
 
-  const header = document.createElement("h2");
-  header.textContent = "Analysis";
-  page.append(header);
+  // The placeholder's job is done. The header stays - it was already the right header.
+  loading.remove();
 
   const totals = document.createElement("div");
   totals.className = "analysis-totals";

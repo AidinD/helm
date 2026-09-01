@@ -7055,3 +7055,73 @@ button.primary {
   gap: 8px;
   margin-top: 10px;
 }
+
+/* Commits that COULD be an unrecorded card, listed because the alternative was hiding
+   the card. Styled quiet on purpose: this is raw material for a decision, not a finding,
+   and anything that reads as a verdict here would send somebody to the wrong diff. */
+.rev-candidate-note {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+.rev-candidate-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  /* Scrolls inside itself rather than growing the row: twelve commits under every
+     unrecorded card would push the rest of the queue off the screen. */
+  max-height: 220px;
+  overflow-y: auto;
+}
+.rev-candidate {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: 10px;
+  align-items: baseline;
+  font-size: 12px;
+  padding: 3px 0;
+}
+.rev-candidate-sha {
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.rev-candidate-when {
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.rev-candidate-subject {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+/* A "commits without a task" heading that folds its list away. Only the affordance is
+   added - the heading keeps its own type, its count hint and its "Seen all" action, since
+   a project can be cleared without ever opening it. The marker is a caret rather than a
+   colour: colour is for active states here, and a fold is not one. */
+.rev-group-toggle {
+  cursor: pointer;
+  user-select: none;
+}
+.rev-group-toggle::before {
+  content: "\25B8"; /* right-pointing triangle */
+  display: inline-block;
+  margin-right: 8px;
+  color: var(--text-faint);
+  transition: transform 120ms ease;
+}
+.rev-group-toggle.rev-group-open::before {
+  transform: rotate(90deg);
+}
+.rev-group-toggle:focus-visible {
+  outline: 2px solid var(--accent, currentColor);
+  outline-offset: 3px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .rev-group-toggle::before {
+    transition: none;
+  }
+}

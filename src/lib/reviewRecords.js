@@ -1449,6 +1449,10 @@ export function buildReviewQueue(reviewTasks, records, metaHome = null) {
     return {
       taskId: t.id,
       title: t.title || t.text || "(untitled)",
+      // Carried so a row that names no commits can still open a window on its repo's
+      // history - see commitCandidates.js. Creation time and not `updatedAt`: the latter
+      // moves on every edit, so it cannot stand for when the work happened.
+      createdAt: typeof t.createdAt === "number" ? t.createdAt : null,
       // The task's own prose, carried through so a brief can be written in the language
       // the captain actually wrote the task in (task 7bd1e2df). Title alone is often too short
       // a sample to tell Swedish from English.
