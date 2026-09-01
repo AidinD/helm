@@ -73,6 +73,7 @@ import { computeVersionString, captureRunningBuildIdentity, checkForNewerBuild }
 import { checkModelFreshness } from "./lib/modelFreshness.js";
 import { runGoal } from "./lib/goalOrchestrator.js";
 import { loadGoalRunHistory, upsertGoalRunRecord, removeGoalRunRecord } from "./lib/goalRunHistory.js";
+import { findStalledWork, workersFromSnapshot, summariseStalls } from "./lib/watchdog.js";
 import {
   removeWorktree,
   isBranchMerged,
@@ -294,6 +295,13 @@ const liveChildren = new Map(); // launchId -> child process, for the Stop butto
  * Keyed by launchId because that is the only handle Stop is given.
  */
 const launchHolds = new Map(); // launchId -> { resumeSessionId, liveTurnId }
+// The last time a launch produced ANY output, so the watchdog can tell a turn that is
+// working from one that has stopped existing. Deliberately separate from launchHolds: that
+// map answers "what is this holding", and a lock being held says nothing about whether the
+// process behind it is alive - which is precisely how a dead turn held a session for the
+// rest of the app's life. Pruned against launchHolds when the snapshot is built, so a
+// finished launch cannot leave an entry behind.
+const launchProgress = new Map(); // launchId -> { startedAt, lastProgressAt }
 // Fas 3 Point 11 (goal orchestrator) — one entry per in-flight goal run,
 // goalRunId -> { cancelToken, currentChild }. The orchestrator checks
 // cancelToken.cancelled BETWEEN iterations, so "goal:cancel" flips the flag
@@ -384,7 +392,17 @@ function noteCompactFailure(session, tokens, why) {
   const prev = compactRetry.get(session.sessionId);
   const attempts = (prev?.attempts || 0) + 1;
   const waitMs = compactBackoffMs(attempts);
-  compactRetry.set(session.sessionId, { attempts, nextAt: Date.now() + waitMs });
+  compactRetry.set(session.sessionId, {
+    attempts,
+    nextAt: Date.now() + waitMs,
+    // When this session FIRST started failing, not when it last did. The backoff already
+    // makes each retry cheaper; what it cannot do is notice that a session has been
+    // failing for a week. Kept from the previous entry so it is a start date and not a
+    // rolling one, and carrying the title so a finding can name the session rather than
+    // an id.
+    firstFailedAt: prev?.firstFailedAt || Date.now(),
+    title: session.title || prev?.title || null,
+  });
   appendUsageLog({
     type: "orchestratorAutoCompactFailed",
     sessionId: session.sessionId,
@@ -557,9 +575,140 @@ ipcMain.handle("sessions:get", async () => {
      * the banner cannot say "on" while the guard is actually enforcing or the reverse.
      */
     tierGuardOverridden: process.env.HELM_TIER_OVERRIDE === "1",
+    /*
+     * Work that ought to be moving and is not.
+     *
+     * On the sessions poll rather than a channel of its own, deliberately. A watchdog
+     * nobody fetches is a watchdog nobody hears, and this is the one payload the dashboard
+     * already asks for on a timer - so a stall reaches the screen without anything new
+     * having to remember to look. It also has the session titles right here, which is what
+     * lets a finding name the session instead of an id.
+     */
+    watchdog: collectStalledWork(sessions),
     generatedAt: Date.now(),
   };
 });
+
+/**
+ * What has already been said, so a stall is announced once and not on every poll.
+ *
+ * Keyed by id and not by count: a set that keeps changing shape while the same three things
+ * are stuck would announce itself forever, and a line that repeats every thirty seconds is
+ * one the captain will filter out - at which point the next real one goes unread too.
+ */
+const announcedStalls = new Set();
+
+function announceStalls(stalls) {
+  const now = new Set(stalls.map((entry) => entry.id));
+  const fresh = stalls.filter((entry) => !announcedStalls.has(entry.id));
+  for (const stall of fresh) {
+    console.warn(`[helm] watchdog: ${stall.reason} ${stall.whatToDo}`);
+  }
+  // And out of the app, once, for the case this whole file exists for: the captain is not
+  // looking at Helm. Every one of the three known silent deaths was found because he
+  // happened to glance at the right screen, so a signal that only lives on a dashboard
+  // he is not reading is not much of a signal. Same gate as every other attention
+  // notification - it is suppressed while the window has focus, because then the row is
+  // already in front of him.
+  const line = summariseStalls(fresh);
+  if (line && mainWindow && !mainWindow.isDestroyed() && !mainWindow.isFocused() && loadConfig().notifyAttention !== false) {
+    try {
+      if (Notification.isSupported()) {
+        new Notification({ title: "Helm - something stopped moving", body: line, silent: false }).show();
+      }
+    } catch (err) {
+      console.error("[helm] could not notify about a stall:", err);
+    }
+  }
+  for (const id of [...announcedStalls]) {
+    if (!now.has(id)) {
+      // Recovered or gone. Forgetting it means a recurrence is announced again, which is
+      // right - the second time something wedges is news, not a duplicate.
+      announcedStalls.delete(id);
+    }
+  }
+  for (const id of now) {
+    announcedStalls.add(id);
+  }
+}
+
+/**
+ * Everything Helm believes is working, judged against what is reasonable for its kind.
+ *
+ * The judgement lives in watchdog.js and is pure; this only reads the live maps and the
+ * history file and turns them into plain data. That split is what lets a test plant a
+ * deadlock without an app around it, which is the card's own definition of done.
+ *
+ * Never throws. A watchdog that can break the poll it rides on would take the dashboard
+ * down with it, and a crashed watchdog reporting nothing looks exactly like a healthy fleet
+ * - the precise failure it exists to prevent.
+ */
+function collectStalledWork(sessions) {
+  try {
+    const titleFor = new Map();
+    for (const session of sessions || []) {
+      titleFor.set(session.cliSessionId, session.title);
+      titleFor.set(session.sessionId, session.title);
+    }
+    // launchHolds is the authority on what is still running; launchProgress can outlive it
+    // if a release path ever forgets to prune, and reporting a finished turn as stuck is
+    // the one false positive that would teach the captain to ignore this.
+    const liveTurns = [];
+    for (const [launchId, hold] of launchHolds.entries()) {
+      const beat = launchProgress.get(launchId);
+      liveTurns.push({
+        launchId,
+        sessionId: hold?.liveTurnId || null,
+        title: titleFor.get(hold?.liveTurnId) || null,
+        startedAt: beat?.startedAt ?? null,
+        lastProgressAt: beat?.lastProgressAt ?? null,
+      });
+    }
+    for (const launchId of [...launchProgress.keys()]) {
+      if (!launchHolds.has(launchId)) {
+        launchProgress.delete(launchId);
+      }
+    }
+
+    const compactFailures = [];
+    for (const [sessionId, entry] of compactRetry.entries()) {
+      compactFailures.push({
+        sessionId,
+        title: entry?.title || titleFor.get(sessionId) || null,
+        firstFailedAt: entry?.firstFailedAt ?? null,
+        failures: entry?.attempts || 0,
+      });
+    }
+
+    const workers = workersFromSnapshot({
+      liveTurns,
+      goalRuns: loadGoalRunHistory(),
+      ownPid: process.pid,
+      heartbeatStaleMs: GOAL_HEARTBEAT_STALE_MS,
+      compactFailures,
+    });
+    const stalls = findStalledWork(workers, Date.now());
+    announceStalls(stalls);
+    return stalls;
+  } catch (err) {
+    console.error("[helm] the watchdog itself failed:", err);
+    // Say so rather than returning nothing. An empty list reads as "all clear", and a
+    // watchdog quietly reporting all-clear because it crashed is the disease itself.
+    return [
+      {
+        kind: "watchdog",
+        id: "watchdog:self",
+        label: "the watchdog",
+        stalledForMs: null,
+        limitMs: 0,
+        measured: false,
+        reason: `The watchdog could not run, so nothing is being watched right now: ${err.message}`,
+        whatToDo: "This is a bug in Helm. Restart it, and the console holds the stack.",
+        context: {},
+      },
+    ];
+  }
+}
 
 // --- Config: grouping, sorting, view mode, persisted to config.json ---
 // EVERY setting in the app goes through here, and the renderer does
@@ -2823,6 +2972,13 @@ ipcMain.handle(
       // answer never depends on it, which keeps the strictest tier the least fragile.
       ...tierGuardLaunchConfig(launchTier, { sessionId: resumeSessionId, metaHome: resolveMetaHome() }),
       onEvent: (evt) => {
+        // Any output at all is a sign of life. Here rather than on specific event kinds
+        // because the question is "is this process still producing anything", and a turn
+        // that only emits tool calls for ten minutes is working perfectly well.
+        const beat = launchProgress.get(launchId);
+        if (beat) {
+          beat.lastProgressAt = Date.now();
+        }
         if (evt.kind === "session" && evt.sessionId && !internal && !liveTurnId) {
           liveTurnId = evt.sessionId;
           markSessionLive(liveTurnId);
@@ -2930,6 +3086,9 @@ ipcMain.handle(
       throw err;
     }
     liveChildren.set(launchId, child);
+    // Started, nothing back yet. A launch that never produces a first event is measurable
+    // from here, which is the shape of a spawn that died before saying anything.
+    launchProgress.set(launchId, { startedAt: Date.now(), lastProgressAt: null });
     // What this launch is holding, so Stop and the dead-turn sweep can let go of it too.
     // Recorded here rather than where the lock is taken because for a FRESH session
     // liveTurnId is not known until the CLI reports its id; the hold is refreshed on
@@ -3570,7 +3729,18 @@ function startGoalRun({
       // true is harmless.
       upsertGoalRunRecord({ goalRunId, worktreePath, branchName, baseCommit, resumable: true, updatedAt: Date.now() });
     },
-    onIteration: (record) => send({ kind: "iteration", record }),
+    onIteration: (record) => {
+      send({ kind: "iteration", record });
+      // A finished iteration is the only honest progress signal a goal run has. The
+      // heartbeat twenty lines up is NOT one: it beats on a timer whether or not the
+      // iteration behind it is wedged, so a run could report itself alive for hours while
+      // doing nothing. Two different questions, two different fields.
+      try {
+        upsertGoalRunRecord({ goalRunId, lastProgressAt: Date.now() });
+      } catch {
+        // best-effort; a missed stamp makes the watchdog earlier, never blinder
+      }
+    },
     // Forwarded to the renderer as its own "escalation" goal:event kind, on
     // the same channel as "iteration"/"done"/"error", so the Goal page can
     // show a human-gated card the moment the run actually pauses, rather

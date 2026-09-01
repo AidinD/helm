@@ -4844,6 +4844,30 @@ button.primary {
   pointer-events: none;
 }
 
+/* A piece of work the watchdog found standing still (see dashWatchdogRowEl). Same
+   .dash-queue-row shell as every other row so it does not read as a different kind of
+   thing; it only stops behaving like a link, because it is not one, and lets its two
+   lines of text wrap. */
+.dash-queue-grid .dash-queue-row.dash-watchdog-row,
+.dash-watchdog-row {
+  align-items: flex-start;
+  /* The three-class selector is load-bearing, not belt-and-braces: `.dash-queue-grid
+     .dash-queue-row` further down this file sets `cursor: pointer` on every row in the
+     grid, and it is both later AND equal in specificity to a lone `.dash-watchdog-row`,
+     so it wins twice over. Every other row in that grid opens something; this one has
+     nowhere single to go, and a pointer on it is a promise the row cannot keep. */
+  cursor: default;
+}
+
+.dash-watchdog-row .dash-q-why {
+  white-space: normal;
+}
+
+.dash-watchdog-todo {
+  margin-top: 2px;
+  color: var(--text);
+}
+
 /* Collapsed stand-in for every archive proposal (see dashArchiveGroupEl in
    renderer.js) - same .dash-queue-row shell as any other row so it sorts
    into the list visually unchanged; "Review" reveals the expanded list of

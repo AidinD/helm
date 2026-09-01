@@ -10110,6 +10110,10 @@ async function refresh() {
 
   state.sessions = data.sessions;
   state.config = data.config;
+  // Work that should be moving and is not. Kept on state rather than rendered from here so
+  // it repaints with the rest of the dashboard - a stall that only appeared on the poll
+  // that discovered it would be gone before the captain looked up.
+  state.watchdog = Array.isArray(data.watchdog) ? data.watchdog : [];
   state.quota = data.quota;
   state.quotaWindows = data.quotaWindows || [];
   state.quotaAt = data.quotaAt || null;
@@ -13926,6 +13930,7 @@ function dashboardInMotionRows() {
 function dashboardQueueSection() {
   const proposalSessions = dashboardProposalSessions();
   const inMotion = dashboardInMotionRows();
+  const stalls = state.watchdog || [];
   const suggestionsEnabled = state.config.archiveSuggestions?.enabled === true;
 
   // Needs-action count: the whole archive group counts as ONE click (the
@@ -13933,8 +13938,11 @@ function dashboardQueueSection() {
   // small number of distinct decisions actually waiting on you, not the
   // number of individual sessions that happen to share the same decision.
   const waitingSessionCount = inMotion.filter((r) => r.needsAction).length;
-  const needsActionCount = (proposalSessions.length > 0 ? 1 : 0) + waitingSessionCount;
-  const totalRows = proposalSessions.length + inMotion.length;
+  // Each stall counts as its own click. Unlike the archive proposals there is no single
+  // action that clears them - they are different faults in different places - so collapsing
+  // them into one would understate what is actually waiting.
+  const needsActionCount = (proposalSessions.length > 0 ? 1 : 0) + waitingSessionCount + stalls.length;
+  const totalRows = proposalSessions.length + inMotion.length + stalls.length;
 
   const countLabel = totalRows === 0 ? null : needsActionCount > 0 ? `${needsActionCount} need a click` : "all clear";
 
@@ -13952,7 +13960,7 @@ function dashboardQueueSection() {
     body.append(
       dashEmpty(
         suggestionsEnabled
-          ? "Nothing needs you right now, and nothing is in motion."
+          ? "Nothing needs you right now, nothing is in motion, and nothing is stuck."
           : 'Nothing in motion right now. (Archive suggestions are off - Settings > "Suggest archiving idle sessions".)'
       )
     );
@@ -13963,6 +13971,10 @@ function dashboardQueueSection() {
     // (the captain: "behåll arkiveringsnudgen som horisontell").
     const grid = document.createElement("div");
     grid.className = "dash-queue-grid";
+    // Above everything, including the archive nudge. A stall means Helm believes something
+    // is happening that is not, and every row below it is describing a world that may be
+    // wrong - so it cannot sit underneath them.
+    stalls.forEach((stall) => grid.append(dashWatchdogRowEl(stall)));
     if (proposalSessions.length > 0) {
       const group = dashArchiveGroupEl(proposalSessions);
       group.classList.add("dash-queue-fullspan");
@@ -14146,6 +14158,56 @@ function dashProposeRowEl(session) {
   });
   actions.append(approve, dismiss);
   row.append(actions);
+  return row;
+}
+
+/**
+ * One piece of work that should be moving and is not.
+ *
+ * Deliberately not clickable. Every other row here opens something; a stall has no single
+ * right destination - a wedged turn wants Stop, an abandoned run wants the Goal page, an
+ * unread crew report wants its mate - so the row carries the instruction in words instead
+ * of guessing, and a wrong guess on a row about broken state is worse than a sentence.
+ *
+ * Full-width for the same reason the archive nudge is: it is an actionable block with a
+ * paragraph in it, not a glance card.
+ */
+function dashWatchdogRowEl(stall) {
+  const row = document.createElement("div");
+  row.className = "dash-queue-row dash-queue-fullspan dash-watchdog-row";
+
+  const ic = document.createElement("div");
+  ic.className = "dash-state-ic dash-state-needs";
+  ic.textContent = "⏱"; // stopwatch - stopped, not broken
+  row.append(ic);
+
+  const body = document.createElement("div");
+  body.className = "dash-q-body";
+
+  const top = document.createElement("div");
+  top.className = "dash-q-top";
+  const tag = document.createElement("span");
+  tag.className = "dash-goal-tag";
+  // "not moving" and not "stalled": the second is a word about the mechanism, the first is
+  // a word about what the captain sees.
+  tag.textContent = stall.measured ? "not moving" : "unwatched";
+  const title = document.createElement("span");
+  title.className = "dash-q-title";
+  title.textContent = stall.label;
+  top.append(tag, title);
+  body.append(top);
+
+  const why = document.createElement("div");
+  why.className = "dash-q-why";
+  why.textContent = stall.reason;
+  body.append(why);
+
+  const todo = document.createElement("div");
+  todo.className = "dash-q-why dash-watchdog-todo";
+  todo.textContent = stall.whatToDo;
+  body.append(todo);
+
+  row.append(body);
   return row;
 }
 
