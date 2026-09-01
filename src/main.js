@@ -3763,6 +3763,11 @@ function startGoalRun({
         branchName: result?.branchName || null,
         commitCount: typeof result?.commitCount === "number" ? result.commitCount : null,
         stoppedReason: result?.stoppedReason || null,
+        // What actually went wrong, for a run that ended in failure. Without it the
+        // history records that sixteen runs failed twice in a row and nothing about why,
+        // which is how "has a quota limit ever killed a run" became unanswerable from a
+        // file that should have answered it.
+        lastFailure: result?.lastFailure || null,
         escalation: result?.escalation || null,
         // Persisted so a "fortsätt" can resume this run against the same worktree
         // with a cumulative commit count (Phase-2 Slice 5).

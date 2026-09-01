@@ -852,17 +852,30 @@ function runIteration({ worktreePath, goal, notesContent, planContent, repoMapCo
         // error. Surface that text verbatim instead of a generic "schema mismatch",
         // so isResumableQuotaError can recognise a resumable stop; otherwise every
         // such stop reads as an opaque failure and is auto-cleaned (2026-08-11).
-        const sdkError =
-          parsed.is_error === true ||
-          parsed.subtype === "error_during_execution" ||
-          parsed.subtype === "error_max_turns" ||
-          typeof parsed.error === "string"
-            ? String(parsed.error || parsed.result || parsed.subtype || "")
-            : "";
+        //
+        // Whatever it said, verbatim, WITHOUT first deciding it looks like an error.
+        // The old version only reached for the text when is_error/subtype/error marked
+        // the envelope as a failure - so an envelope that reports subtype "success" with
+        // a usage-limit sentence in `result` and no structured output produced the
+        // generic "did not match the expected schema", and the quota phrasing that
+        // isResumableQuotaError exists to recognise was thrown away right here.
+        //
+        // That is not a hypothetical shape. Measured 2026-09-01 in the installed run
+        // history: 16 runs stopped at two_consecutive_failures and NOT ONE carries any
+        // error text, and zero runs in the whole file have ever been classified
+        // quota_exhausted - while the captain's own scheduled prompt records two autopilots
+        // dying because he ran out of tokens. A classifier is only as good as the text
+        // it is given, and this is where the text was being dropped.
+        // The subtype is a fallback only when it is not "success": reading it
+        // unconditionally turned an envelope that genuinely said nothing into the error
+        // text "Iteration errored: success", which is worse than the generic message it
+        // replaced.
+        const subtype = parsed.subtype === "success" ? "" : parsed.subtype;
+        const envelopeText = String(parsed.error || parsed.result || subtype || "");
         finish({
           ok: false,
-          error: sdkError
-            ? `Iteration errored: ${truncate(sdkError, 500)}`
+          error: envelopeText
+            ? `Iteration errored: ${truncate(envelopeText, 500)}`
             : "Iteration response did not match the expected schema.",
         });
         return;
@@ -870,6 +883,31 @@ function runIteration({ worktreePath, goal, notesContent, planContent, repoMapCo
       finish({ ok: true, result, costUsd: parsed.total_cost_usd || 0, usage: extractUsage(parsed, { requestedModel: model }) });
     });
   });
+}
+
+/**
+ * The most recent iteration that failed, reduced to what a compact record can hold.
+ *
+ * Both failure shapes count: a hard process error (`ok: false`, carrying `error`) and the
+ * agent reporting `success: false` (carrying its own summary). Treating only the first as
+ * a failure would leave the same hole one branch further along.
+ *
+ * @returns {{iteration: number, error: string}|null}
+ */
+export function lastFailureOf(iterations) {
+  for (let i = (iterations || []).length - 1; i >= 0; i--) {
+    const rec = iterations[i];
+    if (!rec) {
+      continue;
+    }
+    if (rec.ok === false && rec.error) {
+      return { iteration: rec.iteration, error: String(rec.error).slice(0, 1000) };
+    }
+    if (rec.ok === true && rec.result && rec.result.success === false) {
+      return { iteration: rec.iteration, error: String(rec.result.summary || "The iteration reported failure without saying why.").slice(0, 1000) };
+    }
+  }
+  return null;
 }
 
 /**
@@ -2080,6 +2118,20 @@ export async function runGoal({
     iterations,
     resolvedModel,
     stoppedReason,
+    /*
+     * The last iteration error, so a run that ends in failure says what failed.
+     *
+     * Everything needed to answer that was already returned in `iterations`, and the
+     * caller persists a compact record that drops it - so the run history has sixteen
+     * runs stopped at two_consecutive_failures and not one word about what went wrong in
+     * any of them. That is not merely inconvenient: it made the question "have we ever
+     * been killed by a quota limit" unanswerable, because the only place the answer could
+     * have been written was empty for exactly the runs that would carry it.
+     *
+     * One field, not the whole iteration list. The list is large and its home is
+     * notes.md in the worktree; what a compact record needs is the sentence.
+     */
+    lastFailure: lastFailureOf(iterations),
     cleanedUp,
     // What a model that did not write this thought of it, or null when nobody was asked.
     // Null and "nothing stood out" are different answers and must never render the same:
