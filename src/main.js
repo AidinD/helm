@@ -47,6 +47,7 @@ import { resolveTaskCommits, diffForCommits, shippedVersionForCommits } from "./
 import { boundCommits, writeBinding, removeBinding } from "./lib/commitBindings.js";
 import { buildMatchPrompt, shapeMatchAnswer, MATCH_SCHEMA, MATCH_SYSTEM } from "./lib/commitMatch.js";
 import { buildAttentionPrompt, shapeAttentionAnswer, ATTENTION_SCHEMA, ATTENTION_SYSTEM } from "./lib/diffAttention.js";
+import { reviewCrewRun } from "./lib/crewReview.js";
 import { ask as askClaude } from "keel/claude";
 // projectKey stays imported here even though the review BUILD moved to reviewQueueBuild.js:
 // `reviews:acknowledgeCommit` keys its acks by the same normalized project key, and dropping
@@ -3510,6 +3511,22 @@ function startGoalRun({
     // worktree/branch (skips createWorktree + provisionDeps) instead of a fresh
     // one, so a quota-stopped / interrupted run continues where it left off.
     resume: resume || undefined,
+    // An independent read of the run's own work, before anything is cleaned up.
+    //
+    // ON by default, and that is the point rather than an oversight. The outside check that
+    // already existed - verifyCommand - is opt-in, and measured on the real store on
+    // 2026-09-01 it has never once been used: 56 runs, 108 review records, and not one
+    // carries the check a declared gate writes. An optional control nobody switches on is a
+    // setting. Meanwhile the loop ends on the builder's own word that it is done, which is
+    // how 22 of 23 reports came to say done without reaching the goal.
+    //
+    // The cost is one model call against one diff, next to a run that just spent many. Set
+    // crewReview:{enabled:false} in config to turn it off; nothing about the run changes
+    // except that nobody but the builder will have read it.
+    reviewer:
+      loadConfig().crewReview?.enabled === false
+        ? null
+        : (args) => reviewCrewRun({ ...args, ask: askClaude }),
     cancelToken,
     // Track each freshly-spawned iteration/verify child so before-quit can
     // sweep its tree (L1) and goal:cancel can kill the in-flight one

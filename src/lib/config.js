@@ -124,6 +124,19 @@ const DEFAULT_CONFIG = {
   // because a Windows user environment variable on this one machine pointed at
   // the payload - an ambient setting Helm did not own, read, or show.
   whisperDir: "",
+  // Whether a finished crew run gets read by a model that did not write it, before its
+  // worktree is cleaned up. ON, deliberately.
+  //
+  // The outside check that already existed - a run's own verifyCommand - is opt-in, and
+  // measured on the real store on 2026-09-01 it had never been used: 56 runs, 108 review
+  // records, not one carrying the check a declared gate writes. An optional control nobody
+  // switches on is a setting, not a control - and meanwhile the loop ends on the builder's
+  // own word that it is done, which is how 22 of 23 crew reports came to say done without
+  // having reached the goal.
+  //
+  // Costs one model call against one diff, next to a run that has just spent many. Turning
+  // it off changes nothing about the run except that nobody but the builder read it.
+  crewReview: { enabled: true },
   // model name -> real context-window size, LEARNED from the CLI's own
   // result events (evt.modelUsage[model].contextWindow) as sessions run
   // through Helm. Authoritative per model; the gauge prefers this over

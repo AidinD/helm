@@ -1372,6 +1372,13 @@ export async function runGoal({
   onChild,
   onWorktree,
   resume,
+  // A model that did not write the code, reading the run's own diff before anything is
+  // cleaned up. Injected rather than imported so a test can exercise the whole run without
+  // spending a token, and so a caller that does not want it simply does not pass it.
+  //
+  // Null means the run ends the way it always did - the builder's own word that it is done -
+  // which is the state that produced 22 done-but-not-done reports in one day.
+  reviewer = null,
 }) {
   if (!projectPath || !goal) {
     throw new Error("runGoal requires both projectPath and goal.");
@@ -1874,6 +1881,34 @@ export async function runGoal({
   const finalPlan = readPlan(worktreePath);
   const commitCount = countCommitsOnBranch(worktreePath, baseCommit);
 
+  // An independent read of the run's own work, BEFORE anything is cleaned up.
+  //
+  // The order is the whole thing. The firstmate skill warns that reviewing from the
+  // coordinator's directory finds a clean tree, sees nothing, and stops correctly having
+  // reviewed nothing - "a silent no-op, not a review". Helm has the same trap with a sharper
+  // edge: the block below removes the worktree of a run with no commits, and a finished
+  // worktree is not guaranteed to survive afterwards either. So this happens here, with the
+  // files still on disk, or it does not happen honestly at all.
+  //
+  // Only when there is something to read. A run with no commits has no diff, and asking a
+  // model to review nothing spends money to be told so.
+  // All iterations share the same --model, so the resolved model is a run-level fact. Worked
+  // out here rather than after the cleanup block, where it used to sit, because the reviewer
+  // needs it: picking a reviewer without knowing what built the code is how you file the
+  // builder's own opinion as a second one.
+  const resolvedModel = iterations.find((r) => r.resolvedModel)?.resolvedModel || null;
+
+  let review = null;
+  if (reviewer && commitCount > 0) {
+    try {
+      review = await reviewer({ worktreePath, baseCommit, goal, builderModel: resolvedModel });
+    } catch {
+      // A review that can break a run is a review that gets switched off. The run already
+      // succeeded or failed on its own terms before this line.
+      review = null;
+    }
+  }
+
   // Auto-clean up a run that produced NOTHING to review (zero commits) - a
   // bad-path fast-fail, an all-failed run, or a cancel before any commit.
   // Otherwise every such run would leave a stale `<repo>-worktrees/goal-*`
@@ -1908,14 +1943,11 @@ export async function runGoal({
     }
   }
 
-  // All iterations in a run share the same --model/--effort CLI args, so the
-  // resolved model is a run-level fact, not a per-iteration one - the first
-  // iteration record that captured one (usually the first, but a hard-failed
-  // iteration has none) is the run's answer. Surfaces "what did the CLI
-  // actually pick" for Auto runs (auto-captain never passes --model), where
-  // the requested `model` field is null and previously nothing else showed
-  // which model ran.
-  const resolvedModel = iterations.find((r) => r.resolvedModel)?.resolvedModel || null;
+  // (resolvedModel is worked out above, before the reviewer, which needs it. It is a
+  // run-level fact: all iterations share the same --model/--effort CLI args, and the first
+  // iteration record that captured one is the run's answer - a hard-failed iteration has
+  // none. It surfaces "what did the CLI actually pick" for Auto runs, where the requested
+  // model is null and nothing else showed which one ran.)
 
   return {
     worktreePath,
@@ -1933,6 +1965,10 @@ export async function runGoal({
     resolvedModel,
     stoppedReason,
     cleanedUp,
+    // What a model that did not write this thought of it, or null when nobody was asked.
+    // Null and "nothing stood out" are different answers and must never render the same:
+    // one means no independent read happened, the other means one did and found nothing.
+    review,
     // Baseline commit the worktree forked from - persisted so a RESUME can reuse
     // it and keep the commit count cumulative (Phase-2 Slice 5).
     baseCommit,
