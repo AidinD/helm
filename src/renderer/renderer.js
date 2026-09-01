@@ -17111,13 +17111,12 @@ function renderSettingsPage() {
       parts.push("Live streaming is not: whisper-stream.exe is missing from that folder.");
     }
     if (!status.oneShot.ready) {
-      // Deliberately NOT "the mic still works". It falls back to transformers.js,
-      // and that path has never been observed running here: its model cache
-      // resolves inside the read-only app bundle in an installed build, so it
-      // would re-download the model on every start rather than cache it. Saying
-      // "still works" would be exactly the kind of claim about the system that
-      // nothing enforces - the thing this app is trying to stop doing.
-      parts.push("The mic falls back to transformers.js, which is slower and has not been verified in an installed build.");
+      // This said "has not been verified in an installed build" for a few hours on
+      // 2026-09-01, which was true at the time: the fallback had never run anywhere
+      // and its model cache resolved inside the read-only bundle. Both are fixed and
+      // it has now been run - see voiceModelCache.js - so the sentence states the
+      // cost instead, which is the part somebody needs before relying on it.
+      parts.push("The mic falls back to transformers.js, which is slower and downloads a ~300MB model the first time.");
     }
     enginePathDesc.textContent = parts.join(" ");
   }

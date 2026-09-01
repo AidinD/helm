@@ -138,6 +138,7 @@ import { listRoutines, createRoutine, updateRoutine, removeRoutine, dueRoutines,
 import { buildArtifactSrcdoc, formatAnnotationsAsPrompt } from "./lib/lavishSdk.js";
 import { engineStatus as whisperStreamStatus, startStream as startWhisperStream, stopStream as stopWhisperStream } from "./lib/whisperStream.js";
 import { engineStatus as whisperCliStatus } from "./lib/whisperCpp.js";
+import { voiceModelCacheDir } from "./lib/voiceModelCache.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -1483,6 +1484,11 @@ ipcMain.handle("voice:status", () => {
     // The fallback is always there, so "voice works" is true even when whisper
     // is missing - it is just the slow path. Saying so is the point.
     fallback: "transformers",
+    // Where the fallback keeps its ~300MB of weights. Reported by the app rather
+    // than recomputed by a caller, because the only interesting question about it
+    // is what a PACKAGED process resolves - packaged, transformers.js's own default
+    // is inside app.asar, which is a file, so mkdir there fails with ENOTDIR.
+    fallbackCacheDir: voiceModelCacheDir(),
     oneShot: { ready: cli.ready, why: cli.why, root: cli.root, source: cli.source },
     streaming: { ready: stream.ready, why: stream.why, root: stream.root, source: stream.source },
   };

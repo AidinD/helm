@@ -131,11 +131,129 @@ try {
       `and PLAIN NODE runs it from there and gets a deny back (exit ${probe.status}, stdout ${JSON.stringify((probe.stdout || "").slice(0, 80))}) - this is the actual thing the CLI does, not a stand-in for it`
     );
   }
+  // --- 5. the transcription engine, which is the whole reason it needs asking here ---
+  // keel resolves the whisper payload by, among other things, walking up from its own file.
+  // In a checkout that reaches the folder holding the repos; packaged it reaches
+  // app.asar\node_modules\.whisper, which cannot exist. So the ONE thing dev can never show
+  // is what an installed build answers - and until 2026-09-01 nobody had asked. The answer
+  // then turned out to be "it works", but only because a Windows user environment variable
+  // on this machine happened to point WHISPER_DIR at the payload: an ambient setting Helm
+  // did not own, read, display or repair, and whose disappearance would have stopped
+  // transcription silently.
+  //
+  // What is asserted is deliberately NOT "the engine is present". A machine without the
+  // 1.5GB payload is a legitimate state and this check must pass there too. What must hold
+  // in every case is that the packaged app can ANSWER - and that when the answer is no, it
+  // is a sentence somebody can act on rather than a bare false.
+  const voice = await app.eval(`window.helm.voiceStatus()`);
+  ok(
+    voice && voice.ok === true && voice.oneShot && typeof voice.oneShot.ready === "boolean",
+    `the packaged app can say where its transcription engine is (${JSON.stringify(voice).slice(0, 200)})`
+  );
+  if (voice?.oneShot?.ready) {
+    ok(
+      typeof voice.oneShot.root === "string" && voice.oneShot.root.length > 0 && voice.oneShot.source !== undefined,
+      `and names the folder it found it in, and which setting said so (${voice.oneShot.root}, via ${voice.oneShot.source})`
+    );
+  } else {
+    // The failing case is the one that used to be silent, so it is the one worth checking
+    // hardest: a reason, and a reason that names a path rather than saying "not installed".
+    ok(
+      typeof voice?.oneShot?.why === "string" && /[\\/]/.test(voice.oneShot.why),
+      `and when it cannot find it, says why and where it looked (${voice?.oneShot?.why})`
+    );
+  }
+  // The streaming engine is a separate binary and a separate answer. Reporting one for both
+  // would tell somebody whose one-shot transcription works fine that voice is unavailable.
+  ok(
+    voice?.streaming && typeof voice.streaming.ready === "boolean",
+    `and answers separately for the streaming engine (ready: ${voice?.streaming?.ready})`
+  );
+
+  // --- 6. the fallback's model cache, for the same packaged-only reason -----
+  // transformers.js derives its cache directory from its own module location, which packaged
+  // is inside app.asar - a file, not a directory, so mkdir there fails with ENOTDIR. The
+  // redirect that fixes it rides on HELM_CONFIG_PATH, which only packagedPaths.js sets, so
+  // only a packaged run proves it lands somewhere writable.
+  //
+  // Read out of the PACKAGED process's own answer, not recomputed here: recomputing it in
+  // this test would resolve it under this process's environment, which is a checkout, and
+  // would pass no matter what the installed app does.
+  // Not asserted against dataDir, which was the first attempt and was wrong: the harness
+  // points HELM_CONFIG_PATH at its own temp config, and the cache correctly follows the
+  // config directory, so that check failed on correct code. What must hold regardless of
+  // where the config lives is that the answer is somewhere OUTSIDE the application bundle -
+  // transformers.js's own default is inside it - and that it can actually be created.
+  const cacheDir = voice?.fallbackCacheDir;
+  const appDir = path.resolve(repo, "dist", "win-unpacked");
+  ok(
+    typeof cacheDir === "string" && cacheDir.length > 0 && !path.resolve(cacheDir).startsWith(appDir),
+    `the packaged app keeps the fallback's model cache outside its own bundle (${cacheDir}), where transformers.js would have put it`
+  );
+  ok(!/app\.asar/.test(String(cacheDir)), "and specifically not inside app.asar, which is a file - mkdir there fails with ENOTDIR");
+  // The real failure was a mkdir, so do the mkdir. A path that merely LOOKS writable is
+  // what the original code had.
+  let created = false;
+  try {
+    fs.mkdirSync(cacheDir, { recursive: true });
+    created = fs.statSync(cacheDir).isDirectory();
+  } catch (err) {
+    created = `${err.code}: ${err.message}`;
+  }
+  ok(created === true, `and the packaged process's answer is a directory that can really be created (${created})`);
 } finally {
   if (app) {
     await app.close();
   }
   fs.rmSync(dataDir, { recursive: true, force: true });
+}
+
+// --- 7. and the case that USED to be silent, which the run above never reaches ---
+//
+// The machine this runs on has the payload, so every assertion above took the "ready"
+// branch and the "cannot find it" branch was never executed once. That branch is the
+// acceptance criterion - the card asked for a packaged build that finds the engine OR says
+// clearly why not - so leaving it uncovered would mean the half that matters is asserted
+// only by reading it.
+//
+// Pointing WHISPER_DIR at a folder that does not exist reproduces a machine without the
+// payload, and does it through the strictest path: an explicit setting is an answer, so
+// there must be no quiet fallback to the real payload sitting right there on this disk.
+{
+  const missing = path.join(os.tmpdir(), `helm-no-whisper-${Date.now()}`);
+  const dataDir2 = fs.mkdtempSync(path.join(os.tmpdir(), "helm-packaged-nowhisper-"));
+  const previous = process.env.WHISPER_DIR;
+  process.env.WHISPER_DIR = missing;
+  process.env.HELM_DATA_DIR = dataDir2;
+  let app2 = null;
+  try {
+    app2 = await launch({ command: exe, args: [], appDir: path.dirname(exe) });
+    await app2.waitForSelector("#pageToggle", 60000, { visible: true });
+    const voice2 = await app2.eval(`window.helm.voiceStatus()`);
+    ok(voice2?.oneShot?.ready === false, `with the engine folder missing, the packaged app reports it as missing (ready: ${voice2?.oneShot?.ready})`);
+    ok(
+      typeof voice2?.oneShot?.why === "string" && voice2.oneShot.why.includes(missing),
+      `and says why, naming the folder it was pointed at (${String(voice2?.oneShot?.why).slice(0, 160)})`
+    );
+    ok(
+      /WHISPER_DIR|whisperDir/.test(String(voice2?.oneShot?.why)),
+      "and names the setting responsible, so it can be corrected rather than guessed at"
+    );
+    ok(
+      voice2?.oneShot?.root === missing,
+      `and did NOT quietly fall back to the payload that is really on this disk (${voice2?.oneShot?.root})`
+    );
+  } finally {
+    if (app2) {
+      await app2.close();
+    }
+    if (previous === undefined) {
+      delete process.env.WHISPER_DIR;
+    } else {
+      process.env.WHISPER_DIR = previous;
+    }
+    fs.rmSync(dataDir2, { recursive: true, force: true });
+  }
 }
 
 console.log(
