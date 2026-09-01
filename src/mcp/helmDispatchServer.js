@@ -176,8 +176,17 @@ const TOOLS = [
   {
     name: "helm_resume_crew",
     description:
-      "SECOND MATES ONLY: resume YOUR OWN crew's resumable runs (autopilot runs YOU dispatched that stopped on a quota/token limit or paused/escalated), picking up where each left off in its kept worktree. Use this when your autopilots ran out of tokens and you want to continue them once the limit resets - you own those runs, so you can resume them yourself without going up to a first mate. Each run resumes only if the budget/kill switch/concurrency cap allow it. Returns how many were resumed.",
-    inputSchema: { type: "object", properties: {} },
+      "SECOND MATES ONLY: continue YOUR OWN crew's runs in their kept worktrees. Called with no argument it resumes the runs that stopped on a quota/token limit or paused - use that once a limit resets. Called with a goalRunId it continues THAT run, including one that simply ran out of iterations, on the branch it already has. Use the second form instead of dispatching a fresh run at a worktree: a new run rooted in another run's worktree is refused, because the isolation is the point, and starting over re-pays for work that is already done. Returns how many were resumed.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        goalRunId: {
+          type: "string",
+          description:
+            "Continue this one run, on the branch and worktree it already has - the way to carry on a run that hit its iteration cap. Omit to resume every run of yours that stopped on quota or paused.",
+        },
+      },
+    },
   },
   {
     name: "helm_report_up",
@@ -436,7 +445,7 @@ async function toolResumeFleet() {
 // The narrower twin of helm_resume_fleet: a first mate cascades across its whole
 // tree, a second mate owns only the runs it dispatched. The app scopes the resume
 // to dispatchedBy === this second mate's id and gates each run individually.
-async function toolResumeCrew() {
+async function toolResumeCrew(args = {}) {
   if (CALLER_TIER !== "second-mate") {
     return { error: "Only a second mate resumes its own crew (a first mate uses helm_resume_fleet)." };
   }
@@ -444,7 +453,16 @@ async function toolResumeCrew() {
     return { error: "HELM_META_HOME not configured; cannot reach the dispatch queue." };
   }
   ensureDispatchDirs(META_HOME);
-  const dispatchId = writeRequest(META_HOME, { kind: "resume-crew", dispatchedBy: MATE_ID, callerTier: CALLER_TIER });
+  // A named run is a DIFFERENT request from the blanket sweep, and deliberately so: marking
+  // capped runs resumable in general would make one no-argument call restart every one of
+  // them, which is a bill nobody asked for. Naming one is the mate saying it means this one.
+  const goalRunId = typeof args?.goalRunId === "string" ? args.goalRunId.trim() : "";
+  const dispatchId = writeRequest(META_HOME, {
+    kind: "resume-crew",
+    goalRunId: goalRunId || null,
+    dispatchedBy: MATE_ID,
+    callerTier: CALLER_TIER,
+  });
   const ack = await waitForAck(dispatchId);
   if (!ack) {
     return { status: "pending", note: "Resume queued; the app has not acknowledged it yet." };
@@ -466,7 +484,7 @@ function callTool(name, args) {
     case "helm_resume_fleet":
       return toolResumeFleet();
     case "helm_resume_crew":
-      return toolResumeCrew();
+      return toolResumeCrew(args || {});
     case "helm_collect_reports":
       return toolCollectReports(args || {});
     case "helm_list_projects":

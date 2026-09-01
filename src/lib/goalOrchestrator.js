@@ -5,6 +5,7 @@ import path from "node:path";
 import { resolveClaudeBinary } from "./launcher.js";
 import { createWorktree, removeWorktree } from "./worktree.js";
 import { buildRepoMap } from "./repoMap.js";
+import { refuseIfNotPrimary } from "./primaryWorkTree.js";
 
 /**
  * Fas 3 Point 11 v1 — a real goal orchestrator, adapted (not copied) from
@@ -1410,16 +1411,22 @@ export async function runGoal({
   // IPC with only a truthiness check, yet flows into `git -C <projectPath>
   // branch -D` / `worktree remove` at cleanup. Fail loudly here rather than let
   // a destructive git command run against a non-repo or the wrong directory.
-  try {
-    const inside = execFileSync("git", ["-C", projectPath, "rev-parse", "--is-inside-work-tree"], {
-      encoding: "utf8",
-      windowsHide: true,
-    }).trim();
-    if (inside !== "true") {
-      throw new Error("path is not inside a git work tree");
+  //
+  // `--is-inside-work-tree` was the wrong question and answered yes to the wrong thing: a
+  // worktree IS a work tree, so a run could be rooted in another run's isolated copy, and
+  // twice one was. It asks whether the path is A work tree; what matters is whether it is
+  // the repository's PRIMARY one. See primaryWorkTree.js - the two are distinguishable, and
+  // the primary can be named, which is what lets the refusal say where to point instead.
+  //
+  // A resume is exempt: it re-attaches to a worktree ON PURPOSE, which is the one legitimate
+  // way a run is rooted in one. Without this exemption, closing the hole would break the
+  // only route a capped run has to be continued - and the card that found this is explicit
+  // that shutting the door without opening that one makes things worse.
+  if (!resume) {
+    const refusal = refuseIfNotPrimary(projectPath, { what: "A goal run" });
+    if (refusal) {
+      throw new Error(`runGoal: ${refusal}`);
     }
-  } catch (err) {
-    throw new Error(`runGoal: projectPath is not a git repository: ${projectPath} (${err.message})`);
   }
 
   // Goal iterations spawn claude WITHOUT a shell (see runIteration), passing the

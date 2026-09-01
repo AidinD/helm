@@ -49,6 +49,7 @@ import { buildMatchPrompt, shapeMatchAnswer, MATCH_SCHEMA, MATCH_SYSTEM } from "
 import { buildAttentionPrompt, shapeAttentionAnswer, ATTENTION_SCHEMA, ATTENTION_SYSTEM } from "./lib/diffAttention.js";
 import { reviewCrewRun } from "./lib/crewReview.js";
 import { clearStaleIndexLocks } from "./lib/gitLocks.js";
+import { classifyWorkTree, refuseIfNotPrimary } from "./lib/primaryWorkTree.js";
 import { ask as askClaude } from "keel/claude";
 // projectKey stays imported here even though the review BUILD moved to reviewQueueBuild.js:
 // `reviews:acknowledgeCommit` keys its acks by the same normalized project key, and dropping
@@ -1839,9 +1840,22 @@ function resolveDispatchProject(project) {
   if (byPath) {
     return byPath.path;
   }
-  // Escape hatch: an explicit absolute path that exists.
+  // Escape hatch: an explicit absolute path that exists AND is a repository of its own.
+  //
+  // "exists" was the whole test, and a worktree exists - so a second mate could name another
+  // run's isolated copy as its project, and twice one did. The escape hatch is still here
+  // because a project Helm has not registered is a real case; what it no longer accepts is a
+  // path that belongs to somebody else's run.
   if (path.isAbsolute(project) && fs.existsSync(project)) {
-    return path.resolve(project);
+    const resolved = path.resolve(project);
+    const seen = classifyWorkTree(resolved);
+    if (seen.kind === "worktree") {
+      // Reported as unresolvable rather than thrown: this function's contract is a path or
+      // null, and the caller turns null into a message. The dispatch handler adds the
+      // sentence naming the repository to point at instead.
+      return null;
+    }
+    return resolved;
   }
   return null;
 }
@@ -3689,7 +3703,7 @@ ipcMain.handle("goal:cancel", (_event, { goalRunId }) => {
 // persists the worktree/branch/baseCommit + resumable:true the moment the
 // worktree exists, so an interrupted run (which never completed to clear it)
 // still qualifies here.
-function resumeGoalRunById(goalRunId) {
+function resumeGoalRunById(goalRunId, { allowCapped = false } = {}) {
   const rec = loadGoalRunHistory().find((r) => r.goalRunId === goalRunId);
   if (!rec) {
     return { ok: false, error: "No such run." };
@@ -3700,8 +3714,20 @@ function resumeGoalRunById(goalRunId) {
   // Slice-5 records that have no persisted baseCommit (whose commit count would
   // read 0 and could auto-delete their committed work, #3). resumable is cleared
   // below the moment we start, so a concurrent second call also fails this.
-  if (!rec.resumable) {
-    return { ok: false, error: "This run isn't in a resumable state (only a quota-stopped or escalated run, once each)." };
+  // A run that simply ran out of iterations is not marked resumable, and that default is
+  // right: the blanket sweep must not restart every capped run on one call. But it IS
+  // continuable when somebody names it - its worktree, branch and baseCommit are all still
+  // there, and the alternative a mate reached for twice was dispatching a fresh run AT the
+  // worktree, which is now refused. Closing that door without opening this one would turn a
+  // capped job into a dead end instead of merely an expensive one.
+  const capped = rec.stoppedReason === "max_iterations_reached";
+  if (!rec.resumable && !(allowCapped && capped)) {
+    return {
+      ok: false,
+      error: capped
+        ? "This run hit its iteration cap. Name it explicitly to continue it (helm_resume_crew with its goalRunId)."
+        : "This run isn't in a resumable state (only a quota-stopped or escalated run, once each).",
+    };
   }
   if (liveGoalRuns.has(goalRunId)) {
     return { ok: false, error: "That run is already live." };
@@ -5816,6 +5842,29 @@ function processDispatchRequests(metaHome) {
       // cascade above). dispatchedBy is the second mate's own id; each resume is
       // individually guardrail-gated by resumeGoalRunById, so no cap is bypassed.
       if (request.kind === "resume-crew") {
+        // A NAMED run is continued even if it only ran out of iterations; the blanket sweep
+        // stays conservative. The difference is the mate saying "this one" rather than "all
+        // the ones that are already marked" - see resumeGoalRunById for why widening the
+        // blanket instead would restart every capped run on one call.
+        if (request.goalRunId) {
+          const rec = loadGoalRunHistory().find((r) => r.goalRunId === request.goalRunId);
+          if (!rec) {
+            reject(`No run with id ${request.goalRunId}.`);
+            continue;
+          }
+          // Ownership, the same rule the sweep applies: a mate continues its OWN crew.
+          if (rec.dispatchedBy && request.dispatchedBy && rec.dispatchedBy !== request.dispatchedBy) {
+            reject("That run was dispatched by someone else - you can only continue your own crew.");
+            continue;
+          }
+          const one = resumeGoalRunById(request.goalRunId, { allowCapped: true });
+          if (!one.ok) {
+            reject(one.error || "That run could not be continued.");
+            continue;
+          }
+          writeAck(metaHome, dispatchId, { status: "accepted", resumed: 1, total: 1 });
+          continue;
+        }
         const res = resumeCrew(request.dispatchedBy || null);
         writeAck(metaHome, dispatchId, { status: "accepted", resumed: res.resumed, total: res.total });
         continue;
@@ -5836,7 +5885,18 @@ function processDispatchRequests(metaHome) {
       // hatch, design decision 5).
       const projectPath = resolveDispatchProject(request.project);
       if (!projectPath) {
-        reject(`Unknown project "${request.project}". Call helm_list_projects, or pass an explicit absolute repo path.`);
+        // Name the repository when the path was a worktree, rather than answering "unknown"
+        // to a path that plainly exists. The mate that hit this was doing something sensible -
+        // trying to continue a capped run on its own branch - and "unknown project" to a
+        // directory it can see would read as a bug in Helm and get worked around.
+        const worktreeRefusal =
+          request.project && path.isAbsolute(request.project) && fs.existsSync(request.project)
+            ? refuseIfNotPrimary(path.resolve(request.project), { what: "A dispatch" })
+            : null;
+        reject(
+          worktreeRefusal ||
+            `Unknown project "${request.project}". Call helm_list_projects, or pass an explicit absolute repo path.`
+        );
         continue;
       }
       // Depth cap (belt-and-suspenders; structurally a dispatched run never
