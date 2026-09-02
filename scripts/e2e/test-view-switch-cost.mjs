@@ -60,20 +60,37 @@ try {
     // Away and back, so each measurement is a real switch INTO the page.
     await app.eval(`navigateToPage('dashboard')`);
     await new Promise((r) => setTimeout(r, 150));
-    const ms = await app.eval(`(async () => {
+    // SPLIT, because the total on its own cannot be acted on. Measured 2026-09-02: this
+    // window is normally 0.2-0.4 ms for Dashboard and 8-19 ms for Archive, and it stayed
+    // flat under 100% CPU on all cores right up to the point where the app stopped
+    // responding at all. So when it reports 1000 ms, the interesting question is not "how
+    // slow is a view switch" but WHICH HALF grew - and the two halves have different fixes.
+    //
+    // `nav` is the page's own synchronous JS: teardown plus DOM build. Note that
+    // `await navigateToPage(...)` awaits a NON-promise (navigateToPage is not async), so
+    // this half deliberately excludes any render work behind an await - which for Dashboard
+    // is all five of its IPC calls. That is why a large number here can never be blamed on
+    // the main process being busy: for these pages the main process is not in the window.
+    //
+    // `layout` is the forced reflow. On Archive it is already 3-6x the JS at rest, which is
+    // what one row per archived session costs to lay out, and it is the half CSS
+    // containment would attack.
+    const split = await app.eval(`(async () => {
       const t0 = performance.now();
       await navigateToPage(${JSON.stringify(page)});
+      const t1 = performance.now();
       // Force the layout the render queued, so the number is what the user waits for and
       // not just the JS that scheduled it.
       void document.body.offsetHeight;
-      return performance.now() - t0;
+      const t2 = performance.now();
+      return { nav: t1 - t0, layout: t2 - t1, total: t2 - t0 };
     })()`);
-    results[page] = ms;
+    results[page] = split;
   }
 
-  const rows = Object.entries(results).sort((a, b) => b[1] - a[1]);
-  for (const [page, ms] of rows) {
-    console.log(`      ${page.padEnd(12)} ${ms.toFixed(1)} ms`);
+  const rows = Object.entries(results).sort((a, b) => b[1].total - a[1].total);
+  for (const [page, r] of rows) {
+    console.log(`      ${page.padEnd(12)} ${r.total.toFixed(1)} ms   (js ${r.nav.toFixed(1)} + layout ${r.layout.toFixed(1)})`);
   }
 
   const worst = rows[0];
@@ -83,9 +100,30 @@ try {
   // flaky test, which is worse than none: it teaches you to re-run until it passes. The
   // ceiling is set where a real REGRESSION (a view that went back to blocking on IPC) would
   // still be caught.
+  const worstSplit = worst[1];
+  // The message names the half that grew, because that is the whole difference between a
+  // finding and a mystery. A `js` blowup is the page building its own DOM too slowly and is
+  // this app's fault. A `layout` blowup is reflow cost and scales with how much is on the
+  // page. Both roughly flat while the total explodes means the renderer was stalled by
+  // something outside the measured work - a stop-the-world garbage collection or the OS
+  // descheduling the process - and NEITHER is a view-switch regression. That third case is
+  // what the numbers recorded on 2026-09-01 look like, and reading them as slow view
+  // switches sent two task cards off in the wrong direction.
   ok(
-    worst[1] < 600,
-    `the slowest SYNCHRONOUS view switch stays well under a second (${worst[0]} at ${worst[1].toFixed(0)}ms)`
+    worstSplit.total < 600,
+    worstSplit.total < 600
+      ? `the slowest SYNCHRONOUS view switch stays well under a second (${worst[0]} at ${worstSplit.total.toFixed(0)}ms)`
+      : `${worst[0]} took ${worstSplit.total.toFixed(0)}ms: own JS ${worstSplit.nav.toFixed(1)}ms, forced layout ${worstSplit.layout.toFixed(1)}ms. ` +
+        // By PROPORTION, not by an absolute millisecond cut-off. The first version of this
+        // message used `> 200ms` and told a 25ms run that neither half accounted for it
+        // while forced layout was 23.4 of those 25 - found by mutating the ceiling rather
+        // than by reading the branch. A share works at any scale, which matters because the
+        // whole point is to stay right when the total is 1000x the normal one.
+        (worstSplit.nav / worstSplit.total > 0.6
+          ? "The page's own DOM build is the cost - that is a real view-switch regression, in this app's render logic."
+          : worstSplit.layout / worstSplit.total > 0.6
+            ? "Forced reflow is the cost - look at how much this page puts on screen, not at the render logic. CSS containment attacks this half."
+            : "NEITHER half dominates, so the renderer was stalled by something outside the measured work (a stop-the-world GC, or the OS descheduling it under load). Do not read this as a slow view switch, and do not raise the ceiling - capture a CDP trace with v8.gc and Layout events during a run that reproduces it.")
   );
 
   // The numbers above are the SYNCHRONOUS part only. navigateToPage is not async, so for a
