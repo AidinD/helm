@@ -119,6 +119,18 @@ try {
   // The seat is resolved without going through the coordinator list, or it could not be found
   // at all once that list started excluding it.
   ok(/assistantSeat\(\)/.test(src), "the seat is resolved through its own accessor");
+
+  // The seat's OWN store is attached by Helm, not looked up in the user's config, and the
+  // difference matters: Tend, Jot and Nib are his apps in sibling repositories, while this one
+  // is Helm's own file in this repository. Looking it up would have meant the seat cannot
+  // write its goals or its log until a line is added to ~/.claude.json by hand.
+  const cfgFn = src.slice(src.indexOf("function buildAssistantMcpConfig"), src.indexOf("function buildFirstMateMcpConfig"));
+  ok(/base\.mcpServers\.assistant = \{/.test(cfgFn), "Helm attaches the assistant store itself - no user config entry needed for it");
+  ok(/process\.execPath/.test(cfgFn) && /ELECTRON_RUN_AS_NODE/.test(cfgFn), "through Electron as a node runtime, so it needs no `node` on PATH and survives packaging");
+  ok(/HELM_ASSISTANT_STORE_DIR/.test(cfgFn), "and is told its data directory rather than re-deriving the meta-home this process already resolved");
+  ok(!/"tend", "jot", "nib", "assistant"/.test(src), "so `assistant` is NOT in the list of the user's own store servers");
+  ok(/"mcp__assistant"/.test(src), "but its tools are still pre-approved, or the seat would hit a prompt it cannot answer");
+  ok(/launching WITHOUT these stores/.test(cfgFn), "and a store of HIS that is not configured is named out loud rather than silently absent");
 }
 
 console.log("");

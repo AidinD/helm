@@ -2307,12 +2307,20 @@ function buildDispatchMcpConfig(metaHome, callerId, callerTier, parentMateId = n
  * validates its own writes - see GUARD_EXEMPT_SERVERS in tierGuard.js, whose list must move
  * with this one.
  *
+ * The seat's OWN store is not in this list, and that is the difference between the two kinds
+ * of surface here. Tend, Jot and Nib are his apps: they live in sibling repositories, he
+ * configures them for every client, and Helm is one of those clients. The assistant store is
+ * Helm's own file, in this repository, so Helm attaches it the same way it attaches the
+ * dispatch server - see buildAssistantMcpConfig. That is not tidiness: it means the seat can
+ * write its goals and its log with no entry in any user config at all, and it keeps working in
+ * a packaged build with no `node` on PATH.
+ *
  * `nib` is present but READ-ONLY by the store's own choice, on the seat's own recommendation:
  * a note filed with the wrong tag silently resets a contact cadence and turns an overdue duty
  * green, with no error anywhere. Read access is worth having now; write access is worth
  * earning (DECISIONS.md 2026-09-02).
  */
-const ASSISTANT_STORE_SERVERS = ["tend", "jot", "nib", "assistant"];
+const ASSISTANT_STORE_SERVERS = ["tend", "jot", "nib"];
 
 /**
  * The assistant seat's MCP config: Helm's dispatch server plus its stores, and nothing else.
@@ -2329,6 +2337,24 @@ const ASSISTANT_STORE_SERVERS = ["tend", "jot", "nib", "assistant"];
  */
 function buildAssistantMcpConfig(metaHome, mateId) {
   const base = JSON.parse(buildDispatchMcpConfig(metaHome, mateId, TIER_ASSISTANT));
+  // The seat's own store, attached by Helm rather than looked up in the user's config.
+  //
+  // process.execPath + ELECTRON_RUN_AS_NODE is the same trick buildDispatchMcpConfig uses and
+  // for the same two reasons: it does not depend on a `node` being on PATH, and it survives
+  // packaging. Looking this one up in ~/.claude.json instead would have meant the seat cannot
+  // write its own goals or log until a line is added there by hand - a setup step for the one
+  // store that is not his app but ours.
+  //
+  // The data directory is passed explicitly so the server does not have to re-derive the
+  // meta-home that this process has already resolved.
+  base.mcpServers.assistant = {
+    command: process.execPath,
+    args: [path.join(__dirname, "mcp", "assistantStoreServer.js")],
+    env: {
+      ELECTRON_RUN_AS_NODE: "1",
+      HELM_ASSISTANT_STORE_DIR: path.join(metaHome, "assistant"),
+    },
+  };
   const stores = namedMcpServersFromConfig(path.join(os.homedir(), ".claude.json"), ASSISTANT_STORE_SERVERS);
   const missing = ASSISTANT_STORE_SERVERS.filter((name) => !stores[name]);
   if (missing.length > 0) {
@@ -2341,7 +2367,7 @@ function buildAssistantMcpConfig(metaHome, mateId) {
 }
 
 /** Pre-approved tools for the assistant seat: Helm's delegation tools plus its stores. */
-const ASSISTANT_ALLOWED_TOOLS = [...FIRST_MATE_ALLOWED_TOOLS, ...ASSISTANT_STORE_SERVERS.map((name) => `mcp__${name}`)];
+const ASSISTANT_ALLOWED_TOOLS = [...FIRST_MATE_ALLOWED_TOOLS, "mcp__assistant", ...ASSISTANT_STORE_SERVERS.map((name) => `mcp__${name}`)];
 
 function buildFirstMateMcpConfig(metaHome, mateId) {
   // Named mates: the session is bound to one of the two fixed mate slots by the
