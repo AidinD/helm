@@ -1,7 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import { findSessionsDir, findTranscriptPath, encodeProjectDir, projectsRoot } from "./paths.js";
+import {
+  findSessionsDir,
+  findTranscriptPath,
+  encodeProjectDir,
+  projectsRoot,
+  sessionStoreStatus,
+  sessionStoreUnavailableMessage,
+} from "./paths.js";
 import { loadConfig } from "./config.js";
 import { writeFileAtomicSync } from "./atomicWrite.js";
 
@@ -58,20 +65,57 @@ const DEFAULT_ATTENTION_WINDOW_MS = 24 * 60 * 60 * 1000;
 const TAIL_BYTES = 96 * 1024;
 
 /**
+ * A missing Desktop store is REPORTED, not folded into an empty list - but this runs on
+ * the 30-second poll, so it is said once per distinct state instead of every tick. The
+ * returned `desktopStore` field carries the same fact to every caller on every read;
+ * this log line exists so the fact is not lost when a caller drops the field.
+ */
+let lastReportedStoreState = "";
+function reportUnavailableStore(status) {
+  const key = `${status.reason}:${status.root}`;
+  if (key === lastReportedStoreState) {
+    return;
+  }
+  lastReportedStoreState = key;
+  console.warn(`[helm] ${sessionStoreUnavailableMessage(status)}`);
+}
+
+/**
  * Reads every session's metadata file and derives a normalized status.
  * Pure read; never writes to the app's files.
+ *
+ * TWO INDEPENDENT STORES, and neither one's absence may take out the other. The Claude
+ * Desktop app's local_*.json files are one; `config.helmSessions` - Helm's own record of
+ * the sessions IT launched, which by design never get a Desktop metadata file - is the
+ * other. This function used to return early the moment the Desktop store could not be
+ * located, which meant a machine with no Claude Desktop data got an empty list and the
+ * string "Could not locate Claude session files." even though Helm's own index was sitting
+ * right there with sessions in it. That is a brand-new user's machine exactly: install
+ * Helm, start a session in Helm, and the session Helm is running is invisible in Direct
+ * and Fleet forever. Found by scripts/e2e/test-helm-session-index.mjs and
+ * test-archive-overlay.mjs failing on a CI runner with no Claude installation while
+ * passing on a developer machine - the tests were right and the app was wrong.
+ *
+ * So: the Desktop half degrades to "no Desktop sessions" and reports itself through
+ * `desktopStore` (see sessionStoreStatus), and `error` is reserved for a store that is
+ * there and cannot be READ - a real failure, as opposed to a store that legitimately
+ * does not exist on this machine.
  */
 export function readAllSessions(options = {}) {
   const attentionWindowMs = options.attentionWindowMs || DEFAULT_ATTENTION_WINDOW_MS;
-  const dir = findSessionsDir();
-  if (!dir) {
-    return { error: "Could not locate Claude session files.", sessions: [] };
-  }
-  let files;
-  try {
-    files = fs.readdirSync(dir).filter((f) => f.startsWith("local_") && f.endsWith(".json"));
-  } catch (err) {
-    return { error: `Failed to read sessions dir: ${err.message}`, sessions: [] };
+  const desktopStore = sessionStoreStatus();
+  let error = null;
+  let files = [];
+  if (desktopStore.available) {
+    try {
+      files = fs.readdirSync(desktopStore.dir).filter((f) => f.startsWith("local_") && f.endsWith(".json"));
+    } catch (err) {
+      // The directory is there and unreadable: a permissions or I/O fault, not an absent
+      // app. That IS an error, and it does not stop Helm's own index from being listed.
+      error = `Failed to read sessions dir: ${err.message}`;
+    }
+  } else {
+    reportUnavailableStore(desktopStore);
   }
   // Helm-owned archive overlay: sessionIds Helm has archived, kept in its own
   // config on D:\ (NOT the desktop app's local_*.json, which that app owns and
@@ -97,7 +141,7 @@ export function readAllSessions(options = {}) {
 
   const sessions = [];
   for (const file of files) {
-    const meta = readMeta(path.join(dir, file));
+    const meta = readMeta(path.join(desktopStore.dir, file));
     if (!meta || !meta.sessionId) {
       continue;
     }
@@ -166,7 +210,20 @@ export function readAllSessions(options = {}) {
     s.helmOwned = ownedIds.has(s.sessionId) || (!!s.cliSessionId && ownedIds.has(s.cliSessionId));
   }
 
-  return { error: null, sessions };
+  // `desktopStore` is part of the answer, not a debug extra: without it an empty
+  // `sessions` array cannot be told apart from "the Claude Desktop app has never run
+  // here", and any surface that renders the count would state the second as the first.
+  //
+  // The sentence travels WITH the status rather than being rebuilt by each surface. A
+  // surface that has to import a message helper to explain a field is a surface that
+  // will ship the field and forget the sentence, which is the same silence in a new
+  // place; and this payload already crosses a process boundary (worker -> main -> the
+  // renderer), where only plain data survives.
+  return {
+    error,
+    sessions,
+    desktopStore: { ...desktopStore, message: sessionStoreUnavailableMessage(desktopStore) },
+  };
 }
 
 /**

@@ -60,22 +60,71 @@ export const sessionsRoot = process.env.HELM_SESSIONS_ROOT || path.join(CLAUDE_R
 export const projectsRoot = process.env.HELM_PROJECTS_ROOT || path.join(os.homedir(), ".claude", "projects");
 
 /**
- * The sessions metadata lives under a nested <accountId>/<deviceId> folder.
- * There is usually exactly one of each, but we discover them rather than
- * hardcode. Returns the directory that actually contains local_*.json files.
+ * Is the Claude Desktop app's session store there, and if not, WHY not?
+ *
+ * findSessionsDir used to be the only answer, and it returns the same `null` for two
+ * completely different machines: one where the Desktop app has never run (nothing at
+ * `sessionsRoot` at all) and one where it has, but has recorded no sessions yet. A
+ * caller that folds both into "no sessions" makes a first launch look exactly like a
+ * finished inbox - the confidently-false shape jotBoardStatus in jot.js exists to
+ * refuse, for the same reason: a first-time user with no sibling app installed was
+ * shown an empty surface and nothing said why.
+ *
+ * Returns { available, root, dir, reason }, reason being:
+ *   "absent" - nothing at `root`; the Claude Desktop app has probably never run here
+ *   "empty"  - `root` exists but holds no local_*.json anywhere beneath it
+ *   null     - a session directory was found, and `dir` is it
  */
-export function findSessionsDir() {
+export function sessionStoreStatus() {
   if (!fs.existsSync(sessionsRoot)) {
-    return null;
+    return { available: false, root: sessionsRoot, dir: null, reason: "absent" };
   }
   const candidates = [];
   walkForSessionJson(sessionsRoot, candidates, 0);
   if (candidates.length === 0) {
-    return null;
+    return { available: false, root: sessionsRoot, dir: null, reason: "empty" };
   }
   // Prefer the directory with the most session files (the live one).
   candidates.sort((a, b) => b.count - a.count);
-  return candidates[0].dir;
+  return { available: true, root: sessionsRoot, dir: candidates[0].dir, reason: null };
+}
+
+/**
+ * One sentence a person can act on, for whatever `sessionStoreStatus` just found.
+ * Lives here beside the status it explains so the wording cannot drift away from the
+ * condition - the surfaces that show it only pass it through. Mirrors
+ * jotUnavailableMessage in jot.js.
+ */
+export function sessionStoreUnavailableMessage(status) {
+  if (!status || status.available) {
+    return null;
+  }
+  if (status.reason === "empty") {
+    return (
+      `The Claude Desktop app's session store at ${status.root} holds no sessions yet. ` +
+      "Sessions Helm starts itself are listed from Helm's own index and are unaffected; " +
+      "chats started in the Claude Desktop app will appear here once that app records one."
+    );
+  }
+  return (
+    `No Claude Desktop session store found at ${status.root}. Helm reads the session ` +
+    "metadata that the Claude Desktop app owns, and that app has not created any on this " +
+    "machine - it has probably never been run here. Sessions Helm starts itself are listed " +
+    "from Helm's own index and do not need it, so this is a partial view, not an empty one."
+  );
+}
+
+/**
+ * The sessions metadata lives under a nested <accountId>/<deviceId> folder.
+ * There is usually exactly one of each, but we discover them rather than
+ * hardcode. Returns the directory that actually contains local_*.json files.
+ *
+ * Thin wrapper over sessionStoreStatus for callers that only need the directory and
+ * have nothing to do with the reason it is missing (patchSessionMeta). Anything that
+ * SHOWS a session count must use sessionStoreStatus instead.
+ */
+export function findSessionsDir() {
+  return sessionStoreStatus().dir;
 }
 
 function walkForSessionJson(dir, out, depth) {
