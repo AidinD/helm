@@ -42,6 +42,7 @@ const ok = (cond, label, detail = "") => {
 
 const secondMate = read("src/lib/second-mate-instructions.md");
 const firstMate = read("src/lib/first-mate-instructions.md");
+const assistant = read("src/lib/assistant-instructions.md");
 const dispatchServer = read("src/mcp/helmDispatchServer.js");
 const tierGuard = read("src/lib/tierGuard.js");
 const records = read("src/lib/reviewRecords.js");
@@ -168,6 +169,77 @@ claim(
 {
   const stillClaimsOpusSession = /its Opus session spins up/.test(dispatchServer);
   ok(!stillClaimsOpusSession, "and it no longer promises a first mate that the seat will be an Opus one");
+}
+
+
+// --- assistant-instructions.md ---------------------------------------------------------
+//
+// Added 2026-09-02, and the gap is worth naming: this manual has existed since the seat did
+// and NOTHING here read it. It is the same file class as the two above - a document the model
+// reads as fact every turn - and it now makes specific, checkable claims about seats it can
+// consult by name. A renamed seat would turn it into a page of instructions pointing at
+// nothing, silently, which is the exact failure the second-mate manual already paid for.
+console.log("");
+console.log("-- assistant-instructions.md --");
+{
+  const seatKeys = [...personas.matchAll(/key:\s*"([a-z-]+)"/g)].map((m) => m[1]);
+  ok(seatKeys.length >= 5, `personas.js publishes ${seatKeys.length} seats to check the manual against`);
+
+  // Every seat the manual names by its LABEL must exist. Labels rather than keys, because the
+  // manual is written for a reader and names them the way a person would.
+  const labels = [...personas.matchAll(/label:\s*"([^"]+)"/g)].map((m) => m[1]);
+  for (const label of ["Mediator", "Architect", "Red team", "Researcher", "Teacher"]) {
+    claim(
+      assistant,
+      "assistant-instructions.md",
+      `**${label}**`,
+      `it names ${label}, and personas.js publishes a seat with that label`,
+      labels.includes(label),
+      labels.join(", ")
+    );
+  }
+
+  claim(
+    assistant,
+    "assistant-instructions.md",
+    "A consult is one level deep",
+    "and the guard refuses a consult from inside a consult, rather than the manual merely asking",
+    /consultedSeatFanOutDenial\(agentType\)/.test(tierGuard)
+  );
+
+  claim(
+    assistant,
+    "assistant-instructions.md",
+    "the guard fires inside a consulted seat exactly as it fires on you",
+    "and the hook really does read the sub-agent field, so that is a mechanism and not a hope",
+    /agent_type/.test(read("src/hooks/tierGuardHook.mjs"))
+  );
+
+  claim(
+    assistant,
+    "assistant-instructions.md",
+    "You can consult five read-only advisory seats",
+    "and the assistant launch actually passes the seats, or the whole section is unreachable",
+    /agents = personaAgents\(\);/.test(main)
+  );
+
+  claim(
+    assistant,
+    "assistant-instructions.md",
+    "an allow list pinned to reading",
+    "and the seats' tool list really is that, frozen",
+    /ADVISORY_TOOLS = Object\.freeze\(\["Read", "Grep", "Glob"\]\)/.test(personas)
+  );
+
+  // The oldest claim in this file, never pinned until now: the seat does not build, and the
+  // guard is what makes it true rather than the sentence.
+  claim(
+    assistant,
+    "assistant-instructions.md",
+    "The tier guard enforces this rather than trusting you with it",
+    "and the tier really has a deny-everything-that-writes policy of its own",
+    /tier === TIER_ASSISTANT/.test(tierGuard)
+  );
 }
 
 console.log("");

@@ -16,7 +16,15 @@ import { loadJot, loadGoals, addSubtask, formatJotSummaryForClassifier, projectB
 import { resolveJotDataDir } from "./lib/jotDataDir.js";
 import { loadConfig, writeConfig } from "./lib/config.js";
 import { startSession, resolveClaudeBinary } from "./lib/launcher.js";
-import { turnCounterPath, TIER_FIRST_MATE, TIER_SECOND_MATE, TIER_CREW, TIER_ASSISTANT } from "./lib/tierGuard.js";
+import {
+  turnCounterPath,
+  TIER_FIRST_MATE,
+  TIER_SECOND_MATE,
+  TIER_CREW,
+  TIER_ASSISTANT,
+  FIRST_MATE_DISALLOWED_TOOLS,
+  ASSISTANT_DISALLOWED_TOOLS,
+} from "./lib/tierGuard.js";
 import { createLiveSessionRegistry } from "./lib/liveSessions.js";
 import { sessionLifecycleState, applyStatusOverrides, sessionStateSource } from "./lib/sessionState.js";
 import { createJotHostStore, jotCoreAvailable, jotMountDecision } from "./lib/jotHostStore.js";
@@ -2078,19 +2086,18 @@ const FIRST_MATE_ALLOWED_TOOLS = ["helm_dispatch", "helm_collect_reports", "helm
   (t) => `mcp__${FIRST_MATE_MCP_SERVER}__${t}`
 );
 
-// First-mate tier guard (tier-discipline, task ad17e2e6): a first mate must not
-// do hands-on project work or fan out its own workers - it dispatches via the
-// helm_* tools above. Denying Edit/Write/NotebookEdit makes file mutation
-// structurally impossible (the dinghy runaway did 23 Edits in the coordinator
-// seat); denying Agent removes the sub-agent fan-out multiplier. Read/Grep/Glob/
-// Bash stay so it can still survey (git state, Jot, file reads). The rare
-// legitimate write (a Jot status tick) can still go via Bash.
+// Tier guard, layer one (tier-discipline, task ad17e2e6): a supervising seat must not do
+// hands-on project work - it dispatches via the helm_* tools above. Denying
+// Edit/Write/NotebookEdit makes file mutation structurally impossible (the dinghy runaway
+// did 23 Edits in the coordinator seat). Read/Grep/Glob/Bash stay so it can still survey
+// (git state, the board, file reads); the rare legitimate write can still go via a store's
+// own MCP tool.
 //
-// Both names are listed because the CLI renamed this tool from "Task" to
-// "Agent" - denying only the old name made this guard a silent no-op (found
-// while chasing why a first mate's sub-agents never showed up in the Fleet
-// tree either, src/lib/subAgents.js - same stale-name bug in two places).
-const FIRST_MATE_DISALLOWED_TOOLS = ["Edit", "Write", "NotebookEdit", "Agent", "Task"];
+// The two lists and what separates them live in lib/tierGuard.js, imported above, so a
+// first mate's set and the assistant seat's are COMPOSED from named pieces rather than
+// copied. They differ in exactly one piece - FAN_OUT_TOOLS, which the assistant keeps so
+// it can consult an advisory seat - and expressing that as an inclusion means neither list
+// can silently drift from the other when one of them changes.
 
 // The user's OWN configured MCP servers, as `mcp__<key>` allowedTools entries,
 // so a second-mate session can actually USE them in headless -p (see
@@ -3017,10 +3024,28 @@ ipcMain.handle(
         ensureDispatchDirs(metaHome);
         mcpConfig = buildAssistantMcpConfig(metaHome, seatedAssistant.mateId);
         allowedTools = ASSISTANT_ALLOWED_TOOLS;
-        // The same schema removal a first mate gets: a tool that is not offered cannot be
-        // called, which is stronger than intercepting it. The hook below is what covers the
-        // shell, which cannot be removed because this seat reads with it.
-        disallowedTools = FIRST_MATE_DISALLOWED_TOOLS;
+        // The same schema removal a first mate gets for the tools of DOING work: a tool
+        // that is not offered cannot be called, which is stronger than intercepting it. The
+        // hook below is what covers the shell, which cannot be removed because this seat
+        // reads with it.
+        //
+        // The difference from a first mate is fan-out, which this list deliberately leaves
+        // in - see ASSISTANT_DISALLOWED_TOOLS for the argument. It pairs with the `agents`
+        // assignment further down: without the seats, removing the denial would only
+        // advertise a tool with nothing worth calling.
+        disallowedTools = ASSISTANT_DISALLOWED_TOOLS;
+        // Advisory seats (personas.js), the same read-only set a second mate gets. This is
+        // the seat that holds the conversations and the one advisory seat built for reading
+        // a conversation before answering it was, until now, the one it could not reach.
+        //
+        // Passed on EVERY turn, not just a fresh one: --agents is a launch flag, so unlike
+        // the system prompt it is not carried by a resume.
+        //
+        // Consulting is not building, and the guard is what makes that more than a claim: a
+        // seat's `tools` field is an ALLOW list pinned to Read/Grep/Glob, and the PreToolUse
+        // hook fires inside a sub-agent too (measured, see the hook's own header), so a
+        // write attempted from in there is refused by the same policy as one attempted here.
+        agents = personaAgents();
         launchTier = TIER_ASSISTANT;
         // STRICT, like a first mate and unlike a second mate. The stores were added to the
         // config by name; strict is what keeps the machine's other servers out.
@@ -3117,9 +3142,10 @@ ipcMain.handle(
         // committing to it. Passed on EVERY turn, not just a fresh one: --agents is
         // a launch flag, so unlike the system prompt it is not carried by a resume.
         //
-        // A second mate is the tier that can reach them: it has Task (a first mate
-        // is denied it by the tier guard, so injecting seats there would advertise
-        // something it structurally cannot call).
+        // A second mate can reach them because it has the fan-out tool. So does the
+        // assistant seat as of 2026-09-02 (see its branch above). A FIRST MATE still
+        // cannot: the tier guard denies it fan-out entirely, so injecting seats there
+        // would advertise something it structurally cannot call.
         agents = personaAgents();
         launchTier = TIER_SECOND_MATE;
         // NOT strict: additive to the project's full MCP set (see comment above).

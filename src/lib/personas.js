@@ -315,3 +315,36 @@ export function personaAgents() {
   }
   return agents;
 }
+
+/**
+ * Is `key` a seat Helm actually publishes to a launch's `--agents`?
+ *
+ * The tier guard asks this, and it has to be the SAME answer personaAgents()
+ * gives - so it is derived from that function rather than from a second list.
+ *
+ * Why the guard needs to ask at all, measured against claude 2.1.226 on
+ * 2026-09-02: `--agents` ADDS to the CLI's built-in agent types, it does not
+ * replace them. A launch carrying exactly one custom seat offered seven
+ * subagent types, including `general-purpose`, whose tool set is everything the
+ * session has. So "which seats exist" and "which seats Helm published" are two
+ * different questions, and only the second one is answerable from this file.
+ *
+ * It is therefore an ALLOW list, for the same reason tierGuard.js inverts its
+ * own question: every built-in the CLI has today, and every one a future
+ * version adds, lands on the refused side without anybody having to notice it
+ * appeared.
+ */
+export function isAdvisorySeat(key) {
+  return typeof key === "string" && key !== "" && advisorySeatKeys().includes(key);
+}
+
+/**
+ * The names a consult may use as its `subagent_type`, in catalog order.
+ *
+ * Derived from personaAgents() for the same single-source reason as isAdvisorySeat: a
+ * refusal that lists the open seats must not be able to name one that was never
+ * published, or leave out one that was.
+ */
+export function advisorySeatKeys() {
+  return Object.keys(personaAgents());
+}

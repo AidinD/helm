@@ -20,8 +20,14 @@
  * Two things, and the second matters more than it looks.
  *
  * That the POLICY did not drift from the first mate's while nobody was looking: these two
- * tiers must refuse the same set, and a change to one that misses the other is the shape of
- * bug this repo keeps finding (one path per concept, or a mirror that is tested).
+ * tiers must refuse the same WRITES, and a change to one that misses the other is the shape
+ * of bug this repo keeps finding (one path per concept, or a mirror that is tested).
+ *
+ * They are allowed to differ on exactly one thing, decided 2026-09-02: the assistant seat
+ * may consult a read-only advisory seat and a first mate may not. That difference is checked
+ * as its own block below rather than excepted out of the mirror, because an excepted probe
+ * stops meaning anything. What the guard does with a call from INSIDE a consulted seat, and
+ * with the CLI's own built-in agent types, is test-assistant-subagent-boundary.mjs.
  *
  * And that the seat's write access comes ENTIRELY from which MCP servers its launch attaches,
  * never from this guard relaxing. That was the decision on 2026-09-02: a path-aware guard
@@ -54,7 +60,26 @@ const fm = (tool, input = {}) => decideToolCall({ tier: TIER_FIRST_MATE, tool, i
   ok(asst("Edit", { file_path: "src/app.ts" }).decision === "deny", "nor edit one");
   ok(asst("Bash", { command: "cat > src/app.ts << 'EOF'\nx\nEOF" }).decision === "deny", "nor reach for a shell to do the same thing");
   ok(asst("Bash", { command: "npm install lodash" }).decision === "deny", "nor install anything");
-  ok(asst("Task", {}).decision === "deny", "and it cannot fan out into sub-agents, same as a first mate");
+  ok(asst("Task", {}).decision === "deny", "and a fan-out that names no seat at all is refused rather than defaulted");
+}
+
+// --- consulting, which is the one thing it may do that a first mate may not --------------
+{
+  // 2026-09-02. Consulting a read-only seat is not building: it reads and answers, and the
+  // caller stays under exactly the rules it already had. The seat that holds the
+  // conversations was the only seat structurally unable to reach the advisory seat built
+  // for reading a conversation before answering it.
+  //
+  // The full boundary - what the guard does with a call made from INSIDE a seat, and with
+  // the CLI's own built-in agent types - is scripts/e2e/test-assistant-subagent-boundary.mjs.
+  ok(asst("Agent", { subagent_type: "architect" }).decision === "allow", "it can consult a published advisory seat");
+  ok(asst("Task", { subagent_type: "red-team" }).decision === "allow", "under the tool's old name too, since the CLI has used both");
+  ok(asst("Agent", { subagent_type: "general-purpose" }).decision === "deny", "but NOT a general-purpose worker - that one comes with the tools of doing the job");
+  ok(asst("Agent", { subagent_type: "architect" }).isWrite === false, "and a consult does not count as a file change, because it is not one");
+  // The first mate keeps the ban. It dispatches through helm_*, which is the only route the
+  // Fleet can see; a coordinator with its own workers is the fan-out multiplier this guard
+  // was built to remove.
+  ok(fm("Agent", { subagent_type: "architect" }).decision === "deny", "a first mate still cannot consult at all - fan-out is denied to it outright");
 }
 
 // --- its own folder is NOT an exception, and that is the whole design -------------------
@@ -116,12 +141,17 @@ const fm = (tool, input = {}) => decideToolCall({ tier: TIER_FIRST_MATE, tool, i
 {
   // A change to one tier that misses the other is the shape of bug this repo keeps finding.
   // Nothing enforces that they agree except this.
+  //
+  // They agree on WRITING, which is the whole of what these two tiers are for, and they are
+  // now allowed to differ on exactly one thing: consulting an advisory seat, checked in its
+  // own block above. So fan-out is deliberately absent from the probes below - listing it
+  // here would either force the two tiers back together or have to be excepted, and an
+  // excepted probe is a probe that stops meaning anything.
   const probes = [
     ["Write", { file_path: "a.ts" }],
     ["Edit", { file_path: "a.ts" }],
     ["MultiEdit", { file_path: "a.ts" }],
     ["NotebookEdit", {}],
-    ["Task", {}],
     ["Read", {}],
     ["Grep", {}],
     ["Glob", {}],

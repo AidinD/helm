@@ -27,7 +27,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { decideToolCall, turnCounterPath, SECOND_MATE_TURN_WRITE_BUDGET, TIER_SECOND_MATE } from "../lib/tierGuard.js";
+import { decideToolCall, turnCounterPath, SECOND_MATE_TURN_WRITE_BUDGET, TIER_SECOND_MATE, TIER_FIRST_MATE, TIER_ASSISTANT } from "../lib/tierGuard.js";
 
 function readStdin() {
   try {
@@ -115,6 +115,22 @@ if (counterFile) {
   }
 }
 
+/*
+ * SUB-AGENT CONTEXT, and why this hook reads it at all.
+ *
+ * A PreToolUse hook fires for tool calls made INSIDE a sub-agent, not only for the
+ * session's own - verified against claude 2.1.226 on 2026-09-02 by dumping raw payloads
+ * from a real run. A call from a sub-agent carries two extra fields, `agent_id` and
+ * `agent_type`; `session_id` stays the PARENT's, which is what lets the second mate's
+ * per-turn counter keep working unchanged.
+ *
+ * That is the whole reason the assistant seat is allowed to consult a seat at all: the
+ * guard can still see, and still refuse, a write attempted from inside one. Extra fields
+ * in a payload must therefore never soften a decision, and the policy module is written
+ * so they cannot - it reads the tier, the tool and the input, and this one named field.
+ */
+const agentType = typeof payload?.agent_type === "string" ? payload.agent_type : "";
+
 let verdict;
 try {
   verdict = decideToolCall({
@@ -123,16 +139,29 @@ try {
     input: payload?.tool_input || {},
     writesThisTurn,
     budget,
+    agentType,
   });
 } catch (err) {
-  // FAIL CLOSED for the tier that has no write budget at all. The policy module fails closed
-  // on syntax it cannot read; converting an exception here into a silent allow reversed that
-  // doctrine one layer up, and nothing marked it (review, 2026-08-16). A second mate may
-  // write anyway, so an allow there costs only an uncounted edit.
+  // FAIL CLOSED for every tier that has no write budget at all. The policy module fails
+  // closed on syntax it cannot read; converting an exception here into a silent allow
+  // reversed that doctrine one layer up, and nothing marked it (review, 2026-08-16). A
+  // second mate may write anyway, so an allow there costs only an uncounted edit.
+  //
+  // The ASSISTANT was missing from this list until 2026-09-02, found while giving that seat
+  // sub-agents. Its policy is a ban with no budget, exactly like a first mate's, so a
+  // classifier exception was the one input shape that got it a write - and it was written as
+  // a literal "first-mate" rather than the exported constant, which is how a tier added
+  // later ended up on the open side by omission. Named constants now, so the next tier fails
+  // to compile rather than failing open.
   process.stderr.write(`[helm-tier-guard] classifier threw: ${err?.message || err}
 `);
-  if (tier === "first-mate") {
+  if (tier === TIER_FIRST_MATE) {
     deny("HELM TIER GUARD: this call could not be classified, and a first mate does not write files. Hand the work to a second mate with helm_create_second_mate or helm_relay_to_second_mate.");
+  }
+  if (tier === TIER_ASSISTANT) {
+    deny(
+      "HELM TIER GUARD: this call could not be classified, and the assistant seat does not write files with a tool or a shell. Your stores have their own MCP tools for writing; repository work goes to a session that owns the tree, with the context."
+    );
   }
   allow();
 }

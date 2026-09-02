@@ -35,6 +35,12 @@
 // shells and command substitutions.
 
 import path from "node:path";
+// The advisory seats, for the one tier that may consult them. Imported rather than
+// re-listed: the guard must admit exactly the seats a launch publishes, and a second
+// copy of that list is a second place for a new seat to be forgotten. personas.js is a
+// pure data module with no imports of its own, so this stays safe to load inside the
+// hook process.
+import { isAdvisorySeat, advisorySeatKeys } from "./personas.js";
 
 export const TIER_FIRST_MATE = "first-mate";
 export const TIER_SECOND_MATE = "second-mate";
@@ -94,6 +100,64 @@ export const TIER_ASSISTANT = "assistant";
 // tier exists to do.
 export const SECOND_MATE_TURN_WRITE_BUDGET = 3;
 
+// ---------------------------------------------------------------------------
+// Layer one: what a launch REMOVES from the schema
+// ---------------------------------------------------------------------------
+//
+// `--disallowedTools` deletes a tool from a session's schema, and a tool that is not
+// offered cannot be called - stronger than intercepting it. It is only layer one: the
+// shell cannot be removed (every supervising tier reads with it), and the shell is the
+// route both incidents in the header actually took. That surface belongs to the hook.
+//
+// The lists live HERE, next to the tiers they belong to, rather than in the launcher.
+// Two tiers deny overlapping-but-different sets, and the failure mode of that is a
+// copied list where one copy gets a change and the other does not - the shape of bug
+// this repo keeps finding. So the difference is expressed as a NAMED piece that one
+// tier adds and the other does not, and the composition is assertable from a test
+// without parsing main.js.
+
+// The tools of doing hands-on work. No supervising tier gets these, and no tier ever
+// will: this is the whole content of "does not build".
+export const HANDS_ON_TOOLS = Object.freeze(["Edit", "Write", "NotebookEdit"]);
+
+// Sub-agent fan-out - the multiplier. Denied to a first mate because a coordinator that
+// can spawn its own workers has no reason to dispatch through helm_*, which is the only
+// route the Fleet can see.
+//
+// BOTH names are listed because the CLI renamed this tool from "Task" to "Agent":
+// denying only the old name made this guard a silent no-op (found while chasing why a
+// first mate's sub-agents never showed up in the Fleet tree either, src/lib/subAgents.js
+// - the same stale-name bug in two places).
+export const FAN_OUT_TOOLS = Object.freeze(["Agent", "Task"]);
+
+/**
+ * A first mate: no hands-on work, and no fan-out of its own. It dispatches through the
+ * helm_* tools or it does nothing.
+ */
+export const FIRST_MATE_DISALLOWED_TOOLS = Object.freeze([...HANDS_ON_TOOLS, ...FAN_OUT_TOOLS]);
+
+/**
+ * The assistant seat: no hands-on work, and fan-out DELIBERATELY LEFT IN (2026-09-02).
+ *
+ * Not a relaxation of "it does not build" - consulting an advisory seat is not building.
+ * The seats (personas.js) are pinned to Read, Grep and Glob, and a sub-agent's `tools`
+ * field is an allow list, so a consulted seat can change nothing and cannot reach an
+ * inherited MCP tool either. What the seat gets back is a judgment, and acting on it
+ * stays with the caller under exactly the rules it already had.
+ *
+ * The reason it MATTERS here rather than being a nice-to-have: this is the one seat that
+ * holds the people store, and one of the advisory seats exists to read a conversation
+ * before somebody answers it. The seat with the conversations was the only seat
+ * structurally unable to consult the seat for conversations.
+ *
+ * Removing a name from a deny list is not the whole change, because the deny list was
+ * never the only layer. Two more had to move with it, both in decideToolCall below:
+ * fan-out is admitted only for a seat Helm actually published (isAdvisorySeat - the CLI
+ * offers built-in agent types alongside ours, with much broader tool sets), and a
+ * consulted seat may not consult further.
+ */
+export const ASSISTANT_DISALLOWED_TOOLS = Object.freeze([...HANDS_ON_TOOLS]);
+
 // Tools that mutate files by definition. Also removed from a first mate's schema entirely
 // with --disallowedTools, which is stronger than intercepting them; they are listed here
 // because that removal does not apply to a second mate, whose budget must still count them.
@@ -147,6 +211,11 @@ function toolIsWriteShaped(name) {
   return WRITE_SHAPED.some((stem) => bare.includes(stem));
 }
 const SHELL_TOOLS = new Set(["bash", "powershell", "shell"]);
+
+// The fan-out tool, lower-cased, under both names the CLI has used for it. A separate set
+// from FAN_OUT_TOOLS because that one is argv spelling for --disallowedTools and this one
+// is matched against a payload's tool_name.
+const FAN_OUT_TOOL_NAMES = new Set(FAN_OUT_TOOLS.map((t) => t.toLowerCase()));
 
 // ---------------------------------------------------------------------------
 // Lexing
@@ -855,6 +924,45 @@ const ASSISTANT_DENIAL = [
   "write it. If it belongs in one of your stores, it has a tool.",
 ].join("\n");
 
+/**
+ * Refusing a consult that named something other than a published advisory seat.
+ *
+ * The seat names come from personas.js so this sentence cannot list a seat that does not
+ * exist, or omit one that does.
+ */
+function assistantSeatDenial(seat) {
+  return [
+    seat
+      ? `HELM TIER GUARD: \`${seat}\` is not one of the advisory seats, so this consult is refused.`
+      : "HELM TIER GUARD: a consult has to name which advisory seat it wants, so this one is refused.",
+    "",
+    "You CAN consult an advisory seat, and it is not building - a seat reads and answers, it",
+    "changes nothing. What you cannot do is reach a general-purpose worker: those come with the",
+    "tools of doing the job, and doing the job is not this seat's tier. Only the seats below are",
+    "open to you, by these exact names:",
+    "",
+    ...advisorySeatKeys().map((key) => `  - ${key}`),
+    "",
+    "Pass one of them as subagent_type. If none of them fits, what you want is a session that",
+    "owns a tree - hand it over with the context rather than looking for a worker here.",
+  ].join("\n");
+}
+
+/**
+ * Refusing a consult made from INSIDE a consulted seat. One level, not a tree: the point of
+ * a consult is a second opinion, and an opinion that fans out is a crew run in disguise.
+ */
+function consultedSeatFanOutDenial(agentType) {
+  return [
+    `HELM TIER GUARD: this call came from inside the \`${agentType}\` seat, and a consulted seat does not`,
+    "consult further.",
+    "",
+    "A consult is one level deep on purpose. You were asked a question by the seat that has the",
+    "context; answer that question with what you can read, and name what you could not check so",
+    "the caller can decide whether to go and get it.",
+  ].join("\n");
+}
+
 function crewDenial(why) {
   return [
     `HELM TIER GUARD: ${why}.`,
@@ -886,11 +994,17 @@ function secondMateDenial(used, budget) {
  * The whole policy, as one pure function so it can be tested without a hook, a session or
  * a model.
  *
+ * @param {string} [agentType] The sub-agent this call came FROM, when it came from one -
+ *        `agent_type` in the hook payload, absent for the session's own calls. The guard
+ *        reads it rather than ignoring it: a call from inside a consulted seat is a
+ *        different question from the same call made by the seat that did the consulting.
+ *        Everything else about the decision is deliberately independent of it, so an
+ *        unfamiliar payload shape cannot soften a refusal.
  * @returns {{decision: "allow"|"deny", reason?: string, isWrite: boolean}}
  *          isWrite means "this counted as a file change" - it drives the second mate's
  *          budget and is false for reads and for builds/tests.
  */
-export function decideToolCall({ tier, tool, input = {}, writesThisTurn = 0, budget = SECOND_MATE_TURN_WRITE_BUDGET } = {}) {
+export function decideToolCall({ tier, tool, input = {}, writesThisTurn = 0, budget = SECOND_MATE_TURN_WRITE_BUDGET, agentType = "" } = {}) {
   const name = String(tool || "").toLowerCase();
   const isShell = SHELL_TOOLS.has(name);
   const isMutatingTool = MUTATING_TOOLS.has(name) || toolIsWriteShaped(name);
@@ -912,7 +1026,33 @@ export function decideToolCall({ tier, tool, input = {}, writesThisTurn = 0, bud
   }
 
   if (tier === TIER_ASSISTANT) {
-    // Identical policy to a first mate, different sentence. See TIER_ASSISTANT.
+    // Identical policy to a first mate on writing, different sentence. See TIER_ASSISTANT.
+    // The ONE place the two tiers genuinely differ is here, and it is checked first:
+    // "agent" and "task" are write-shaped stems, so a consult would otherwise be refused
+    // as if it changed a file.
+    if (FAN_OUT_TOOL_NAMES.has(name)) {
+      // A consulted seat may not consult further. The seats are pinned to Read/Grep/Glob
+      // so today they have no fan-out tool to call - this refuses the recursion at the
+      // policy layer too, so it does not depend on a tool list staying pinned. It is also
+      // what the sub-agent fields in the hook payload are FOR: the guard reads them
+      // instead of ignoring an input shape it has not seen before.
+      if (agentType) {
+        return { decision: "deny", isWrite: false, reason: consultedSeatFanOutDenial(agentType) };
+      }
+      // An ALLOW LIST of seat names, and the reason is the same inversion this whole file
+      // is built on. `--agents` ADDS to the CLI's built-in agent types rather than
+      // replacing them (measured, claude 2.1.226, 2026-09-02: a launch carrying one custom
+      // seat offered claude, claude-code-guide, Explore, general-purpose, Plan, the custom
+      // seat, statusline-setup). `general-purpose` gets the session's whole tool set, and a
+      // deny list of built-in names would have to be kept in step with a CLI Helm does not
+      // ship. Naming what IS consultable puts every present and future built-in on the
+      // refused side without anybody having to notice it appeared.
+      const seat = typeof input.subagent_type === "string" ? input.subagent_type : "";
+      if (isAdvisorySeat(seat)) {
+        return { decision: "allow", isWrite: false };
+      }
+      return { decision: "deny", isWrite: false, reason: assistantSeatDenial(seat) };
+    }
     if (isMutatingTool) {
       return { decision: "deny", isWrite: true, reason: `${ASSISTANT_DENIAL}\n\n(Blocked because \`${tool}\` writes a file.)` };
     }
