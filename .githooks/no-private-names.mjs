@@ -67,6 +67,18 @@ if (!result.checked) {
   process.exit(0);
 }
 
+// Terms the repository already publishes in force. Said out loud on EVERY push that touches
+// one - including a push that is otherwise clean - because the alternative is dropping them
+// silently, and a term that is genuinely private and already public a hundred times is the
+// one case where silence is worst. It does not block: refusing the hundred-and-first
+// occurrence would not unpublish the first hundred.
+for (const seen of result.pervasive ?? []) {
+  console.warn(
+    `[privacy] "${seen.term}" is already in this repository ${seen.count} times across ${seen.files} files, so this push is not what put it there.`
+  );
+  console.warn("[privacy] treating it as the codebase's own vocabulary, not a name. If it IS private, the leak is in the history and needs rewriting - a blocked push would not help.");
+}
+
 if (result.hits.length === 0) {
   console.log(
     `[privacy] clean - ${result.terms} private terms checked against this push, from ${result.sources.length} source(s).`
