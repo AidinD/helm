@@ -280,6 +280,21 @@ export function startSession({ cwd, prompt, model, effort, permissionMode, resum
         for (const block of blocks) {
           if (block.type === "text" && block.text) {
             emit({ kind: "assistant", text: block.text });
+          } else if (block.type === "thinking") {
+            // What the model is reasoning about, while it still is. The stream has always
+            // carried these - the CLI emits one event per content block, which is the reason
+            // the usage dedupe above exists - and this loop simply had no branch for them, so
+            // Helm received them and threw them away. Nothing extra is requested and no model
+            // call is made: the text is already in the event.
+            //
+            // ONLY when there is text. Measured across the transcripts on this machine:
+            // 27,291 thinking blocks, 16,168 of them carrying content and the other 11,123
+            // signature-only. Emitting those would put an empty italic line under the status,
+            // which reads as a bug rather than as silence.
+            const thought = String(block.thinking || block.text || "");
+            if (thought.trim()) {
+              emit({ kind: "thinking", text: thought });
+            }
           } else if (block.type === "tool_use") {
             // Lets the UI show a live "agent is running X" indicator while a
             // turn is in progress, ahead of the authoritative transcript.

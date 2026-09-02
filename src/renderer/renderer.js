@@ -143,6 +143,7 @@ function freshPane() {
     lastTurnStats: null, // { durationMs, totalTokens, costUsd } for the reply that just completed — consumed once by wireTurnStatsOnLastReply
     runStartedAt: null, // Date.now() at send time, drives the LIVE elapsed-time readout while busy (see startLiveStatsTicker)
     liveTokens: 0, // running total summed from each turn's incremental "usage" events, reset per run
+    liveThinking: "", // the newest thing the model said it was reasoning about, shown while busy
   };
 }
 
@@ -167,6 +168,13 @@ function startLiveStatsTicker(index) {
       return;
     }
     renderLiveStats(index, pane);
+    // The thought is repainted from HERE, not only when one arrives, and that is load-bearing:
+    // setPaneBusyUI clears the whole status row with `status.innerHTML = ""`, and it is called
+    // on every tool_use to update the "Working - ToolName" text. A line drawn only on arrival
+    // therefore vanished at the first tool call and did not come back until the model thought
+    // again - it flickered through exactly the long turns it exists for. Found by a mutation
+    // that failed to fail, which is its own kind of finding.
+    renderLiveThinking(index, pane);
   }, 250);
   liveStatsTickers.set(index, timer);
 }
@@ -184,6 +192,58 @@ function stopLiveStatsTicker(index) {
 // this appends its own trailing span instead, so "Working — ToolName" and
 // the ticking "12.3s · 1.2k tokens" coexist rather than fighting over the
 // same status line.
+/**
+ * The part of a long thought worth putting on one line.
+ *
+ * A thinking block is prose, and the longest on disk here is 13,186 characters - so this is a
+ * choice about WHICH part, not just a truncation. The LAST line is the one that reads as
+ * "what it is on now"; the first would be where it started several paragraphs ago, which is
+ * the opposite of a live indicator.
+ */
+function lastThinkingLine(text) {
+  const lines = String(text || "")
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const last = lines[lines.length - 1] || "";
+  const flat = last.replace(/\s+/g, " ");
+  return flat.length > 140 ? flat.slice(0, 139).trimEnd() + "\u2026" : flat;
+}
+
+/**
+ * Show what the session is reasoning about, while it still is.
+ *
+ * the captain, 2026-08-30: "i claude desktop finns även den här utskriften medans claude tänker,
+ * jag gillar den skarpt." The elapsed time and the token count were already on this row; this
+ * is the sentence above them.
+ *
+ * Its own element rather than appended to the status text, for the same reason the ticker has
+ * one: setPaneBusyUI's caller owns the "Working" part, and two writers on one node fight over
+ * it.
+ */
+function renderLiveThinking(index, pane) {
+  const paneEl = document.querySelector(`.pane[data-pane="${index}"]`);
+  const status = paneEl?.querySelector(".pane-status");
+  if (!status) {
+    return;
+  }
+  let line = status.querySelector(".pane-thinking");
+  if (!pane.liveThinking) {
+    // Nothing to say is said by showing nothing. 11,123 of the thinking blocks on this
+    // machine are signature-only, so a blank line would be the common case rather than a
+    // rare one.
+    line?.remove();
+    return;
+  }
+  if (!line) {
+    line = document.createElement("div");
+    line.className = "pane-thinking";
+    status.append(line);
+  }
+  line.textContent = pane.liveThinking;
+  line.title = pane.liveThinking;
+}
+
 function renderLiveStats(index, pane) {
   const paneEl = document.querySelector(`.pane[data-pane="${index}"]`);
   const status = paneEl?.querySelector(".pane-status");
@@ -9677,6 +9737,9 @@ function paneComposerEl(index) {
     if (pane.runStartedAt) {
       startLiveStatsTicker(index);
       renderLiveStats(index, pane);
+      // The thought comes back with the ticker's next tick (see startLiveStatsTicker), so it
+      // is not painted a second time here.
+      renderLiveThinking(index, pane);
     }
   }
 
@@ -9819,6 +9882,7 @@ async function sendFromPane(index, els) {
   // (see the event switch below) add to it as the turn streams in.
   pane.runStartedAt = Date.now();
   pane.liveTokens = 0;
+  pane.liveThinking = "";
   startLiveStatsTicker(index);
   setPaneBusyUI(index, "Working…");
   renderPane(index);
@@ -18838,6 +18902,13 @@ window.helm.onSessionEvent((evt) => {
       // (a39286b7 follow-up). Falls back to totalTokens for older event shapes.
       pane.liveTokens += evt.outputTokens ?? evt.totalTokens ?? 0;
       renderLiveStats(index, pane);
+      pulsePaneStatusIcon(index);
+      break;
+    case "thinking":
+      // Replaced, not accumulated: this is an indicator of what it is on NOW, and a growing
+      // list of everything it has thought about is the transcript's job.
+      pane.liveThinking = lastThinkingLine(evt.text);
+      renderLiveThinking(index, pane);
       pulsePaneStatusIcon(index);
       break;
     case "assistant":

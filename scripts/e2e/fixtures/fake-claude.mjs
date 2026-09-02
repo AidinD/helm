@@ -32,6 +32,23 @@ const say = (obj) => process.stdout.write(JSON.stringify(obj) + "\n");
 
 say({ type: "system", subtype: "init", session_id: sessionId, cwd: process.cwd() });
 
+// A thinking block first, when asked for one. Same shape the real CLI streams and the
+// transcript stores: type "thinking", with the prose in `thinking`. Off unless a test sets
+// it, so every existing check sees exactly the stream it saw before.
+if (process.env.FAKE_CLAUDE_THINKING) {
+  say({
+    type: "assistant",
+    session_id: sessionId,
+    message: { content: [{ type: "thinking", thinking: process.env.FAKE_CLAUDE_THINKING, signature: "fake" }] },
+  });
+  // And a signature-only one, which is 41% of the real ones: it must produce nothing.
+  say({
+    type: "assistant",
+    session_id: sessionId,
+    message: { content: [{ type: "thinking", thinking: "", signature: "fake" }] },
+  });
+}
+
 const hold = Number(process.env.FAKE_CLAUDE_HOLD_MS || 0);
 setTimeout(() => {
   const reply =

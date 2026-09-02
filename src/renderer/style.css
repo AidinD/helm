@@ -4844,6 +4844,21 @@ button.primary {
   pointer-events: none;
 }
 
+/* What the session is reasoning about, while it still is (see renderLiveThinking).
+   Italic and dim so it reads as the model's own voice rather than as the app's status, and
+   clamped to one line: the source can be thousands of characters, and a status row that grew
+   with a thought would push the composer around while typing. */
+.pane-thinking {
+  flex-basis: 100%;
+  margin-top: 2px;
+  font-style: italic;
+  font-size: 11.5px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* A piece of work the watchdog found standing still (see dashWatchdogRowEl). Same
    .dash-queue-row shell as every other row so it does not read as a different kind of
    thing; it only stops behaving like a link, because it is not one, and lets its two
