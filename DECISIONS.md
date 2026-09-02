@@ -1,5 +1,84 @@
 # Decisions
 
+## 2026-09-02 - An assistant seat is not a first mate with a different manual
+
+Asked for: a standing seat in Helm dedicated to being an assistant. It must not build
+anything itself, only delegate; it needs read AND WRITE access to the personal stores; and
+other sessions must be able to ask it things. The account below of what such a seat does, and
+what would be wrong to build, came from the assistant session itself rather than from
+guesswork - one day of practice, which it flagged as thin evidence for the duties and strong
+evidence for the failure modes.
+
+**Most of it already exists, measured rather than assumed.** A first mate is already a seat
+that cannot build and can only delegate: `TIER_FIRST_MATE` denies every mutating tool and
+every non-read-only shell command at the hook, not in prose. It already holds
+`helm_dispatch`, `helm_relay_to_second_mate` and `helm_fleet_state`. It is already rooted in
+the meta-home. Cross-session messaging already works in both directions - this design was
+gathered through it. And every write-shaped MCP call against the one store that HAS an MCP
+surface passes the guard untouched, because the guard exempts MCP tools by design.
+
+**The one thing that does not exist is the whole problem.** The guard denies writes BY TOOL,
+not by destination, and it has no notion of a path anywhere in it. So a first-mate-tiered
+assistant cannot write its own daily log, cannot write the goals file it is the sole scribe
+of, and cannot touch the task board - all four denied, checked directly. A seat whose main
+output is "something he said, written down in the same turn" cannot run on a tier that denies
+writing.
+
+**Two ways to resolve it, and the deciding argument is not the one I expected.**
+
+*Give every store an MCP surface*, the way one of them already has: a standalone process over
+the same files, working with the app closed. The guard stays path-free and the seat runs on
+the existing tier unchanged.
+
+*Or make the guard destination-aware*: writes allowed under declared roots, denied elsewhere.
+
+The tidiness argument favours the first - a guard with no concept of a path cannot slide into
+being a path matcher, and that is a real property worth keeping. But the deciding argument is
+sharper and came from the seat itself: in one of these stores a note carrying the wrong tag
+silently resets a cadence and turns an overdue duty green. **A destination-aware guard would
+allow that write** - the file is in an allowed root - and there would be no error anywhere. An
+MCP surface can refuse the invalid tag. So only one of the two options can enforce the store's
+own invariants, and that is the choice.
+
+Consequence worth stating plainly: the work is mostly NOT in this repo. It is one new MCP
+surface in a sibling app, plus a small one for the seat's own two files.
+
+**Where "do not build" falls, from the seat rather than from taste.** Sharp, and worth
+enforcing: anything touching a repository working tree, and anything taking more than a few
+minutes of tool work inside somebody else's tree regardless of what it touches. Clearly not
+building, and the guard must not block it: reading anywhere, writing the personal stores and
+the seat's own two files, running read-only scripts against those stores, drafting a brief.
+
+Genuinely blurry, left as decisions rather than discovered later: a plan file written into a
+repo (call it building - draft it in the seat, hand it over); small scripts, where the
+distinction is DURABILITY rather than size, because one that answers a question today becomes
+a tool the moment it is rerun, and a tool belongs in a repo with an owner; a rendered overview
+of the person's own state, which on a strict reading is building but is the same class of
+artifact as the goals file; and fixing the stores themselves, which is building even when the
+store is the seat's primary one, and will feel wrong in the moment.
+
+**What would be wrong to build, and this is the part to keep.** A dashboard instead of a
+colleague: the seat's value in its first day was disagreement, four times, not display, and a
+widget that renders store state is a worse version of the store. A seat that answers from its
+own context, which a standing widget actively invites - whatever it holds in its head goes
+stale silently, so re-reading before answering has to survive into the design or the seat is a
+chat log with a nice frame. Autonomous writes, which corrupt quietly for the tag reason above;
+writes stay conversational. Anything that ignores the focus mechanism that deliberately holds
+items back, because showing everything reintroduces exactly the noise that feature removes. A
+mandatory router, which makes the seat a bottleneck. And autonomous delegation on the person's
+behalf - the ability to fan work out is what makes it tempting, and a seat that dispatches
+before it can be corrected produces wrong worktrees instead of corrections.
+
+**Two gaps it named that are cheap to close here.** It can list other sessions but cannot see
+their work, so "what is in flight" is a claim it cannot support - `helm_fleet_state` is
+already in the first-mate allowlist and answers exactly that. And the instruction that other
+sessions should PUSH facts to it unprompted currently lives only where the sessions that need
+it never read; pull-only means the state is stale between the moments somebody thinks to ask.
+That belongs in the seat's own system prompt rather than in a file its callers do not load.
+
+**Not decided here:** which of the two resolutions to take, and the four blurry cases above.
+Recorded so they are settled deliberately rather than by whichever code lands first.
+
 ## 2026-09-01 - The fallback that had never run, and where its model goes now
 
 **What was wrong, in two parts.** `config.voiceEngine` defaults to `whispercpp`, and
