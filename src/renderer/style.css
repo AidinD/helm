@@ -2342,6 +2342,36 @@ body.advanced .row-jot {
   white-space: normal;
 }
 
+/* A skill this turn actually invoked, lifted out of the collapsed "Used N tools" group and
+   shown as a chip (card 7cf14337). Reuses .skill-chip verbatim - the Analysis page already
+   has skill chips and a second chip shape for the same thing would read as two features.
+   Left-aligned like the tool rows, not a bubble: it is a fact about the turn, not an answer.
+   No colour: the chip is subtle by default, and a skill running is normal, not a warning. */
+.turn-skill-use {
+  align-self: flex-start;
+  max-width: 100%;
+  margin: 2px 0;
+}
+
+.turn-skill-chip {
+  background: var(--bg-sidebar);
+  border: 1px solid var(--border);
+  font-size: 11px;
+}
+
+/* Not-yet-resolved and unresolvable look the same on purpose: both mean "Helm has not got a
+   file to open for this name", and both keep the name, which is the part that answers the
+   question. The reason is on the title. */
+.turn-skill-chip:disabled {
+  cursor: default;
+  color: var(--text-faint);
+}
+
+.turn-skill-chip:disabled:hover {
+  background: var(--bg-sidebar);
+  color: var(--text-faint);
+}
+
 .turn-tool-result {
   font-size: 10.5px;
   color: var(--text-faint);

@@ -7491,6 +7491,203 @@ function compactBoundaryEl(turn) {
   return wrap;
 }
 
+// ============================== Skill chips in the transcript ==============================
+//
+// the captain, card 7cf14337: "I want to see in the output which memory it loads and which skills
+// it uses - as chips maybe, like in the other app."
+//
+// SKILLS are observable; MEMORY is not. That is measured, not assumed - see
+// scripts/e2e/test-skill-chips.mjs for both captures. In short: an invoked skill arrives as a
+// `Skill` tool_use (`{"name":"Skill","input":{"skill":"probe-skill"}}`) followed by a
+// tool_result reading `Launching skill: probe-skill`, and BOTH the live stream-json stdout
+// launcher.js parses and the CLI's own session transcript carry it. A loaded CLAUDE.md /
+// memory file does NOT appear in either: the root and user CLAUDE.md go into the system
+// prompt, and a nested one is recorded only as an `attachment` record of type
+// `nested_memory` in the session .jsonl, which never reaches stdout at all. So there is no
+// memory chip here. A chip claiming "memory: X" with no signal behind it would be a
+// rendering of a guess, which is the one thing this card must not produce. The Analysis
+// page's "Context files" block already answers the availability question honestly (which
+// CLAUDE.md and memory files EXIST for a folder), and that is a different question from
+// which ones a given turn loaded.
+//
+// A `Skill` call was previously swallowed by the "Used N tools" group, one line down inside a
+// collapsed <details> - so the one thing the card asks for was the least visible thing on
+// screen. It gets lifted out into its own chip instead.
+
+// A skill reference is a flat name, optionally namespaced by its plugin
+// ("anthropic-skills:pptx"). Deliberately strict: transcript.js hands the renderer
+// `summarizeToolInput`'s output, which is the input's FIRST key - `skill` in all 81 real
+// invocations on this machine, but `{skill, args}` also occurs (33 of them) and nothing
+// guarantees the key order forever. If what arrives is not shaped like a skill ref (an args
+// sentence, a truncated string ending in an ellipsis), this returns null and the call renders
+// as the ordinary tool row it always did. Degrading to the old rendering is right; inventing
+// a skill name out of a prose fragment is not.
+const SKILL_REF_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*(?::[A-Za-z0-9][A-Za-z0-9._-]*)?$/;
+
+function skillUseFromTurn(turn) {
+  if (!turn || turn.kind !== "tool_use" || turn.toolName !== "Skill") {
+    return null;
+  }
+  const raw = String(turn.toolInput || "").trim();
+  if (!raw || raw.length > 80 || !SKILL_REF_RE.test(raw)) {
+    return null;
+  }
+  const colon = raw.indexOf(":");
+  if (colon > 0) {
+    return { ref: raw, name: raw.slice(colon + 1), plugin: raw.slice(0, colon) };
+  }
+  return { ref: raw, name: raw, plugin: null };
+}
+
+// The Skill call's own tool_result is the literal string "Launching skill: <ref>" (verified
+// against a captured stream). It carries nothing the chip does not already say, so the chip
+// consumes it rather than leaving a stray result row under itself.
+function isSkillLaunchResult(turn) {
+  return turn?.kind === "tool_result" && /^Launching skill\b/.test(String(turn.text || ""));
+}
+
+/**
+ * Where a skill actually lives, resolved against what is on disk.
+ *
+ * `listing` is window.helm.listSkills's answer. This is a RESOLUTION, not a claim about the
+ * stream: the stream says which skill ran, and this says which SKILL.md on disk that name
+ * refers to - which is also what makes clicking the chip open the right file. Order follows
+ * Claude Code's own precedence: a plugin-namespaced ref can only be that plugin's, otherwise
+ * the project's own .claude/skills wins over ~/.claude/skills.
+ *
+ * Returns null when no folder Helm can see has it. That happens for real - the skills shipped
+ * inside the CLI (artifact-design, code-review, run) are not in any of these roots - and the
+ * chip then says the name without claiming an origin, rather than guessing "personal".
+ */
+function resolveSkillOrigin(listing, skill, cwd) {
+  if (!listing || !skill) {
+    return null;
+  }
+  // The listing's OWN ref is what comes back, not the invoked name. A skill filed under a
+  // category is listed as "git/rebase" while the Skill tool invokes it as "rebase", and
+  // skillMdPath resolves the file from the ref - so handing it the bare name would produce a
+  // chip that names a skill it cannot open, the exact bug task 2ba0d477 was about in the
+  // Analysis chips.
+  const findRef = (source, name) => {
+    for (const group of source?.groups || []) {
+      for (const entry of group.skills || []) {
+        if (entry.ref === name || entry.label === name) {
+          return entry.ref;
+        }
+      }
+    }
+    return null;
+  };
+  if (skill.plugin) {
+    for (const plugin of listing.plugins || []) {
+      if (plugin.plugin !== skill.plugin) {
+        continue;
+      }
+      const ref = findRef(plugin, skill.name);
+      if (ref) {
+        return { origin: "plugin", plugin: plugin.plugin, cwd: null, label: plugin.plugin, ref };
+      }
+    }
+    return null;
+  }
+  for (const project of listing.projects || []) {
+    // samePath (declared above, near the session helpers) already normalises slash direction,
+    // trailing separators and drive-letter case, which a Windows cwd needs on both sides.
+    if (!cwd || !samePath(project.root, cwd)) {
+      continue;
+    }
+    const ref = findRef(project, skill.ref);
+    if (ref) {
+      return { origin: "project", plugin: null, cwd: project.root, label: "project", ref };
+    }
+  }
+  const globalRef = findRef(listing.global, skill.ref);
+  if (globalRef) {
+    return { origin: "global", plugin: null, cwd: null, label: "personal", ref: globalRef };
+  }
+  for (const plugin of listing.plugins || []) {
+    const ref = findRef(plugin, skill.ref);
+    if (ref) {
+      return { origin: "plugin", plugin: plugin.plugin, cwd: null, label: plugin.plugin, ref };
+    }
+  }
+  return null;
+}
+
+// One listing per cwd, fetched once and reused for every chip in that pane's transcript. The
+// listing walks skills roots on disk, so a per-chip fetch would put a directory scan behind
+// every message - this app has already been measurably slowed by exactly that shape of cost.
+//
+// Cached for the life of the window, deliberately: a skill added to a folder while Helm is
+// open will not resolve until the next start. That is the right trade at this size - the
+// consequence is one chip that says the name without a scope, not a wrong scope - but it IS
+// the thing to change first if it ever bites.
+const skillListingCache = new Map(); // cwd -> Promise<listing>
+
+function skillListingFor(cwd) {
+  const key = String(cwd || "");
+  if (!skillListingCache.has(key)) {
+    skillListingCache.set(
+      key,
+      Promise.resolve(window.helm.listSkills(key ? [key] : [])).catch(() => null)
+    );
+  }
+  return skillListingCache.get(key);
+}
+
+/**
+ * The chip: "⚡ jot-task-tracking · personal", clicking opens that SKILL.md.
+ *
+ * It is a chip and not a panel because the question it answers is one glance long ("was it
+ * the skill I meant, from where I meant"). Clicking opens the file in the doc viewer and
+ * right-click reveals it in Explorer - the same two gestures the Analysis-page skill chips
+ * already have, so there is one way to open a SKILL.md in this app rather than two.
+ *
+ * The origin arrives a beat later than the chip (resolving it reads directories), so the chip
+ * starts disabled and name-only and gains its origin and its click when the listing lands.
+ * If the listing cannot place the skill, it STAYS name-only and disabled - the same treatment
+ * contextFilesEl gives a doc that is not there. Naming a file it cannot open is the failure
+ * mode this whole card is about.
+ */
+function skillUseEl(skill, cwd) {
+  const wrap = document.createElement("div");
+  wrap.className = "turn-skill-use";
+  const chip = document.createElement("button");
+  chip.type = "button";
+  chip.className = "skill-chip turn-skill-chip";
+  chip.disabled = true;
+  chip.textContent = `⚡ ${skill.name}`;
+  chip.title = "Skill invoked in this turn - locating its SKILL.md…";
+  wrap.append(chip);
+
+  skillListingFor(cwd).then((listing) => {
+    const resolved = resolveSkillOrigin(listing, skill, cwd);
+    if (!resolved) {
+      chip.title =
+        `Skill "${skill.ref}" ran in this turn. Helm cannot find a SKILL.md for it in ` +
+        "~/.claude/skills, this project's .claude/skills, or an enabled plugin - most likely it ships inside the CLI.";
+      return;
+    }
+    chip.textContent = `⚡ ${skill.name} · ${resolved.label}`;
+    chip.disabled = false;
+    chip.title = "Open SKILL.md (right-click to reveal in Explorer)";
+    const ref = { name: resolved.ref, origin: resolved.origin, cwd: resolved.cwd || cwd, plugin: resolved.plugin };
+    chip.addEventListener("click", () =>
+      openDocViewer({
+        label: `${skill.ref} · SKILL.md`,
+        read: () => window.helm.readSkill(ref),
+        reveal: () => window.helm.openSkill(ref),
+        revealLabel: "Open file",
+      })
+    );
+    chip.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      window.helm.openSkill(ref);
+    });
+  });
+  return wrap;
+}
+
 function toolOutputEl(text) {
   const pre = document.createElement("pre");
   pre.className = "tool-call-output";
@@ -7547,10 +7744,17 @@ function extendToolGroup(details, pairs) {
 //    belongs to the item already on screen, not to a new one;
 //  - a tool_result with no such item waiting: it is a lone result, which the
 //    full rebuild draws as its own block, so leave it to the caller.
+// A Skill call is NOT part of a tool group any more (see skillUseEl), so this stops at one
+// and hands it back to the caller to draw as its own chip. Without that, a skill invoked in
+// the middle of a streaming tool run would be appended into the collapsed group after all -
+// visible in a full rebuild and invisible in an append, which is the worst of both.
 function extendToolGroupWithTurns(details, turns, from) {
   const list = details.querySelector(".tool-group-list");
   let i = from;
   if (turns[i].kind === "tool_result") {
+    if (isSkillLaunchResult(turns[i])) {
+      return i;
+    }
     const lastItem = list.lastElementChild;
     if (lastItem && !lastItem.querySelector(".tool-call-output")) {
       lastItem.append(toolOutputEl(turns[i].text));
@@ -7560,7 +7764,7 @@ function extendToolGroupWithTurns(details, turns, from) {
     }
   }
   const pairs = [];
-  while (i < turns.length && turns[i].kind === "tool_use") {
+  while (i < turns.length && turns[i].kind === "tool_use" && !skillUseFromTurn(turns[i])) {
     const useTurn = turns[i];
     const next = turns[i + 1];
     const resultTurn = next && next.kind === "tool_result" ? next : null;
@@ -7578,20 +7782,38 @@ function extendToolGroupWithTurns(details, turns, from) {
 // append-only redraw possible (see renderPaneTailOnly): without it there is no
 // way to tell which DOM children belong to which turns, so the only safe redraw
 // is to throw the whole transcript away and rebuild it.
-function appendTurns(scroll, turns, fromIndex = 0) {
+function appendTurns(scroll, turns, fromIndex = 0, cwd = "") {
   let i = fromIndex;
   while (i < turns.length) {
     const at = i;
     let el;
-    if (turns[i].kind === "tool_use") {
+    const skill = skillUseFromTurn(turns[i]);
+    if (skill) {
+      // Lifted out of the "Used N tools" group and drawn as its own chip, together with the
+      // "Launching skill: X" result that says nothing more than the chip does.
+      el = skillUseEl(skill, cwd);
+      i += isSkillLaunchResult(turns[i + 1]) ? 2 : 1;
+    } else if (isSkillLaunchResult(turns[i])) {
+      // Only reachable when the chip was drawn in an earlier append and the result landed in
+      // this one. The chip above already stands for it; drawing it would be a bare
+      // "Launching skill: X" row under the chip that said so.
+      i++;
+      continue;
+    } else if (turns[i].kind === "tool_use") {
       const pairs = [];
-      while (i < turns.length && turns[i].kind === "tool_use") {
+      // do/while, not while: reaching this branch means turns[i] is a tool_use that is NOT a
+      // skill call, so the FIRST turn is always consumed. Written as a leading `while` it
+      // depended on the branch condition and the loop condition agreeing about that turn -
+      // and when a mutation made them disagree, the loop consumed nothing, appended an empty
+      // group and spun forever with the renderer's main thread. A render path that can hang
+      // the window should not be one edit away.
+      do {
         const useTurn = turns[i];
         const next = turns[i + 1];
         const resultTurn = next && next.kind === "tool_result" ? next : null;
         pairs.push({ useTurn, resultTurn });
         i += resultTurn ? 2 : 1;
-      }
+      } while (i < turns.length && turns[i].kind === "tool_use" && !skillUseFromTurn(turns[i]));
       el = toolGroupEl(pairs);
     } else {
       el = turnEl(turns[i]);
@@ -7692,7 +7914,7 @@ function renderPane(index) {
     empty.textContent = "No history yet - start typing below.";
     scroll.append(empty);
   } else {
-    appendTurns(scroll, pane.turns);
+    appendTurns(scroll, pane.turns, 0, pane.cwd || "");
     wireEditableUserTurns(index, scroll);
     wireLastReplyDecorations(index, scroll);
     markPaneRendered(pane, scroll);
@@ -7770,7 +7992,7 @@ function renderPaneTailOnly(index, pane, scroll) {
     if (tailEl?.classList.contains("tool-group") && isToolTurn(pane.turns[from])) {
       from = extendToolGroupWithTurns(tailEl, pane.turns, from);
     }
-    appendTurns(scroll, pane.turns, from);
+    appendTurns(scroll, pane.turns, from, pane.cwd || "");
     wireEditableUserTurns(index, scroll);
     // Keep the scroll-to-bottom affordance the last child, where the full
     // rebuild leaves it.
@@ -7785,7 +8007,13 @@ function renderPaneTailOnly(index, pane, scroll) {
   return true;
 }
 
+// A Skill call and its "Launching skill: X" result are drawn as a chip of their own, NOT
+// inside a tool group - so they must not be treated as a continuation of one, or the append
+// path would fold them back into the collapsed group the chip exists to escape.
 function isToolTurn(turn) {
+  if (skillUseFromTurn(turn) || isSkillLaunchResult(turn)) {
+    return false;
+  }
   return turn?.kind === "tool_use" || turn?.kind === "tool_result";
 }
 
@@ -18908,7 +19136,11 @@ window.helm.onSessionEvent((evt) => {
       }
       break;
     case "tool_use":
-      setPaneBusyUI(index, `Working — ${evt.toolName}`);
+      // A skill invocation says "Working - Skill" otherwise, which is the least informative
+      // thing it could say about the one event the captain most wants to see. launcher.js
+      // already reads the skill name off the same block (evt.skillName); the chip in the
+      // transcript is the durable record and this is the live one.
+      setPaneBusyUI(index, evt.skillName ? `Skill: ${evt.skillName}` : `Working — ${evt.toolName}`);
       pulsePaneStatusIcon(index);
       break;
     case "tool_written":
