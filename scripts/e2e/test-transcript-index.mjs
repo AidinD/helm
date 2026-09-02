@@ -112,7 +112,31 @@ try {
   console.log(`    ${perLookupMs.toFixed(3)}ms per lookup over 43 project dirs`);
   // A generous ceiling: the old code did one statSync per directory, so it could not
   // possibly beat this, and a regression back to that shape blows straight through it.
-  ok(perLookupMs < 1, `a warm lookup costs well under a millisecond (${perLookupMs.toFixed(3)}ms)`);
+  // NOT a wall-clock ceiling. A sub-millisecond absolute threshold is unreliable on a
+  // shared or loaded machine - it measured 1.193ms under load in a CI simulation while the
+  // index was working perfectly - and this repo has already paid for a timing assertion
+  // whose margin was the same size as its noise. So assert the MECHANISM instead: a warm
+  // lookup must not re-read the projects tree. The old implementation's defect was one
+  // directory read per lookup, and a count of those is exactly what regressed, measured
+  // identically on an idle machine and a hammered one.
+  const realReaddir = fs.readdirSync;
+  let readdirCalls = 0;
+  fs.readdirSync = function counted(...args) {
+    readdirCalls += 1;
+    return realReaddir.apply(this, args);
+  };
+  try {
+    for (let i = 0; i < 200; i++) {
+      findTranscriptPath("sess-aaaa");
+    }
+  } finally {
+    fs.readdirSync = realReaddir;
+  }
+  console.log(`    ${readdirCalls} directory read(s) across 200 warm lookups`);
+  ok(
+    readdirCalls === 0,
+    `200 warm lookups read the projects tree ${readdirCalls} time(s) - the index is consulted, not rebuilt, and a regression to one read per lookup would be 200`
+  );
   // And the cost must not scale with the number of project directories any more.
   for (let i = 0; i < 200; i++) {
     mkProject(`D--Repo-bulk-${i}`);

@@ -280,7 +280,9 @@ const TODAY = todayStamp();
 // --- a concurrent append never clobbers a sibling ---------------------------
 {
   const dir = freshStore("concurrent");
-  const day = TODAY;
+  // No `day` captured here on purpose: pinning one and reading only its file is what made this
+  // block report a loss that had not happened. Each child files under the day it computes at
+  // write time, so the assertions below read whatever day files exist.
   const runner = path.join(dir, "append-one.mjs");
   fs.writeFileSync(
     runner,
@@ -309,10 +311,28 @@ const TODAY = todayStamp();
     results.every((c) => c === 0),
     `all ${N} concurrent appends reported success (${results.join(",")})`
   );
-  const content = fs.readFileSync(path.join(logDir(dir), `${day}.md`), "utf8");
+  // Read EVERY day file, not just today's. `day` is captured once when this test starts,
+  // while each child computes its own day at write time - so a run that straddles midnight
+  // puts a writer's entry in tomorrow's file, and a single-file read reports that as lost.
+  // That flake looks exactly like the data-loss bug this block exists to catch, which is the
+  // worst kind: it teaches you to re-run until it passes. Reported once from a loaded CI
+  // simulation as "8 reported success, 7 landed"; the store was then driven with 80 real
+  // concurrent process writes under load with no loss at all, which is what pointed here.
+  const dayFiles = fs.readdirSync(logDir(dir)).filter((f) => f.endsWith(".md"));
+  const bodies = dayFiles.map((f) => fs.readFileSync(path.join(logDir(dir), f), "utf8"));
+  const content = bodies.join("\n");
   const landed = Array.from({ length: N }, (_, i) => `entry ${i}`).filter((line) => content.includes(line));
-  ok(landed.length === N, `and all ${N} entries are in the file - a read-modify-write would have lost the losers (${landed.length}/${N})`);
-  ok(content.split("\n").filter((l) => l === `# ${day}`).length === 1, "with exactly one day heading, so the exclusive create really is exclusive");
+  ok(
+    landed.length === N,
+    `and all ${N} entries are on disk - a read-modify-write would have lost the losers (${landed.length}/${N} across ${dayFiles.length} day file${dayFiles.length === 1 ? "" : "s"})`
+  );
+  // One heading PER FILE, since a midnight straddle legitimately produces two files and each
+  // of them must still have been created exactly once.
+  const headingCounts = bodies.map((body, i) => body.split("\n").filter((l) => l === `# ${dayFiles[i].replace(/\.md$/, "")}`).length);
+  ok(
+    headingCounts.every((n) => n === 1),
+    `with exactly one day heading in each day file (${headingCounts.join(",")}), so the exclusive create really is exclusive`
+  );
 }
 
 // --- the real MCP surface, over stdio ---------------------------------------
