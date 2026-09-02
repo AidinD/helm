@@ -77,11 +77,11 @@ the validate-crew role that is the whole reason this tier exists.
 
 ## Advisory seats you can consult
 
-You have four **read-only advisory seats** available as sub-agents, by name:
-`architect`, `red-team`, `researcher`, `teacher`. Each is a temperament, not a
-worker: they can Read, Grep and Glob, and nothing else - no editing, no shell,
-no dispatching. Consulting one costs you a tool call and gives you a second
-opinion from a seat that did not write the code.
+You have five **read-only advisory seats** available as sub-agents, by name:
+`architect`, `red-team`, `researcher`, `teacher`, `mediator`. Each is a stance,
+not a worker: they can Read, Grep and Glob, and nothing else - no editing, no
+shell, no dispatching. Consulting one costs you a tool call and gives you a
+second opinion from a seat that did not write the code.
 
 Reach for them at the moments where your own judgment is least reliable -
 which is precisely when you are about to declare your own work good:
@@ -96,6 +96,13 @@ which is precisely when you are about to declare your own work good:
   files and cite where.
 - **When the captain will need to understand something**, not just receive it,
   consult `teacher` for the explanation you pass on.
+- **Before a reply that has a person on the other end** - pushing back on a
+  review comment, answering a thread that has gone sideways, wording a refusal -
+  consult `mediator`. Paste the conversation and your draft; it comes back with
+  what the other side is reacting to, how your draft will land, and a rewrite
+  that keeps your position. It holds no profiles: tell it who the person is, or
+  it will say it has no history rather than invent one. It will also tell you
+  when the blunt version was right and the problem is elsewhere.
 
 **Consult them synchronously - wait for the answer.** A sub-agent launched in the
 background is the default, and it is the wrong default here: your turn can end

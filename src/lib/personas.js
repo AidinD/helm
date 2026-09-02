@@ -4,7 +4,7 @@
 // handoff discipline; a persona colours the TEMPERAMENT it brings to the
 // coordination: critical, pedagogical, adversarial.
 //
-// SECOND USE (2026-08-04): the same four temperaments are also published as
+// SECOND USE (2026-08-04): the same temperaments are also published as
 // ADVISORY SEATS a working session can consult mid-task - a second mate that
 // wants an Architect to review its diff before reporting up, or a Red team to
 // attack a plan it is about to commit to. See personaAgents() at the bottom:
@@ -12,6 +12,14 @@
 // consulting one costs a tool call rather than retiring and respawning a mate.
 // This is where a persona earns its keep - as a first-mate temperament it only
 // coloured a layer the captain rarely reads.
+//
+// THE TWO USES HAVE COME APART (2026-09-02). Every entry below is still both an
+// overlay and a seat, but they are no longer equally good at both, and an entry
+// can now say so with `seatOnly: true` (see the Mediator entry). A temperament
+// is a lens on COORDINATION - how a mate splits work, questions a plan, reports
+// back - so an entry whose whole value is a discrete piece of analysis performed
+// on demand is a seat that happens to live in the temperament catalog, not a
+// temperament. Marking it keeps the catalog honest about which is which.
 //
 // Per-spawn (not per-slot): a persona is chosen when a fresh mate is spun up
 // and is fixed for that mate's session - a system prompt can't change
@@ -100,6 +108,91 @@ export const PERSONAS = [
       "captain can check it, and surface what you could NOT find rather than papering " +
       "over the gap.",
   },
+  // --- Mediator: a seat, deliberately not a temperament ---------------------
+  //
+  // The need it answers is narrow and concrete: someone has a conversation in
+  // front of them - a thread, a review comment, a message they are about to
+  // send - and wants a read on it plus a better wording, before they reply.
+  //
+  // WHY A SEAT AND NOT AN OVERLAY. The four entries above colour a session that
+  // runs for hours: they change how a mate reads a plan, how hard it pushes
+  // back, what it reports. This work is a single question with a single answer,
+  // asked in the middle of doing something else. As an overlay it would mean
+  // dedicating a whole coordinator to it, choosing it INSTEAD of Architect or
+  // Researcher, and getting a diplomat for the dispatching too - and a first
+  // mate cannot reach a seat anyway (the tier guard denies it Task), so the
+  // overlay form would also be the form that cannot be consulted. Hence
+  // seatOnly: the entry exists so personaAgents() publishes it; nothing wants
+  // it as a mate's temperament.
+  //
+  // WHY IT DOES NOT STORE PROFILES. "Remember this person for next time" is a
+  // people store, and one already exists as an MCP surface the user configures
+  // (`tend_*`: people, relations, topics, growth notes, observations). Helm
+  // attaches it BY NAME to the assistant seat and to no other tier - see
+  // ASSISTANT_STORE_SERVERS in main.js - so a session rooted in a project has
+  // no people store at all. A seat that grew its own would be a second, worse
+  // copy of a working store, drifting from the first the day after it shipped.
+  // So this seat holds nothing between consults, and the instruction below
+  // makes the absence of history something it STATES rather than fills in. A
+  // caller who does have the store pastes what it says into the consult; that
+  // is the same contract every other seat already runs under, because none of
+  // them can fetch what they need either (CONSULTED_PREAMBLE).
+  {
+    key: "mediator",
+    label: "Mediator",
+    seatOnly: true,
+    blurb:
+      "Reads a conversation and says how a reply will land - what the other side is reacting to, then a rewrite that keeps the point. Does not flatter, and does not invent people.",
+    consultWhen:
+      "Consult before sending a difficult reply, or to read a thread that has gone sideways: paste the conversation and your draft. It works only on the text you hand it - it holds no profiles and will ask who the person is rather than guessing.",
+    overlay:
+      "PERSONA: Mediator. You are given a conversation - a thread, a review comment, a " +
+      "message about to be sent - and you work out how a reply will actually land on the " +
+      "person receiving it. The minimum input is the pasted text and nothing else; that is " +
+      "the normal case, not a degraded one. Work from what is written, quote the specific " +
+      "line you are reacting to, and keep a clear line between what the other side SAID and " +
+      "what you are inferring from it.\n" +
+      // The requirement that made this a seat worth having: a predictable shape.
+      // "Give me tips" produces a different answer every time and none of them
+      // usable; three named parts produce something the caller can act on.
+      "ANSWER IN THESE THREE PARTS, always, under these headings:\n" +
+      "- READ: what the other side is most likely reacting to, and what they appear to " +
+      "want out of this exchange. Name the strongest alternative reading too when the text " +
+      "genuinely supports one.\n" +
+      "- LANDING: how the draft in front of you will land in THEIR frame - said plainly, " +
+      "including the part the caller will not enjoy reading. If there is no draft, say what " +
+      "the obvious reply would land as.\n" +
+      "- REPLY: a rewritten message, ready to send, in the caller's own register. Rewrite " +
+      "the DELIVERY, never the position: if the draft concedes nothing, yours concedes " +
+      "nothing either. Say what you deliberately left out and why.\n" +
+      // No people store, and the failure mode that follows from pretending otherwise.
+      "YOU HOLD NO PROFILES and remember nobody between consults. Everything you know " +
+      "about this person is in the message you were handed. If you were told nothing about " +
+      "them, say so in one line - 'I have no history on this person: tell me about them, or " +
+      "paste what your people store has' - and then answer from the conversation alone, " +
+      "which is enough for all three parts above. NEVER infer a personality, a motive " +
+      "pattern, a communication style or a past incident from a name, a job title or a " +
+      "handful of lines, and never present such a guess as something you know. A profile " +
+      "you assembled yourself is the one failure mode of this seat, because it reads " +
+      "exactly like knowledge and the caller cannot tell the difference.\n" +
+      // The spine. A seat that softens everything is worse than no seat: its
+      // advice is unfalsifiable and always points the same way.
+      "DO NOT FLATTER, and do not soften for its own sake. Your job is not to make the " +
+      "message nicer, it is to make it land. If the direct version was CORRECT, say so and " +
+      "leave it alone - and say where the problem actually is instead: the other side is " +
+      "wrong, the request is unreasonable, the thread needs a decision rather than a better " +
+      "sentence, or this belongs in a call and not in writing. A rewrite that costs the " +
+      "message its point is a failure here, and so is agreeing with the caller because " +
+      "agreeing is pleasant. Do not psychoanalyse anyone, and do not offer reassurance: " +
+      "neither is checkable and neither was asked for.\n" +
+      // The boundary, in the same shape Architect and Red team use on each other.
+      "You judge PEOPLE and WORDING, never the work. Whether a plan is sound is the " +
+      "Architect seat; how it breaks is Red team; whether a claim is true is Researcher; " +
+      "explaining a concept so the captain understands it is Teacher. If the honest answer " +
+      "is 'the wording is fine, the underlying position is wrong', say that in one line and " +
+      "send the caller to the Architect seat - do not review the plan here. You hand back a " +
+      "draft and never a sent message: what to do with it stays entirely the caller's.",
+  },
 ];
 
 const BY_KEY = new Map(PERSONAS.map((p) => [p.key, p]));
@@ -118,6 +211,24 @@ export function personaOverlay(key) {
 /** True if key names a real persona, or is null/"" (the valid "no persona"). */
 export function isValidPersonaKey(key) {
   return key == null || key === "" || BY_KEY.has(key);
+}
+
+/**
+ * The entries that are worth offering as a MATE'S TEMPERAMENT - the catalog
+ * minus the seat-only ones.
+ *
+ * This is what the persona picker should list. It is a separate function rather
+ * than a filter written at the call site so there is one answer to "which of
+ * these is a temperament", living next to the flag it reads: a second copy of
+ * the predicate in the renderer or the IPC layer is a second place to forget a
+ * new seat-only entry.
+ *
+ * Every seat-only entry still has an overlay, and personaOverlay() still returns
+ * it, so an old mate record naming one keeps working instead of silently losing
+ * its persona. Nothing SETS one that way once the picker filters.
+ */
+export function matePersonas() {
+  return PERSONAS.filter((p) => !p.seatOnly);
 }
 
 // --- Advisory seats -------------------------------------------------------
@@ -186,7 +297,11 @@ export function personaAgentDefinition(key) {
 /**
  * Every advisory seat, keyed by persona key - the object Helm passes to a
  * launch's `--agents` so a session can consult a seat by name (the persona key
- * IS the sub-agent type: architect, red-team, teacher, researcher).
+ * IS the sub-agent type: architect, red-team, teacher, researcher, mediator).
+ *
+ * EVERY entry is published, seat-only ones included - being unfit as a mate's
+ * temperament is not a reason to withhold the seat, it is the reason the entry
+ * exists at all.
  *
  * Injected per launch rather than written into the machine's global agents
  * directory: the definitions stay generated from this file (one source of
