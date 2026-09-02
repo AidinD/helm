@@ -12,14 +12,14 @@ import crypto from "node:crypto";
 import { execFile, execFileSync, spawn, spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { readAllSessions, enrichWithJot, setSessionArchived, forkTranscriptAtUserMessage, switchSessionRootFolder } from "./lib/sessions.js";
-import { loadJot, loadGoals, addSubtask, formatJotSummaryForClassifier, projectBoardSummary, setTaskStatus, setTaskTags, readJotState, ensureTagsExist, boardPath } from "./lib/jot.js";
+import { loadJot, loadGoals, addSubtask, formatJotSummaryForClassifier, projectBoardSummary, setTaskStatus, setTaskTags, readJotState, ensureTagsExist, boardPath, jotBoardStatus, jotUnavailableMessage } from "./lib/jot.js";
 import { resolveJotDataDir } from "./lib/jotDataDir.js";
 import { loadConfig, writeConfig } from "./lib/config.js";
 import { startSession, resolveClaudeBinary } from "./lib/launcher.js";
 import { turnCounterPath, TIER_FIRST_MATE, TIER_SECOND_MATE, TIER_CREW, TIER_ASSISTANT } from "./lib/tierGuard.js";
 import { createLiveSessionRegistry } from "./lib/liveSessions.js";
 import { sessionLifecycleState, applyStatusOverrides, sessionStateSource } from "./lib/sessionState.js";
-import { createJotHostStore } from "./lib/jotHostStore.js";
+import { createJotHostStore, jotCoreAvailable, jotMountDecision } from "./lib/jotHostStore.js";
 import { registerJotIpc } from "./lib/jotIpcBridge.js";
 import { continueOnMobile } from "./lib/remoteControl.js";
 import { suggestModelEffort } from "./lib/suggest.js";
@@ -796,26 +796,50 @@ ipcMain.handle("suggest:modelEffort", (_event, prompt) => suggestModelEffort(pro
 // --- Focus (Point 8): the user's active GOALS ranked by attention/priority,
 // read straight from Jot (the same todos.json the sidebar's category matching
 // reads — no second task system). Read-only. ---
+// `reason`/`why` are carried alongside the existing ok:false so a caller can say WHY the
+// list is empty instead of showing an empty list. loadGoals already degraded quietly on a
+// missing board, which is right for a reader and wrong for a surface (card 6c84414b).
 ipcMain.handle("jot:goals", () => {
-  const config = loadConfig();
-  return loadGoals(config.jot || {});
+  const jotConfig = loadConfig().jot || {};
+  const goals = loadGoals(jotConfig);
+  if (goals.ok) {
+    return goals;
+  }
+  const status = jotBoardStatus(jotConfig);
+  return { ...goals, reason: status.reason, why: jotUnavailableMessage(status) };
 });
 
 // --- Fleet retire nudge, trigger layer 3: per-project Jot board summary so a
 // mate's "work wrapped" nudge can strengthen (boards clear) or dampen (an
 // urgent task still queued) based on the projects its second mates work. ---
+// `boardAvailable` distinguishes the two ways every project comes back `matched: false`:
+// a board that has no list for this project, and no board at all. The nudge logic reads
+// the same summary either way; a caller that wants to explain itself now can.
 ipcMain.handle("jot:boardSummary", (_event, { projectPaths }) => {
-  const config = loadConfig();
-  return { ok: true, summary: projectBoardSummary(projectPaths || [], config.jot || {}) };
+  const jotConfig = loadConfig().jot || {};
+  const status = jotBoardStatus(jotConfig);
+  return {
+    ok: true,
+    boardAvailable: status.available,
+    why: jotUnavailableMessage(status),
+    summary: projectBoardSummary(projectPaths || [], jotConfig),
+  };
 });
 
 // --- Goal breakdown: add a subtask under an existing top-level goal, written
 // back to todos.json via the safe atomic-write path (re-read fresh, append one
 // todo, temp file + rename — see addSubtask in jot.js). The one Jot WRITE
 // Helm performs; only ever in response to an explicit user action. ---
+// A missing board is answered here rather than by the writer, whose message for it was
+// the raw filesystem error ("Could not read Jot data: ENOENT ...") - true, and useless to
+// anyone who does not already know that Jot is a separate app.
 ipcMain.handle("jot:addSubtask", (_event, { parentId, text }) => {
-  const config = loadConfig();
-  return addSubtask(config.jot || {}, parentId, text);
+  const jotConfig = loadConfig().jot || {};
+  const status = jotBoardStatus(jotConfig);
+  if (!status.available) {
+    return { ok: false, error: jotUnavailableMessage(status), reason: status.reason };
+  }
+  return addSubtask(jotConfig, parentId, text);
 });
 
 // --- Skills available to a pane, split global vs project-specific ---
@@ -3563,17 +3587,29 @@ ipcMain.handle("jot:paths", () => {
 // Create the @jot/core host store (once) and wire the IPC bridge so the Jot
 // webview's window.jot is answered by the shared board. Idempotent - safe to call
 // each time the tab opens.
+//
+// Refuses to mount when there is no board to mount, and hands back a sentence saying
+// which of the two reasons it is - no Jot on this machine, or a Helm build without
+// @jot/core. See jotMountDecision for why refusing beats mounting: @jot/core's init()
+// creates the file it could not read, so the friendly-looking outcome here is an empty
+// board Helm invented, presented as the user's own (card 6c84414b). The renderer
+// already paints `error` in the tab, so no new UI is needed to say it.
 ipcMain.handle("jot:mount", async () => {
   if (jotHost) {
     return { ok: true, dataDir: jotHost.dataDir };
   }
   try {
+    const jotConfig = loadConfig().jot || {};
+    const decision = jotMountDecision(jotBoardStatus(jotConfig), await jotCoreAvailable());
+    if (!decision.mount) {
+      return { ok: false, error: decision.error, reason: decision.reason };
+    }
     // Point the embedded Jot at the SAME board the user's standalone Jot uses.
     // Helm knows that authoritatively via config.jot.path (e.g. D:/Sync/jot\
     // todos.json); use its dir. Falls back to the portable resolver otherwise.
-    const jotPathCfg = loadConfig().jot?.path;
+    const jotPathCfg = jotConfig.path;
     const dataDir = jotPathCfg && jotPathCfg.trim() ? path.dirname(jotPathCfg) : undefined;
-    const host = createJotHostStore(dataDir);
+    const host = await createJotHostStore(dataDir);
     await host.store.init();
     // The unregister handle is deliberately dropped: this host is created once and kept
     // for the app's lifetime (see the comment where jotHost is declared), so nothing ever
@@ -6563,9 +6599,16 @@ function startDispatchWatcher() {
   // it, so there was nothing to pick in Jot. Idempotent, and it does not touch
   // the file when all three already exist.
   try {
-    const seeded = ensureTagsExist(loadConfig().jot || {}, AUTO_CAPTAIN_TAGS);
+    const jotConfig = loadConfig().jot || {};
+    const seeded = ensureTagsExist(jotConfig, AUTO_CAPTAIN_TAGS);
     if (seeded.added.length > 0) {
       console.log(`[helm] added Jot tags for the auto-captain: ${seeded.added.join(", ")}`);
+    } else if (seeded.ok === false) {
+      // Said out loud. This returns { ok: false } rather than throwing, so the result was
+      // dropped on the floor and a Helm with no Jot board looked identical to one whose
+      // tags were already in place - including to whoever later wondered why tagging a
+      // card "auto" did nothing (card 6c84414b).
+      console.warn(`[helm] the auto-captain's Jot tags were not seeded: ${jotUnavailableMessage(jotBoardStatus(jotConfig)) || seeded.error}`);
     }
   } catch (err) {
     console.error("[helm] could not add the auto-captain's Jot tags:", err?.message || err);

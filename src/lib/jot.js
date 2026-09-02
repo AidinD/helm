@@ -42,6 +42,58 @@ export function boardPath(jotConfig = {}) {
 }
 
 /**
+ * Is there a Jot board to read, and if not, WHY not?
+ *
+ * Every reader in this module degrades a missing board to the same empty result as an
+ * empty board, which is the right thing for a reader and the wrong thing for a surface:
+ * a Helm sitting next to no Jot at all then looks exactly like a Helm whose owner has
+ * finished everything. That is the confident-but-false shape this project trusts least,
+ * and it is what a first-time user actually hit (card 6c84414b: Jot had never been
+ * installed on that machine, so there was no board anywhere, and nothing said so).
+ *
+ * `explicitPath` is the part callers need to make decisions with: a user who pointed
+ * `config.jot.path` at a file has told Helm where their board is, and a file that is not
+ * there yet is a board Helm may create. The DEFAULT location is another app's data
+ * directory, and creating a board there is manufacturing one, not finding one.
+ *
+ * Returns { available, path, explicitPath, reason }, reason being:
+ *   "disabled" - the integration is switched off in config
+ *   "no-board" - nothing readable at `path`
+ *   null       - a board is there
+ */
+export function jotBoardStatus(jotConfig = {}) {
+  const explicitPath = Boolean(jotConfig.path && String(jotConfig.path).trim());
+  if (jotConfig.enabled === false) {
+    return { available: false, path: null, explicitPath, reason: "disabled" };
+  }
+  const jotPath = boardPath(jotConfig);
+  if (!readJotFile(jotPath)) {
+    return { available: false, path: jotPath, explicitPath, reason: "no-board" };
+  }
+  return { available: true, path: jotPath, explicitPath, reason: null };
+}
+
+/**
+ * One sentence a person can act on, for whatever `jotBoardStatus` just found. Lives here
+ * next to the status it explains so the wording cannot drift away from the condition -
+ * the surfaces that show it (the Jot tab, the startup log) only pass it through.
+ */
+export function jotUnavailableMessage(status) {
+  if (!status || status.available) {
+    return null;
+  }
+  if (status.reason === "disabled") {
+    return "Helm's Jot integration is switched off in its config (jot.enabled = false), so there is no board to show.";
+  }
+  return (
+    `No Jot board found at ${status.path}. Helm reads the task board that the Jot app owns, and Jot has ` +
+    "not created one on this machine - it has probably never been run here. Install and open the Jot app " +
+    "(it ships separately from Helm) and Helm picks that board up, or point Helm at an existing board by " +
+    "setting jot.path in its config.json. Nothing else in Helm needs it."
+  );
+}
+
+/**
  * Loads Jot data and builds a per-category work index plus a matcher that
  * associates a session (by title) with a Jot category. All read-only.
  *

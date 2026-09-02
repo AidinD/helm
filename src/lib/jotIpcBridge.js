@@ -7,7 +7,7 @@
 //
 // The channel -> store-method mapping is a PURE function (applyJotOp) so it's
 // unit-testable without electron. registerJotIpc is the thin electron wiring on
-// top. NOT wired into Helm's startup yet - the Jot tab will call registerJotIpc.
+// top, called by main.js's jot:mount handler when the Jot tab first opens.
 //
 // Channel surface mirrors Jot's preload (src/preload/index.ts). The board (App)
 // needs the data channels below; capture:* (popover) and update:* (Jot self-update)
