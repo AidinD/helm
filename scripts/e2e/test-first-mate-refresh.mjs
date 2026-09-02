@@ -18,7 +18,6 @@ function assert(cond, msg) {
   }
 }
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-const hidden = (sel) => app.eval(`document.querySelector(${JSON.stringify(sel)})?.classList.contains("hidden")`);
 
 // Build a pane via openFreshDraftInPane, set it saturated + idle, re-render the
 // gauge, and return whether the handoff nudge is visible + its text.

@@ -1,6 +1,5 @@
 import fs from "node:fs";
 import path from "node:path";
-import crypto from "node:crypto";
 import { writeFileAtomicSync } from "./atomicWrite.js";
 
 // Durable handoffs for sessions that have NO project repo (task 663ab4b6).

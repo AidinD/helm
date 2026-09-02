@@ -91,7 +91,6 @@ try {
 
   // ---- the concurrency guard actually guards ----
   seed();
-  const before = read().todos.length;
   const raced = mutateJotFile(jotPath, (data) => {
     // Simulate the Jot app writing inside our read->write window.
     //

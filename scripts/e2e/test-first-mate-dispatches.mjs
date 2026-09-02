@@ -86,7 +86,6 @@ try {
   app = await launch();
   await app.waitForSelector("#pageToggle", 30000, { visible: true });
 
-  const projPath = fakeProj.replace(/\\/g, "\\\\");
   const prompt = `Jag vill jobba med projektet fake-proj (${fakeProj}). Jag vill lagga till en enkel hello-funktion i repot.`;
   // mateId is REQUIRED, and leaving it out is why this failed on 2026-08-12 with the tool
   // sequence Bash -> Read -> Write -> Bash. Without it the session is not a first mate at all:

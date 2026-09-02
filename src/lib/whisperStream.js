@@ -101,7 +101,6 @@ export function isAvailable() {
 // REAL boundary this parser keys on is the full triplet "clear, 100 spaces,
 // clear" — splitting on that in one step avoids ever treating the
 // spaces-only filler as its own text run.
-// eslint-disable-next-line no-control-regex
 const CLEAR_LINE = "\x1b[2K\r";
 const REPRINT_BOUNDARY = CLEAR_LINE + " ".repeat(100) + CLEAR_LINE;
 

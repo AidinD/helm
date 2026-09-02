@@ -36,15 +36,6 @@ const ok = (c, m) => {
  * three free checks were miscounted as expensive). And a string literal can carry the
  * name too - test-nav-shape looks for source text, for instance.
  */
-function code(src) {
-  return src
-    .replace(/\/\*[\s\S]*?\*\//g, " ")
-    .replace(/(^|[^:])\/\/[^\n]*/g, "$1")
-    .replace(/`(?:[^`\\]|\\.)*`/g, "``")
-    .replace(/"(?:[^"\\]|\\.)*"/g, '""')
-    .replace(/'(?:[^'\\]|\\.)*'/g, "''");
-}
-
 // What "reaches a real model" looks like. Deliberately about the ACT, not about a
 // filename or a comment: starting a session, or spawning the CLI binary.
 // Each entry was derived from a check that ACTUALLY spends tokens, not guessed: the last

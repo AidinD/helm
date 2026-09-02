@@ -30,7 +30,7 @@ import { spawn, execSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { personaAgents, ADVISORY_TOOLS } from "../../src/lib/personas.js";
+import { personaAgents } from "../../src/lib/personas.js";
 import { resolveClaudeBinary } from "../../src/lib/launcher.js";
 import { requireLive } from "./live-gate.mjs";
 requireLive("spawns the real CLI to test what an advisory seat cannot do");

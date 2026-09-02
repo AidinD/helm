@@ -9,6 +9,7 @@
     "start": "electron .",
     "dist": "node scripts/build.mjs",
     "release": "node scripts/build.mjs --publish",
+    "lint": "eslint .",
     "test": "node scripts/run-tests.mjs",
     "test:fast": "node scripts/run-tests.mjs --fast",
     "test:reviews": "node scripts/run-tests.mjs review acceptance intent gauntlet",
@@ -28,6 +29,7 @@
       "!spike/**/*",
       "!scripts/**/*",
       "!*.md",
+      "!eslint.config.mjs",
       "!config.json",
       "!domains.json",
       "!goal-run-history.json",
@@ -88,7 +90,8 @@
   },
   "devDependencies": {
     "electron": "^31.0.0",
-    "electron-builder": "^25.1.8"
+    "electron-builder": "^25.1.8",
+    "eslint": "^10.9.1"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",

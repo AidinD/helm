@@ -29,7 +29,7 @@ import { setTimeout as delay } from "node:timers/promises";
 // `import ... harness.mjs` on a SINGLE line, and this file launches three real
 // Electrons. Wrapped across lines it was silently demoted into the fast lane and
 // ran four-at-a-time with the pure-node checks.
-// eslint-disable-next-line prettier/prettier
+// (Do not let a formatter wrap this import - see above.)
 import { launch, ownerState, rmDirWithRetries, sweepAbandonedRuns, processesUsingE2EProfiles } from "./harness.mjs";
 
 let exit = 0;

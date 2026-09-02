@@ -412,7 +412,6 @@ try {
   ok(g.unverified === 1, "a run with a plausible exit code and timestamp but no signature is still unverified");
 
   // A signature from a DIFFERENT record can't be transplanted.
-  const rec2 = readReviewRecord(metaHome, G);
   const otherSig = signCheckRun(metaHome, ID_B, { label: "auth e2e (34 assertions)", cmd: "node -e \"process.exit(0)\"", exitCode: 0, ranAt: 5000 });
   fabricated.checkRuns = [{ label: "auth e2e (34 assertions)", cmd: "node -e \"process.exit(0)\"", exitCode: 0, ranAt: 5000, sig: otherSig }];
   fs.writeFileSync(legacyFile, JSON.stringify(fabricated), "utf8");

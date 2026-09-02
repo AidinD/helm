@@ -13,7 +13,7 @@ import { execFile, execFileSync, spawn, spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { readAllSessions, enrichWithJot, setSessionArchived, forkTranscriptAtUserMessage, switchSessionRootFolder } from "./lib/sessions.js";
 import { loadJot, loadGoals, addSubtask, formatJotSummaryForClassifier, projectBoardSummary, setTaskStatus, setTaskTags, readJotState, ensureTagsExist, boardPath } from "./lib/jot.js";
-import { resolveJotDataDir, resolveJotTodosPath } from "./lib/jotDataDir.js";
+import { resolveJotDataDir } from "./lib/jotDataDir.js";
 import { loadConfig, writeConfig } from "./lib/config.js";
 import { startSession, resolveClaudeBinary } from "./lib/launcher.js";
 import { turnCounterPath, TIER_FIRST_MATE, TIER_SECOND_MATE, TIER_CREW } from "./lib/tierGuard.js";
@@ -108,7 +108,7 @@ import { listSlashItems } from "./lib/slashCommands.js";
 import { trackHelmUsage, summarizeHelmUsage, summarizeReviewActions } from "./lib/helmUsage.js";
 import { mcpAllowedToolsFromConfig } from "./lib/userMcp.js";
 import { initAutoUpdate } from "./lib/autoUpdate.js";
-import { deriveSecondMates, bindSecondMateSession, renameSecondMate, readBindings, proposeSecondMate, markSecondMateCreated, secondMateIdForSession, secondMateId, removeSecondMates, resolveSecondMateId, isDisplaySecondMateId, migrateDisplayKeyBindings, releaseDisplayKeyedSession, AUTO_CAPTAIN } from "./lib/secondMates.js";
+import { deriveSecondMates, bindSecondMateSession, renameSecondMate, readBindings, proposeSecondMate, secondMateIdForSession, secondMateId, removeSecondMates, resolveSecondMateId, isDisplaySecondMateId, migrateDisplayKeyBindings, releaseDisplayKeyedSession, AUTO_CAPTAIN } from "./lib/secondMates.js";
 import {
   AUTO_WIDTH_CAP,
   AUTO_CAPTAIN_TAGS,
@@ -339,7 +339,6 @@ const markSessionDone = (id) => liveSessions.markDone(id);
 // webview's webContents (set on did-attach-webview). Created lazily the first
 // time the Jot tab mounts, then kept alive for the app's lifetime.
 let jotHost = null;
-let jotHostUnregister = null;
 let jotWebviewWebContents = null;
 // First-mate tier caps (docs/first-mate-tier-design.md sections 3 + 5),
 // enforced at the app - the single dispatch authority - never trusting the
@@ -2561,7 +2560,6 @@ ipcMain.handle("mates:add", () => {
 // read as the app refusing to do what it was asked.
 ipcMain.handle("mates:remove", (_event, { mateId } = {}) => {
   try {
-    const cfg = loadConfig();
     const current = configuredMateSlots();
     if (current <= 1) {
       return { ok: false, error: "Helm keeps at least one first mate.", active: activeMates() };
@@ -2578,13 +2576,15 @@ ipcMain.handle("mates:remove", (_event, { mateId } = {}) => {
       console.error("[helm] could not tear down second mates while removing a first mate:", err);
     }
     retireMateSlot(mate.slot);
-    // RE-READ. `cfg` was loaded before the teardown, and tearDownSecondMatesFor
+    // RE-READ, and never a config loaded before this point. tearDownSecondMatesFor
     // writes config.json twice on its way through (it archives each second mate's
-    // session and adds their ids to the archived-second-mates overlay). Writing the
-    // stale `cfg` back over the top erased both, so the dismissed mate's second
-    // mates reappeared in the Fleet under a parent that no longer exists and their
-    // sessions un-archived - exactly the orphan state the teardown exists to
-    // prevent. Found by the pre-release review, reproduced with a probe.
+    // session and adds their ids to the archived-second-mates overlay), so a snapshot
+    // taken at the top of this handler is stale by now. Writing that stale copy back
+    // over the top erased both, and the dismissed mate's second mates reappeared in the
+    // Fleet under a parent that no longer exists, with their sessions un-archived -
+    // exactly the orphan state the teardown exists to prevent. Found by the pre-release
+    // review, reproduced with a probe. The stale read itself is gone now, so there is
+    // nothing left to write back by mistake.
     writeConfig({ ...loadConfig(), firstMateSlots: current - 1 });
     return { ok: true, active: ensureMates(resolveMetaHome(), current - 1) };
   } catch (err) {
@@ -3390,7 +3390,11 @@ ipcMain.handle("jot:mount", async () => {
     const dataDir = jotPathCfg && jotPathCfg.trim() ? path.dirname(jotPathCfg) : undefined;
     const host = createJotHostStore(dataDir);
     await host.store.init();
-    jotHostUnregister = registerJotIpc({
+    // The unregister handle is deliberately dropped: this host is created once and kept
+    // for the app's lifetime (see the comment where jotHost is declared), so nothing ever
+    // unregisters it. Holding the handle in a variable nobody reads only suggested
+    // otherwise.
+    registerJotIpc({
       ipcMain,
       store: host.store,
       dataDir: host.dataDir,
@@ -5487,7 +5491,6 @@ const MAX_COMPACTIONS_PER_SWEEP = 3;
 // runs is enough to meaningfully move the followed/overridden appropriate-
 // rate (each run is a full data point in a typically low-N comparison)
 // without re-surfacing on every single prompt.
-const SUGGESTION_ACCURACY_CHECK_EVERY_N_RUNS = 10;
 // setInterval doesn't know whether the PREVIOUS sweep is still running — up
 // to MAX_CLASSIFICATIONS_PER_SWEEP sequential calls, each with its own 30s
 // timeout backstop, stay comfortably under one interval in the stated worst
@@ -5764,7 +5767,6 @@ function runModelFreshnessCheck() {
 // being trusted to name each file exactly once; a slow poll backstops it in
 // case a watch event is missed entirely. Each request is deleted (removeRequest)
 // the moment it is picked up, so a re-scan never double-launches it.
-let dispatchWatcher = null;
 let dispatchScanInFlight = false;
 
 // The width + depth cap predicates are pure functions in lib/dispatchCaps.js
@@ -6403,7 +6405,10 @@ function startDispatchWatcher() {
   // ack that never got picked up) is handled promptly.
   processDispatchRequests(metaHome);
   try {
-    dispatchWatcher = fs.watch(requestsDir(metaHome), { persistent: false }, () => {
+    // Not held: `persistent: false` means it never keeps the process alive, and nothing
+    // closes it before quit. A handle in a variable nobody reads implied a teardown that
+    // does not exist.
+    fs.watch(requestsDir(metaHome), { persistent: false }, () => {
       processDispatchRequests(metaHome);
     });
   } catch (err) {
@@ -6434,9 +6439,17 @@ function writeFleetStateSnapshot(metaHome) {
 // routine at the meta home is a plain session, never a first mate. Best-effort:
 // a routine that fails to launch must not crash the scheduler.
 function fireRoutine(routine) {
+  // OUTSIDE the try, because the catch below uses it.
+  //
+  // It was declared inside, so `liveSessions.clearLaunching(launchId)` in the catch threw
+  // ReferenceError instead of clearing anything - which means the cleanup the comment down
+  // there promises ("a misconfigured routine leaves a dead launching entry behind on every
+  // scheduled fire, forever") has never once run. The same shape as the `guard` bug in
+  // goalOrchestrator: a name read where it does not exist, in a path nothing executes on a
+  // good day. Found by eslint's first run on this repo.
+  const launchId = crypto.randomUUID();
   try {
     const cwd = routine.cwd || resolveMetaHome();
-    const launchId = crypto.randomUUID();
     const send = (payload) => {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send("session:event", { launchId, ...payload });
@@ -6683,7 +6696,6 @@ const reviewQueueSingleFlight = createSingleFlight({
     return { ...payload, builds: reviewQueueBuilds };
   },
 });
-const REVIEW_QUEUE_DEFAULT_MAX_AGE_MS = 20_000;
 
 // See reviewQueueInputsFingerprint in reviewRecords.js for what this covers and, more
 // importantly, what it deliberately does not (git state).
@@ -6744,7 +6756,7 @@ ipcMain.handle("reviews:list", async (_e, opts = {}) => {
  *      single writer of config.json; letting the worker persist them would race the main
  *      process for the same file, which trades a slow app for a corrupted one.
  *
- * Returns a Promise now. Callers that cannot await get the synchronous path below.
+ * Returns a Promise now.
  */
 async function buildReviewsPayload() {
   const config = loadConfig();
@@ -6752,14 +6764,6 @@ async function buildReviewsPayload() {
   const { payload, watermarks } = await runHeavy("reviewQueue", { metaHome, config }, () =>
     buildReviewQueuePayload({ metaHome, config })
   );
-  persistCommitReviewWatermarks(watermarks);
-  return payload;
-}
-
-/** The same build, on this thread. For the few callers that are not async. */
-function buildReviewsPayloadSync() {
-  const config = loadConfig();
-  const { payload, watermarks } = buildReviewQueuePayload({ metaHome: resolveMetaHome(), config });
   persistCommitReviewWatermarks(watermarks);
   return payload;
 }

@@ -35,6 +35,10 @@ const withHelm = readAllSessions({
     },
   },
 });
+// The control, which was computed and then never used: without it, "the Helm session
+// appears" would also pass for a session the Desktop index already carried, and this test
+// would say nothing about the merge it exists to check.
+assert(!baseIds.has(uniqueId), "the id is genuinely absent from the Desktop-only baseline");
 const found = withHelm.sessions.find((s) => s.sessionId === uniqueId);
 assert(!!found, "a Helm-owned session (no Desktop file) is surfaced by readAllSessions");
 assert(found && found.title === "helm-created session", "the Helm session carries its own title");

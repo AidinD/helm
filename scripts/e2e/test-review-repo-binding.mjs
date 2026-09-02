@@ -16,7 +16,6 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { reviewTasks } from "../../src/lib/jot.js";
 import { buildReviewQueue } from "../../src/lib/reviewRecords.js";
 import { repoRootedCategories } from "../../src/lib/reviewQueueBuild.js";

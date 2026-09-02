@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import path from "node:path";
 import crypto from "node:crypto";
 import { resolveJotTodosPath } from "./jotDataDir.js";
 import { writeFileAtomicSync } from "./atomicWrite.js";

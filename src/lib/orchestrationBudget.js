@@ -1,6 +1,5 @@
 import fs from "node:fs";
 import path from "node:path";
-import crypto from "node:crypto";
 import { writeJsonAtomicSync } from "./atomicWrite.js";
 
 // Phase-2 guardrail (docs/orchestration-phase2-plan.md, Slice 0): a per-fleet

@@ -4310,29 +4310,6 @@ function relTime(ts) {
   return `${Math.round(hr / 24)}d ago`;
 }
 
-// Short deadline label for the sidebar chip, or "" when the deadline is too
-// far off to be worth showing (matches sessions.js's 7-day deadlineBoost
-// cutoff — beyond that it doesn't affect sorting, so it shouldn't clutter
-// the row either). null/non-number → "".
-function deadlineChipText(ms) {
-  if (typeof ms !== "number") {
-    return "";
-  }
-  const DAY = 24 * 60 * 60 * 1000;
-  const msLeft = ms - Date.now();
-  if (msLeft < 0) {
-    return "overdue";
-  }
-  if (msLeft < DAY) {
-    return "due today";
-  }
-  const days = Math.round(msLeft / DAY);
-  if (days <= 7) {
-    return `due in ${days}d`;
-  }
-  return "";
-}
-
 function sortByAttention(list) {
   return [...list].sort((a, b) => {
     const s = (b.attentionScore || 0) - (a.attentionScore || 0);
@@ -5313,23 +5290,6 @@ function worstFreshQuotaRow(rows) {
     }
   }
   return worst;
-}
-
-// A plain label/value row for the context popover (no bar) - used when there's a
-// value worth showing but no meaningful 0-100 fill (e.g. quota status without a %).
-function cpopTextRow(labelText, valueText) {
-  const row = document.createElement("div");
-  row.className = "cpop-row";
-  const top = document.createElement("div");
-  top.className = "cpop-row-top";
-  const l = document.createElement("span");
-  l.textContent = labelText;
-  const v = document.createElement("span");
-  v.className = "cpop-val";
-  v.textContent = valueText;
-  top.append(l, v);
-  row.append(top);
-  return row;
 }
 
 function cpopBarRow(labelText, valueText, pct, high) {
@@ -9947,61 +9907,6 @@ function orchestrationChipContent(budget) {
   return { hidden: false, stopped, over, labelText, title: FLEET_SPEND_TOOLTIP };
 }
 
-// Phase-2 orchestration guardrail control (Slice 0): a budget readout + a kill/
-// resume toggle on the Dashboard. Subtle when idle; amber when stopped or over
-// budget. No-op if the chip isn't rendered.
-async function renderDashOrchestration() {
-  const chip = document.getElementById("dashOrchestrationChip");
-  if (!chip) {
-    return;
-  }
-  let budget = null;
-  try {
-    const res = await window.helm.getOrchestrationBudget();
-    budget = res && res.ok ? res.budget : null;
-  } catch {
-    budget = null;
-  }
-  chip.textContent = "";
-  chip.className = "dash-orch-chip";
-  const content = orchestrationChipContent(budget);
-  if (content.hidden) {
-    return;
-  }
-  const spent = Number(budget.spentUsd) || 0;
-  const over = content.over;
-  const stopped = content.stopped;
-  chip.title = content.title;
-  const label = document.createElement("span");
-  label.className = "dash-orch-label";
-  if (stopped || over) {
-    chip.classList.add("stopped");
-  }
-  label.textContent = content.labelText;
-  chip.append(label);
-  const btn = document.createElement("button");
-  btn.className = "dash-orch-btn";
-  if (stopped || over) {
-    btn.textContent = "Resume";
-    btn.title = "Clear the stop + reset spend so new work can start (keeps the ceiling)";
-    btn.addEventListener("click", async () => {
-      btn.disabled = true;
-      await window.helm.resumeOrchestration();
-      renderDashOrchestration();
-    });
-  } else {
-    btn.textContent = "Stop";
-    btn.title = "Stop everything: halt the whole fleet (cancels live runs; blocks new work from starting)";
-    btn.addEventListener("click", async () => {
-      btn.disabled = true;
-      const res = await window.helm.killOrchestration();
-      showToast(res && res.ok ? `Fleet stopped (${res.cancelled} live run${res.cancelled === 1 ? "" : "s"} cancelled).` : "Couldn't stop the fleet - try again.");
-      renderDashOrchestration();
-    });
-  }
-  chip.append(btn);
-}
-
 async function refresh() {
   const [data, matesResult, secondMatesResult] = await Promise.all([
     window.helm.getSessions(),
@@ -10377,32 +10282,6 @@ function applyViewMode() {
 // path in jot.js). Deliberately NOT goal-to-session dispatch, auto-scheduling,
 // or drag-reprioritization — those are later (PLAN.md Phase 3).
 
-// Deadline label for the Focus page. Unlike deadlineChipText (which hides
-// anything past 7 days to avoid cluttering sidebar rows), a goal's own
-// breakdown should always state its deadline when it has one.
-function goalDeadlineText(ms) {
-  if (typeof ms !== "number") {
-    return "";
-  }
-  const DAY = 24 * 60 * 60 * 1000;
-  const msLeft = ms - Date.now();
-  if (msLeft < 0) {
-    return "overdue";
-  }
-  if (msLeft < DAY) {
-    return "due today";
-  }
-  const days = Math.round(msLeft / DAY);
-  return `due in ${days}d`;
-}
-
-const SUBTASK_STATUS_LABEL = {
-  open: "○ open",
-  "in-progress": "◐ in progress",
-  review: "◎ review",
-  done: "● done",
-};
-
 // ============================== Dashboard page (Variant A, now the default landing page) ==============================
 //
 // Approved design "Variant A (attention-first)" - see the mock this was built
@@ -10429,8 +10308,6 @@ const SUBTASK_STATUS_LABEL = {
 // goals, actual session-start-from-dashboard) is rendered as a clearly
 // labeled placeholder rather than invented data - see the individual section
 // comments below.
-let dashboardSelectedChip = null; // which "New session" project chip is selected (a cwd string)
-
 function isDashboardVisible() {
   return !document.getElementById("dashboardPage").classList.contains("hidden");
 }
@@ -12429,23 +12306,6 @@ async function jumpIntoSecondMate(sm) {
   }
 }
 
-// Re-render only the sections whose data changed, into their existing slots.
-// This is the anti-flicker path: it never touches page.innerHTML, so unchanged
-// sections (and the whole page when nothing changed) stay put. A full rebuild
-// (renderDashboardPage) only happens on navigation or when the shell is missing.
-// Write into one of the classic dashboard's section slots, tolerating the slot
-// having disappeared. This function awaits IPC between its entry check and each
-// write, and the widget dashboard commits its page swap in one go - so a slot
-// that existed at entry can legitimately be gone by the time we write to it
-// (observed as "Cannot read properties of null (reading 'replaceChildren')"
-// while toggling into widget mode).
-function writeDashSlot(id, ...nodes) {
-  const slot = document.getElementById(id);
-  if (slot) {
-    slot.replaceChildren(...nodes);
-  }
-}
-
 async function fillDashboardSections({ force = false } = {}) {
   // Don't swap a slot out from under a pressed pointer (see the pointer-held
   // guard near the mouse-nav handler) - it tears the card out from under an
@@ -12760,23 +12620,6 @@ async function saveWidgetLayout(layout) {
   await window.helm.setConfig({ dashboardWidgets: next });
 }
 
-
-/** A labelled stat block ("4 / own sessions"). */
-function widgetStat(label, value, note, variant) {
-  const col = document.createElement("div");
-  col.className = "wd-stat" + (variant ? ` ${variant}` : "");
-  const l = document.createElement("div");
-  l.className = "wd-stat-label";
-  l.textContent = label;
-  const v = document.createElement("div");
-  v.className = "wd-stat-value";
-  v.textContent = value;
-  const n = document.createElement("div");
-  n.className = "wd-stat-note";
-  n.textContent = note;
-  col.append(l, v, n);
-  return col;
-}
 
 function widgetEmpty(text) {
   const d = document.createElement("div");
@@ -14665,10 +14508,6 @@ function dashReportRowEl(run) {
   return row;
 }
 
-// Repo chips get a folder icon; a registered life-domain project gets its own. The icon is
-// also how dashAutoContextStripEl tells the two kinds apart.
-const REPO_CHIP_ICON = "\u{1F4C1}"; // folder
-
 // Local UI state for the archive-suggestion group, reset on reload.
 let dashboardArchiveGroupExpanded = false;
 
@@ -14690,6 +14529,22 @@ let dashboardArchiveGroupExpanded = false;
 // (the mistake that's easy to make - "I just wanted to use Helm's own
 // folder") doesn't silently create a permanent, confusing duplicate chip
 // with no obvious way back - point at "+ other..." instead.
+//
+// NOTHING CALLS THIS, and it is a lost control rather than dead code. main.js still handles
+// `dialog:pickDomainFolder` and still calls registerDomain, and the preload still exposes
+// both - only the "+ new domain..." button in this file is gone, so a persistent non-repo
+// project can no longer be registered from the UI at all. Deleting the function would finish
+// the disappearance instead of cleaning up after it, so it stays until the control comes back
+// or the feature is retired on purpose. Found by eslint's first run; tracked on the board.
+//
+// `dashboardSelectedChip` below belongs to this same unreachable flow - it is written here
+// and read nowhere, which only stayed invisible because the one write is inside a function
+// nothing calls. It is declared beside its writer rather than back among the dashboard's
+// live state, so it is obvious that both halves go together and both go away together.
+// eslint-disable-next-line no-unused-vars -- written by the unreachable flow below
+let dashboardSelectedChip = null; // which "New session" project chip is selected (a cwd string)
+
+// eslint-disable-next-line no-unused-vars -- the caller is missing, not the code
 async function promptRegisterDomain() {
   const folder = await window.helm.pickDomainFolder();
   if (!folder) {

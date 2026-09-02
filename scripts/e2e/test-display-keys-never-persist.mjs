@@ -42,7 +42,6 @@ process.env.HELM_SECOND_MATES_PATH = path.join(tmp, "second-mates.json");
 
 const { upsertGoalRunRecord, loadGoalRunHistory } = await import("../../src/lib/goalRunHistory.js");
 const { secondMateId, DIRECT_FIRST_MATE, isDisplaySecondMateId } = await import("../../src/lib/secondMates.js");
-const { buildFleetState } = await import("../../src/lib/fleetState.js").catch(() => ({}));
 
 const PROJECT = "D:/Repo/Some/project";
 const DISPLAY_KEY = "sess_3436226e-1111-4000-8000-000000000000";

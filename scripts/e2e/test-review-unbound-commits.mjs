@@ -52,7 +52,9 @@ const c0 = commit("README.md", "# scratch\n", "Initial commit");
 const c1 = commit("a.txt", "a\n", "Work bound by a review record");
 const c2 = commit("b.txt", "b\n", "Genuinely unbound work");
 const c3 = commit("c.txt", "c\n", "Wire the thing for task aaaaaaaa");
+// The commits themselves are what these calls are for; c0 and c3 are never read.
 void c0;
+void c3;
 
 // A Jot board with the review task whose short id (aaaaaaaa) c3's subject names.
 fs.writeFileSync(
