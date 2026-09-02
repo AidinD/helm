@@ -497,7 +497,14 @@ function createWindow() {
 ipcMain.handle("sessions:get", async () => {
   const config = loadConfig();
   const attentionWindowMs = (config.attentionWindowHours || 24) * 60 * 60 * 1000;
-  const { error, sessions } = await runHeavy("sessions", { attentionWindowMs }, () => readAllSessions({ attentionWindowMs }));
+  // `desktopStore` travels with the read, not beside it. It says whether the Claude Desktop
+  // session store is there at all, and it has to survive the worker hop because the whole
+  // point is that a machine WITHOUT that store gets told so instead of being shown an empty
+  // list. Dropping it here is how the old error string died: computed in the library, carried
+  // to this process, and never passed on.
+  const { error, sessions, desktopStore } = await runHeavy("sessions", { attentionWindowMs }, () =>
+    readAllSessions({ attentionWindowMs })
+  );
   // The manual-ack downgrade MUST happen BEFORE enrichWithJot: its scoring
   // (attentionScore/needsAttention) reads session.status, so applying this
   // after scoring would leave an acknowledged session's score/spotlight
@@ -563,6 +570,7 @@ ipcMain.handle("sessions:get", async () => {
   }
   return {
     error,
+    desktopStore,
     sessions,
     config,
     jot: { ok: jotIndex.ok, categories: jotIndex.categories },
@@ -5606,7 +5614,12 @@ async function refreshStaleProjects() {
     dormantDays: DOCS_NUDGE_ACTIVE_DAYS,
     // A sessions-dir failure means the candidate list itself is empty for the
     // wrong reason - report it rather than letting it look like a clean board.
-    error: all.error || null,
+    //
+    // An ABSENT Desktop store counts as that reason too, and used to be the same `error`
+    // until the read stopped conflating "not installed here" with "unreadable". The list is
+    // no longer wrong just because that store is missing, since Helm's own sessions are
+    // merged regardless - but it can still be short for a reason worth naming, so name it.
+    error: all.error || (all.desktopStore && all.desktopStore.available === false ? all.desktopStore.message : null) || null,
   };
   return staleProjectsCache;
 }

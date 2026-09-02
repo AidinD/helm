@@ -10377,6 +10377,28 @@ function orchestrationChipContent(budget) {
   return { hidden: false, stopped, over, labelText, title: FLEET_SPEND_TOOLTIP };
 }
 
+/**
+ * The header pill saying the Claude Desktop session store is not on this machine.
+ *
+ * Deliberately quiet: this is not an error and nothing is broken. Helm's own sessions are
+ * listed either way. What it prevents is reading a short list as a complete one.
+ */
+function paintDesktopStorePill(store) {
+  const pill = document.getElementById("desktopStorePill");
+  if (!pill) {
+    return;
+  }
+  if (!store || store.available !== false) {
+    pill.classList.add("hidden");
+    pill.textContent = "";
+    pill.title = "";
+    return;
+  }
+  pill.textContent = store.reason === "empty" ? "No Desktop sessions" : "No Desktop store";
+  pill.title = store.message || "The Claude Desktop session store was not found on this machine, so only the sessions Helm started itself are listed.";
+  pill.classList.remove("hidden");
+}
+
 async function refresh() {
   const [data, matesResult, secondMatesResult] = await Promise.all([
     window.helm.getSessions(),
@@ -10398,6 +10420,17 @@ async function refresh() {
   // is NOT a first mate - keying off cwd alone wrongly tagged it "◆ Helm" and
   // showed the "first mate X% full" nudge on it. (Bug: "vissa sessioner i
   // direct verkar klassas som first mate".)
+  // The Claude Desktop session store, when it is not there. A FACT ABOUT THIS MACHINE, so it
+  // goes in the header beside the dev and stale-build pills rather than into the transient
+  // notice column - a message that fades leaves exactly the empty list it was raised to
+  // explain, which is the failure this whole thing exists to end.
+  //
+  // Until 2026-09-02 a missing store made `readAllSessions` return early, so Helm's OWN
+  // sessions were dropped with it and a new user saw nothing, with no explanation: the one
+  // honest sentence the code produced was carried to this process and never read. The read
+  // now merges Helm's sessions regardless and reports the missing half; this is where the
+  // report lands.
+  paintDesktopStorePill(data && data.desktopStore);
   const activeMatesForBinding = (matesResult?.ok ? matesResult.active : []).filter((m) => m.sessionId);
   mateSessionIds = new Set(activeMatesForBinding.map((m) => m.sessionId));
   mateBySessionId = new Map(activeMatesForBinding.map((m) => [m.sessionId, m]));
