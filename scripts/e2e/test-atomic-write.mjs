@@ -193,7 +193,19 @@ try {
   // worst loses the last usage entry, not the store. Named, not pattern-excluded,
   // so this list has to be maintained honestly.
   const appendOnly = new Set(["helmUsage.js", "usage.js"]);
+  // READ-ONLY stores: they declare a store path but write nothing at all, so "does not call
+  // the shared helper" is the correct state rather than a violation. Named for the same
+  // reason the append-only list is named - a pattern would silently absorb a module that LOST
+  // its writer by accident, which is a real bug and looks identical from here.
+  //
+  // domains.js became one on 2026-09-02 when non-repo domain projects were retired; it kept
+  // loadDomains so an existing registry still resolves as a project. This check caught the
+  // retirement as a failure on the first CI run, which was the right alarm at the wrong
+  // altitude: the rule it enforces is "no store writes around the helper", not "every store
+  // writes".
+  const readOnly = new Set(["domains.js"]);
   const missing = [];
+  const unexpectedlyReadOnly = [];
   for (const file of fs.readdirSync(libDir).filter((f) => f.endsWith(".js") && f !== "atomicWrite.js" && f !== "packagedPaths.js")) {
     if (appendOnly.has(file)) {
       continue;
@@ -219,10 +231,33 @@ try {
       continue;
     }
     if (!/writeJsonAtomicSync\s*\(|writeFileAtomicSync\s*\(/.test(code)) {
+      // Nothing in this module writes its store through anything. Either it is deliberately
+      // read-only, or it lost its writer - and those look the same, so the named list decides
+      // and an unnamed one is a failure.
+      const writesAtAll = /fs\.(write|append|createWriteStream|copyFile|rename)/.test(code);
+      if (readOnly.has(file) && !writesAtAll) {
+        continue;
+      }
       missing.push(`${file} (never calls the helper)`);
     }
   }
+  // A name that outlives the fact is how an exception list rots. If a module on the read-only
+  // list starts writing again, it must go back through the helper like everything else.
+  for (const file of readOnly) {
+    const src2 = fs.readFileSync(path.join(libDir, file), "utf8");
+    const code2 = src2
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*"))
+      .join("\n");
+    if (/fs\.(write|append|createWriteStream|copyFile|rename)/.test(code2) || /writeJsonAtomicSync\s*\(|writeFileAtomicSync\s*\(/.test(code2)) {
+      unexpectedlyReadOnly.push(`${file} (listed as read-only but writes)`);
+    }
+  }
   ok(missing.length === 0, `every whole-file store writes through the shared helper (missing: ${missing.join(", ") || "none"})`);
+  ok(
+    unexpectedlyReadOnly.length === 0,
+    `and every store named read-only really is read-only (${unexpectedlyReadOnly.join(", ") || "all " + readOnly.size + " of them"})`
+  );
   for (const f of appendOnly) {
     const src = fs.readFileSync(path.join(libDir, f), "utf8");
     ok(/appendFileSync/.test(src) && !/writeFileSync/.test(src), `${f} really is append-only, so its exemption is earned`);
