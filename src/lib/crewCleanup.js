@@ -62,8 +62,37 @@
  *
  * `max_iterations_reached` is NOT here and that is the important omission: hitting the cap
  * means the run was cut off mid-way, which is a thing to look at, not a thing to tidy.
+ *
+ * ## Why this is a total partition and not just a list
+ *
+ * The first version of this file spelled two of the loop's stop reasons as bare strings with
+ * no link back to `runOutcome.js`, whose own `TERMINAL_REASONS` exists precisely so the class
+ * is closed rather than the instance. That is one concept with two spellings, and it fails in
+ * the quietest possible way: rename a reason and nothing matches, so this feature silently
+ * stops tidying anything and no test goes red.
+ *
+ * A shared import alone would not have been enough either. The dangerous direction is a NEW
+ * stop reason, because whichever way an unlisted reason falls is a decision made by omission.
+ * So the two sets below must together cover every reason the loop can produce, and
+ * `test-one-path-per-stop-reason.mjs` asserts exactly that. Adding a reason to
+ * `TERMINAL_REASONS` now breaks a test until somebody says which side it belongs on, which is
+ * the whole point: the default is a question, not a behaviour.
  */
 export const CLEAN_STOPS = new Set(["goal_reached", "no_op_convergence"]);
+
+/**
+ * Every other reason the loop can stop for, each one a deliberate refusal to tidy.
+ *
+ * Kept as data rather than prose so the partition above can be checked mechanically. The
+ * value is the reason a human would want to look, which is also the reason not to clear it.
+ */
+export const NOT_CLEAN_STOPS = Object.freeze({
+  cancelled: "somebody stopped it on purpose, so what it left behind is theirs to judge",
+  escalated: "it asked for a human, and clearing it would answer by tidying",
+  quota_exhausted: "it ran out of budget mid-way, so the work is unfinished by definition",
+  two_consecutive_failures: "it died failing, and the failure is the thing worth reading",
+  max_iterations_reached: "it was cut off mid-way, which is a thing to look at, not to tidy",
+});
 
 /**
  * Which finished crew runs a mate may clear away by itself.
