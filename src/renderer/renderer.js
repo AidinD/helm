@@ -75,7 +75,7 @@ let unseenGoalAttention = new Set();
 // Persists the "Escalate on trouble" checkbox across re-renders of the launcher
 // form (renderGoalPage rebuilds the whole page's DOM each time). A plain module
 // var since it must survive before any run exists.
-let goalEscalateOnTrouble = false;
+let goalEscalateOnTrouble = true; // matches goalOrchestrator's default; see the escalate row
 let selectedSessionId = null;
 let focusedPaneIndex = 0;
 // The single source of truth for a drag-reorder: set on every dragover and
@@ -15347,11 +15347,16 @@ function renderGoalPage() {
     suggestVerifyCommandFor(cwdInput.value.trim());
   });
 
-  // Point 12 Phase-0 escalation (opt-in, default OFF, mirrors verifyCommand's
-  // own opt-in shape) — a checkbox rather than a field of thresholds, since
-  // Phase-0 is deliberately "free Tier-1 signals with sane defaults", not a
-  // tuning panel. Checking it sends `escalationConfig: {}` on goal:run, which
-  // enables escalation with all of goalOrchestrator.js's defaults.
+  // Escalation is ON by default now (goalOrchestrator's resolveEscalationConfig
+  // treats an absent config as on), so this checkbox is an OFF switch and its
+  // unchecked state has to send something. It sends `false`, which is the only
+  // value the resolver reads as a deliberate refusal - `undefined` means "nobody
+  // said" and gets the default, so the previous spelling would have made
+  // unchecking the box do nothing at all while looking like it worked.
+  //
+  // Still a checkbox rather than a panel of thresholds: the defaults are the
+  // point, and the one threshold that turned out to be wrong was measured and
+  // switched off in the orchestrator, not exposed here for the user to guess at.
   const escalateRow = document.createElement("label");
   escalateRow.className = "settings-toggle-row goal-escalate-row";
   const escalateCheckbox = document.createElement("input");
@@ -15364,11 +15369,11 @@ function renderGoalPage() {
   escalateText.className = "settings-toggle-text";
   const escalateTitle = document.createElement("div");
   escalateTitle.className = "settings-toggle-title";
-  escalateTitle.textContent = "Escalate on trouble";
+  escalateTitle.textContent = "Pause and ask when in trouble";
   const escalateDesc = document.createElement("div");
   escalateDesc.className = "settings-toggle-desc";
   escalateDesc.textContent =
-    "Pause the run for you to review instead of continuing blind, when it repeats the same verify failure, reports an ambiguity it can't resolve, an iteration's cost spikes, or several iterations in a row land no new commits.";
+    "On by default. The run stops for you instead of continuing blind when it repeats the same verify failure, reports an ambiguity it cannot resolve, or an iteration's cost spikes. A pause keeps the worktree and its commits and can be resumed in one click, so the cost of a needless one is small. Uncheck to let a run always push on alone.";
   escalateText.append(escalateTitle, escalateDesc);
   escalateRow.append(escalateCheckbox, escalateText);
 
@@ -15428,7 +15433,10 @@ function renderGoalPage() {
     const verifyCommand = verifyInput.value.trim();
     const model = modelDD.value !== "auto" ? modelDD.value : proposedModel || undefined;
     const effort = effortDD.value !== "auto" ? effortDD.value : proposedEffort || undefined;
-    const escalationConfig = escalateCheckbox.checked ? {} : undefined;
+    // Checked: send nothing and take the default policy. Unchecked: send the
+    // explicit `false` that turns it off. Not `{}` vs `undefined` - both of those
+    // now mean "on".
+    const escalationConfig = escalateCheckbox.checked ? undefined : false;
 
     // Approve-first: show the proposed plan + config for a one-click OK before
     // the run starts. Overrides live under Advanced.

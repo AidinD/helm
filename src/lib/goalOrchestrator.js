@@ -74,8 +74,9 @@ import { refuseIfNotPrimary } from "./primaryWorkTree.js";
  * only surfaces the KPI on the data; a UI badge for it is a deferred
  * Goal-page follow-up, not built here.
  *
- * Point 12 Phase-0 escalation (free Tier-1 signals, opt-in via
- * `escalationConfig`, default OFF): a prior design (DECISIONS.md/PLAN.md's
+ * Point 12 Phase-0 escalation (free Tier-1 signals, ON BY DEFAULT since
+ * 2026-09-02, opt out with `escalationConfig: false`): a prior design
+ * (DECISIONS.md/PLAN.md's
  * Point 12 "coach" framing) called for escalation to be a PAUSE between
  * iterations, not an abort - the worktree/commits are kept exactly as a
  * `cancelled` run leaves them, so a human (or a future resume path) can pick
@@ -87,9 +88,17 @@ import { refuseIfNotPrimary } from "./primaryWorkTree.js";
  * fires, `stoppedReason` becomes `"escalated"`, the fired signal is returned
  * on `escalation` and passed to the optional `onEscalation` callback (the
  * hook a future human-gated card would render from), and the loop simply
- * stops issuing new iterations. Absent `escalationConfig`, none of this runs
- * and behavior is byte-for-byte unchanged, mirroring `verifyCommand`'s own
- * opt-in shape.
+ * stops issuing new iterations.
+ *
+ * WHY IT IS NO LONGER OPT-IN. It was opt-in via a truthy `escalationConfig`,
+ * and neither the dispatch path nor the autopilot path ever passed one - the
+ * dispatch tool's input schema had no field for it at all, so a second mate
+ * could not turn it on even deliberately. Measured on the installed run store
+ * on 2026-09-02: 56 runs, 0 with an escalationConfig, 0 that ever stopped with
+ * `stoppedReason: "escalated"`. This is the ONLY mechanism by which a run stops
+ * and asks instead of guessing, and it had never once run. See
+ * `resolveEscalationConfig` for the shape that replaced the boolean, and
+ * DEFAULT_NO_PROGRESS_STREAK for the one signal that is deliberately still off.
  */
 
 const NOTES_DIR = ".helm-goal";
@@ -1032,7 +1041,23 @@ function runVerifyCommand(worktreePath, verifyCommand, onChild) {
 // `{ signal, detail }` shape `detectEscalationSignal` below returns.
 const DEFAULT_AMBIGUITY_KEYWORDS = ["unclear", "ambiguous", "could not determine", "needs a decision"];
 const DEFAULT_MAX_COST_PER_ITERATION_USD = 2;
-const DEFAULT_NO_PROGRESS_STREAK = 2;
+// OFF by default, and that is a measurement rather than caution.
+//
+// `detectNoNetProgress(iterations, 2)` and the default NO_OP_CONVERGENCE_STREAK stop are the
+// same condition at the same threshold: consecutive implement iterations that report success
+// and change nothing outside `.helm-goal/`. The escalation check runs BEFORE the convergence
+// check in the loop, so a default of 2 does not add a signal - it renames an existing stop.
+//
+// Replayed against the installed run store on 2026-09-02: 17 of 56 runs stopped at
+// `no_op_convergence`, 12 of them with commits, and those 12 classify as `done` today. A
+// default of 2 would have turned all 17 into paused escalations needing a human, including
+// the 12 that had finished. That is the "spurious escalation pauses a run that could have
+// finished" failure mode, at 30% of the whole history, for no new information.
+//
+// A caller that genuinely wants a paused-and-resumable stop instead of a converged one can
+// still ask for it by passing `noProgressStreak`. Setting it to 1 or more turns the signal
+// on; it only ever pauses EARLIER than convergence would, never later.
+const DEFAULT_NO_PROGRESS_STREAK = null;
 
 /**
  * Reduces a verify-failure output tail to a short, stable signature so two
@@ -1131,6 +1156,13 @@ function detectCostSoftCap(record, maxCostPerIterationUsd) {
  * inside .helm-goal/), so counting them here would false-positive.
  */
 export function detectNoNetProgress(iterations, streak) {
+  // A null/zero/negative streak means the signal is switched off (see
+  // DEFAULT_NO_PROGRESS_STREAK). Without this guard a null streak made
+  // `implementSuccesses.length < streak` false on the very first iteration and
+  // `[].every(...)` true, so "off" fired immediately on every run.
+  if (!Number.isInteger(streak) || streak < 1) {
+    return null;
+  }
   const implementSuccesses = iterations.filter(
     (r) => r.ok && r.result && r.result.success !== false && r.phase === "implement"
   );
@@ -1145,14 +1177,42 @@ export function detectNoNetProgress(iterations, streak) {
 }
 
 /**
+ * The escalation policy a run will actually use, or null when escalation is off.
+ *
+ * Replaces `Boolean(escalationConfig)`, which made "nobody passed anything" and "somebody
+ * decided against it" the same answer - and since nothing ever passed anything, the answer
+ * was always off. Escalation is the only way a run stops and asks rather than guessing, so
+ * silence now means ON.
+ *
+ * Turning it off has to be SAID, and there are two spellings because two kinds of caller
+ * exist: `false` for a caller that holds a single value (an IPC argument, a persisted run
+ * record), and `{ enabled: false }` for one that is already passing a config object and only
+ * wants to add the switch.
+ *
+ * @param {object|boolean|null|undefined} escalationConfig
+ * @returns {object|null} the effective config (possibly `{}`, meaning "all defaults"), or
+ *   null when escalation is off for this run.
+ */
+export function resolveEscalationConfig(escalationConfig) {
+  if (escalationConfig === false) {
+    return null;
+  }
+  if (escalationConfig && typeof escalationConfig === "object") {
+    return escalationConfig.enabled === false ? null : escalationConfig;
+  }
+  // undefined, null, true, or anything else that is not a config object: defaults ON.
+  return {};
+}
+
+/**
  * Runs all Phase-0 Tier-1 signals against the run so far and returns the
  * first one that fires (or null). Order is fixed but not meaningful beyond
  * determinism — only one signal is ever needed to trigger a pause.
- * `escalationConfig` fields all have defaults so a caller can opt in with
+ * `escalationConfig` fields all have defaults so a caller can enable with
  * `{}` and still get sensible behavior; see `runGoal`'s own doc comment for
  * the full option list.
  */
-export function detectEscalationSignal(iterations, latestRecord, escalationConfig) {
+export function detectEscalationSignal(iterations, latestRecord, escalationConfig = {}) {
   const keywords = escalationConfig.ambiguityKeywords || DEFAULT_AMBIGUITY_KEYWORDS;
   const maxCostPerIterationUsd = escalationConfig.maxCostPerIterationUsd ?? DEFAULT_MAX_COST_PER_ITERATION_USD;
   const noProgressStreak = escalationConfig.noProgressStreak ?? DEFAULT_NO_PROGRESS_STREAK;
@@ -1450,9 +1510,12 @@ function countCommitsOnBranch(worktreePath, baseCommit) {
  *   `.helm-goal/plan.md` content as of right after this iteration (null
  *   before the plan phase has written one yet), so a live caller can surface
  *   the plan without waiting for the run to finish.
- * @param {object} [opts.escalationConfig] - opt-in (default undefined/absent
- *   = OFF, mirroring `verifyCommand`'s own opt-in shape — no behavior change
- *   when omitted). When present, enables Point 12 Phase-0 escalation: free,
+ * @param {object|boolean} [opts.escalationConfig] - ON BY DEFAULT since
+ *   2026-09-02. Omitting it (or passing null/`{}`) enables escalation with
+ *   default thresholds; pass `false` or `{ enabled: false }` to turn it off
+ *   deliberately (see `resolveEscalationConfig`). It used to be opt-in and
+ *   nothing ever opted in: 0 of 56 recorded runs had a config, and 0 ever
+ *   escalated. Enables Point 12 Phase-0 escalation: free,
  *   no-extra-LLM-call "Tier-1" signals computed from the loop's own data,
  *   checked after every iteration. When a signal fires, the run PAUSES
  *   (not aborts) between iterations — the worktree and all commits so far
@@ -1463,8 +1526,8 @@ function countCommitsOnBranch(worktreePath, baseCommit) {
  *   card. A caller can later start a NEW `runGoal` against the same
  *   `projectPath` with the same worktree/branch resumed (nothing here
  *   removes them) to continue, exactly like resuming after `cancelled`.
- *   All threshold fields are optional with sane defaults — pass `{}` to
- *   enable with defaults:
+ *   All threshold fields are optional with sane defaults — pass `{}` (or
+ *   nothing at all) for the defaults:
  *   - `opts.escalationConfig.ambiguityKeywords` - string list checked
  *     (case-insensitively) against each iteration's own `summary`/
  *     `keyLearnings`. Default: unclear/ambiguous/"could not determine"/
@@ -1472,8 +1535,11 @@ function countCommitsOnBranch(worktreePath, baseCommit) {
  *   - `opts.escalationConfig.maxCostPerIterationUsd` - soft cap on a single
  *     iteration's own `costUsd`. Default 2.
  *   - `opts.escalationConfig.noProgressStreak` - how many consecutive
- *     successful-but-uncommitted iterations with a flat commit count counts
- *     as no net progress. Default 2.
+ *     successful implement iterations that changed nothing real counts as no
+ *     net progress. Default OFF (null): at any value <= the default
+ *     `no_op_convergence` stop it renames that stop rather than adding a
+ *     signal, and doing so would have paused 17 of 56 recorded runs, 12 of
+ *     them already finished. See DEFAULT_NO_PROGRESS_STREAK.
  *   - `opts.escalationConfig.repeatedVerifyFailureThreshold` - how many
  *     consecutive verify-gated failures with the same failure signature
  *     counts as stuck-repeating. Default 2. Only meaningful alongside
@@ -1517,6 +1583,17 @@ export async function runGoal({
   // push its worktree to a remote. Null leaves the run exactly as it was - and exactly as
   // unguarded, which is worth saying out loud rather than defaulting quietly.
   guard = null,
+  // The thing that actually spends money, injected for the same reason `reviewer` is: a test
+  // can then drive a WHOLE run - worktree creation, notes.md, commits, producedRealChanges,
+  // phase advance, record building, escalation detection, cleanup, resumability - without a
+  // token or a subprocess, and without the test writing any of those records itself.
+  //
+  // That distinction is the point. The escalated stop had never run in production, so the
+  // only honest way to check it is to let the real loop produce the state and then look at
+  // it. Asserting on hand-written iteration records is how this suite has fooled itself
+  // before: a record missing a field the real writer always sets passes a test that the app
+  // would fail. Nothing but a test passes this.
+  runIterationFn = runIteration,
 }) {
   if (!projectPath || !goal) {
     throw new Error("runGoal requires both projectPath and goal.");
@@ -1552,7 +1629,11 @@ export async function runGoal({
   // (drops quotes -> invalid JSON) and truncates the multi-word system prompt at
   // the first space. Fail loudly here rather than silently feed every iteration a
   // broken schema (ship-review finding).
-  const claudeBinary = resolveClaudeBinary();
+  // Skipped when the iteration runner was replaced: the check exists because `runIteration`
+  // spawns this binary with a JSON schema and a multi-word system prompt in argv, and a
+  // substitute runner spawns nothing at all. Checking it anyway would make the seam useless
+  // on any machine without a native claude.exe, which is the wrong thing to be sensitive to.
+  const claudeBinary = runIterationFn === runIteration ? resolveClaudeBinary() : ".exe";
   if (!claudeBinary.toLowerCase().endsWith(".exe")) {
     throw new Error(
       `runGoal requires a native claude.exe; resolved "${claudeBinary}". A .cmd/.bat shim ` +
@@ -1674,11 +1755,12 @@ export async function runGoal({
   writePhase(worktreePath, phase);
 
   // Point 12 Phase-0 escalation state (see runGoal's own doc comment /
-  // detectEscalationSignal). `escalationEnabled` is captured once so an
-  // absent `escalationConfig` truly changes nothing below beyond this one
-  // boolean check per iteration - the whole point of the opt-in default-OFF
-  // shape.
-  const escalationEnabled = Boolean(escalationConfig);
+  // detectEscalationSignal). Resolved once per run rather than re-derived per
+  // iteration, and via `resolveEscalationConfig` rather than a truthiness test -
+  // `Boolean(escalationConfig)` is what kept this switched off for 56 runs, because
+  // it read "nobody said" as "no".
+  const effectiveEscalationConfig = resolveEscalationConfig(escalationConfig);
+  const escalationEnabled = effectiveEscalationConfig !== null;
   let escalation = null;
 
   for (let i = 1; i <= maxIterations; i++) {
@@ -1702,7 +1784,7 @@ export async function runGoal({
       writePhase(worktreePath, phase);
     }
 
-    const outcome = await runIteration({
+    const outcome = await runIterationFn({
       worktreePath,
       goal,
       notesContent,
@@ -1999,7 +2081,7 @@ export async function runGoal({
     // the loop pauses (worktree/commits kept, resumable) rather than falling
     // through to the harsher unconditional abort path.
     if (escalationEnabled) {
-      const signal = detectEscalationSignal(iterations, record, escalationConfig);
+      const signal = detectEscalationSignal(iterations, record, effectiveEscalationConfig);
       if (signal) {
         escalation = {
           iteration: i,
@@ -2167,9 +2249,9 @@ export async function runGoal({
     // same worktree/branch/notes.md.
     resumable: stoppedReason === "quota_exhausted" || stoppedReason === "escalated",
     // Point 12 Phase-0 escalation (see doc comment): non-null exactly when
-    // stoppedReason === "escalated" - the signal that fired, for a future
-    // human-gated card to render. Always null when escalationConfig was not
-    // provided (feature fully opt-in).
+    // stoppedReason === "escalated" - the signal that fired, for the
+    // human-gated card to render. Null for a run that escalation was turned
+    // off for, and for one that simply never tripped a signal.
     escalation,
   };
 }

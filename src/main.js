@@ -2536,7 +2536,10 @@ ipcMain.handle("routines:runNow", (_event, { id }) => {
 // object; falls back to deterministic defaults if the model output can't be
 // parsed. Best-effort - never throws into the renderer. ---
 ipcMain.handle("autopilot:proposeConfig", async (_event, { projectPath, goal } = {}) => {
-  const fallback = { verifyCommand: "", maxIterations: 5, model: "", effort: "", escalate: false, rationale: "" };
+  // escalate defaults TRUE, matching runGoal's own default since 2026-09-02. It was false
+  // here, and this proposer drives the Goal page's checkbox, so the one screen that could
+  // switch escalation on arrived with it switched off.
+  const fallback = { verifyCommand: "", maxIterations: 5, model: "", effort: "", escalate: true, rationale: "" };
   if (!projectPath || !goal) {
     return { ok: true, config: fallback };
   }
@@ -2548,7 +2551,9 @@ ipcMain.handle("autopilot:proposeConfig", async (_event, { projectPath, goal } =
     "maxIterations (integer 1-15, sized to the goal), " +
     "model (\"claude-sonnet-5\" | \"claude-opus-4-8\" | \"\" for auto), " +
     "effort (\"low\"|\"medium\"|\"high\"|\"\"), " +
-    "escalate (boolean - pause the run on repeated trouble), " +
+    "escalate (boolean, DEFAULT TRUE - whether the run may stop and hand the decision back " +
+    "instead of guessing when it hits repeated trouble; say false only if you have a reason " +
+    "this particular goal is better off guessing), " +
     "rationale (one short sentence explaining the choices).\n\nGoal:\n" +
     goal;
   let text = "";
@@ -2582,7 +2587,9 @@ ipcMain.handle("autopilot:proposeConfig", async (_event, { projectPath, goal } =
         maxIterations: Number.isInteger(p.maxIterations) ? Math.min(15, Math.max(1, p.maxIterations)) : 5,
         model: ["claude-sonnet-5", "claude-opus-4-8", "claude-haiku-4-5-20251001"].includes(p.model) ? p.model : "",
         effort: ["low", "medium", "high", "xhigh", "max"].includes(p.effort) ? p.effort : "",
-        escalate: p.escalate === true,
+        // `!== false` rather than `=== true`: a proposer that omits the key gets the
+        // default, and the default is on. `=== true` made silence mean off.
+        escalate: p.escalate !== false,
         rationale: typeof p.rationale === "string" ? p.rationale.slice(0, 240) : "",
       },
     };
@@ -3904,7 +3911,10 @@ function startGoalRun({
     model: model || null,
     effort: effort || null,
     maxIterations: clampedMax || null,
-    escalationConfig: escalationConfig || null,
+    // `false` means "escalation was deliberately switched off for this run" and must survive
+    // to a resume; `|| null` flattened it into "nothing was said", which now means the
+    // opposite (defaults ON). Stored raw so the resume reconstructs the same policy.
+    escalationConfig: escalationConfig === false ? false : escalationConfig || null,
     // Which meta-home's dispatch queue this run's report belongs to. The
     // goal-run history is a single GLOBAL file, but reports are per-meta-home;
     // stamping this lets startup reconciliation resurrect a missing report only
@@ -3932,12 +3942,13 @@ function startGoalRun({
     // straight through; runGoal treats an empty/missing value as "no gate"
     // (unchanged pre-existing behavior).
     verifyCommand: verifyCommand || undefined,
-    // Point 12 Phase-0 escalation - opt-in, mirrors verifyCommand's own
-    // opt-in shape. The renderer only ever sends a plain object (possibly
-    // empty, `{}`, for "enable with defaults") when the user checked
-    // "Escalate on trouble"; an unchecked box sends `undefined`, which
-    // keeps runGoal's pre-existing behavior (no escalation) unchanged.
-    escalationConfig: escalationConfig || undefined,
+    // Point 12 Phase-0 escalation - ON BY DEFAULT since 2026-09-02, so this is
+    // passed through RAW rather than coerced. It used to be `escalationConfig ||
+    // undefined`, which was harmless while undefined meant off and is now a bug:
+    // it would turn a deliberate `false` back into the default. runGoal's
+    // resolveEscalationConfig owns the interpretation - undefined/null/{} enable
+    // with defaults, `false` or `{ enabled: false }` switch it off.
+    escalationConfig,
     // Phase-2 Slice 5: when present, runGoal re-attaches to this existing
     // worktree/branch (skips createWorktree + provisionDeps) instead of a fresh
     // one, so a quota-stopped / interrupted run continues where it left off.
@@ -4233,7 +4244,9 @@ function resumeGoalRunById(goalRunId, { allowCapped = false } = {}) {
     model: rec.model || undefined,
     effort: rec.effort || undefined,
     maxIterations: rec.maxIterations || undefined,
-    escalationConfig: rec.escalationConfig || undefined,
+    // Raw, not `|| undefined`: a stored `false` is a decision to run without escalation and
+    // must be reconstructed as such, now that undefined means the default (ON).
+    escalationConfig: rec.escalationConfig,
     dispatch,
     resume,
   });
@@ -4945,6 +4958,10 @@ async function autoCaptainTick({ force = false } = {}) {
           projectPath: where.projectPath,
           goal,
           maxIterations: AUTO_RUN_MAX_ITERATIONS,
+          // escalationConfig is deliberately not passed: absent means the default, and since
+          // 2026-09-02 the default is ON. An unattended board run is the case that most needs
+          // it - nobody is watching, so the alternative to stopping and asking is guessing and
+          // committing. It pauses on a clean state and the card stays resumable.
           dispatch: {
             dispatchedBy: smId,
             dispatchId,
@@ -6405,6 +6422,11 @@ function processDispatchRequests(metaHome) {
           model: request.model || undefined,
           effort: request.effort || undefined,
           verifyCommand: request.verifyCommand || undefined,
+          // The dispatch path never passed this, which is half of why no dispatched run has
+          // ever escalated - the other half being that the tool had no field to put it in
+          // (both fixed 2026-09-02, see helmDispatchServer.js). Raw, so a mate's deliberate
+          // `false` is honoured and its absence means the default (ON).
+          escalationConfig: request.escalationConfig,
           dispatch: {
             dispatchedBy: mateId,
             dispatchId,

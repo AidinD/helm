@@ -98,6 +98,22 @@ const TOOLS = [
           type: "string",
           description: "Optional independent verify gate, e.g. 'npm test'. See the Helm-self caveat above.",
         },
+        escalate: {
+          type: "boolean",
+          description:
+            "Whether the run may STOP and hand the decision back instead of guessing. Default true. It pauses on a clean state - worktree, branch and commits all kept, the run marked resumable - when it hits the same verify failure twice running, reports an ambiguity in its own words, or blows past the per-iteration cost cap. Pass false only when you would rather have a wrong answer than a question, e.g. a run you are deliberately leaving unattended overnight.",
+        },
+        escalationConfig: {
+          type: "object",
+          description:
+            "Optional thresholds for the pause above; every field defaults sensibly, so send this only to tune one. `maxCostPerIterationUsd` (default 2) is the per-iteration soft cap. `repeatedVerifyFailureThreshold` (default 2) is how many identical verify failures in a row count as stuck; only meaningful with verifyCommand. `ambiguityKeywords` replaces the default phrase list checked against the run's own self-report. `noProgressStreak` is OFF by default on purpose - at any useful value it duplicates the run's existing converged-and-stopped ending rather than adding a signal.",
+          properties: {
+            maxCostPerIterationUsd: { type: "number" },
+            repeatedVerifyFailureThreshold: { type: "number" },
+            noProgressStreak: { type: "number" },
+            ambiguityKeywords: { type: "array", items: { type: "string" } },
+          },
+        },
         taskId: {
           type: "string",
           description:
@@ -258,6 +274,20 @@ async function toolDispatch(args) {
     effort: args.effort || null,
     maxIterations: typeof args.maxIterations === "number" ? args.maxIterations : null,
     verifyCommand: args.verifyCommand || null,
+    // The lever that had no handle. Escalation is the only way a run stops and asks instead
+    // of guessing, and it was gated on a config object this schema had no field for - so a
+    // second mate could not switch it on even if it wanted to, and 56 recorded runs never
+    // escalated once. It is on by default now, so the field's real job is the opposite one:
+    // letting a mate say NO deliberately, and tune the thresholds when it has a reason.
+    //
+    // `false` is the app-wide off switch (see resolveEscalationConfig); a plain object is
+    // "on, with these thresholds"; null is "on, with the defaults".
+    escalationConfig:
+      args.escalate === false
+        ? false
+        : args.escalationConfig && typeof args.escalationConfig === "object" && !Array.isArray(args.escalationConfig)
+          ? args.escalationConfig
+          : null,
     // Carried so the finished run can leave a review record on the card it came from.
     taskId: typeof args.taskId === "string" && args.taskId.trim() ? args.taskId.trim() : null,
     dispatchedBy: MATE_ID,
