@@ -63,7 +63,10 @@ const fm = (tool, input = {}) => decideToolCall({ tier: TIER_FIRST_MATE, tool, i
   // roots. It was rejected because a path check cannot tell a valid write from one that
   // silently corrupts the store it lands in. If this ever starts passing, that decision has
   // been undone by accident.
-  const own = "D:/Dropbox/Sync/Claude/assistant/GOALS.md";
+  // An invented path, not a real one. The guard is destination-blind by design, so the
+  // string only has to LOOK like the seat's own goals file for the check to mean something -
+  // and a real local path in a public repository leaks the machine it was written on.
+  const own = "C:/synced/notes/assistant/GOALS.md";
   ok(asst("Write", { file_path: own }).decision === "deny", "writing its OWN goals file with Write is still refused - the guard has no notion of an allowed folder");
   ok(asst("Edit", { file_path: own }).decision === "deny", "and so is editing it");
   ok(asst("Bash", { command: `echo hi >> "${own}"` }).decision === "deny", "and appending to it from a shell");
