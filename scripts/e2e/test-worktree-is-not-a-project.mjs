@@ -29,6 +29,12 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+// sameFsPath rather than path.resolve for the three comparisons below. They put git's
+// answer against a path built from os.tmpdir(), and on a machine whose account name is
+// long enough to have an 8.3 short alias those are two spellings of one directory that
+// path.resolve does not fold. All three failed on a build machine for exactly that reason
+// while the code under test was correct.
+import { canonicalFsPath } from "../../src/lib/fsPath.js";
 import { execFileSync } from "node:child_process";
 import { classifyWorkTree, refuseIfNotPrimary } from "../../src/lib/primaryWorkTree.js";
 
@@ -57,12 +63,12 @@ git(repo, "worktree", "add", "-q", worktree, "-b", "helm/goal-abc");
 {
   const primary = classifyWorkTree(repo);
   ok(primary.kind === "primary", "the repository is the primary work tree", primary.kind);
-  ok(path.resolve(primary.primaryPath) === path.resolve(repo), "and names itself", primary.primaryPath);
+  ok(canonicalFsPath(primary.primaryPath) === canonicalFsPath(repo), "and names itself", primary.primaryPath);
 
   const linked = classifyWorkTree(worktree);
   ok(linked.kind === "worktree", "a linked worktree is NOT primary", linked.kind);
   // The point of naming it: the refusal can say where to go instead.
-  ok(path.resolve(linked.primaryPath) === path.resolve(repo), "and it names the repository it belongs to", linked.primaryPath);
+  ok(canonicalFsPath(linked.primaryPath) === canonicalFsPath(repo), "and it names the repository it belongs to", linked.primaryPath);
 
   // The old question, on the same path, to show it could not have caught this.
   const insideWorkTree = git(worktree, "rev-parse", "--is-inside-work-tree").trim();
@@ -77,7 +83,7 @@ git(repo, "worktree", "add", "-q", worktree, "-b", "helm/goal-abc");
   fs.mkdirSync(sub, { recursive: true });
   const seen = classifyWorkTree(sub);
   ok(seen.kind === "primary", "a subdirectory of the repository is still primary");
-  ok(path.resolve(seen.primaryPath) === path.resolve(repo), "but its primary path is the work-tree ROOT, not itself", seen.primaryPath);
+  ok(canonicalFsPath(seen.primaryPath) === canonicalFsPath(repo), "but its primary path is the work-tree ROOT, not itself", seen.primaryPath);
 }
 
 // --- the refusal is usable, not just correct ---------------------------------------------

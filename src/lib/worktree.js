@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { canonicalFsPath } from "./fsPath.js";
 import { execFileSync } from "node:child_process";
 
 /**
@@ -175,8 +176,14 @@ export function listLocalBranches(projectPath) {
 
 /** True if `worktreePath` is currently a registered worktree of `projectPath`. */
 export function worktreeExists(projectPath, worktreePath) {
-  const target = path.resolve(worktreePath);
-  return listWorktreePaths(projectPath).some((p) => path.resolve(p) === target);
+  // CANONICAL, not path.resolve. The two sides come from different places - git prints the
+  // worktree list, the caller passes the path it was handed - and on Windows those can be two
+  // spellings of one directory. `path.resolve` folds neither case nor the 8.3 short name, so a
+  // worktree this process had itself registered was reported as "not a registered worktree" on
+  // a machine whose account name is long enough to have an alias. That threw out of
+  // removeWorktree and failed the housekeeping sweep.
+  const target = canonicalFsPath(worktreePath);
+  return listWorktreePaths(projectPath).some((p) => canonicalFsPath(p) === target);
 }
 
 /**
