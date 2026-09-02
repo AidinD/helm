@@ -76,6 +76,7 @@ import { loadGoalRunHistory, upsertGoalRunRecord, removeGoalRunRecord } from "./
 import { findStalledWork, workersFromSnapshot, summariseStalls } from "./lib/watchdog.js";
 import { judgeTurnEnd } from "./lib/turnEndGuard.js";
 import { runsToAutoAcknowledge } from "./lib/crewCleanup.js";
+import { modelForSeat } from "./lib/tierModels.js";
 import {
   removeWorktree,
   isBranchMerged,
@@ -2717,6 +2718,30 @@ ipcMain.handle("secondMates:propose", (_event, { firstMateId, project, brief, as
 // once (on create), lastActivityAt always bumps. `createIfAbsent:false` means
 // "only bump an existing entry" - used on resume/completion so resuming a
 // DESKTOP session (which Helm didn't create) never fabricates a stray entry.
+/**
+ * What a session Helm launched last actually ran on, or null.
+ *
+ * Reads Helm's OWN index rather than the Desktop app's: a headless `claude -p` session never
+ * gets a Desktop file, and every seat this is asked about is one of those.
+ *
+ * Null for anything unknown - a seat with no session yet, a session Helm did not start, an
+ * unreadable config. Null means "no opinion", which is what lets the tier default apply
+ * rather than a guess.
+ *
+ * @param {string|null} sessionId
+ * @returns {string|null}
+ */
+function recordedModelFor(sessionId) {
+  if (!sessionId) {
+    return null;
+  }
+  try {
+    return loadConfig().helmSessions?.[sessionId]?.model || null;
+  } catch {
+    return null;
+  }
+}
+
 function recordHelmSession(sessionId, { cwd, model, effort, permissionMode, title, startedBy, createIfAbsent } = {}) {
   // A brand-new session's transcript file has just appeared, and the transcript index is
   // cached (paths.js). Drop it here rather than relying on the TTL, so the session
@@ -5841,13 +5866,20 @@ function runRelayTurn(metaHome, { secondMateId: smId, projectPath, message, allo
     markSessionLive(liveTurnId);
   }
   resetTierTurnCounter(metaHome, resumeSessionId);
+  // What this seat runs on. Not a literal any more, and the ORDER is the point: whatever the
+  // session last actually ran on wins, and the tier default only applies to a seat that has
+  // never run. Before this, jumping in used the composer's picker and relaying used a
+  // hardcoded Opus, so one seat ran two different models depending on which door you came in
+  // through - and changing the model in the picker held only until the next relay put it
+  // back. See tierModels.js.
+  const seatModel = modelForSeat("second-mate", recordedModelFor(resumeSessionId));
   let child;
   let done;
   try {
     ({ child, done } = startSession({
       cwd: projectPath,
       prompt: message,
-      model: "claude-opus-4-8",
+      model: seatModel,
       mcpConfig,
       allowedTools: FIRST_MATE_ALLOWED_TOOLS,
       // A fresh relay turn boots the second mate with its full manual; a resumed
@@ -5888,7 +5920,10 @@ function runRelayTurn(metaHome, { secondMateId: smId, projectPath, message, allo
             // same day - see the comment on the first-mate recordHelmSession call).
             recordHelmSession(evt.sessionId, {
               cwd: projectPath,
-              model: "claude-opus-4-8",
+              // The same value the launch used, not a second opinion about it: a record that
+              // names a different model from the one that ran is how the model came to be
+              // misreported for two days.
+              model: seatModel,
               title: message.trim().split("\n")[0].slice(0, 80) || "(second mate)",
               startedBy,
               createIfAbsent: true,
