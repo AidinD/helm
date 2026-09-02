@@ -7069,6 +7069,181 @@ function inlineFormat(text) {
 // live-sent turns and reloaded-session turns, since both carry the same raw
 // marker in turn.text. DOM is built via createElement/createTextNode (never
 // innerHTML for paths) to avoid injection from odd filenames.
+/**
+ * The rendered reply as HTML somebody could paste into a document.
+ *
+ * Copying a reply used to put only the raw markdown on the clipboard, so pasting into a mail
+ * client or a document showed literal `**bold**` and `#` headings - the formatting was there
+ * on screen and nowhere in the paste (card a746f999).
+ *
+ * ## Why this is a translation and not a sanitising pass
+ *
+ * The first version of this just stripped attributes off a clone of the bubble, and its own
+ * check caught it: headings and bullets vanished. This renderer builds SEMANTICALLY FLAT
+ * markup - a heading is `<div class="md-h md-h1">`, a bullet is `<div class="md-li">` - and
+ * all of the meaning lives in the class name, styled by this app's stylesheet. Strip the
+ * classes and you have plain divs; keep them and the paste target has no stylesheet to apply.
+ * Either way the structure is gone.
+ *
+ * So the classes ARE the semantics, which makes the mapping back to real elements lossless
+ * rather than a guess. Bold, italic, links, tables and code blocks already use real elements
+ * and pass straight through; the block-level divs are what needs translating.
+ *
+ * Chrome comes out first: a per-code-block copy button and its language label live INSIDE the
+ * bubble, so pasting verbatim delivered a stray "⧉" and a floating word. The list marker goes
+ * too - a real `<li>` draws its own bullet, and keeping ours would double it.
+ *
+ * Returns "" when there is nothing usable, so the caller falls back to plain text rather than
+ * putting an empty rich flavour on the clipboard for a target to prefer.
+ */
+function portableHtmlFrom(node) {
+  if (!node) {
+    return "";
+  }
+  const src = node.cloneNode(true);
+  // Affordances of this app, never content. The marker span is ours to draw; a real list
+  // item draws its own.
+  src.querySelectorAll("button, input, select, textarea, .code-copy-btn, .copy-btn, .md-code-head, .md-marker").forEach((el) => el.remove());
+
+  const out = document.createElement("div");
+  // The paragraph currently being filled, and the list currently open. Both are closed by
+  // the next block-level thing, which is what keeps a run of wrapped lines in one <p> and a
+  // run of bullets in one <ul>.
+  let para = null;
+  let list = null;
+  const closePara = () => {
+    if (para) {
+      // A trailing hard break at the end of a paragraph is redundant - the paragraph itself
+      // ends the line. Found by reading the output rather than by an assertion.
+      while (para.lastChild && para.lastChild.nodeName === "BR") {
+        para.lastChild.remove();
+      }
+      // And a paragraph holding nothing but breaks is a blank line nobody asked for.
+      if (para.textContent.trim() || para.querySelector("img, a, code")) {
+        out.append(para);
+      }
+    }
+    para = null;
+  };
+  const closeList = () => {
+    if (list && list.childNodes.length) {
+      out.append(list);
+    }
+    list = null;
+  };
+  const closeAll = () => {
+    closePara();
+    closeList();
+  };
+  /** A copy of `el`'s children with every app-only attribute gone. */
+  const contentOf = (el) => {
+    const frag = document.createDocumentFragment();
+    for (const child of [...el.childNodes]) {
+      frag.append(child);
+    }
+    return frag;
+  };
+
+  for (const child of [...src.childNodes]) {
+    if (child.nodeType === Node.TEXT_NODE) {
+      if (child.textContent.trim()) {
+        para = para || document.createElement("p");
+        para.append(child);
+      }
+      continue;
+    }
+    if (child.nodeType !== Node.ELEMENT_NODE) {
+      continue;
+    }
+    const cls = child.classList;
+    const tag = child.tagName.toLowerCase();
+
+    if (tag === "br") {
+      // Only ever inserted between two plain lines, so it is a hard break inside the
+      // paragraph being built - not a paragraph separator.
+      if (para) {
+        para.append(child);
+      }
+      continue;
+    }
+    if (cls.contains("md-h")) {
+      closeAll();
+      const level = cls.contains("md-h1") ? 1 : cls.contains("md-h2") ? 2 : 3;
+      const h = document.createElement("h" + level);
+      h.append(contentOf(child));
+      out.append(h);
+      continue;
+    }
+    if (cls.contains("md-hr")) {
+      closeAll();
+      out.append(document.createElement("hr"));
+      continue;
+    }
+    if (cls.contains("md-li")) {
+      closePara();
+      const wanted = cls.contains("md-oli") ? "ol" : "ul";
+      if (list && list.tagName.toLowerCase() !== wanted) {
+        closeList();
+      }
+      list = list || document.createElement(wanted);
+      const li = document.createElement("li");
+      li.append(contentOf(child));
+      list.append(li);
+      continue;
+    }
+    if (cls.contains("md-quote")) {
+      closeAll();
+      const quote = document.createElement("blockquote");
+      quote.append(contentOf(child));
+      out.append(quote);
+      continue;
+    }
+    if (tag === "table" || child.querySelector("pre") || tag === "pre") {
+      // Already semantic. A code block arrives wrapped in a div; the <pre> inside it is the
+      // portable part, so the wrapper is dropped rather than carried.
+      closeAll();
+      const keep = tag === "pre" ? child : child.querySelector("pre") || child;
+      out.append(keep);
+      continue;
+    }
+    if (cls.contains("md-para") || cls.contains("md-after-list")) {
+      // A new paragraph starts here - that is exactly what these classes mean.
+      closeAll();
+      para = document.createElement("p");
+      para.append(contentOf(child));
+      continue;
+    }
+    // A plain line: part of the paragraph being built.
+    closeList();
+    para = para || document.createElement("p");
+    para.append(contentOf(child));
+  }
+  closeAll();
+
+  // Attributes last, over the whole result: class, style, id and data-* are this app talking
+  // to itself and some paste targets keep them. href/src/alt/title carry meaning.
+  const strip = (el) => {
+    for (const name of [...el.getAttributeNames()]) {
+      // `title` is deliberately NOT kept: this renderer sets it to the href on every link,
+      // so it pastes as a tooltip duplicating the text beside it.
+      if (name === "href" || name === "src" || name === "alt") {
+        continue;
+      }
+      el.removeAttribute(name);
+    }
+  };
+  out.querySelectorAll("*").forEach(strip);
+  // A <span> with nothing left on it carries no meaning - it was a styling hook, and the
+  // hook is gone. Unwrapping keeps the text and drops the noise from the pasted markup.
+  // After the strip, so it catches the spans this app used for list bodies and code tokens.
+  out.querySelectorAll("span").forEach((span) => {
+    if (span.getAttributeNames().length === 0) {
+      span.replaceWith(...span.childNodes);
+    }
+  });
+  return out.innerHTML.trim();
+}
+
 function renderUserTurnInto(bubble, text) {
   const segments = parseAttachmentLines(text);
   const hasAttachment = segments.some((s) => s.type === "image" || s.type === "file");
@@ -7170,7 +7345,6 @@ function turnEl(turn) {
     renderUserTurnInto(bubble, turn.text);
   }
   wrap.append(bubble);
-
   if (turn.role === "assistant") {
     // Icon-only, shown on hover (was an always-visible "Copy" text button —
     // per feedback that read as too loud sitting under every single reply).
@@ -7179,7 +7353,11 @@ function turnEl(turn) {
     copyBtn.title = "Copy";
     copyBtn.textContent = "⧉";
     copyBtn.addEventListener("click", () => {
-      window.helm.copyToClipboard(turn.text);
+      // BOTH flavours. The plain one stays the markdown - that is the right thing for an
+      // editor or a terminal, and it is what was already here. The rich one is what makes a
+      // paste into a document or a mail keep the formatting it had on screen.
+      const html = portableHtmlFrom(bubble);
+      window.helm.copyToClipboard(html ? { text: turn.text, html } : turn.text);
       copyBtn.textContent = "✓";
       copyBtn.classList.add("copied");
       setTimeout(() => {

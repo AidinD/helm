@@ -53,7 +53,9 @@ contextBridge.exposeInMainWorld("helm", {
   // title feeds the topic-keyed store's classifier + header (task 663ab4b6);
   // category forces a topic instead of classifying (an override).
   saveHandoff: (cwd, text, title, category) => ipcRenderer.invoke("context:saveHandoff", { cwd, text, title, category }),
-  copyToClipboard: (text) => ipcRenderer.invoke("clipboard:write", text),
+  // A string for the plain case (a path, a sha), or { text, html } when the caller has a
+  // rendered version worth pasting into something rich. See the handler in main.js.
+  copyToClipboard: (payload) => ipcRenderer.invoke("clipboard:write", payload),
   saveImage: (base64Data, ext) => ipcRenderer.invoke("image:save", { base64Data, ext }),
   transcribeVoice: (samples, language) => ipcRenderer.invoke("voice:transcribe", { samples, language }),
   // Whether the fast engine is actually there, and when it is not, the reason -

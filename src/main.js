@@ -879,8 +879,33 @@ ipcMain.handle("skills:read", (_event, { name, origin, cwd, plugin } = {}) => {
 
 // --- Copy text to clipboard (Electron's own module, not navigator.clipboard,
 // to avoid relying on an untested web-permission assumption) ---
-ipcMain.handle("clipboard:write", (_event, text) => {
-  clipboard.writeText(text || "");
+/**
+ * Put text on the clipboard, and optionally a rich-text flavour beside it.
+ *
+ * Two flavours, not one, because a paste target chooses: an editor takes text/plain and gets
+ * the markdown, while a mail client or a document takes text/html and gets the formatting.
+ * With only the plain flavour - which is all this handler wrote until 2026-09-02 - pasting a
+ * reply into anything rich showed literal `**bold**` and `#` headings, which is the "copying
+ * output does not keep the formatting" this is for.
+ *
+ * The caller sends the rich flavour, sanitised, rather than this end guessing at it: the
+ * rendered reply is already on screen there, so nothing needs to re-render markdown, and the
+ * app's own affordances (a per-code-block copy button, a language label) have to be taken out
+ * first or they paste as stray glyphs.
+ *
+ * Still accepts a bare string, because most callers are copying a path or a sha and there is
+ * no rich version of those.
+ */
+ipcMain.handle("clipboard:write", (_event, payload) => {
+  if (payload && typeof payload === "object" && typeof payload.text === "string") {
+    if (payload.html) {
+      clipboard.write({ text: payload.text, html: payload.html });
+    } else {
+      clipboard.writeText(payload.text);
+    }
+    return { ok: true };
+  }
+  clipboard.writeText(typeof payload === "string" ? payload : "");
   return { ok: true };
 });
 
