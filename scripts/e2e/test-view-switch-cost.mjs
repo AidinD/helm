@@ -160,17 +160,80 @@ try {
 
   // First paint is only worth having if the real queue then ARRIVES. A page that shows a
   // heading and never fills in is worse than one that was honestly slow - it looks done.
+  //
+  // This check could not fail until 2026-09-02. It polled a Review page the warm-up loop
+  // above had already filled in, so the very first poll found the filter bar and it reported
+  // "0 ms (73 elements)": a pass in which the placeholder-to-queue transition it claims to
+  // measure never happened inside the measured window at all.
+  //
+  // Three things have to be RESET for that transition to really run here, and the old version
+  // reset none of them:
+  //
+  //   1. The page DOM. renderReviewPage paints the placeholder only when the page is empty
+  //      (childElementCount === 0), so on a page that still holds the last visit's queue
+  //      there is no placeholder, and nothing for a later render to replace.
+  //   2. The main process's queue cache. It is the only cached payload in play - listReviews
+  //      is an IPC call and the renderer keeps no copy of the result - and while it is warm
+  //      the "real queue" arrives one IPC hop later out of memory, which is not the path that
+  //      made a placeholder necessary in the first place. Cold it through the app's own
+  //      acknowledge handler, which calls invalidateReviewQueueCache: passing an id that
+  //      matches no task leaves the queue's CONTENT identical and writes nothing but this
+  //      run's throwaway config (see harness.mjs).
+  //   3. The clock AND the navigation, both inside the measured window. A window that opens
+  //      after the render has already finished can only ever report 0 ms - which is exactly
+  //      what it did.
+  //
+  // Then it asserts what the sentence actually claims, in three parts that each fail on their
+  // own: the placeholder really was on screen first, the real queue replaced it, and what
+  // replaced it was a freshly built queue rather than the last known one.
+  //
+  // That last part is read off the page at the moment of the transition, not from a build
+  // counter. A counter says only that SOME build ran somewhere in the window - the review
+  // badge and the dashboard widget both ask for the queue too - and under a mutation where
+  // the placeholder was never replaced at all it still read 1, which is a green line about
+  // something that did not happen. The page is unambiguous instead: paintReviewPage adds
+  // "Showing the last known queue - checking for changes..." if and only if it is painting a
+  // CACHED payload, so its absence is this render's own statement that it built.
+  //
+  // The one way that can go red without a regression: another caller (the review badge, the
+  // dashboard widget) re-warming the cache in the few milliseconds between the reset and the
+  // navigation below. It takes a build finishing inside that gap, and a build costs hundreds
+  // of milliseconds, so it should not happen - and if it does, the failure message says
+  // exactly that rather than blaming the render.
+  await app.eval(`navigateToPage('dashboard')`);
+  await new Promise((r) => setTimeout(r, 150));
+  // The reset itself is asserted. A renamed or removed handler would silently turn it into a
+  // no-op and hand the cache back warm - which is the same trivially-green check by another
+  // route.
+  const cleared = await app.eval(`window.helm.acknowledgeNoRecord('e2e-view-switch-cost-no-such-task')`);
+  ok(cleared?.ok === true, `the queue cache was really cleared before timing the transition (${JSON.stringify(cleared)}) - without this the "real queue" comes back from memory and the check cannot fail`);
   const settled = await app.eval(`(async () => {
     const page = document.getElementById('reviewPage');
+    page.replaceChildren();
     const t0 = performance.now();
+    navigateToPage('review');
+    // Read SYNCHRONOUSLY, before this function's first await: renderReviewPage has run only
+    // as far as its own first await, so whatever is on the page now is the placeholder and
+    // cannot be a queue that arrived over IPC.
+    const placeholder =
+      page.textContent.includes('Building the review queue') &&
+      !page.querySelector('.rev-filters, .review-empty');
     while (performance.now() - t0 < 30000) {
       // The filter bar only exists on the real queue, never on the placeholder.
       if (page.querySelector('.rev-filters, .review-empty')) {
-        return { ms: performance.now() - t0, children: page.childElementCount, real: true };
+        return {
+          ms: performance.now() - t0,
+          children: page.childElementCount,
+          placeholder,
+          real: true,
+          // Read in the same tick as the transition, so it describes the payload that
+          // actually landed on the placeholder and not a later repaint.
+          fromCache: page.textContent.includes('Showing the last known queue'),
+        };
       }
       await new Promise(r => setTimeout(r, 25));
     }
-    return { ms: performance.now() - t0, children: page.childElementCount, real: false };
+    return { ms: performance.now() - t0, children: page.childElementCount, placeholder, real: false, fromCache: null };
   })()`);
   // That duration is NOT asserted, and the number it prints will look alarming. Read it
   // with the harness in mind: every E2E run gets a FRESH temp config (see harness.mjs), so
@@ -181,7 +244,19 @@ try {
   // placeholder is eventually replaced.
   console.log(`      review, placeholder replaced by the real queue after: ${settled.ms.toFixed(0)} ms (${settled.children} elements)`);
   console.log(`      (a fresh E2E profile builds every commit baseline from scratch - this is not what a real profile pays)`);
+  ok(
+    settled.placeholder,
+    `the Review page showed its "Building the review queue" placeholder first, so there was something for the queue to replace - if this fails the measurement below is about nothing`
+  );
   ok(settled.real, `the placeholder is replaced by the real queue (${settled.children} elements) - a first paint that never fills in would look finished while showing nothing`);
+  ok(
+    settled.real && settled.fromCache === false,
+    !settled.real
+      ? `the queue never arrived, so there is nothing to say about where it came from`
+      : settled.fromCache
+        ? `the placeholder was replaced from the CACHE (the page said it was checking for changes), so the reset above did not hold: the ${settled.ms.toFixed(0)}ms is an IPC round trip against a warm payload, not the build this measurement is supposed to cover`
+        : `what replaced the placeholder was a freshly BUILT queue, not the last known one (the page did not say it was checking for changes) - so the ${settled.ms.toFixed(0)}ms above is the slow path this two-step render exists for`
+  );
 } finally {
   await app.close();
 }
