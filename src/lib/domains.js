@@ -1,21 +1,28 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { writeJsonAtomicSync } from "./atomicWrite.js";
 
 /**
- * Registry of non-repo "life-domain" projects (PLAN.md's non-repo project
- * types) — plain folders the captain works in with Claude that are NOT git repos
- * (gym, cycling, kombucha, etc). They follow the exact same ephemeral-
- * session + files-as-memory model as a repo project: a session rooted in the
- * domain's folder auto-loads its CLAUDE.md + memory the same way a repo
- * session does. The only real difference is there is no git, so worktree
- * isolation (see worktree.js / goalOrchestrator.js) never applies to them.
+ * Registry of non-repo "life-domain" projects: plain folders that are worked in with Claude
+ * but are not git repositories. They follow the same ephemeral-session, files-as-memory model
+ * as a repo project - a session rooted in the folder auto-loads its CLAUDE.md and memory
+ * exactly as a repo session does. The only real difference is that there is no git, so
+ * worktree isolation (see worktree.js / goalOrchestrator.js) never applies to them.
  *
- * Stored next to config.json (same directory, same gitignored, personal/
- * machine-specific data convention) rather than folded into config.json
- * itself, since this is a distinct collection with its own shape and this
- * keeps config.js's existing merge logic untouched.
+ * READ-ONLY SINCE 2026-09-02, on purpose. The app's registration control had already
+ * disappeared from the renderer, leaving `registerDomain`, `removeDomain`, their two IPC
+ * handlers and four preload bridges reachable from nowhere - found by the linter's first run
+ * on this repo. Measured before deciding rather than after: no domain has ever been
+ * registered, and there is no domains file on disk at all, so the feature was retired instead
+ * of having its button put back.
+ *
+ * `loadDomains` is the whole remaining job: knownProjects still resolves an existing domain
+ * folder as a project, so a registry written by hand or by an older build keeps working. The
+ * two writers are in the history if the decision is ever reversed.
+ *
+ * Stored next to config.json (same directory, same gitignored machine-specific convention)
+ * rather than folded into config.json, since this is a distinct collection with its own shape
+ * and it keeps config.js's merge logic untouched.
  */
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -25,8 +32,8 @@ const domainsPath = process.env.HELM_DOMAINS_PATH || path.join(__dirname, "..", 
 
 /**
  * @typedef {object} Domain
- * @property {string} id - stable id, generated at registration time.
- * @property {string} name - display name (e.g. "Gym").
+ * @property {string} id - stable id, generated when the entry was created.
+ * @property {string} name - display name.
  * @property {string} path - absolute path to the domain's folder.
  * @property {string} icon - a single emoji shown on the project chip.
  */
@@ -47,75 +54,4 @@ export function loadDomains() {
   } catch {
     return [];
   }
-}
-
-function writeDomains(domains) {
-  // Shared atomic write with the locked-file retry (task efcaf486). Still a plain
-  // overwrite until 2026-08-02: the original conversion missed it, and the class
-  // guard of the day only looked for a private tmp+rename - so a store with no
-  // rename at all was invisible to it. Throws on failure, as the plain write did.
-  const res = writeJsonAtomicSync(domainsPath, domains);
-  if (!res.ok) {
-    throw new Error(`Could not write the domain list: ${res.error}`);
-  }
-}
-
-const DEFAULT_ICON = "\u{1F4CC}"; // pushpin - generic "life domain" marker
-
-/**
- * Registers a new domain, creating its folder if it does not already exist.
- * Does NOT require a CLAUDE.md inside it — that stays optional, same as a
- * fresh repo folder before anyone bothers to add one.
- *
- * @param {object} opts
- * @param {string} opts.name
- * @param {string} opts.path - absolute path to the folder.
- * @param {string} [opts.icon]
- * @returns {{ ok: boolean, domain?: Domain, error?: string }}
- */
-export function registerDomain({ name, path: domainPath, icon }) {
-  const trimmedName = (name || "").trim();
-  const trimmedPath = (domainPath || "").trim();
-  if (!trimmedName) {
-    return { ok: false, error: "Name is required" };
-  }
-  if (!trimmedPath) {
-    return { ok: false, error: "Folder path is required" };
-  }
-  const resolved = path.resolve(trimmedPath);
-
-  const domains = loadDomains();
-  if (domains.some((d) => path.resolve(d.path) === resolved)) {
-    return { ok: false, error: `A domain already points at ${resolved}` };
-  }
-
-  try {
-    if (!fs.existsSync(resolved)) {
-      fs.mkdirSync(resolved, { recursive: true });
-    } else if (!fs.statSync(resolved).isDirectory()) {
-      return { ok: false, error: `${resolved} is not a folder` };
-    }
-  } catch (err) {
-    return { ok: false, error: `Could not create folder: ${err.message}` };
-  }
-
-  const domain = {
-    id: `domain_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-    name: trimmedName,
-    path: resolved,
-    icon: (icon || "").trim() || DEFAULT_ICON,
-  };
-  domains.push(domain);
-  writeDomains(domains);
-  return { ok: true, domain };
-}
-
-export function removeDomain(id) {
-  const domains = loadDomains();
-  const next = domains.filter((d) => d.id !== id);
-  if (next.length === domains.length) {
-    return { ok: false, error: `No domain with id ${id}` };
-  }
-  writeDomains(next);
-  return { ok: true };
 }

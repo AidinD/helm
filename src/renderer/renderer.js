@@ -15032,62 +15032,17 @@ let dashboardArchiveGroupExpanded = false;
 // (the mistake that's easy to make - "I just wanted to use Helm's own
 // folder") doesn't silently create a permanent, confusing duplicate chip
 // with no obvious way back - point at "+ other..." instead.
+// Persistent non-repo "domain" projects were RETIRED here on 2026-09-02, by decision rather
+// than by decay. The registration control had already vanished from this file, leaving the
+// plumbing behind on both sides of the bridge; eslint's first run found the orphan. Measured
+// before deciding: no domain has ever been registered - there is no domains.json on disk at
+// all - so nothing is lost by closing the door rather than putting the button back.
 //
-// NOTHING CALLS THIS, and it is a lost control rather than dead code. main.js still handles
-// `dialog:pickDomainFolder` and still calls registerDomain, and the preload still exposes
-// both - only the "+ new domain..." button in this file is gone, so a persistent non-repo
-// project can no longer be registered from the UI at all. Deleting the function would finish
-// the disappearance instead of cleaning up after it, so it stays until the control comes back
-// or the feature is retired on purpose. Found by eslint's first run; tracked on the board.
-//
-// `dashboardSelectedChip` below belongs to this same unreachable flow - it is written here
-// and read nowhere, which only stayed invisible because the one write is inside a function
-// nothing calls. It is declared beside its writer rather than back among the dashboard's
-// live state, so it is obvious that both halves go together and both go away together.
-// eslint-disable-next-line no-unused-vars -- written by the unreachable flow below
-let dashboardSelectedChip = null; // which "New session" project chip is selected (a cwd string)
-
-// eslint-disable-next-line no-unused-vars -- the caller is missing, not the code
-async function promptRegisterDomain() {
-  const folder = await window.helm.pickDomainFolder();
-  if (!folder) {
-    return;
-  }
-  const knownRepos = [...new Set(state.sessions.filter((s) => s.cwd).map((s) => s.cwd))];
-  if (knownRepos.some((repo) => samePath(repo, folder))) {
-    showToast('That folder is already a project - use "+ other..." instead of "+ new domain...".');
-    return;
-  }
-  const defaultName = folder.split(/[\\/]/).filter(Boolean).pop() || folder;
-
-  // Render a temporary chip holding the inline-edit input so the flow stays
-  // visually consistent with the chip grid instead of popping a dialog.
-  const chipGrid = document.querySelector(".dash-chip-grid");
-  if (!chipGrid) {
-    return;
-  }
-  const placeholder = document.createElement("span");
-  placeholder.textContent = defaultName;
-  const tempChip = document.createElement("div");
-  tempChip.className = "dash-chip";
-  tempChip.append(placeholder);
-  chipGrid.append(tempChip);
-
-  makeInlineEditable(placeholder, defaultName, async (finalName) => {
-    tempChip.remove();
-    if (!finalName) {
-      return;
-    }
-    const result = await window.helm.registerDomain({ name: finalName, path: folder });
-    if (!result.ok) {
-      showToast(result.error || "Couldn't register domain.");
-      return;
-    }
-    dashboardSelectedChip = result.domain.path;
-    fillDashboardSections();
-  });
-}
-
+// What stayed: loadDomains() and the knownProjects read in main.js, so a domain that exists
+// is still resolved as a project. Only creating one from the app is gone. What went with it:
+// the register and folder-pick handlers, their preload bridges, and the list and remove
+// bridges that had no caller either. Leaving those would have been the failure this decision
+// was taken to end - half a feature sitting there looking alive.
 
 // --- Shared small pieces ----------------------------------------------
 
@@ -19509,8 +19464,10 @@ function cmdkBuildCommands() {
 
   // PROJECT ENTITIES - repo projects derived from cwd's Helm has seen among
   // its sessions (the same repo-chip source as the dashboard launcher; kept
-  // synchronous, so no async listDomains here - domains are omitted to keep
-  // the palette instant). Starting one reuses the chip's Start-fresh flow.
+  // synchronous, so the palette stays instant). Domains are not listed here.
+  // That used to be a tradeoff against an async bridge; since the domain
+  // feature was retired there is no bridge to weigh, so it is simply a fact
+  // about what the palette offers. Starting one reuses the Start-fresh flow.
   const knownRepos = [...new Set(state.sessions.filter((s) => s.cwd).map((s) => s.cwd))];
   for (const cwd of knownRepos) {
     const label = cwd.split(/[\\/]/).filter(Boolean).pop() || cwd;

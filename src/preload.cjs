@@ -234,10 +234,6 @@ contextBridge.exposeInMainWorld("helm", {
   },
   // Non-repo "life-domain" projects (PLAN.md) — plain folders (gym, cycling,
   // kombucha, etc) registered as first-class projects alongside git repos.
-  listDomains: () => ipcRenderer.invoke("domains:list"),
-  registerDomain: (opts) => ipcRenderer.invoke("domains:register", opts),
-  removeDomain: (id) => ipcRenderer.invoke("domains:remove", id),
-  pickDomainFolder: () => ipcRenderer.invoke("dialog:pickDomainFolder"),
   // Lavish (interactive-plan) v1 — read an HTML artifact file by path, wrap
   // it into an SDK-injected srcdoc, and format collected annotations to text.
   readArtifactFile: (filePath) => ipcRenderer.invoke("lavish:readFile", filePath),

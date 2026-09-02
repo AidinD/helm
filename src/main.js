@@ -90,7 +90,7 @@ import {
 } from "./lib/worktree.js";
 import { planSweep, describeSweep, reconcileSweepReport } from "./lib/worktreeSweep.js";
 import { docsStaleness, staleProjectsAsync, docsNudgeCandidates, DOCS_NUDGE_ACTIVE_DAYS } from "./lib/docsStaleness.js";
-import { loadDomains, registerDomain, removeDomain } from "./lib/domains.js";
+import { loadDomains } from "./lib/domains.js";
 import { ensureMates, ensureAssistantSeat, assistantSeat, activeMates, findMateById, loadMates, renameMate, retireAndRespawn, bindMateSession, consumeMateHandoff, setMatePersona, rethemeMateNames, retireMateSlot, clampMateSlots, MATE_SLOT_COUNT, MATE_SLOT_MAX } from "./lib/mates.js";
 
 // How many first mates the captain wants. Two by default; configurable since
@@ -2484,13 +2484,10 @@ ipcMain.handle("dialog:pickFolder", async () => {
 // session (same session:start handler, same automatic CLAUDE.md + memory
 // loading) - there is no separate "domain session" code path, only a
 // different source for the cwd. ---
-ipcMain.handle("domains:list", () => loadDomains());
-
-ipcMain.handle("domains:register", (_event, { name, path: domainPath, icon }) =>
-  registerDomain({ name, path: domainPath, icon })
-);
-
-ipcMain.handle("domains:remove", (_event, id) => removeDomain(id));
+// The three domain channels (list, register, remove) were retired 2026-09-02 along with the
+// control that reached them - see the note in renderer.js. `loadDomains` stays, because
+// knownProjects still resolves an existing domain folder as a project; nothing can create,
+// list or remove one from the app any more, and nothing could for some time before this.
 
 // --- Routines page (read-only): list Claude Code's OWN scheduled tasks from
 // ~/.claude/scheduled-tasks/. Helm does not run a scheduler of its own -
@@ -2599,17 +2596,6 @@ ipcMain.handle("autopilot:proposeConfig", async (_event, { projectPath, goal } =
 });
 
 // --- Pick or create the folder for a new non-repo domain project ---
-ipcMain.handle("dialog:pickDomainFolder", async () => {
-  const result = await dialog.showOpenDialog(mainWindow, {
-    title: "Pick (or create) the folder for this domain",
-    properties: ["openDirectory", "createDirectory"],
-  });
-  if (result.canceled || result.filePaths.length === 0) {
-    return null;
-  }
-  return result.filePaths[0];
-});
-
 // --- Pick one or more files to attach to a prompt (same path-reference
 // mechanism as a pasted image) ---
 ipcMain.handle("dialog:pickFiles", async () => {
