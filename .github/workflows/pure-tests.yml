@@ -1,0 +1,93 @@
+# The pure module checks, run on GitHub's machines instead of the author's.
+#
+# WHY THIS EXISTS
+# Every protection around a Helm review record currently runs inside the same process
+# as the thing it is protecting: the key that signs a check run sits on disk in the
+# meta-home, and the function that stamps a result is one an agent can import. That is
+# tamper-evident, not tamper-proof. This workflow moves one half of the evidence
+# somewhere the author cannot reach, so a review record can cite a result nobody in
+# this repository wrote.
+#
+# WHAT IT DOES NOT DO - read this before trusting a green tick
+# Roughly half the checks in scripts/e2e launch the REAL Electron app with a window.
+# They are not run here, and no workflow in this repository runs them. There is no
+# virtual display and no headless harness for them yet; adding one is real work, and
+# pretending otherwise is the failure this repo has spent months fighting. The job
+# prints the exact count at runtime (scripts/ci-fast-lane.mjs) so the claim cannot go
+# stale, and it prints it whether the run is green or red.
+#
+# THIS IS NOT A GATE
+# It has read-only permissions, writes nothing, and must NOT be added to branch
+# protection as a required check. A red run here is a signal for the review flow to
+# read, never something that blocks a push or a merge.
+name: pure-tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pure-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pure-lane:
+    # WINDOWS ON PURPOSE. Helm is a Windows-targeted Electron app, and the pure lane is
+    # not as platform-neutral as "pure node" suggests: several checks assert
+    # Windows-shaped paths (drive letters, backslash handling in a meta-home), and one
+    # asserts the retry behaviour for a file a sync client has locked, which is a
+    # Windows failure mode. More to the point, the lane has been observed green on
+    # Windows and has never been run on Linux - putting it on ubuntu-latest would be an
+    # unverified claim dressed up as cheaper CI. A Linux job can be added the day
+    # somebody actually runs it there and reads the result.
+    runs-on: windows-latest
+    # No continue-on-error, on purpose. It would make a failed run render as a passing
+    # job with a warning nobody reads - hiding a red is the same sin as claiming
+    # coverage this job does not have. A failure here blocks nothing because the job is
+    # not a required check and writes nothing; it does not need to also look green.
+    timeout-minutes: 20
+    steps:
+      - name: Check out Helm
+        uses: actions/checkout@v4
+        with:
+          path: helm
+
+      # Helm imports two packages that are not on npm, declared as `file:` paths to
+      # sibling repositories. `keel` is public, has no dependencies of its own and no
+      # build step, so checking it out straight into node_modules is the whole install:
+      # no `npm ci`, no registry, no lockfile drift, no Electron download. The other one
+      # (@jot/core) is a build artefact of another repo and is NOT provided here - the
+      # single check that needs it is excluded by name in scripts/ci-fast-lane.mjs and
+      # reported as excluded rather than passed.
+      - name: Check out keel into node_modules (the sibling package Helm imports)
+        uses: actions/checkout@v4
+        with:
+          repository: AidinD/keel
+          path: helm/node_modules/keel
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      # Fail with a sentence instead of with 130 identical module-resolution errors.
+      - name: Confirm keel resolved
+        working-directory: helm
+        shell: bash
+        run: |
+          test -f node_modules/keel/package.json || {
+            echo "keel did not land in node_modules - the pure lane cannot run at all."
+            exit 1
+          }
+          node -e "import('keel/storage').then(() => console.log('keel/storage loads'))"
+
+      # Deliberately NOT `npm test`. That launches the app once per app-lane check and
+      # cannot work on a machine with no window. ci-fast-lane.mjs runs the pure lane
+      # through the repo's own runner, cross-checks the runner's lane counts against the
+      # suite on disk, and refuses to report a pass if the two disagree.
+      - name: Pure module checks (the app lane is NOT covered)
+        working-directory: helm
+        run: node scripts/ci-fast-lane.mjs

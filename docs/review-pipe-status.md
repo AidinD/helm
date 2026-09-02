@@ -1,6 +1,6 @@
 # Review pipe - current status
 
-Last updated 2026-07-27. **Read this first**; the chronological reasoning is in
+Last updated 2026-09-02. **Read this first**; the chronological reasoning is in
 `DECISIONS.md` (search "review pipe" - six entries from 2026-07-27 alone).
 This file answers one question: how far can the pipe be trusted right now?
 
@@ -41,8 +41,50 @@ testing (disable a guard, see whether the suite notices) and most mutations WERE
 3. **The signing oracle is narrowed, not closed.** `recordCheckRun` is exported and
    accepts a caller-supplied exit code, so an agent that imports the module can stamp a
    result it never observed. What changed is that the lie must now be about a SPECIFIC
-   declared command at a SPECIFIC commit. A real guarantee needs the runner outside the
-   author's reach (CI) - a project, not a task.
+   declared command at a SPECIFIC commit. **Partly addressed 2026-09-02: the pure lane
+   now runs on GitHub's machines and a record can cite that run. Read the next section
+   before counting it - it moves one lane out of two, and a citation is a pointer, not
+   a second signature.**
+
+## What is outside the assistant's reach, and what is still inside it
+
+Added 2026-09-02 (task 3d01cf26). Be precise about this line, because everything on
+the wrong side of it is still the author vouching for the author.
+
+**Outside.** `.github/workflows/pure-tests.yml` runs the pure lane
+(`scripts/ci-fast-lane.mjs` -> `run-tests.mjs --fast`) on a GitHub-hosted Windows
+runner on every push to `main` and on every pull request. Nothing in this repository
+decides that result, and nothing here can edit it afterwards. The job's token is
+read-only and it writes nothing.
+
+**Still inside, all of it:**
+
+- **The checks that launch the app are NOT run there.** Roughly half the checks in
+  `scripts/e2e` start the real Electron app with a window; a hosted runner has none,
+  and no headless harness or virtual display exists for them yet. No workflow in this
+  repository runs them. They remain something only the author has ever executed. The
+  job prints the live count of them on every run, green or red, so the gap cannot be
+  read as smaller than it is.
+- **Two pure checks are excluded by name** because CI does not install what they
+  import (`@jot/core`, which is a build artefact of a sibling repo, and
+  `@huggingface/transformers`). They are reported as EXCLUDED and never as passed. The
+  list, with reasons, is `EXCLUDED` in `scripts/ci-fast-lane.mjs`.
+- **The checks that drive a real model self-skip.** CI never passes `--live`, so they
+  are reported as skipped and counted as neither pass nor fail.
+- **`checkRuns` are still signed by this process with a key on local disk.** CI does
+  not stamp check runs, and nothing about the gauntlet's provenance changed.
+- **A cited CI run scores nothing.** `externalRuns` on a record is a CITATION - a url
+  and a run id a reader can open. The JSON is still written by an agent, so the field
+  could be invented; what makes it worth anything is that a fabricated run does not
+  survive being clicked. `gauntletStatus` never reads the field: a record with a cited
+  CI success and no signed run is still `unrun`. Making a citation able to turn a check
+  green would let a pass be minted out of a string, which is worse than the honour
+  system it replaces. `covers` is required on every citation for the same reason - a
+  citation with no stated scope reads as "CI passed", and CI covers one lane.
+- **Nobody is watching the workflow.** It is not a required check, it opens no issue
+  and sends no message. A red run is visible in the Actions tab and in a pull request's
+  checks, and nowhere else. That is deliberate (a failed run must not block work) and
+  it is also a gap: a run can go red and stay red unnoticed.
 
 ## What IS hardened (each verified through the running app, not just unit tests)
 
@@ -80,6 +122,12 @@ testing (disable a guard, see whether the suite notices) and most mutations WERE
     node scripts/e2e/test-forged-run-presentation.mjs # a fabricated green, at every level
     node scripts/e2e/test-atomic-write.mjs            # no store keeps a private rename
     node scripts/e2e/test-jot-writers.mjs             # sign-off writes + the done-without-record audit
+    node scripts/e2e/test-ci-evidence-honest.mjs      # the CI coverage statement matches the suite's real split
+
+The last one is the guard on this section rather than on the pipe. It fails if the
+workflow's coverage statement stops matching the suite - a lane count hardcoded instead
+of computed, the app lane wired into the CI job, an exclusion whose stated reason is not
+true, or a citation that could score a check.
 
 ## Coarse commit pinning - RESOLVED 2026-07-27
 

@@ -414,6 +414,9 @@ export function reviewRecordProblems(rec) {
   }
   problems.push(...criticalityProblems(rec));
   problems.push(...acceptanceRecordProblems(rec));
+  // Only when the field is present. Every record written before external citations
+  // existed has no `externalRuns`, and none of them may become invalid for that.
+  problems.push(...externalRunProblems(rec));
   return problems;
 }
 
@@ -692,7 +695,13 @@ export function acceptanceDrift(rec, taskDescription) {
 // actually buys is the line between "the app ran this and stamped the result" and
 // "the author wrote down an outcome they believed" - and the second one is the
 // failure that keeps happening. A real guarantee needs the runner outside the
-// author's reach (CI), which is not built.
+// author's reach (CI).
+//
+// Half of that now exists: .github/workflows/pure-tests.yml runs the PURE lane on
+// GitHub's machines, and `externalRuns` below lets a record cite that run. Read the
+// limits on it there before treating a citation as proof - it is a pointer to a
+// result the reader can go and check, not a second signature, and it covers only
+// the lane that does not launch the app.
 const RUN_KEY_FILE = path.join(".helm", "run-key");
 
 /**
@@ -877,6 +886,132 @@ export function verifyCheckRun(metaHome, taskId, run, declaredCmd = undefined) {
     return false;
   }
   return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(run.sig));
+}
+
+// --- External evidence: a run nobody here performed ------------------------------
+//
+// `checkRuns` above are runs this app spawned and signed. `externalRuns` are the
+// opposite kind of evidence: a POINTER at a result produced somewhere else, by
+// something the author cannot influence - in practice a GitHub Actions run of
+// .github/workflows/pure-tests.yml.
+//
+// WHAT IT IS WORTH, exactly, because overstating this would defeat the point:
+//
+//   - It is a CITATION, not a signature. The JSON is still written by an agent, so
+//     the url, the run id and the conclusion could all be invented. What makes it
+//     worth anything is that the reader can open the url and see the real run, and
+//     a fabricated one does not survive that. The value is checkability by a human,
+//     not proof on the page.
+//   - It therefore CANNOT score a check. gauntletStatus never reads this field: a
+//     record with a cited CI success and no signed run is still `unrun`. If a
+//     citation could turn a check green, an agent would have a way to mint a pass
+//     out of a string, which is strictly worse than the honour system it replaced.
+//   - It covers ONE LANE. The workflow runs the pure module checks only; the checks
+//     that launch the real Electron app are not run there and no workflow runs them.
+//     That is why `covers` is required below rather than optional - a citation with
+//     no stated scope reads as "CI passed", which would let a half-covered suite
+//     look complete. Partial coverage that looks complete is the failure this whole
+//     pipe exists to prevent.
+//
+// Additive by construction: the field is validated only when present, so every
+// record written before it existed still loads and still validates.
+export const EXTERNAL_RUN_PROVIDERS = Object.freeze(["github-actions"]);
+
+// GitHub's own vocabulary for how a run ended. Anything outside it means the writer
+// invented a verdict, which is exactly what must not be accepted quietly.
+export const EXTERNAL_RUN_CONCLUSIONS = Object.freeze([
+  "success",
+  "failure",
+  "cancelled",
+  "timed_out",
+  "skipped",
+  "neutral",
+  "action_required",
+  "stale",
+  "startup_failure",
+]);
+
+const GITHUB_RUN_URL = /^https:\/\/[A-Za-z0-9.-]+\/[^/\s]+\/[^/\s]+\/actions\/runs\/(\d+)(?:\/|$)/;
+
+/**
+ * What is wrong with a record's external citations, as human-readable problems.
+ *
+ * Strict on the two things that decide whether a citation is checkable at all: a url
+ * that really points at a run, and a stated scope. A loose citation is worse than
+ * none - it reads as external proof and leads nowhere.
+ */
+export function externalRunProblems(rec) {
+  const problems = [];
+  if (!rec || rec.externalRuns === undefined) {
+    return problems;
+  }
+  if (!Array.isArray(rec.externalRuns)) {
+    problems.push("externalRuns must be an array (omit it entirely if there is no external run to cite)");
+    return problems;
+  }
+  rec.externalRuns.forEach((run, i) => {
+    const at = `externalRuns[${i}]`;
+    if (!run || typeof run !== "object") {
+      problems.push(`${at} is not an object`);
+      return;
+    }
+    if (!EXTERNAL_RUN_PROVIDERS.includes(run.provider)) {
+      problems.push(`${at}.provider must be one of ${EXTERNAL_RUN_PROVIDERS.join(" | ")} - an unknown provider cannot be checked`);
+    }
+    const url = String(run.url || "");
+    const m = GITHUB_RUN_URL.exec(url);
+    if (!m) {
+      problems.push(`${at}.url must be a run url a reader can open (https://<host>/<owner>/<repo>/actions/runs/<id>), not ${JSON.stringify(url.slice(0, 60))}`);
+    }
+    const runId = String(run.runId || "");
+    if (!/^\d+$/.test(runId)) {
+      problems.push(`${at}.runId must be the run's numeric id`);
+    } else if (m && m[1] !== runId) {
+      // The url is what a reader opens and the id is what a tool would fetch. If they
+      // disagree, at least one of them is describing a different run.
+      problems.push(`${at}.runId (${runId}) is not the run the url points at (${m[1]})`);
+    }
+    if (!EXTERNAL_RUN_CONCLUSIONS.includes(run.conclusion)) {
+      problems.push(`${at}.conclusion must be one of ${EXTERNAL_RUN_CONCLUSIONS.join(" | ")}`);
+    }
+    if (!run.covers || !String(run.covers).trim()) {
+      // The whole reason this is not optional: a citation with no scope reads as "CI
+      // passed", and the workflow behind it runs one lane out of two.
+      problems.push(`${at}.covers is empty - a citation must say what the run covered AND what it did not, or it reads as more than it is`);
+    }
+    if (run.commit !== undefined && run.commit !== null && !/^[0-9a-f]{7,40}$/i.test(String(run.commit))) {
+      problems.push(`${at}.commit must be a commit sha if present`);
+    }
+    if (run.ranAt !== undefined && run.ranAt !== null && typeof run.ranAt !== "number") {
+      problems.push(`${at}.ranAt must be a timestamp in milliseconds if present`);
+    }
+  });
+  return problems;
+}
+
+/**
+ * A record's citations, normalized for display. Never used to score anything - see the
+ * note above. `stale` is the one derived flag: a citation for a commit other than the
+ * one the record is pinned to is still worth showing, and worth showing as old.
+ */
+export function externalRuns(rec, { head = null } = {}) {
+  if (!rec || !Array.isArray(rec.externalRuns)) {
+    return [];
+  }
+  return rec.externalRuns
+    .filter((run) => run && typeof run === "object")
+    .map((run) => ({
+      provider: String(run.provider || ""),
+      runId: run.runId ? String(run.runId) : null,
+      url: run.url ? String(run.url) : null,
+      workflow: run.workflow ? String(run.workflow) : null,
+      conclusion: String(run.conclusion || ""),
+      passed: run.conclusion === "success",
+      commit: run.commit ? String(run.commit) : null,
+      ranAt: typeof run.ranAt === "number" ? run.ranAt : null,
+      covers: String(run.covers || ""),
+      stale: Boolean(head && run.commit && String(run.commit) !== String(head)),
+    }));
 }
 
 /**
