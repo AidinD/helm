@@ -200,14 +200,24 @@ try {
   // navigation below. It takes a build finishing inside that gap, and a build costs hundreds
   // of milliseconds, so it should not happen - and if it does, the failure message says
   // exactly that rather than blaming the render.
-  await app.eval(`navigateToPage('dashboard')`);
-  await new Promise((r) => setTimeout(r, 150));
+  // Routines, not Dashboard: measured at 1ms of layout and it makes no review request, so
+  // parking here does not put a build in flight across the reset below.
+  await app.eval(`navigateToPage('routines')`);
+  await new Promise((r) => setTimeout(r, 400));
   // The reset itself is asserted. A renamed or removed handler would silently turn it into a
-  // no-op and hand the cache back warm - which is the same trivially-green check by another
-  // route.
+  // no-op and hand the cache back warm - a trivially-green check by another route.
   const cleared = await app.eval(`window.helm.acknowledgeNoRecord('e2e-view-switch-cost-no-such-task')`);
+  let settled = cleared?.ok === true ? await measureReviewTransition() : null;
   ok(cleared?.ok === true, `the queue cache was really cleared before timing the transition (${JSON.stringify(cleared)}) - without this the "real queue" comes back from memory and the check cannot fail`);
-  const settled = await app.eval(`(async () => {
+  // Never let a failed reset fall through into a null read below: that would report the
+  // transition assertions as a crash rather than as the reset failing, which is a worse
+  // message about a real problem.
+  if (!settled) {
+    settled = { ms: 0, children: 0, placeholder: false, real: false, fromCache: null };
+  }
+
+  async function measureReviewTransition() {
+    return app.eval(`(async () => {
     const page = document.getElementById('reviewPage');
     page.replaceChildren();
     const t0 = performance.now();
@@ -235,6 +245,7 @@ try {
     }
     return { ms: performance.now() - t0, children: page.childElementCount, placeholder, real: false, fromCache: null };
   })()`);
+  }
   // That duration is NOT asserted, and the number it prints will look alarming. Read it
   // with the harness in mind: every E2E run gets a FRESH temp config (see harness.mjs), so
   // no project's commit baseline is stored yet and the build establishes all ~16 of them
@@ -249,13 +260,29 @@ try {
     `the Review page showed its "Building the review queue" placeholder first, so there was something for the queue to replace - if this fails the measurement below is about nothing`
   );
   ok(settled.real, `the placeholder is replaced by the real queue (${settled.children} elements) - a first paint that never fills in would look finished while showing nothing`);
-  ok(
-    settled.real && settled.fromCache === false,
-    !settled.real
-      ? `the queue never arrived, so there is nothing to say about where it came from`
-      : settled.fromCache
-        ? `the placeholder was replaced from the CACHE (the page said it was checking for changes), so the reset above did not hold: the ${settled.ms.toFixed(0)}ms is an IPC round trip against a warm payload, not the build this measurement is supposed to cover`
-        : `what replaced the placeholder was a freshly BUILT queue, not the last known one (the page did not say it was checking for changes) - so the ${settled.ms.toFixed(0)}ms above is the slow path this two-step render exists for`
+  // WHERE THE PAYLOAD CAME FROM IS NOT ASSERTED, and removing that assertion is a correction
+  // rather than a retreat. It read the page's "Showing the last known queue - checking for
+  // changes" line as "this payload came from cache". That line means something else: the
+  // renderer paints it when `refreshing` is true, which is "a fresh build is in flight".
+  //
+  // So the check asserted the opposite of its own sentence, and in the worst possible
+  // direction - clearing the cache STARTS a build, which sets `refreshing`, which the check
+  // read as a cache hit. The better the reset worked, the more certainly it failed. Three
+  // resets in a row, each verified to have run, each followed by that reading. It could not
+  // have passed except by the reset silently doing nothing, which is precisely the
+  // trivially-green state it was written to end.
+  //
+  // The property is still worth having and still unproven: that what replaces the
+  // placeholder is a freshly built queue rather than the last known one. The build counter
+  // this file already reads for the cold-cache check is the nearest honest observable, and it
+  // was rejected for a good reason - it says SOME build ran somewhere in the window, and the
+  // badge and the dashboard widget both ask for the queue too. Finding an observable that
+  // distinguishes THIS render's payload is its own task, and inventing one here would be the
+  // third guess in a row.
+  //
+  // Printed, so a human can see it, and not asserted, so it cannot lie.
+  console.log(
+    `      (the page ${settled.fromCache ? "WAS" : "was not"} showing "checking for changes" at the transition - a refresh in flight, which is not the same as a cached payload)`
   );
 } finally {
   await app.close();
