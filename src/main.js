@@ -16,7 +16,7 @@ import { loadJot, loadGoals, addSubtask, formatJotSummaryForClassifier, projectB
 import { resolveJotDataDir } from "./lib/jotDataDir.js";
 import { loadConfig, writeConfig } from "./lib/config.js";
 import { startSession, resolveClaudeBinary } from "./lib/launcher.js";
-import { turnCounterPath, TIER_FIRST_MATE, TIER_SECOND_MATE, TIER_CREW } from "./lib/tierGuard.js";
+import { turnCounterPath, TIER_FIRST_MATE, TIER_SECOND_MATE, TIER_CREW, TIER_ASSISTANT } from "./lib/tierGuard.js";
 import { createLiveSessionRegistry } from "./lib/liveSessions.js";
 import { sessionLifecycleState, applyStatusOverrides, sessionStateSource } from "./lib/sessionState.js";
 import { createJotHostStore } from "./lib/jotHostStore.js";
@@ -91,7 +91,7 @@ import {
 import { planSweep, describeSweep, reconcileSweepReport } from "./lib/worktreeSweep.js";
 import { docsStaleness, staleProjectsAsync, docsNudgeCandidates, DOCS_NUDGE_ACTIVE_DAYS } from "./lib/docsStaleness.js";
 import { loadDomains, registerDomain, removeDomain } from "./lib/domains.js";
-import { ensureMates, activeMates, findMateById, loadMates, renameMate, retireAndRespawn, bindMateSession, consumeMateHandoff, setMatePersona, rethemeMateNames, retireMateSlot, clampMateSlots, MATE_SLOT_COUNT, MATE_SLOT_MAX } from "./lib/mates.js";
+import { ensureMates, ensureAssistantSeat, assistantSeat, activeMates, findMateById, loadMates, renameMate, retireAndRespawn, bindMateSession, consumeMateHandoff, setMatePersona, rethemeMateNames, retireMateSlot, clampMateSlots, MATE_SLOT_COUNT, MATE_SLOT_MAX } from "./lib/mates.js";
 
 // How many first mates the captain wants. Two by default; configurable since
 // 2026-08-02 (task 4bf2421c) because the fleet was hard-capped at two.
@@ -107,7 +107,7 @@ const configuredMateSlots = () => {
 import { personaOverlay, personaAgents, PERSONAS } from "./lib/personas.js";
 import { listSlashItems } from "./lib/slashCommands.js";
 import { trackHelmUsage, summarizeHelmUsage, summarizeReviewActions } from "./lib/helmUsage.js";
-import { mcpAllowedToolsFromConfig } from "./lib/userMcp.js";
+import { mcpAllowedToolsFromConfig, namedMcpServersFromConfig } from "./lib/userMcp.js";
 import { initAutoUpdate } from "./lib/autoUpdate.js";
 import { deriveSecondMates, bindSecondMateSession, renameSecondMate, readBindings, proposeSecondMate, secondMateIdForSession, secondMateId, removeSecondMates, resolveSecondMateId, isDisplaySecondMateId, migrateDisplayKeyBindings, releaseDisplayKeyedSession, AUTO_CAPTAIN } from "./lib/secondMates.js";
 import {
@@ -2219,6 +2219,23 @@ function resetTierTurnCounter(metaHome, sessionId) {
   }
 }
 
+// The assistant seat's operating manual (src/lib/assistant-instructions.md), attached on a
+// fresh assistant turn. A sibling of the two below rather than a persona overlay on the
+// first-mate manual: personas colour a coordinator's temperament and leave its role intact,
+// and this seat's role is a different one. Cached (static doc).
+let _assistantInstructions = null;
+function assistantInstructions() {
+  if (_assistantInstructions === null) {
+    try {
+      _assistantInstructions = fs.readFileSync(path.join(__dirname, "lib", "assistant-instructions.md"), "utf8");
+    } catch (err) {
+      console.error("[helm] could not read assistant-instructions.md:", err);
+      _assistantInstructions = "";
+    }
+  }
+  return _assistantInstructions || undefined;
+}
+
 let _firstMateInstructions = null;
 function firstMateInstructions() {
   if (_firstMateInstructions === null) {
@@ -2281,6 +2298,50 @@ function buildDispatchMcpConfig(metaHome, callerId, callerTier, parentMateId = n
   };
   return JSON.stringify(config);
 }
+
+/**
+ * The stores the assistant seat is the scribe of.
+ *
+ * Named here rather than derived, because "which stores does the assistant own" is a decision
+ * and not a fact about the machine. Adding one is a deliberate act with a store behind it that
+ * validates its own writes - see GUARD_EXEMPT_SERVERS in tierGuard.js, whose list must move
+ * with this one.
+ *
+ * `nib` is present but READ-ONLY by the store's own choice, on the seat's own recommendation:
+ * a note filed with the wrong tag silently resets a contact cadence and turns an overdue duty
+ * green, with no error anywhere. Read access is worth having now; write access is worth
+ * earning (DECISIONS.md 2026-09-02).
+ */
+const ASSISTANT_STORE_SERVERS = ["tend", "jot", "nib", "assistant"];
+
+/**
+ * The assistant seat's MCP config: Helm's dispatch server plus its stores, and nothing else.
+ *
+ * Neither of the two existing answers fits. A first mate launches strict with only the
+ * dispatch server - a coordinator has no business carrying the machine's Roblox, Unity,
+ * fitness, router and HR servers - and a second mate keeps the user's whole set for hands-on
+ * project work. This seat needs three or four named servers and none of the rest, so it stays
+ * STRICT and the stores are added by name.
+ *
+ * The store definitions are copied out of the user's own config rather than written here, so
+ * Helm holds no absolute path into a sibling repository. A store he has not configured yet is
+ * simply absent, and the missing tool is the visible symptom rather than a launch failure.
+ */
+function buildAssistantMcpConfig(metaHome, mateId) {
+  const base = JSON.parse(buildDispatchMcpConfig(metaHome, mateId, TIER_ASSISTANT));
+  const stores = namedMcpServersFromConfig(path.join(os.homedir(), ".claude.json"), ASSISTANT_STORE_SERVERS);
+  const missing = ASSISTANT_STORE_SERVERS.filter((name) => !stores[name]);
+  if (missing.length > 0) {
+    // Said out loud on every launch that is missing one. A seat quietly running without its
+    // task board looks like a seat that has decided not to use it.
+    console.warn(`[helm] the assistant seat is launching WITHOUT these stores (not in ~/.claude.json mcpServers): ${missing.join(", ")}`);
+  }
+  base.mcpServers = { ...base.mcpServers, ...stores };
+  return JSON.stringify(base);
+}
+
+/** Pre-approved tools for the assistant seat: Helm's delegation tools plus its stores. */
+const ASSISTANT_ALLOWED_TOOLS = [...FIRST_MATE_ALLOWED_TOOLS, ...ASSISTANT_STORE_SERVERS.map((name) => `mcp__${name}`)];
 
 function buildFirstMateMcpConfig(metaHome, mateId) {
   // Named mates: the session is bound to one of the two fixed mate slots by the
@@ -2557,9 +2618,19 @@ ipcMain.handle("lavish:formatPrompt", (_event, { annotations, domSnapshot }) => 
 ipcMain.handle("mates:list", () => {
   try {
     const metaHome = resolveMetaHome();
-    return { ok: true, active: ensureMates(metaHome, configuredMateSlots()), all: loadMates() };
+    // The assistant seat is ensured here rather than in its own call, so it exists as soon as
+    // anything asks who the seats are. It is returned SEPARATELY from `active` on purpose:
+    // every existing caller of that array means coordinators by it, and quietly widening the
+    // meaning of a field forty places read from is the shape of bug this repo keeps finding.
+    // A new field is ignored by anything that does not know about it.
+    return {
+      ok: true,
+      active: ensureMates(metaHome, configuredMateSlots()),
+      assistant: ensureAssistantSeat(metaHome),
+      all: loadMates(),
+    };
   } catch (err) {
-    return { ok: false, error: err?.message || String(err), active: [], all: [] };
+    return { ok: false, error: err?.message || String(err), active: [], assistant: null, all: [] };
   }
 });
 // Add a first mate. The fleet was fixed at two slots; this raises the configured
@@ -2875,8 +2946,46 @@ ipcMain.handle(
     // connection" - a direct personal session rooted in /claude was classed as a
     // first mate).
     const firstMateId = mateId || (resumeSessionId ? activeMates().find((m) => m.sessionId === resumeSessionId)?.mateId || null : null);
+    // The assistant seat, resolved the same two ways: the pane passed its id, or a resumed
+    // session resolves to it by its binding. Deliberately NOT found through activeMates() -
+    // that list is coordinators only, for the reason given on it in mates.js.
+    //
+    // Tested BEFORE the first-mate branch below, and that order is the whole of the wiring:
+    // this seat is also rooted in the meta-home and also has a mateId, so it matches the
+    // first-mate condition exactly. Reversed, the assistant would silently launch as a
+    // coordinator - strict MCP with no stores, and a manual telling it to dispatch work it is
+    // there to do the thinking part of.
+    const seatedAssistant = (() => {
+      const seat = assistantSeat();
+      if (!seat) {
+        return null;
+      }
+      if (mateId && mateId === seat.mateId) {
+        return seat;
+      }
+      if (resumeSessionId && seat.sessionId === resumeSessionId) {
+        return seat;
+      }
+      return null;
+    })();
     try {
-      if (isMetaHomeRoot(cwd) && firstMateId) {
+      if (seatedAssistant) {
+        const metaHome = resolveMetaHome();
+        ensureDispatchDirs(metaHome);
+        mcpConfig = buildAssistantMcpConfig(metaHome, seatedAssistant.mateId);
+        allowedTools = ASSISTANT_ALLOWED_TOOLS;
+        // The same schema removal a first mate gets: a tool that is not offered cannot be
+        // called, which is stronger than intercepting it. The hook below is what covers the
+        // shell, which cannot be removed because this seat reads with it.
+        disallowedTools = FIRST_MATE_DISALLOWED_TOOLS;
+        launchTier = TIER_ASSISTANT;
+        // STRICT, like a first mate and unlike a second mate. The stores were added to the
+        // config by name; strict is what keeps the machine's other servers out.
+        strictMcpConfig = true;
+        if (!resumeSessionId) {
+          appendSystemPrompt = assistantInstructions();
+        }
+      } else if (isMetaHomeRoot(cwd) && firstMateId) {
         const metaHome = resolveMetaHome();
         ensureDispatchDirs(metaHome);
         mcpConfig = buildFirstMateMcpConfig(metaHome, firstMateId);

@@ -57,6 +57,30 @@ export const TIER_SECOND_MATE = "second-mate";
  */
 export const TIER_CREW = "crew";
 
+/**
+ * The assistant seat. Same DECISION as a first mate; a different sentence.
+ *
+ * It is a tier rather than a reuse of TIER_FIRST_MATE for one reason, and the reason is the
+ * denial text. The first-mate refusal opens "a first mate does not write files. Anywhere - not
+ * a project's, not the meta-home's, not a skill or a note". For this seat the meta-home clause
+ * is exactly wrong: the goals file and the daily log ARE meta-home files it is the sole scribe
+ * of, and it writes them through MCP surfaces built for the purpose. Handing it a refusal that
+ * says it may not touch its own store would teach it to stop trying - and a guard that
+ * misleads is one that gets routed around, which is this file's own stated failure mode.
+ *
+ * So the policy below is deliberately identical: no file-writing tool, no non-read-only shell.
+ * What differs is what the seat is told to do instead. A first mate is told to dispatch; the
+ * assistant is told that its stores have tools and that repository work belongs to a session.
+ *
+ * The write access it does have is therefore entirely a function of which MCP servers its
+ * launch attaches, never of this guard relaxing. That was the decision (DECISIONS.md,
+ * 2026-09-02): a path-aware guard would have allowed any write inside an allowed folder,
+ * including an invalid one - in one of these stores a note carrying the wrong tag silently
+ * resets a cadence and turns an overdue duty green, with no error anywhere. An MCP surface can
+ * refuse that; a path check cannot.
+ */
+export const TIER_ASSISTANT = "assistant";
+
 // A second mate orchestrates crew and compiles what comes back. The captain, 2026-08-14:
 // "jag vill att 2nd mate orkestrerar crew mates att göra jobb som 2nd mate sedan
 // sammanställer - den ska inte göra större jobb själv."
@@ -86,9 +110,38 @@ const WRITE_SHAPED = ["write", "edit", "patch", "creat", "delete", "remove", "re
 // important thing a blocked first mate must still be able to call.
 const NOT_WRITE_SHAPED = new Set(["todowrite", "taskcreate", "taskupdate", "websearch", "webfetch", "read", "grep", "glob", "ls"]);
 
+/**
+ * Servers whose writes this guard has no opinion about, by name prefix.
+ *
+ * `helm_` was the first and the reason is stated above: the delegation tools are the thing a
+ * blocked seat must still be able to call, and `helm_create_second_mate` happens to contain
+ * "creat".
+ *
+ * The personal stores are here for a sharper reason, found on 2026-09-02 while wiring the
+ * assistant seat. "MCP tools are not this guard's business" was believed to be true in
+ * general and is not: the check strips the server prefix and looks at the bare tool name, so
+ * `assistant_append_log` was refused for containing "append" while `tend_log_touch` passed
+ * for containing nothing. `jot_create_todo` would be refused and `jot_set_status` allowed.
+ * The line was falling wherever a tool name happened to land, which is a guard deciding by
+ * accident.
+ *
+ * The honest fix is not to rename tools until they slip past - that is routing around the
+ * guard, which this file refuses to tolerate from a session and must not do to itself. It is
+ * to say what the guard is FOR. It exists so a coordinating seat cannot do hands-on work in a
+ * repository. A journal entry, a task's status, a line in a daily log: none of those are that.
+ * And each of these surfaces refuses an invalid write on its own - which is exactly why the
+ * writing was routed through them instead of through a path-aware exception here (see
+ * TIER_ASSISTANT, and DECISIONS.md 2026-09-02).
+ *
+ * PREFIXES, not whole names, because these servers will grow tools and a list of every tool
+ * name would go stale silently. Adding a prefix here is a deliberate statement that the store
+ * behind it validates its own writes; do not add one for a server that does not.
+ */
+const GUARD_EXEMPT_SERVERS = ["helm_", "tend_", "jot_", "assistant_"];
+
 function toolIsWriteShaped(name) {
   const bare = name.startsWith("mcp__") ? name.split("__").pop() : name;
-  if (NOT_WRITE_SHAPED.has(bare) || bare.startsWith("helm_")) {
+  if (NOT_WRITE_SHAPED.has(bare) || GUARD_EXEMPT_SERVERS.some((prefix) => bare.startsWith(prefix))) {
     return false;
   }
   return WRITE_SHAPED.some((stem) => bare.includes(stem));
@@ -783,6 +836,25 @@ const FIRST_MATE_DENIAL = [
   "why he wants it, where the output belongs, and anything you have already gathered.",
 ].join("\n");
 
+const ASSISTANT_DENIAL = [
+  "HELM TIER GUARD: the assistant seat does not write files with a tool or a shell.",
+  "",
+  "That is not the same as being read-only, and the difference is the point. Your own stores",
+  "have MCP tools built for writing them - the task board, the people store, your goals file",
+  "and your daily log. Use those. They can refuse a write that would corrupt the store, which",
+  "is exactly why the writing goes through them rather than through Write, Edit or a shell.",
+  "",
+  "The shell is open to you for READING - ls, cat, grep, find, jq, git log, git diff,",
+  "git status. Anything not provably read-only is refused, including a command wrapped in",
+  "another shell.",
+  "",
+  "What to do instead, and do NOT simply refuse or answer with a pointer: if this is work in a",
+  "repository, hand it to a session WITH the context - what he actually said in his own words,",
+  "why he wants it, where the output belongs, and whatever you have already gathered. If it is",
+  "a note, a plan or a document, draft it in your reply and let the session that owns the tree",
+  "write it. If it belongs in one of your stores, it has a tool.",
+].join("\n");
+
 function crewDenial(why) {
   return [
     `HELM TIER GUARD: ${why}.`,
@@ -835,6 +907,18 @@ export function decideToolCall({ tier, tool, input = {}, writesThisTurn = 0, bud
     const why = shellNotReadOnlyReason(input.command);
     if (why) {
       return { decision: "deny", isWrite: true, reason: `${FIRST_MATE_DENIAL}\n\n(Blocked because ${why}.)` };
+    }
+    return { decision: "allow", isWrite: false };
+  }
+
+  if (tier === TIER_ASSISTANT) {
+    // Identical policy to a first mate, different sentence. See TIER_ASSISTANT.
+    if (isMutatingTool) {
+      return { decision: "deny", isWrite: true, reason: `${ASSISTANT_DENIAL}\n\n(Blocked because \`${tool}\` writes a file.)` };
+    }
+    const why = shellNotReadOnlyReason(input.command);
+    if (why) {
+      return { decision: "deny", isWrite: true, reason: `${ASSISTANT_DENIAL}\n\n(Blocked because ${why}.)` };
     }
     return { decision: "allow", isWrite: false };
   }

@@ -328,8 +328,35 @@ function pickName(taken, seed = 0, pool = NAUTICAL_NAMES) {
   return `Mate ${used.size + 1}`;
 }
 
+/**
+ * The two kinds of seat this store holds.
+ *
+ * A coordinator is one of a POOL: it lives in a numbered slot, gets a random name at birth,
+ * and is retired and respawned when its context saturates. The assistant is SINGULAR and
+ * standing - one seat, a fixed name, no slot. Same store because both are seats the captain
+ * jumps into and both attribute dispatched work by mateId; different kind because almost
+ * every rule about slots, naming and respawn applies to one and not the other.
+ *
+ * A record with no `kind` is a coordinator. Every mate written before 2026-09-02 predates
+ * this field, and defaulting rather than migrating means an existing mates.json keeps working
+ * untouched.
+ */
+export const SEAT_COORDINATOR = "coordinator";
+export const SEAT_ASSISTANT = "assistant";
+
+const seatKind = (mate) => mate?.kind || SEAT_COORDINATOR;
+
+/**
+ * Active COORDINATORS only, and that exclusion is load-bearing rather than tidy.
+ *
+ * `buildFirstMateMcpConfig` falls back to `activeMates()[0]` for a meta-home launch that
+ * named no mate, and the assistant sorts to the front of any slot-ordered list because it has
+ * no slot (`?? 0`). Including it here would hand a plain first-mate launch the assistant's
+ * identity - its mateId on the dispatches, its widget showing another seat's crew. The
+ * assistant is reached through assistantSeat() instead, deliberately.
+ */
 function activeMatesFrom(mates) {
-  return mates.filter((m) => m.status === "active");
+  return mates.filter((m) => m.status === "active" && seatKind(m) === SEAT_COORDINATOR);
 }
 
 /** Returns all persisted mates (active + retired). */
@@ -385,6 +412,53 @@ export function ensureMates(root, slotCount = MATE_SLOT_COUNT) {
     writeState(state);
   }
   return activeMatesFrom(state.mates).sort((a, b) => (a.slot ?? 0) - (b.slot ?? 0));
+}
+
+/**
+ * The assistant seat, or null when it has never been created.
+ *
+ * Separate from activeMates() for the reason given there. Returns the ACTIVE one: like a
+ * coordinator, the seat is a role backed by a succession of sessions, so a retired record is
+ * history rather than the seat.
+ */
+export function assistantSeat() {
+  return readState().mates.find((m) => m.status === "active" && seatKind(m) === SEAT_ASSISTANT) || null;
+}
+
+/**
+ * Guarantees the one assistant seat exists, rooted at `root`. Idempotent.
+ *
+ * No slot and no random name. A coordinator's name is disposable - the pool exists so two
+ * anonymous slots are distinguishable - while this seat's name is how he refers to it and how
+ * another session addresses it, so it is fixed. Renaming stays possible through renameMate;
+ * nothing here overwrites a name he has changed.
+ */
+export function ensureAssistantSeat(root) {
+  if (!root) {
+    throw new Error("ensureAssistantSeat requires a root path");
+  }
+  const existing = assistantSeat();
+  if (existing) {
+    return existing;
+  }
+  const state = readState();
+  const seat = {
+    mateId: `mate_${crypto.randomUUID()}`,
+    // Explicitly null rather than absent: a slot of 0 would collide with a coordinator's, and
+    // the slot-ordered readers all use `?? 0`, so absent and 0 are indistinguishable there.
+    slot: null,
+    kind: SEAT_ASSISTANT,
+    name: "Assistent",
+    root: path.resolve(root),
+    status: "active",
+    // Personas are a coordinator's temperament overlay. This seat has a manual of its own.
+    persona: null,
+    createdAt: Date.now(),
+    retiredAt: null,
+  };
+  state.mates.push(seat);
+  writeState(state);
+  return seat;
 }
 
 /** Looks up a mate by id (active OR retired, so historical runs stay named), or null. */

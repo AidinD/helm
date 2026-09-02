@@ -12711,6 +12711,10 @@ const WIDGET_CATALOG = {
   captain: { label: "Captain", span: 4, accent: "mate", singleton: true },
   auto: { label: "Auto", span: 4, accent: "mate", singleton: true },
   firstMate: { label: "First mate", span: 4, accent: "mate", perMate: true },
+  // The assistant seat. A singleton rather than perMate: there is one, always, and it is not
+  // one of the coordinator pool (see mates.js). Its own accent so a glance separates the seat
+  // that holds cross-project state from the seats that coordinate work.
+  assistant: { label: "Assistant", span: 4, accent: "acc", singleton: true },
   docsDrift: { label: "Docs drift", span: 4, accent: "acc", singleton: true },
   review: { label: "Review", span: 4, accent: "acc", singleton: true },
   // Layout-only entries, so a row can be left deliberately short instead of the
@@ -12750,6 +12754,9 @@ function widgetLayout(mates) {
     layout.push({ id: `w-mate-${mate.mateId}`, type: "firstMate", span: 4, mateId: mate.mateId });
   }
   layout.push(
+    // Standing, and placed with the seats rather than among the readouts: it is somewhere to
+    // go, not something to look at.
+    { id: "w-assistant", type: "assistant", span: 4 },
     { id: "w-captain", type: "captain", span: 4 },
     { id: "w-auto", type: "auto", span: 4 },
     { id: "w-docsDrift", type: "docsDrift", span: 4 },
@@ -13025,6 +13032,28 @@ function widgetBodyNeedsYou(data, widget) {
     body.querySelectorAll(".dash-queue-grid").forEach((g) => g.classList.add("wd-stacked"));
   }
   return body;
+}
+
+/**
+ * The assistant seat's widget.
+ *
+ * Deliberately the SAME card the Fleet renders for a seat, not a purpose-built readout. The
+ * seat's own account of what would be wrong to build put a dashboard first: "today's value was
+ * disagreement, not display - a widget that renders store state is a worse version of the
+ * store". So this is a way IN to the seat, with its live state on it, and it renders nothing
+ * from Tend, Nib or the board. Those have apps.
+ *
+ * Empty only before the first `mates:list` has come back, since main ensures the seat there -
+ * so the empty text says "loading", not "none", because "none" would be a lie about a seat
+ * that always exists.
+ */
+function widgetBodyAssistant(data) {
+  if (!data.assistant) {
+    return widgetEmpty("Reading the seat…");
+  }
+  // No second mates under it: this seat coordinates by asking and by handing work over, and
+  // any crew it dispatches belongs to the project seat that ends up owning the work.
+  return fleetMateCardEl(data.assistant, [], data.boardSummary || {});
 }
 
 function widgetBodyFirstMate(data, widget) {
@@ -13518,6 +13547,7 @@ async function paintReviewWidget(el = document.getElementById("widgetReviewBody"
 const WIDGET_BODIES = {
   quota: widgetBodyQuota,
   needsYou: widgetBodyNeedsYou,
+  assistant: widgetBodyAssistant,
   captain: widgetBodyCaptain,
   auto: widgetBodyAuto,
   firstMate: widgetBodyFirstMate,
@@ -13852,6 +13882,9 @@ async function renderWidgetDashboard(page) {
   await ensurePersonaCatalog();
   const data = {
     mates,
+    // Separate from `mates` all the way through, the same way main returns it separately:
+    // every reader of that array means coordinators by it.
+    assistant: matesResult?.ok ? matesResult.assistant || null : null,
     secondMates,
     boardSummary,
     goalsResult,
