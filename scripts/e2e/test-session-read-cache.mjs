@@ -91,9 +91,27 @@ try {
     { type: "user", message: {} },
   ];
   const sameSizeBody = rewritten.map((l) => JSON.stringify(l)).join("\n") + "\n";
-  const previousSize = fs.statSync(livePath).size;
+  const previousStat = fs.statSync(livePath);
+  const previousSize = previousStat.size;
   fs.writeFileSync(livePath, sameSizeBody);
-  ok(fs.statSync(livePath).size === previousSize, `the rewrite really is the same size (${previousSize} bytes) - otherwise this checks nothing that the append above did not`);
+  // MOVE THE MTIME EXPLICITLY, rather than hoping the clock moved between two writes in a
+  // row. Measured 2026-09-02: two immediate same-size writes to one file get the SAME
+  // timestamp, and not only in milliseconds - the nanosecond field is identical too, so no
+  // timestamp key can tell them apart at all. This check therefore passed here by timing
+  // luck and failed on a build machine, which is a race dressed as a property.
+  //
+  // The property is still real and still worth asserting: an mtime that has moved while the
+  // size has not MUST invalidate the cache, because size alone would serve the stale answer.
+  // Making the mtime move deliberately is what turns that from a hope into a check - the same
+  // move the mirror case below already makes by pinning it.
+  const bumped = new Date(previousStat.mtimeMs + 2000);
+  fs.utimesSync(livePath, bumped, bumped);
+  const afterStat = fs.statSync(livePath);
+  ok(afterStat.size === previousSize, `the rewrite really is the same size (${previousSize} bytes) - otherwise this checks nothing that the append above did not`);
+  ok(
+    afterStat.mtimeMs !== previousStat.mtimeMs,
+    `and its mtime really did move (${previousStat.mtimeMs} -> ${afterStat.mtimeMs}) - without that this checks nothing at all`
+  );
   const flipped = find(readAllSessions(opts), LIVE);
   ok(
     flipped.lastRole === "user",
