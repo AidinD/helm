@@ -8615,20 +8615,34 @@ function openInlineCapture(actions, button, cwd) {
   input.focus();
 }
 
-// Convention for "this session generated a vision mockup": a Write/Edit to an
-// HTML file whose name contains "mockup" (case-insensitive), e.g.
-// dashboard-mockup.html. Deliberately narrow so ordinary .html writes don't pop
-// the "Open in Plan" banner - the orchestrator/Claude names vision mockups this
-// way on purpose.
+// "This session generated something worth opening in Plan": an HTML file, recognised two
+// ways. Both are deliberately narrow, so an ordinary .html write does not pop the banner.
+//
+//   THE DIRECTORY   anything under `.helm-artifacts/`. This is the one that should win
+//                   over time: it is the same folder the tier guard exempts from a second
+//                   mate's write budget, so "where an artifact goes" is one fact with one
+//                   spelling rather than a naming habit here and a path rule there.
+//
+//   THE NAME        a file whose name contains "mockup". Kept, because sessions have been
+//                   told to name them that way for months and such files already exist;
+//                   removing it would break the feature for every one of them to gain
+//                   tidiness. It is the older half and the weaker one - it asks what a
+//                   file IS, which is a judgement, where the directory is mechanical.
 function isMockupPath(p) {
   if (!p) {
     return false;
   }
-  const name = String(p)
-    .split(/[\\/]/)
-    .pop()
-    .toLowerCase();
-  return name.endsWith(".html") && name.includes("mockup");
+  const parts = String(p).split(/[\\/]/);
+  const name = parts.pop().toLowerCase();
+  if (!name.endsWith(".html")) {
+    return false;
+  }
+  // A path SEGMENT, matching how the guard decides the same question - a folder merely
+  // named like this one must not qualify in one place and not in the other.
+  if (parts.some((segment) => segment.toLowerCase() === ".helm-artifacts")) {
+    return true;
+  }
+  return name.includes("mockup");
 }
 
 // Fills (or clears) a pane's "Open in Plan" banner from pane.detectedMockup.
