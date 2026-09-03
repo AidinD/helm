@@ -2729,6 +2729,52 @@ function reviewActionsEl(row) {
   // reviewer do not actually need a record - they work off the task's commits and its
   // project (row.repoPath, resolved by the payload builder) - so offer them whenever
   // that project is known. Only "Present review" genuinely needs a record to render.
+  // A BINDING IS VISIBLE, AND UNDOABLE. Neither was true until 2026-09-03.
+  //
+  // Binding commits to a card is a judgement a person makes after looking, and a wrong one
+  // sends the next reader to review the wrong diff while telling them it is the right one.
+  // The payload has carried `boundCommitCount` all along and this page never read it, so a
+  // binding was invisible - and `unbindReviewCommits` was bridged, handled, and reachable from
+  // nowhere at all. Bind was buildable and undo was not, which is the wrong half to be missing
+  // when the action is fallible.
+  //
+  // Found by the IPC-surface sweep rather than by anybody hitting it, which is the argument for
+  // that check: a control can be absent for weeks with every file still describing it.
+  if (row.boundCommitCount > 0) {
+    const boundNote = document.createElement("span");
+    boundNote.className = "rev-commit-note";
+    boundNote.textContent = `${row.boundCommitCount} commit${row.boundCommitCount === 1 ? "" : "s"} bound`;
+    boundNote.title =
+      "Somebody tied these commits to this card by hand, so its diff is theirs. Not a review and not a verdict - just which change this card is about.";
+    actions.append(boundNote);
+
+    const unbindBtn = document.createElement("button");
+    unbindBtn.type = "button";
+    unbindBtn.className = "text-btn";
+    unbindBtn.textContent = "Unbind";
+    unbindBtn.title = "Drop the binding, so this card stops claiming those commits. The commits themselves are untouched.";
+    unbindBtn.addEventListener("click", () => {
+      // The app's own confirm, not a native one - window.confirm is disabled here, and a click
+      // that discards somebody's judgement deserves a question rather than a silent undo.
+      customConfirm(
+        `This card claims ${row.boundCommitCount} commit${row.boundCommitCount === 1 ? "" : "s"}. Unbinding drops that link, so its diff goes away until something is bound again. The commits themselves are not touched.`,
+        "Unbind",
+        async () => {
+          unbindBtn.disabled = true;
+          const res = await window.helm.unbindReviewCommits(row.taskId);
+          if (!res?.ok) {
+            unbindBtn.disabled = false;
+            showToast(res?.error || "Could not unbind those.");
+            return;
+          }
+          showToast("Unbound. This card no longer claims those commits.");
+          renderReviewPage();
+        }
+      );
+    });
+    actions.append(unbindBtn);
+  }
+
   const canDiff = !!(row.record || (row.repoPath && row.hasCommits));
   const canReview = !!(row.record || row.repoPath);
   if (canDiff) {

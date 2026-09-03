@@ -103,13 +103,13 @@ const CLASSIFIED = {
     kind: "internal",
     why: "the dispatch MCP server drives this, not the window - a mate resumes its own fleet, and there is no button for it by design.",
   },
+  // `unbindReviewCommits` was here until 2026-09-03 and is gone because the control got
+  // built, which is the direction this list is supposed to move. It was the clearer of the two
+  // calls: binding commits to a card is a fallible judgement, so the undo is worth having, and
+  // the payload had carried the bound count all along without the page ever showing it.
   addJotSubtask: {
     kind: "missing",
     why: "the handler exists and was hardened on 2026-09-02, and nothing in the app can reach it. Adding a subtask to a board card is possible from a session through the board's own MCP server but not from Helm. Either build the control or drop the bridge and the handler together.",
-  },
-  unbindReviewCommits: {
-    kind: "missing",
-    why: "BINDING commits to a review card has a control; unbinding does not, so a wrong binding cannot be undone in the app. Binding is fallible, which makes this the half worth building rather than removing - the opposite call from the domain feature.",
   },
 };
 
