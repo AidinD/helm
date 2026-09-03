@@ -8662,7 +8662,14 @@ function renderMockupBanner(index, el, pane) {
   openBtn.className = "text-btn";
   openBtn.textContent = "Open in Plan";
   openBtn.addEventListener("click", async () => {
-    const res = await openMockupFileInPlan(pane.detectedMockup.path);
+    // The pane that WROTE the artifact, carried into the Plan view so annotations can go back
+    // to it rather than to whatever is focused later. This is the only place that link exists.
+    const res = await openMockupFileInPlan(pane.detectedMockup.path, {
+      cliSessionId: pane.cliSessionId || null,
+      sessionId: pane.sessionId || null,
+      paneIndex: index,
+      title: pane.title || pane.detectedMockup.name,
+    });
     if (!res.ok) {
       label.textContent = "Couldn't open mockup: " + res.error;
     }
@@ -16479,8 +16486,11 @@ function updateRunningIndicator() {
 // HTML mockup is shown in a sandboxed iframe with the annotation SDK injected
 // (see lib/lavishSdk.js, lifted from lavish-axi), the user clicks an element
 // and types feedback ON it, and each annotation comes back as a structured
-// record. "Copy feedback" / "Send to composer" turn the collected annotations
-// into one agent-ready text block. Explicitly a FIRST-PASS draft.
+// record. The Send button then hands the whole set to a session as ONE TURN - back to the
+// session that WROTE the artifact when it was opened from that session's banner, and to the
+// focused pane otherwise, which the button says out loud rather than guessing quietly. If
+// that session is busy the turn is queued and fires when its run finishes, which is the same
+// transport the crew nudge uses. "Copy feedback" remains for taking it elsewhere.
 //
 // The SDK runs inside the sandboxed, null-origin iframe, so it can only reach
 // the host via window.parent.postMessage — collected here (no Express, no
@@ -16495,6 +16505,14 @@ let lavishState = {
   loadError: "",
   pastedHtml: "", // persists the "Artifact HTML" textarea across re-renders so
   // loading a mockup doesn't wipe what you pasted (tweak + reload without re-paste)
+  //
+  // WHO WROTE THIS ARTIFACT. Set when it is opened from a pane's "Open in Plan" banner, null
+  // when it arrived by paste or from the Recents list. The annotation loop is a conversation
+  // with the session that produced the page, and without this the feedback would go to
+  // whichever pane happened to be focused when the button was clicked - which is a mis-send
+  // that looks exactly like a send. Null is honest: the UI then says it is going to the
+  // focused pane instead of pretending to know.
+  origin: null, // { cliSessionId, sessionId, paneIndex, title } | null
 };
 
 // Recently-loaded mockups, most-recent-first, capped at 5. Renderer-only
@@ -16568,12 +16586,93 @@ let lavishRecents = loadLavishRecents();
 // generated-mockup flow calls), so "generate a mockup -> annotate it in Plan"
 // is one action rather than a copy-paste round-trip. Returns { ok } or
 // { ok: false, error }.
-async function openMockupInPlan(html) {
+/**
+ * Which pane the annotation feedback should go to, and how sure we are.
+ *
+ * The artifact's ORIGIN wins: annotating a page is a conversation with the session that wrote
+ * it. Falling back to the focused pane is a guess, so it is returned as one - the caller says
+ * so on the button rather than sending confidently into the wrong session.
+ */
+function lavishFeedbackTarget() {
+  const origin = lavishState.origin;
+  if (origin) {
+    const byId = panes.findIndex(
+      (p) => p && ((origin.cliSessionId && p.cliSessionId === origin.cliSessionId) || (origin.sessionId && p.sessionId === origin.sessionId))
+    );
+    if (byId >= 0) {
+      return { index: byId, sure: true, title: panes[byId].title || origin.title || "" };
+    }
+    // The session that wrote it is not open in a pane any more. Not a target, and saying so
+    // beats sending its feedback to a stranger.
+    return { index: -1, sure: false, title: origin.title || "", gone: true };
+  }
+  const idx = typeof focusedPaneIndex === "number" ? focusedPaneIndex : 0;
+  const pane = panes[idx];
+  return { index: pane ? idx : -1, sure: false, title: pane ? pane.title || "" : "" };
+}
+
+/**
+ * Hand the formatted annotations to a session as ONE turn.
+ *
+ * The card's whole point: annotate several things, send once, one turn. Not one turn per
+ * annotation, and not a block of text left in a composer for the reader to send by hand.
+ *
+ * Deliberately the SAME path a person takes rather than a second sending route - the composer
+ * gets the text, and then either the pane's own send button is clicked or the text is queued
+ * exactly as typing while busy would queue it. A parallel send path is how two ways of doing
+ * one thing drift apart, and this file has spent the week removing those.
+ *
+ * Queueing when busy is the transport the crew nudge already uses (queuedPromptBySession):
+ * step away and it still fires when the current run finishes.
+ */
+function deliverLavishFeedback(index, text) {
+  const pane = panes[index];
+  if (!pane) {
+    return { ok: false, error: "that pane is gone" };
+  }
+  const paneEl = document.querySelector(`.pane[data-pane="${index}"]`);
+  const promptEl = paneEl?.querySelector(".pane-composer textarea");
+  if (!promptEl) {
+    return { ok: false, error: "that pane has no composer open" };
+  }
+  // An existing draft is never overwritten - his half-typed message outranks this, the same
+  // rule the crew nudge follows.
+  promptEl.value = promptEl.value ? `${promptEl.value}
+
+${text}` : text;
+  promptEl.dispatchEvent(new Event("input", { bubbles: true }));
+
+  if (pane.busy) {
+    const queued = promptEl.value.trim();
+    pane.queuedPrompt = queued;
+    if (pane.cliSessionId) {
+      queuedPromptBySession.set(pane.cliSessionId, queued);
+    }
+    promptEl.value = "";
+    // Re-render so the queued-prompt bar appears above the composer it will fire into. The
+    // bar's own renderer is a closure inside the composer builder, which is why this goes
+    // through the pane rather than calling it - the same reason the crew nudge re-renders.
+    renderPane(index);
+    return { ok: true, queued: true };
+  }
+
+  const sendBtn = paneEl.querySelector(".send-btn");
+  if (!sendBtn) {
+    return { ok: false, error: "that pane has no send button" };
+  }
+  sendBtn.click();
+  return { ok: true, queued: false };
+}
+
+async function openMockupInPlan(html, origin = null) {
   const built = await window.helm.buildArtifactSrcdoc(html);
   if (!built || !built.ok) {
     return { ok: false, error: built?.error || "unknown error" };
   }
   lavishState.srcdoc = built.srcdoc;
+  // A new artifact is a new conversation: the previous page's annotations and its origin both
+  // go, or feedback about one page arrives attached to another.
+  lavishState.origin = origin;
   lavishState.annotations = [];
   lavishState.domSnapshot = "";
   lavishState.annotateMode = true;
@@ -16591,12 +16690,12 @@ async function openMockupInPlan(html) {
 // Open a mockup that already exists as an HTML file (by absolute path) straight
 // in the Plan view - the entry point for a generated artifact. Reads the file,
 // then hands off to openMockupInPlan. Returns { ok } / { ok: false, error }.
-async function openMockupFileInPlan(filePath) {
+async function openMockupFileInPlan(filePath, origin = null) {
   const res = await window.helm.readArtifactFile(filePath);
   if (!res || !res.ok) {
     return { ok: false, error: res?.error || "unknown error" };
   }
-  const built = await openMockupInPlan(res.html);
+  const built = await openMockupInPlan(res.html, origin);
   if (built.ok) {
     addLavishFileRecent(filePath);
   }
@@ -16637,7 +16736,7 @@ function renderLavishPage() {
   const intro = document.createElement("div");
   intro.className = "analysis-totals";
   intro.textContent =
-    "Draft / first pass. Load an HTML mockup, toggle annotate mode, click any element and type feedback on it. Each annotation is captured as structured data; 'Send to composer' / 'Copy feedback' turn them into one agent-ready text block.";
+    "Load an HTML mockup, toggle annotate mode, click any element and type feedback on it. Annotate as many as you like, then send them as ONE turn - to the session that wrote the artifact if you opened it from that session's banner, otherwise to the focused pane. A busy session gets it queued.";
   page.append(intro);
 
   // ---- Load form: paste HTML, or point at a file path ----
@@ -16849,28 +16948,46 @@ function renderLavishCollected() {
     }
   });
 
+  // ONE TURN, which is the loop the artifacts card asks for: annotate several things, send
+  // once. This used to fill the focused pane's composer and leave the sending to you - so
+  // every round of design iteration cost a click you had to remember, and the feedback went
+  // to whichever pane happened to be focused rather than to the session that wrote the page.
+  const target = lavishFeedbackTarget();
+  const noteCount = lavishState.annotations.length;
+  const plural = noteCount === 1 ? "" : "s";
   const sendBtn = document.createElement("button");
   sendBtn.className = "goal-start-btn";
-  sendBtn.textContent = "Send to composer";
-  sendBtn.title = "Drop the formatted feedback into the focused chat composer";
-  sendBtn.disabled = lavishState.annotations.length === 0;
+  sendBtn.textContent = target.gone
+    ? "Session closed"
+    : target.sure
+      ? `Send ${noteCount} note${plural} to ${target.title || "the session"}`
+      : `Send ${noteCount} note${plural} to the focused session`;
+  sendBtn.title = target.gone
+    ? "The session that wrote this artifact is not open any more, so there is nowhere to send its feedback. Copy it instead, or reopen that session."
+    : target.sure
+      ? `Sends all ${noteCount} as a single turn to the session that wrote this artifact. If it is busy, it is queued and fires when the current run finishes.`
+      : 'This artifact did not come from a session banner, so its origin is unknown - this sends to the FOCUSED pane. Open it from the "Open in Plan" banner to have feedback go back to the session that wrote it.';
+  sendBtn.disabled = noteCount === 0 || target.index < 0;
   sendBtn.addEventListener("click", async () => {
     const text = await lavishFormatText();
     if (!text) {
       return;
     }
-    // Drop into the focused pane's composer on the Chat page. NEXT-PASS: start
-    // a fresh rooted session directly with this as the prompt (noted deferred).
-    const paneEl = document.querySelector(`.pane[data-pane="${focusedPaneIndex}"]`);
-    const promptEl = paneEl?.querySelector(".pane-composer textarea");
-    if (promptEl) {
-      promptEl.value = promptEl.value ? promptEl.value + "\n\n" + text : text;
-      promptEl.dispatchEvent(new Event("input", { bubbles: true }));
-    }
-    // Also copy, so it's usable even if the user isn't looking at the composer.
+    // Copy first, unconditionally. Delivery can fail for reasons that have nothing to do with
+    // the feedback being wanted - a closed pane, a composer rebuilt mid-click - and losing a
+    // page of annotations to a failed send is the worst outcome available here.
     await window.helm.copyToClipboard(text);
-    // Jump to the Chat page so the composer is visible with the feedback in it.
+    const res = deliverLavishFeedback(target.index, text);
+    if (!res.ok) {
+      showToast(`Couldn't send the feedback: ${res.error}. It is on the clipboard.`);
+      return;
+    }
+    // The annotations have been spent. Keeping them would send them again next round on top
+    // of the new ones, which reads to the mate as the same complaint repeated.
+    lavishState.annotations = [];
+    renderLavishCollected();
     navigateToPage("chat");
+    showToast(res.queued ? "Queued - it fires when the current run finishes." : "Sent as one turn.");
   });
 
   const clearBtn = document.createElement("button");
