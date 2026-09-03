@@ -86,6 +86,23 @@ jobs:
       # node_modules/keel that was checked out by hand - so the app started and died on
       # `Cannot find package 'keel'`. The order was the bug, and the app's own stderr said so
       # the moment the harness surfaced it.
+      # And clear what npm left there first. This is the dangling symlink the whole sibling
+      # story is about, met head-on: npm created node_modules/keel as a link to `../keel`,
+      # which does not exist on a runner, and `actions/checkout` then failed with
+      # "ENOENT: mkdir node_modules\keel" - it follows the broken link, finds nothing, and can
+      # neither create nor overwrite. Removing the link is the whole fix.
+      - name: Clear the dangling link npm left where keel belongs
+        working-directory: helm
+        shell: bash
+        run: |
+          if [ -e node_modules/keel ] || [ -L node_modules/keel ]; then
+            rm -rf node_modules/keel
+            echo "removed what npm left at node_modules/keel"
+          else
+            echo "nothing at node_modules/keel"
+          fi
+          mkdir -p node_modules
+
       - name: Check out keel into node_modules (after the install, which would prune it)
         uses: actions/checkout@v4
         with:
