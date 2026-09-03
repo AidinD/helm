@@ -71,16 +71,47 @@ jobs:
       #
       # Electron itself IS needed and its download is the expensive part; there is no way to
       # answer this workflow's question without it.
-      - name: Install dependencies (Electron included - this is the expensive step)
+      - name: Install dependencies
         working-directory: helm
         run: npm install --ignore-scripts --no-audit --no-fund
 
-      - name: Confirm Electron is actually here
+      # `--ignore-scripts` above skips THIS repo's postinstall check, which is right here (keel
+      # is placed by hand and @jot/core is deliberately absent) - but it also skipped ELECTRON's
+      # own postinstall, and that is the step that downloads the actual binary. The npm package
+      # is only a downloader. The first run of this probe failed with "Electron failed to
+      # install correctly" for exactly that reason: one flag turned off two different things.
+      #
+      # So Electron's installer is run explicitly, which is narrower than letting every
+      # package's install hook run on a runner.
+      - name: Download the Electron binary (its own postinstall, run on purpose)
+        working-directory: helm
+        run: node node_modules/electron/install.js
+
+      # The BINARY, not the package. The first version of this step checked that the directory
+      # and its package.json existed and passed while Electron was broken - so the probe
+      # reported a failure that looked like "Electron cannot run here" when the truth was
+      # "Electron was never downloaded". A check that passes against a broken install is worse
+      # than no check: it moves the blame.
+      - name: Confirm the Electron BINARY exists
         working-directory: helm
         shell: bash
         run: |
-          test -d node_modules/electron || { echo "Electron did not install - the probe cannot answer its question."; exit 1; }
-          node -e "const p=require('electron/package.json'); console.log('electron ' + p.version)"
+          node -e "
+            const fs = require('node:fs');
+            const path = require('node:path');
+            const pkg = require('electron/package.json');
+            const pathFile = path.join('node_modules', 'electron', 'path.txt');
+            if (!fs.existsSync(pathFile)) {
+              console.error('electron/path.txt is missing - the binary was never downloaded, so this probe would blame the runner for an install problem.');
+              process.exit(1);
+            }
+            const bin = path.join('node_modules', 'electron', 'dist', fs.readFileSync(pathFile, 'utf8').trim());
+            if (!fs.existsSync(bin)) {
+              console.error('the Electron binary is not at ' + bin + ' - same problem.');
+              process.exit(1);
+            }
+            console.log('electron ' + pkg.version + ' binary present at ' + bin);
+          "
 
       # The one thing being measured. HELM_E2E_HIDDEN=1 is the harness default anyway, but it
       # is set explicitly here because the whole question is whether a hidden window can lay
