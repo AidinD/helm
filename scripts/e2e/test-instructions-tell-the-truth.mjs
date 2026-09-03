@@ -43,6 +43,7 @@ const ok = (cond, label, detail = "") => {
 const secondMate = read("src/lib/second-mate-instructions.md");
 const firstMate = read("src/lib/first-mate-instructions.md");
 const assistant = read("src/lib/assistant-instructions.md");
+const renderer = read("src/renderer/renderer.js");
 const dispatchServer = read("src/mcp/helmDispatchServer.js");
 const tierGuard = read("src/lib/tierGuard.js");
 const records = read("src/lib/reviewRecords.js");
@@ -197,6 +198,20 @@ console.log("");
     "`.helm-artifacts/`",
     "and it names the SAME directory the guard matches on",
     /ARTIFACT_DIR = "\.helm-artifacts"/.test(tierGuard)
+  );
+  claim(
+    secondMate,
+    "second-mate-instructions.md",
+    "the whole set comes back to you as ONE",
+    "and the Plan view really does deliver the annotations as one turn rather than per point",
+    /function deliverLavishFeedback\(/.test(renderer)
+  );
+  claim(
+    secondMate,
+    "second-mate-instructions.md",
+    "The feedback returns to the session that WROTE the page",
+    "and the artifact really carries its origin, so that is a mechanism rather than a wish",
+    /function lavishFeedbackTarget\(/.test(renderer) && /lavishState\.origin/.test(renderer)
   );
   claim(
     secondMate,

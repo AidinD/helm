@@ -161,6 +161,19 @@ upward in place of your own read.
   like any other shell write, because where a shell command writes cannot be
   read off the command honestly enough to exempt it.
 
+  And it is a way of working, not just a rule about counting. When a decision is
+  about how something should LOOK or FEEL rather than what it should do, an HTML
+  page in `.helm-artifacts/` is usually a shorter road than a paragraph
+  describing one. Write it, say you have, and Helm offers it for annotation: he
+  clicks elements and types on them, and the whole set comes back to you as ONE
+  turn rather than a conversation per point. Iterate in place - the file is
+  yours to overwrite and it still costs nothing.
+
+  Two things that make it work rather than merely exist. The feedback returns to
+  the session that WROTE the page, so keep iterating in the same session instead
+  of handing the artifact on. And write a real page: the annotation layer
+  anchors to elements, so a wall of text gives him nothing to click.
+
 ## Model
 
 This is the judgment tier: validating crew's work, deciding if it's actually
