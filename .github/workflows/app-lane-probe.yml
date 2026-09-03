@@ -50,12 +50,6 @@ jobs:
         with:
           path: helm
 
-      - name: Check out keel into node_modules (the sibling package Helm imports)
-        uses: actions/checkout@v4
-        with:
-          repository: AidinD/keel
-          path: helm/node_modules/keel
-
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -86,6 +80,27 @@ jobs:
       - name: Download the Electron binary (its own postinstall, run on purpose)
         working-directory: helm
         run: node node_modules/electron/install.js
+
+      # AFTER the install, not before, and the second probe run is why. npm sees
+      # `keel: file:../keel`, finds no such directory beside the repo, and PRUNES the
+      # node_modules/keel that was checked out by hand - so the app started and died on
+      # `Cannot find package 'keel'`. The order was the bug, and the app's own stderr said so
+      # the moment the harness surfaced it.
+      - name: Check out keel into node_modules (after the install, which would prune it)
+        uses: actions/checkout@v4
+        with:
+          repository: AidinD/keel
+          path: helm/node_modules/keel
+
+      # This repo's OWN postinstall check, run explicitly rather than skipped. `--ignore-scripts`
+      # above is right for the install itself but it turned this off too - and this is the check
+      # that names a missing sibling at install time, which is exactly the failure that cost the
+      # second probe run. Using it here means the probe is verified by the same guard a developer
+      # gets, instead of by a hand-rolled copy of it. keel is now present, and the optional
+      # sibling is absent on purpose, which this check warns about and does not fail on.
+      - name: Confirm the siblings resolve (the repo's own install check)
+        working-directory: helm
+        run: node scripts/check-siblings.mjs
 
       # The BINARY, not the package. The first version of this step checked that the directory
       # and its package.json existed and passed while Electron was broken - so the probe
