@@ -254,11 +254,20 @@ export function readGoals() {
  * to keep consistent for a case the guard above already prevents.
  *
  * `ifUnchangedSince` is the optional lost-update guard: pass the `modifiedAt` from
- * read_goals and the write aborts if the file moved underneath you. It runs
- * through the atomic writer's onBeforeRename hook, so it is re-checked immediately
- * before the rename on every retry attempt rather than once at the start - the
- * same guard jot.js uses, for the same reason (its store is edited by a live app
- * at the same time; this one is edited by hand in an editor).
+ * read_goals and the write aborts if the file moved underneath you. It runs through
+ * the atomic writer's onBeforeRename hook, so it is checked immediately before the
+ * rename - and under the write lock, together with the rename, which is what makes
+ * it a guard rather than a narrower window. The same guard jot.js uses, for the same
+ * reason (its store is edited by a live app at the same time; this one is edited by
+ * hand in an editor).
+ *
+ * DELIBERATELY NOT RETRIED, unlike jot.js's. It is asked exactly once (this comment
+ * claimed "on every retry attempt" until 2026-09-03, when the shared writer stopped
+ * spinning on a refusal). Retrying would mean re-reading and re-applying, and there
+ * is nothing to re-apply here: the content is a whole document composed upstream
+ * against the version the caller read, so a fresh read invalidates the write rather
+ * than rebasing it. Refusing and making the caller re-read is the only correct
+ * answer for this store.
  */
 export function writeGoals(args = {}) {
   const dir = resolveStoreDir();

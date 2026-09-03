@@ -333,6 +333,24 @@ export function projectTodoForContext(todo) {
 const JOT_CONFLICT_ATTEMPTS = 8;
 
 /**
+ * And how long those attempts may take in total.
+ *
+ * An attempt count alone is not a bound on TIME, and this function is called
+ * synchronously from IPC handlers - the whole window is frozen for however long it
+ * runs. Attempts multiply: each one can wait for the write lock and can retry a
+ * Dropbox-locked rename, so eight attempts against a busy competitor is not eight
+ * short tries. An independent review measured a successful write blocking for 22.6
+ * seconds before this budget existed, against a design whose stated bound was a few
+ * hundred milliseconds.
+ *
+ * Three seconds is far more than a contended board needs (six competing processes
+ * finish 240 writes in under two seconds all told) and short enough that the app
+ * stays answerable. Running out of it is the same safe outcome as running out of
+ * attempts: nothing was written.
+ */
+const JOT_CONFLICT_BUDGET_MS = 3000;
+
+/**
  * Read-modify-write the Jot board under the same compare-before-swap discipline
  * addSubtask established: both Helm and the Jot app do whole-file writes, so a
  * naive rename can silently REVERT the other's edit. Hash the bytes at read time,
@@ -368,6 +386,7 @@ const JOT_CONFLICT_ATTEMPTS = 8;
  */
 export function mutateJotFile(jotPath, mutate) {
   let lastConflict = null;
+  const deadline = Date.now() + JOT_CONFLICT_BUDGET_MS;
 
   for (let attempt = 0; attempt < JOT_CONFLICT_ATTEMPTS; attempt += 1) {
     // A CONTENT HASH, not size+mtime. The old guard could not see a same-size edit made
@@ -413,17 +432,24 @@ export function mutateJotFile(jotPath, mutate) {
       return { ok: false, error: `Could not write to Jot: ${res.error}` };
     }
     lastConflict = res.error;
-    if (attempt < JOT_CONFLICT_ATTEMPTS - 1) {
-      // JITTERED, and that is not decoration: two writers that back off on the
-      // identical schedule stay in lockstep and keep colliding with each other.
-      sleepSync(jitteredBackoffMs(attempt));
+    if (attempt >= JOT_CONFLICT_ATTEMPTS - 1) {
+      break;
     }
+    // JITTERED, and that is not decoration: two writers that back off on the
+    // identical schedule stay in lockstep and keep colliding with each other.
+    const wait = jitteredBackoffMs(attempt);
+    if (Date.now() + wait > deadline) {
+      // Out of time rather than out of attempts. Same safe outcome - nothing was
+      // written - reached without freezing the window any longer.
+      break;
+    }
+    sleepSync(wait);
   }
 
   return {
     ok: false,
     error:
-      `Could not write to Jot: gave up after ${JOT_CONFLICT_ATTEMPTS} attempts because something keeps ` +
+      `Could not write to Jot: gave up after ${Date.now() > deadline ? `${JOT_CONFLICT_BUDGET_MS}ms` : `${JOT_CONFLICT_ATTEMPTS} attempts`} because something keeps ` +
       `rewriting the board (last: ${lastConflict}). Nothing was changed.`,
   };
 }

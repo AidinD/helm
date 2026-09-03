@@ -5,33 +5,51 @@
 `mutateJotFile`'s doc comment promised it would "retry from a fresh read if the file moved in our window".
 For five weeks it did not, and the way that happened is the part worth keeping.
 
-**The retry was there first.** The compare-before-swap guard shipped on 2026-07-04 with its own outer loop: stat, read, mutate, write, and on a collision go round again from the read.
+**The retry was there first.**
+The compare-before-swap guard shipped on 2026-07-04 with its own outer loop: stat, read, mutate, write, and on a collision go round again from the read.
 On 2026-07-27 the commit that moved all eight durable stores onto one shared atomic write (c4bdd7a) removed that loop, because the shared writer had an attempt loop of its own and the function visibly still retried.
 It was the wrong loop.
 `writeFileAtomicSync` retries the WRITE, holding `contents` and the expected hash fixed, so all four of its attempts re-checked the same stale hash against the same stale data and failed identically - four temp files written and deleted to reach the verdict the first attempt had already reached.
 Retrying a write cannot resolve a concurrent edit; only re-reading can.
 A visible retry is what stopped anyone looking for the missing one, including the review that read this function afterwards.
 
-**Nothing was lost, which is why it survived so long.** The guard refused rather than overwriting, so the failure mode was not data loss - it was a Helm review action colliding with the Jot app and being handed back to the user, when re-reading the board and re-applying the same status change would simply have worked.
+**Nothing was lost, which is why it survived so long.**
+The guard refused rather than overwriting, so the failure mode was not data loss - it was a review action colliding with the Jot app and being handed back to the user, when re-reading the board and re-applying the same status change would simply have worked.
 A refusal is the right answer only when retrying cannot produce a better one.
 No test caught it because no test ran two writers at once; the whole failure mode is the interleaving.
 
-**What the restored retry needs.** Eight attempts with a JITTERED backoff.
+**What the restored retry needs.**
+Eight attempts, a jittered backoff, and a total time budget.
 Two writers that back off on an identical schedule stay in lockstep and keep colliding, so the randomisation is load-bearing rather than cosmetic.
-Only a refused guard is retried: a full disk, a folder Helm may not write in, or a target that stayed locked are verdicts a re-read cannot change, which is why the shared writer now reports an abort differently from a failure instead of flattening both into "could not write".
+The budget is there because an attempt count is not a bound on TIME and this function runs synchronously on the main thread - attempts multiply, since each one can wait for the write lock and can retry a Dropbox-locked rename, and an independent review measured a successful write blocking for 22.6 seconds before the budget existed.
+Only a refused guard is retried: a full disk, a folder Helm may not write in, or a target that stayed locked are verdicts a re-read cannot change, which is why the shared writer now reports a refusal differently from a failure instead of flattening both into "could not write".
 
 **The mutation callback may now run more than once**, once per attempt, each time against a freshly read board.
 That is a real constraint on callers: a mutation must decide from the data it is handed, not from anything captured before the call.
-All four callers already satisfied it, and one of them re-checks its own work inside the mutation for exactly this reason.
+All four callers already satisfied it - review confirmed it by running each one against a competitor rewriting the board up to 81 times mid-write - and one of them re-checks its own work inside the mutation for exactly this reason.
 Nothing is written on a refused attempt, so a mutation that adds a card adds it once.
 
 **Hash and parse now come from one read of the bytes.**
 Hashing the file and then reading it again left a window where the board that got mutated was not the board the guard was defending, which surfaced as a collision with nobody on the other side of it.
 
+**The other hook caller is deliberately NOT retried.**
+`assistantStoreTools.writeGoals` uses the same pre-rename guard, and refusing is the correct answer there: its content is a whole document composed upstream against the version the caller read, so a fresh read invalidates the write rather than rebasing it.
+Worth stating because "the guard should retry" looks like a general rule and is not one - it depends on whether the caller holds a mutation that can be re-applied.
+
 **Evidence, because this class of bug is invisible in a single process.**
 `scripts/e2e/test-jot-concurrent-writes.mjs` spawns real competing processes and asserts the only contract that matters: every write either lands or is refused, never silently lost.
-Six processes, 1440 contended writes: none lost, none refused, and about 13% of writes hit a collision that the retry absorbed instead of returning.
-The same test with only the lock removed from the shared writer loses 2-3 writes of every 240, every run - so the lock in `keel/storage` is load-bearing here too, not belt-and-braces.
+Six processes, three rounds, 720 contended writes: none lost, none refused, and roughly 18% of writes hitting a collision that the retry absorbed instead of returning.
+With only the lock removed from `keel/storage` it loses writes - 7 of 720 measured here, and a reviewer measured 4, 0 and 3 of 240 in three runs of their own.
+Their middle run is the important one: loss needs two writers inside the same few microseconds, so a single clean run is not evidence that the lock is unnecessary, which is why the default is now the contended configuration and the loss assertion aggregates over rounds.
+
+**What mutation testing then found in that test, which is the reason the file looks the way it does.**
+Eight of eleven deliberate breakages were caught; the three survivors were all timing and window-width regressions - exactly the class this change exists to fix.
+Narrowing the lock to cover only the guard and not the rename was invisible, because the assertion asked whether the lock was held *during the hook* rather than *at the rename*.
+Removing the jitter was invisible, because nothing asserted this module calls it - and an import is not a call, which this suite has been caught by before.
+Splitting the one board read back into two was invisible, because the only assertion on retry volume was a lower bound, so spurious collisions read as more green rather than less.
+All three now fail deterministically, and each new assertion was itself checked by reintroducing the defect and watching it fail.
+Three further holes came from the test's own shape: a worker's stderr was discarded on success, so a worker silently running with **no write lock** was invisible in a green run; the leftover-lock check asked the code under test where to look, so a mutation to lock naming made it pass for free; and there was no wall-clock budget, so a mutation that made the run 250x slower stayed green.
+The stderr check earned its place within minutes - it caught two separate bugs in the new lock's error classification, both of which ran the write unlocked under ordinary contention.
 
 ## 2026-09-02 - An assistant seat is not a first mate with a different manual
 

@@ -1,6 +1,6 @@
 {
   "name": "helm",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "private": true,
   "description": "Personal orchestrator harness over Claude Code sessions — overview, rooting, and rooted-session launch. Wraps the real claude CLI.",
   "type": "module",

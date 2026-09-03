@@ -47,7 +47,13 @@ import {
  * @param {string} contents
  * @param {{ onBeforeRename?: () => string|null }} [opts] - a hook to re-check
  *   preconditions immediately before the rename (jot.js uses it for its
- *   concurrent-edit guard); return a reason string to abort the attempt and retry.
+ *   concurrent-edit guard); return a reason string to REFUSE the write. It is asked
+ *   once, under the write lock, and a refusal comes back as
+ *   `{ ok: false, aborted: true, error }` - it is not retried, because the contents
+ *   and the hook's expectation are both fixed before the call, so re-asking can only
+ *   give the same answer. The retry that can succeed is the caller re-reading and
+ *   re-applying; see mutateJotFile in jot.js. This comment described the opposite
+ *   until 2026-09-03.
  */
 export function writeFileAtomicSync(filePath, contents, opts = {}) {
   return keelWriteFileAtomicSync(filePath, contents, { ...opts, app: "Helm" });
