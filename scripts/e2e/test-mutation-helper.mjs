@@ -19,7 +19,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { runMutations } from "./mutate.mjs";
+import { runMutations, reportMutations } from "./mutate.mjs";
 
 let fails = 0;
 const ok = (c, m) => {
@@ -73,6 +73,9 @@ const result = runMutations({
     { label: "anchor appears twice", file: "lib/rule.mjs", from: "  }\n", to: "  }\n" },
     { label: "anchor is absent", file: "lib/rule.mjs", from: "return 'nothing like this';", to: "x" },
     { label: "mutant does not parse", file: "lib/rule.mjs", from: "export function classify(n) {", to: "export function classify(n) {{{" },
+    // No label on purpose. A survivor nobody can name is the one result here that MUST be
+    // actionable, and a caller that passes the wrong field name gets exactly that.
+    { file: "lib/rule.mjs", from: "export function classify(n) {", to: "export function classify(n) {" },
   ],
 });
 
@@ -98,6 +101,46 @@ ok(
   !labelled(result.killed).includes("mutant does not parse"),
   "so a syntax error cannot be mistaken for a guard doing its job - which is the one that looks most like success"
 );
+
+// --- and the fourth: a mutation nobody can name ------------------------------------------
+// SURVIVED is the finding, so a survivor with no label is a finding that cannot be acted on.
+// A real caller hit this by passing `name` instead of `label`: five results printed as
+// "KILLED undefined" under a confident summary. Refused up front instead of defaulted,
+// because inventing a name would hide the caller's mistake rather than surface it.
+const unnamed = result.refused.find((r) => !r.mutation.label);
+ok(Boolean(unnamed), "a mutation with no label is REFUSED rather than reported as `undefined`");
+ok(
+  /label/.test((unnamed || {}).why || ""),
+  `and the reason names the missing field, so the caller can fix it (${((unnamed || {}).why || "none").slice(0, 60)})`
+);
+ok(
+  result.killed.every((k) => k.label) && result.survived.every((x) => x.label),
+  "and it never reaches the killed or survived lists, where an unnamed entry would be unattributable"
+);
+
+// The report itself has to be readable, which is the whole reason the refusal exists. Printed
+// output is asserted rather than assumed: the first fix refused correctly and still printed
+// "REFUSED undefined", which fixed nothing a reader would notice.
+{
+  const said = [];
+  const realLog = console.log;
+  console.log = (...args) => said.push(args.join(" "));
+  let code;
+  try {
+    code = reportMutations(result);
+  } finally {
+    console.log = realLog;
+  }
+  const refusedLine = said.find((l) => l.startsWith("REFUSED") && !/anchor|parse/.test(l)) || "";
+  ok(!/undefined/.test(said.join(" | ")), `no report line says "undefined" (${said.filter((l) => /undefined/.test(l)).join(" | ") || "none do"})`);
+  ok(/rule\.mjs/.test(refusedLine), `the unnamed refusal is identified by its file instead (${refusedLine.slice(0, 70)})`);
+  ok(code !== 0, "and a run containing a refusal exits non-zero - it proved nothing about that mutation either way");
+  const summary = said[said.length - 1] || "";
+  ok(
+    /SURVIVED/.test(summary) && /refused/.test(summary),
+    `the summary separates a coverage gap from a mutation that never ran (${summary})`
+  );
+}
 
 // --- a non-JavaScript file is mutable too --------------------------------------------------
 // The parse gate runs `node --check`, which cannot read YAML - so the first version refused a
@@ -139,7 +182,7 @@ fs.rmSync(repo, { recursive: true, force: true });
 console.log("");
 console.log(
   fails === 0
-    ? "VERIFY OK: killed, survived and the three lying cases are told apart, and the source is restored."
+    ? "VERIFY OK: killed, survived and the four lying cases are told apart, the report is attributable, and the source is restored."
     : `VERIFY FAILED: ${fails} assertion(s)`
 );
 process.exit(fails === 0 ? 0 : 1);

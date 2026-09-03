@@ -92,6 +92,16 @@ export function runMutations({ repo, checks, mutations, env = {} }) {
         originals.set(m.file, source);
       }
 
+      // A mutation with no label prints `SURVIVED undefined`, and a survivor nobody can name
+      // is the one result in this file that MUST be actionable - it is the finding. Caught by
+      // using the helper and reading its own output: a caller passing `name` instead of
+      // `label` got five unreadable KILLED lines and a confident summary. Refused rather than
+      // defaulted, because inventing a label ("mutation 3") hides the caller's mistake.
+      if (typeof m.label !== "string" || m.label.trim().length === 0) {
+        refused.push({ mutation: m, why: "the mutation has no `label`, so its result could not be attributed to anything - name what it breaks" });
+        continue;
+      }
+
       // Uniqueness, before anything else. This is the failure that reports a good guard as bad.
       const hits = source.split(m.from).length - 1;
       if (hits === 0) {
@@ -150,25 +160,41 @@ export function runMutations({ repo, checks, mutations, env = {} }) {
  */
 export function reportMutations(result) {
   const { survived, killed, refused } = result;
+  // The missing-label refusal has, by definition, no label to print - so every line falls back
+  // to something that identifies the mutation anyway. A report line nobody can trace back to a
+  // mutation is the same as no line.
+  const name = (m) =>
+    typeof m?.label === "string" && m.label.trim() ? m.label : `(unlabelled) ${m?.file || "?"}: ${String(m?.from || "").split("\n")[0].slice(0, 60)}`;
   for (const k of killed) {
     const f = k.failures[0];
-    console.log(`KILLED   ${k.label}`);
+    console.log(`KILLED   ${name(k)}`);
     console.log(`         ${f.check}: ${f.count} failing - ${f.first.replace(/^FAIL\s*-\s*/, "")}`);
   }
   for (const r of refused) {
-    console.log(`REFUSED  ${r.mutation.label}`);
+    console.log(`REFUSED  ${name(r.mutation)}`);
     console.log(`         ${r.why}`);
   }
   for (const s of survived) {
-    console.log(`SURVIVED ${s.label}`);
+    console.log(`SURVIVED ${name(s)}`);
     console.log(`         nothing went red, so no check covers this defect`);
   }
   console.log("");
+  // Survivors and refusals are BOTH failures of the run, and they mean different things: a
+  // survivor is a gap in the checks, a refusal is a mutation that never ran. The summary used
+  // to describe every non-clean run as a survivor, which sent a reader looking for a coverage
+  // gap that was not there.
   const bad = survived.length + refused.length;
-  console.log(
-    bad === 0
-      ? `all ${killed.length} mutation(s) killed - every one of these defects is covered`
-      : `${killed.length} killed, ${survived.length} SURVIVED, ${refused.length} refused - a survivor is a gap in the checks, not a pass`
-  );
-  return bad === 0 ? 0 : 1;
+  if (bad === 0) {
+    console.log(`all ${killed.length} mutation(s) killed - every one of these defects is covered`);
+    return 0;
+  }
+  const parts = [`${killed.length} killed`];
+  if (survived.length > 0) {
+    parts.push(`${survived.length} SURVIVED (a gap in the checks, not a pass)`);
+  }
+  if (refused.length > 0) {
+    parts.push(`${refused.length} refused (never ran, so it proved nothing either way)`);
+  }
+  console.log(parts.join(", "));
+  return 1;
 }
