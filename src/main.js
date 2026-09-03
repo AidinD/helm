@@ -1288,13 +1288,31 @@ ipcMain.handle("context:saveHandoff", async (_event, { cwd, text, title, categor
     // repo at all, or the commit may fail for an unrelated reason, and a
     // handoff that saved but didn't commit is still a saved handoff - worth
     // returning, not worth failing the whole call over.
+    //
+    // NOT SILENT, though, and that distinction cost a real defect. Swallowing the failure was
+    // right about not failing the call and wrong about saying nothing: on a machine with no
+    // global git identity - which is every fresh one - the commit fails, and the exact problem
+    // it was added to fix comes straight back with nobody told. HANDOFF.md sits uncommitted
+    // forever and stamps every review run "ran on uncommitted changes". Found on a build
+    // machine in 2026-09, by the check that had only ever run where an identity exists.
+    //
+    // So the outcome travels with the answer. The caller can still ignore it - a handoff that
+    // saved but did not commit is still a saved handoff - but it can no longer do so unknowingly.
+    let committed = false;
+    let commitError = null;
     try {
       execFileSync("git", ["-C", cwd, "add", "--", "HANDOFF.md"], { windowsHide: true });
       execFileSync("git", ["-C", cwd, "commit", "-m", "[handoff] Update session handoff"], { windowsHide: true });
-    } catch {
-      // best-effort - see comment above
+      committed = true;
+    } catch (err) {
+      const text = `${err?.stderr || ""}${err?.stdout || ""}${err?.message || ""}`;
+      // The identity case is named, because it is the one with an action attached and the one
+      // a fresh machine hits. Everything else is reported as-is rather than guessed at.
+      commitError = /Please tell me who you are|user\.email|user\.name|empty ident/i.test(text)
+        ? "git has no user.name/user.email configured here, so the handoff was saved but not committed. Set them (git config --global user.email ...) and it will commit itself next time."
+        : `the handoff was saved but not committed: ${String(text).split("\n").find((l) => l.trim()) || "git failed with no message"}`;
     }
-    return { ok: true, path: file };
+    return { ok: true, path: file, committed, commitError };
   } catch (err) {
     return { ok: false, error: err.message };
   }

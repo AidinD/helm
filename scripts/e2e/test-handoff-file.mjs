@@ -63,11 +63,48 @@ try {
   const saved = await app.eval(`window.helm.saveHandoff(${JSON.stringify(repoCwd)}, "Handoff that should get committed")`);
   assert(saved && saved.ok, `saveHandoff still succeeds in a real repo (${JSON.stringify(saved)})`);
   const statusAfter = git("status", "--porcelain");
-  assert(/HANDOFF\.md/.test(git("log", "-1", "--name-only", "--format=")), "HANDOFF.md was committed - it's in the last commit's file list");
-  assert(!/HANDOFF\.md/.test(statusAfter), "and no longer shows up as uncommitted");
-  assert(/unrelated-work-in-progress\.txt/.test(statusAfter), "but the OTHER uncommitted file is untouched - the handoff commit is scoped to HANDOFF.md only, never -A");
-  const log1 = git("log", "-1", "--format=%s");
-  assert(/handoff/i.test(log1), `the commit message says what it is (${JSON.stringify(log1)})`);
+  // TWO WORLDS, BOTH LEGITIMATE, and the check now says which one it is in rather than
+  // assuming the author's. A machine with a global git identity commits the handoff. A machine
+  // without one - which is every fresh machine, and every hosted CI runner - cannot, and that
+  // is not a failure of this feature.
+  //
+  // What IS a failure is saying nothing about it. Until 2026-09-03 the commit was best-effort
+  // and silent, so on a machine with no identity the exact problem committing was added to
+  // solve came straight back with nobody told: HANDOFF.md sits uncommitted forever and stamps
+  // every review run "ran on uncommitted changes". This check only ever ran where an identity
+  // exists, so it had never seen it.
+  //
+  // So the assertion is on the pair - either it committed, or it said why not - which is true
+  // in both worlds and false in the one that was shipping.
+  assert(
+    typeof saved.committed === "boolean",
+    `the answer says whether it committed rather than leaving the caller to guess (${JSON.stringify(saved.committed)})`
+  );
+  if (saved.committed) {
+    assert(/HANDOFF\.md/.test(git("log", "-1", "--name-only", "--format=")), "it committed, and HANDOFF.md is in the last commit's file list");
+    assert(!/HANDOFF\.md/.test(statusAfter), "and no longer shows up as uncommitted");
+    assert(
+      /unrelated-work-in-progress\.txt/.test(statusAfter),
+      "but the OTHER uncommitted file is untouched - the handoff commit is scoped to HANDOFF.md only, never -A"
+    );
+    const log1 = git("log", "-1", "--format=%s");
+    assert(/handoff/i.test(log1), `the commit message says what it is (${JSON.stringify(log1)})`);
+    assert(!saved.commitError, `and it does not also report an error (${saved.commitError})`);
+  } else {
+    assert(
+      typeof saved.commitError === "string" && saved.commitError.length > 30,
+      `it did not commit, and says why in a sentence (${JSON.stringify(saved.commitError)})`
+    );
+    assert(
+      /HANDOFF\.md/.test(statusAfter),
+      "the file is still there uncommitted, which is what the message is about - saved is saved"
+    );
+    assert(
+      /user\.email|user\.name|git/i.test(saved.commitError),
+      "and the message names git rather than being a generic failure nobody can act on"
+    );
+    console.log(`      (no commit here, and it said so: ${saved.commitError.slice(0, 100)})`);
+  }
   fs.rmSync(repo, { recursive: true, force: true });
 
   const errors = app.getConsoleErrors();
