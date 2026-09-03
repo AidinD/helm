@@ -96,22 +96,24 @@ try {
   // -------------------------------- @jot/core must not be a LOAD-TIME dependency
   //
   // Run in a child node process from a directory where the package genuinely cannot
-  // resolve. A copy of src/lib plus a minimal `keel/storage` stub is the whole
-  // dependency closure of jotHostStore.js, so the ONLY thing missing there is
-  // @jot/core - which is the condition under test.
+  // resolve. A copy of src/lib plus a copy of keel is the whole dependency closure
+  // of jotHostStore.js, so the ONLY thing missing there is @jot/core - which is the
+  // condition under test.
   const sandbox = path.join(tmp, "no-jot-installed");
   fs.mkdirSync(sandbox, { recursive: true });
   fs.cpSync(LIB, path.join(sandbox, "lib"), { recursive: true });
+  // The REAL keel/storage, copied in, not a hand-written stub of it. The stub used
+  // to export the two functions src/lib happened to import, which made it a second
+  // place to remember: jot.js started importing `jitteredBackoffMs` on 2026-09-03
+  // and this test failed with "does not provide an export named ..." - a true
+  // report about the fake, and nothing at all about the condition under test.
+  // keel/storage's whole dependency closure is node builtins, so a copy of src plus
+  // the package manifest resolves exactly like the installed package.
   const keelDir = path.join(sandbox, "node_modules", "keel");
   fs.mkdirSync(keelDir, { recursive: true });
-  fs.writeFileSync(
-    path.join(keelDir, "package.json"),
-    JSON.stringify({ name: "keel", version: "0.0.0", type: "module", exports: { "./storage": "./storage.js" } })
-  );
-  fs.writeFileSync(
-    path.join(keelDir, "storage.js"),
-    "export function writeFileAtomicSync() { return { ok: true }; }\nexport function writeJsonAtomicSync() { return { ok: true }; }\n"
-  );
+  const realKeel = path.resolve(__dirname, "..", "..", "node_modules", "keel");
+  fs.cpSync(path.join(realKeel, "src"), path.join(keelDir, "src"), { recursive: true });
+  fs.cpSync(path.join(realKeel, "package.json"), path.join(keelDir, "package.json"));
   fs.writeFileSync(path.join(sandbox, "package.json"), JSON.stringify({ name: "sandbox", type: "module" }));
 
   const probe = path.join(sandbox, "probe.mjs");

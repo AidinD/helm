@@ -1,5 +1,38 @@
 # Decisions
 
+## 2026-09-03 - Centralising the atomic write quietly ate a different retry loop
+
+`mutateJotFile`'s doc comment promised it would "retry from a fresh read if the file moved in our window".
+For five weeks it did not, and the way that happened is the part worth keeping.
+
+**The retry was there first.** The compare-before-swap guard shipped on 2026-07-04 with its own outer loop: stat, read, mutate, write, and on a collision go round again from the read.
+On 2026-07-27 the commit that moved all eight durable stores onto one shared atomic write (c4bdd7a) removed that loop, because the shared writer had an attempt loop of its own and the function visibly still retried.
+It was the wrong loop.
+`writeFileAtomicSync` retries the WRITE, holding `contents` and the expected hash fixed, so all four of its attempts re-checked the same stale hash against the same stale data and failed identically - four temp files written and deleted to reach the verdict the first attempt had already reached.
+Retrying a write cannot resolve a concurrent edit; only re-reading can.
+A visible retry is what stopped anyone looking for the missing one, including the review that read this function afterwards.
+
+**Nothing was lost, which is why it survived so long.** The guard refused rather than overwriting, so the failure mode was not data loss - it was a Helm review action colliding with the Jot app and being handed back to the user, when re-reading the board and re-applying the same status change would simply have worked.
+A refusal is the right answer only when retrying cannot produce a better one.
+No test caught it because no test ran two writers at once; the whole failure mode is the interleaving.
+
+**What the restored retry needs.** Eight attempts with a JITTERED backoff.
+Two writers that back off on an identical schedule stay in lockstep and keep colliding, so the randomisation is load-bearing rather than cosmetic.
+Only a refused guard is retried: a full disk, a folder Helm may not write in, or a target that stayed locked are verdicts a re-read cannot change, which is why the shared writer now reports an abort differently from a failure instead of flattening both into "could not write".
+
+**The mutation callback may now run more than once**, once per attempt, each time against a freshly read board.
+That is a real constraint on callers: a mutation must decide from the data it is handed, not from anything captured before the call.
+All four callers already satisfied it, and one of them re-checks its own work inside the mutation for exactly this reason.
+Nothing is written on a refused attempt, so a mutation that adds a card adds it once.
+
+**Hash and parse now come from one read of the bytes.**
+Hashing the file and then reading it again left a window where the board that got mutated was not the board the guard was defending, which surfaced as a collision with nobody on the other side of it.
+
+**Evidence, because this class of bug is invisible in a single process.**
+`scripts/e2e/test-jot-concurrent-writes.mjs` spawns real competing processes and asserts the only contract that matters: every write either lands or is refused, never silently lost.
+Six processes, 1440 contended writes: none lost, none refused, and about 13% of writes hit a collision that the retry absorbed instead of returning.
+The same test with only the lock removed from the shared writer loses 2-3 writes of every 240, every run - so the lock in `keel/storage` is load-bearing here too, not belt-and-braces.
+
 ## 2026-09-02 - An assistant seat is not a first mate with a different manual
 
 Asked for: a standing seat in Helm dedicated to being an assistant. It must not build

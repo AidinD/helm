@@ -149,9 +149,21 @@ try {
     },
   });
   ok(aborted.ok === false && /changed it/.test(aborted.error || ""), "onBeforeRename can abort the write");
-  ok(asked > 1, `and it is re-asked on each attempt, on fresh data (${asked} times)`);
+  // Asked ONCE, and this assertion is the inverse of what it said until 2026-09-03.
+  // Re-asking looked like diligence and was the opposite: contents and the guard's
+  // expectation are both fixed before the first attempt, so every extra attempt
+  // re-checks the same stale question, writes and deletes another temp file, and
+  // buries the one signal the caller needed - "your data is stale, read it again".
+  // jot.js documented a re-read retry for three weeks that this loop was eating.
+  ok(asked === 1, `a refused precondition is not re-asked with the same stale data (asked ${asked}x)`);
+  ok(aborted.aborted === true, "and it is marked `aborted`, so a caller can tell a refusal from a write failure");
   ok(fs.readFileSync(target, "utf8") === "untouched", "an aborted write leaves the file alone");
   ok(fs.readdirSync(dir).filter((f) => f.includes(".tmp")).length === 0, "and cleans up its temp files");
+
+  // A REAL failure must not claim to be an abort: a caller that re-reads and
+  // retries a full disk or a forbidden folder just spends its attempts.
+  const notAnAbort = writeFileAtomicSync(path.join(target, "child", "x.json"), "x", { onBeforeRename: () => null });
+  ok(notAnAbort.ok === false && notAnAbort.aborted === undefined, "a real write failure is not flagged as an abort");
 
   ok(isTransientLock({ code: "EPERM" }) === true && isTransientLock({ code: "ENOENT" }) === false, "isTransientLock distinguishes a lock from a real failure");
   ok(isTransientLock(null) === false, "isTransientLock(null) is safe");

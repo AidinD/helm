@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import crypto from "node:crypto";
+import { jitteredBackoffMs, sleepSync } from "keel/storage";
 import { resolveJotTodosPath } from "./jotDataDir.js";
 import { writeFileAtomicSync } from "./atomicWrite.js";
 import { normalizeFsPath as normalizePath } from "./fsPath.js";
@@ -17,14 +18,31 @@ import { normalizeFsPath as normalizePath } from "./fsPath.js";
  */
 function readJotFile(jotPath) {
   try {
-    let raw = fs.readFileSync(jotPath, "utf8");
-    if (raw.charCodeAt(0) === 0xfeff) {
-      raw = raw.slice(1);
-    }
-    return JSON.parse(raw);
+    return readJotSnapshot(jotPath).data;
   } catch {
     return null;
   }
+}
+
+/**
+ * The board plus the hash of the exact bytes it was parsed from, in ONE read.
+ *
+ * mutateJotFile's guard compares that hash against the file immediately before it
+ * renames, so the two have to describe the same bytes: reading the file once for
+ * the hash and again for the content leaves a window where the board that gets
+ * mutated is not the board the guard is defending, which shows up as a collision
+ * with nobody on the other side of it.
+ *
+ * Throws on an unreadable or unparseable file - callers that would rather have
+ * `null` go through readJotFile above.
+ */
+function readJotSnapshot(jotPath) {
+  const bytes = fs.readFileSync(jotPath);
+  let text = bytes.toString("utf8");
+  if (text.charCodeAt(0) === 0xfeff) {
+    text = text.slice(1);
+  }
+  return { data: JSON.parse(text), hash: crypto.createHash("sha256").update(bytes).digest("hex") };
 }
 
 /**
@@ -304,54 +322,110 @@ export function projectTodoForContext(todo) {
  * separate thing to sign off.
  */
 /**
+ * How many times a collision is worth re-reading and re-applying.
+ *
+ * The Jot skill's concurrency test measured the shape of this: at six simultaneous
+ * writers, six attempts gave up on 6.7% of writes and eight on 2.9%. Giving up is
+ * a SAFE outcome - nothing is written - but a useless one, because it hands the
+ * user back a refusal for a collision that a re-read would have absorbed. Attempts
+ * cost nothing unless there is a collision, so buy the extra two.
+ */
+const JOT_CONFLICT_ATTEMPTS = 8;
+
+/**
  * Read-modify-write the Jot board under the same compare-before-swap discipline
- * addSubtask established: both Helm and the Jot app do whole-file writes with no
- * lock, so a naive rename can silently REVERT the other's edit. Stat at read
- * time, re-stat immediately before the atomic rename, and retry from a fresh read
- * if the file moved in our window.
+ * addSubtask established: both Helm and the Jot app do whole-file writes, so a
+ * naive rename can silently REVERT the other's edit. Hash the bytes at read time,
+ * re-hash immediately before the atomic rename (under the write lock), and on a
+ * collision RE-READ and re-apply the mutation against the fresh board.
+ *
+ * That retry is the point, and it was MISSING from 2026-07-27 to 2026-09-03 while
+ * this comment kept describing it. It was here originally. The commit that moved
+ * every store onto the shared atomic write (c4bdd7a) replaced this function's own
+ * outer loop with writeFileAtomicSync's attempt loop, which looks like the same
+ * thing and is not: that loop retries the WRITE, holding `contents` and the
+ * expected hash fixed, so all four attempts failed identically against the same
+ * stale hash and the same stale data. Retrying a write cannot resolve a concurrent
+ * edit; only re-reading can. The visible attempt loop is exactly why nobody
+ * noticed the invisible one had gone.
+ *
+ * What it cost: a Helm review action colliding with the Jot app was handed back to
+ * the user, when re-reading and re-applying the same status change would simply
+ * have worked. The writer now returns `aborted` on a refused precondition instead
+ * of spinning on it, and the loop below is the read-side retry again.
  *
  * Extracted rather than copied (task ce2d19ab needed a second writer, for review
  * actions): a second hand-rolled copy of this loop is exactly how the two writers
  * drift and one of them loses the guard.
  *
  * `mutate(data)` may return { ok: false, error } to abort, or mutate `data` in
- * place and return { ok: true, result }.
+ * place and return { ok: true, result }. IT MAY RUN MORE THAN ONCE - once per
+ * attempt, each time against a freshly read board - so it must decide from the
+ * `data` it is handed rather than from anything captured before the call. A
+ * refused attempt writes nothing, so a mutation that adds a card adds it once,
+ * not once per attempt. (All four callers here already satisfy this;
+ * ensureTagsExist deliberately re-checks its work inside the mutation.)
  */
 export function mutateJotFile(jotPath, mutate) {
-  // A CONTENT HASH, not size+mtime. The old guard could not see a same-size edit made
-  // inside the read->write window, and that is the common shape of a real concurrent
-  // edit from the Jot app: a drag-reorder is a pure array permutation (byte-identical
-  // size) and a subtask "open"->"done" is the same length. Windows' ~15.6ms clock tick
-  // is also coarser than the window, so mtime often matched too - measured at 250 of
-  // 400 same-size writes being invisible. Helm would then rename over the user's edit
-  // and report success.
-  //
-  // The Dropbox-lock retry now lives in atomicWrite.js, shared with the six other
-  // durable stores that had the same unprotected rename. This function keeps only what
-  // is specific to Jot: read, mutate, and re-check the hash immediately before the
-  // rename (the onBeforeRename hook).
-  let hashBefore;
-  try {
-    hashBefore = fileHash(jotPath);
-  } catch (err) {
-    return { ok: false, error: `Could not read Jot data: ${err.message}` };
+  let lastConflict = null;
+
+  for (let attempt = 0; attempt < JOT_CONFLICT_ATTEMPTS; attempt += 1) {
+    // A CONTENT HASH, not size+mtime. The old guard could not see a same-size edit made
+    // inside the read->write window, and that is the common shape of a real concurrent
+    // edit from the Jot app: a drag-reorder is a pure array permutation (byte-identical
+    // size) and a subtask "open"->"done" is the same length. Windows' ~15.6ms clock tick
+    // is also coarser than the window, so mtime often matched too - measured at 250 of
+    // 400 same-size writes being invisible. Helm would then rename over the user's edit
+    // and report success.
+    //
+    // Hash and parse come from ONE read of the bytes, so the fingerprint describes
+    // exactly the board that was mutated. Hashing and reading separately left a gap
+    // where the guard could compare against bytes nobody parsed, which cost a
+    // pointless retry every time it happened.
+    let snapshot;
+    try {
+      snapshot = readJotSnapshot(jotPath);
+    } catch (err) {
+      return { ok: false, error: `Could not read Jot data: ${err.message}` };
+    }
+    const { data, hash: hashBefore } = snapshot;
+    if (!data || !Array.isArray(data.todos)) {
+      return { ok: false, error: "Could not read Jot data." };
+    }
+    const verdict = mutate(data);
+    if (!verdict || verdict.ok === false) {
+      return verdict || { ok: false, error: "Refused by the mutator." };
+    }
+    // No BOM, 2-space, LF - exactly Jot's own writer's output. The Dropbox-lock
+    // retry and the lock around the guard both live in atomicWrite.js, shared with
+    // the other durable stores; what stays here is Jot's own read-mutate-recheck.
+    const res = writeFileAtomicSync(jotPath, JSON.stringify(data, null, 2), {
+      onBeforeRename: () => (fileHash(jotPath) !== hashBefore ? "the Jot file changed during the write (concurrent edit)" : null),
+    });
+    if (res.ok) {
+      return { ok: true, ...(verdict.result !== undefined ? { result: verdict.result } : {}) };
+    }
+    // Only a REFUSED GUARD is worth another go. Everything else - a full disk, a
+    // folder Helm may not write in, a target that stayed locked - is a verdict a
+    // re-read cannot change, and retrying it just spends eight attempts arriving
+    // at the same answer more slowly.
+    if (!res.aborted) {
+      return { ok: false, error: `Could not write to Jot: ${res.error}` };
+    }
+    lastConflict = res.error;
+    if (attempt < JOT_CONFLICT_ATTEMPTS - 1) {
+      // JITTERED, and that is not decoration: two writers that back off on the
+      // identical schedule stay in lockstep and keep colliding with each other.
+      sleepSync(jitteredBackoffMs(attempt));
+    }
   }
-  const data = readJotFile(jotPath);
-  if (!data || !Array.isArray(data.todos)) {
-    return { ok: false, error: "Could not read Jot data." };
-  }
-  const verdict = mutate(data);
-  if (!verdict || verdict.ok === false) {
-    return verdict || { ok: false, error: "Refused by the mutator." };
-  }
-  // No BOM, 2-space, LF - exactly Jot's own writer's output.
-  const res = writeFileAtomicSync(jotPath, JSON.stringify(data, null, 2), {
-    onBeforeRename: () => (fileHash(jotPath) !== hashBefore ? "the Jot file changed during the write (concurrent edit)" : null),
-  });
-  if (!res.ok) {
-    return { ok: false, error: `Could not write to Jot: ${res.error}` };
-  }
-  return { ok: true, ...(verdict.result !== undefined ? { result: verdict.result } : {}) };
+
+  return {
+    ok: false,
+    error:
+      `Could not write to Jot: gave up after ${JOT_CONFLICT_ATTEMPTS} attempts because something keeps ` +
+      `rewriting the board (last: ${lastConflict}). Nothing was changed.`,
+  };
 }
 
 /** Hash of the file's raw bytes - the only reliable "did this change" signal here. */
