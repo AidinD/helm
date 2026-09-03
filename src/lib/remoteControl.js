@@ -78,8 +78,25 @@ export function buildLauncherScript({ cwd, claudePath, args, title }) {
     "echo Scan the QR / open the URL below from the Claude mobile app or claude.ai/code.",
     "echo.",
     `"${claudePath}" ${quotedArgs}`,
+    // HOLD THE WINDOW OPEN. This console exists to show you the session URL, the QR code and
+    // any eligibility error - Remote Control is a gated research preview, and when it refuses
+    // it refuses immediately. Without a pause the window closes the instant claude exits, so
+    // the reason went with it: a console flashes and nothing has happened, which is exactly
+    // what "the remote session did not even work" looks like from the outside.
+    //
+    // The exit code is captured on the line straight after the call, because anything else -
+    // an echo included - overwrites ERRORLEVEL first.
+    "set RC_EXIT=%ERRORLEVEL%",
     "echo.",
-    "echo (Remote Control session ended.)",
+    'if not "%RC_EXIT%"=="0" (',
+    "  echo Remote Control exited with code %RC_EXIT%.",
+    "  echo The reason is in the output above. Remote Control is a gated research preview,",
+    "  echo so an eligibility refusal looks like this too.",
+    ") else (",
+    "  echo (Remote Control session ended.)",
+    ")",
+    "echo.",
+    "pause",
     "",
   ].join("\r\n");
 }

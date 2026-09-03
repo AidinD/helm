@@ -47,6 +47,65 @@ assert(script.includes('"C:\\Users\\me\\claude.exe"'), "script invokes the resol
 assert(/--remote-control/.test(script) && /--name "My Session"/.test(script), "script carries the RC flag + quoted name");
 assert(script.includes("\r\n"), "script uses CRLF line endings (a .cmd file)");
 
+// --- the window survives long enough to be read -------------------------------------------
+//
+// This console is the ONLY place the session URL, the QR code and any eligibility error
+// appear - Remote Control is a gated research preview, and when it refuses it refuses at once.
+// The script used to end on an echo, so the window closed the instant claude exited and took
+// the reason with it. It also opens MINIMIZED, which makes a console that flashes and leaves
+// nothing behind even less visible - and that is precisely what "the remote session did not
+// even work" looks like from the outside.
+//
+// It was the likeliest explanation for that report, because everything upstream checks out:
+// the installed CLI has --remote-control, --resume and --name, and the argv Helm builds is
+// valid against it. Checked rather than assumed, and the argument-order trap that
+// `--remote-control [name]` invites was checked too - the name goes through --name, which
+// exists.
+assert(/^pause$/m.test(script), "the script pauses, so the window does not close on top of the reason it closed");
+assert(/set RC_EXIT=%ERRORLEVEL%/.test(script), "and it captures the exit code");
+// ORDER, not just presence. ERRORLEVEL is overwritten by the next command - an echo included -
+// so capturing it one line later would read that command's status instead of claude's, and
+// every failure would report as a clean exit.
+{
+  const lines = script.split("\r\n");
+  const callAt = lines.findIndex((l) => l.includes("claude.exe"));
+  const captureAt = lines.findIndex((l) => l.includes("set RC_EXIT="));
+  assert(
+    callAt >= 0 && captureAt === callAt + 1,
+    `the capture is on the line straight after the call (call ${callAt}, capture ${captureAt})`
+  );
+}
+
+// Driven for real, because batch syntax is easy to get subtly wrong and a script that prints
+// nothing useful is the bug being fixed. Two runs of the GENERATED file, one per exit code,
+// with input piped so `pause` does not block.
+{
+  const { spawnSync } = await import("node:child_process");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "helm-rc-script-"));
+  const runWithExit = (code) => {
+    const body = buildLauncherScript({
+      cwd: dir,
+      // `cmd /c exit N` stands in for claude: this asserts the SCRIPT's branching, and using
+      // the real binary here would either start a session or spend a token.
+      claudePath: "cmd",
+      args: ["/c", "exit", String(code)],
+      title: "diag",
+    });
+    const file = path.join(dir, `rc-${code}.cmd`);
+    fs.writeFileSync(file, body);
+    const r = spawnSync("cmd", ["/c", file], { encoding: "utf8", input: "\r\n" });
+    return String(r.stdout || "");
+  };
+  const clean = runWithExit(0);
+  assert(/session ended/.test(clean), "a clean exit says the session ended");
+  assert(!/exited with code/.test(clean), "and does not claim a failure");
+  const failed = runWithExit(3);
+  assert(/exited with code 3/.test(failed), "a non-zero exit names the code");
+  assert(/research preview/.test(failed), "and says an eligibility refusal looks like this too, since that is the likely cause");
+  assert(!/session ended/.test(failed), "and does not also claim the session ended, which would be two answers to one question");
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
 // --- continueOnMobile (injected deps; no real window) ---
 let spawned = null;
 const fakeSpawn = (cmd, argv, opts) => {
