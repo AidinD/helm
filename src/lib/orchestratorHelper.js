@@ -296,9 +296,10 @@ const HANDOFF_CATEGORY_PROMPT = [
   "",
   "Rules:",
   "- Name the topic from what the NOTE IS ABOUT. The session title is a hint only, and often a",
-  "  loose translation - never translate it word for word. A Swedish session called 'Träning och",
-  "  kost' is about exercise and diet; rendering it as 'training-coaching' describes something",
-  "  else entirely and is how a physical-training topic ended up holding leadership notes.",
+  "  loose translation - never translate it word for word. A Swedish session called 'Odling och",
+  "  skötsel' is about growing plants and looking after them; rendering it as 'growth-coaching'",
+  "  describes something else entirely, and that is how a topic about one subject ends up",
+  "  holding another subject's notes.",
   "- Prefer the plainest unambiguous English word for the thing itself (exercise, diet, sleep,",
   "  hiring) over a word that means different things in different parts of a life (training,",
   "  coaching, development, review). If a name would be ambiguous, make it more specific.",
@@ -311,7 +312,7 @@ const HANDOFF_CATEGORY_PROMPT = [
   "- When two readings are both plausible, INVENT a new, more specific topic instead of reusing.",
   "  Filing into a topic REPLACES what that topic currently holds, so a wrong reuse buries",
   "  someone's notes, while an extra topic is merely untidy. The costs are not symmetric.",
-  "- A topic is a durable life/work subject (training, kombucha, job-search, finances), never a one-off task.",
+  "- A topic is a durable life/work subject (gardening, beekeeping, language-learning), never a one-off task.",
   "- Answer with a short lowercase kebab-case slug in English, 1-3 words.",
   "- reason: one short sentence, and say which existing topic you considered and rejected, if any.",
 ].join("\n");
@@ -324,8 +325,8 @@ const HANDOFF_CATEGORY_PROMPT = [
  * Resolves { category, reason, costUsd } on success, or { error } describing WHY
  * no topic could be picked. It must never resolve a bare null: the caller's
  * fallback is to name the topic after the session title, which produces a
- * one-off near-duplicate of an existing topic ("traning-och-kost-hevy" next to
- * "training-coaching", the captain 2026-08-02). That fallback is only safe to take
+ * one-off near-duplicate of an existing topic ("odling-och-skotsel" next to
+ * "growth-coaching", reported 2026-08-02). That fallback is only safe to take
  * knowingly, so the failure has to be reportable rather than silent.
  *
  * The caller decides what to do with a success too - see resolveHandoffCategory

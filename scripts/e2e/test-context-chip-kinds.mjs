@@ -1,14 +1,14 @@
 // Every chip in "Context files" opens the file it names.
 //
-// the captain, task 2ba0d277: "de här verkar referera fel i analysis - flertalet går fel + att en
-// står det none på", with a screenshot of the doc viewer saying "Invalid project doc" over
-// strength-training.md.
+// Reported on task 2ba0d277: several chips in the analysis view referenced the wrong thing
+// and one said "none", with the doc viewer showing "Invalid project doc" over a topic
+// handoff file.
 //
 // Root cause: main's context:list puts TWO kinds of entry in the same `projectDocs` array -
 // the three durable project docs (HANDOFF/DECISIONS/PLAN, kind "projectDoc") and, for a
 // session with no repo of its own, the topic handoffs from Helm's own store (kind
 // "handoffTopic"). The renderer hardcoded kind: "projectDoc" for every one of them, so a
-// topic-handoff chip asked main for a project doc named "strength-training.md" - which the
+// topic-handoff chip asked main for a project doc named "bird-feeders.md" - which the
 // resolver refuses by design, because it only allows the three known names.
 //
 // So the check is not "does a chip exist": it is that clicking EVERY chip in the section
@@ -33,9 +33,9 @@ const metaHome = path.join(tmp, "meta-home");
 fs.mkdirSync(path.join(metaHome, ".helm", "handoffs"), { recursive: true });
 // Two topic handoffs, the store's own file layout. These are what a session with no repo
 // carries its continuity in, and they are listed beside the project docs.
-fs.writeFileSync(path.join(metaHome, ".helm", "handoffs", "strength-training.md"), "# Strength training\n\nLast session: incline bench 15 degrees.\n", "utf8");
-fs.writeFileSync(path.join(metaHome, ".helm", "handoffs", "job-search.md"), "# Job search\n\nPipeline: two live processes.\n", "utf8");
-// DECISIONS.md exists, HANDOFF.md and PLAN.md do not - exactly the mix in his screenshot.
+fs.writeFileSync(path.join(metaHome, ".helm", "handoffs", "bird-feeders.md"), "# Bird feeders\n\nLast build: cedar, two ports.\n", "utf8");
+fs.writeFileSync(path.join(metaHome, ".helm", "handoffs", "model-trains.md"), "# Model trains\n\nNext: wire the second loop.\n", "utf8");
+// DECISIONS.md exists, HANDOFF.md and PLAN.md do not - the mix a meta-home-rooted session shows.
 fs.writeFileSync(path.join(metaHome, "DECISIONS.md"), "# Decisions\n\n- Meta-home root.\n", "utf8");
 fs.writeFileSync(path.join(metaHome, "CLAUDE.md"), "# Rules\n\nBe precise.\n", "utf8");
 
@@ -73,7 +73,7 @@ try {
   ok(chips.found, "the Context files section renders");
   const labels = (chips.labels || []).map((l) => l.text);
   ok(
-    labels.some((t) => t.startsWith("strength-training.md")),
+    labels.some((t) => t.startsWith("bird-feeders.md")),
     `the topic handoffs are listed (${JSON.stringify(labels)})`
   );
 
@@ -112,10 +112,10 @@ try {
   }
   // Named specifically, because this one is the reported bug and a generic loop over
   // whatever happens to be present could stop covering it.
-  const strength = opened.find((o) => o.label.startsWith("strength-training.md"));
+  const topic = opened.find((o) => o.label.startsWith("bird-feeders.md"));
   ok(
-    !!strength && /incline bench/.test(strength.body),
-    `the topic handoff shows its own content (${JSON.stringify(strength?.body?.slice(0, 70) || null)})`
+    !!topic && /cedar, two ports/.test(topic.body),
+    `the topic handoff shows its own content (${JSON.stringify(topic?.body?.slice(0, 70) || null)})`
   );
 
   // The "(none)" chips: a missing file is still worth showing (it tells him the doc does

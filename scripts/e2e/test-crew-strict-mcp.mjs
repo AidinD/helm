@@ -3,7 +3,7 @@
 // spawn path in goalOrchestrator.js had skipped it, so every crew iteration dragged in the
 // full global MCP set - extra tool name-listing tokens on every call, and a
 // bypassPermissions autonomous run with access to unrelated tools (router, home-assistant,
-// hevy, ...) it could invoke.
+// whatever the workstation happens to carry) it could invoke.
 //
 // The spawn's argv is built by the pure buildIterationArgs(), so this asserts the flag set
 // directly - no subprocess, deterministic.

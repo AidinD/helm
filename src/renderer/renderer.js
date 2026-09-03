@@ -4631,8 +4631,8 @@ function pickHandoffTopic({ existing = [], suggestion = "general", error = null,
     };
     // `nearMiss` is the topic the matcher WOULD have reused on its own. Naming the
     // consequence matters here: picking it replaces whatever that topic currently
-    // holds, and doing that silently is what buried the captain's training notes under a
-    // leadership handoff. So it is listed first, with what it costs.
+    // holds, and doing that silently is what buried one topic's notes under a
+    // handoff about something else. So it is listed first, with what it costs.
     const items = [
       {
         label: nearMiss
@@ -4783,9 +4783,9 @@ async function archiveWithHandoff(session) {
 // handoff (task 663ab4b6) was added to one of the three menus only. The other two
 // kept gating the handoff option on `session.cwd`, so a session with no project
 // folder - exactly the case the feature was built for - was still offered nothing
-// but "Archive without a handoff", and its knowledge was dropped silently. The captain
-// hit this on 2026-07-28 archiving "Träning och kost (Hevy)". Same shape as the
-// eight file writers: one instance fixed, the class assumed closed.
+// but "Archive without a handoff", and its knowledge was dropped silently. Reported
+// on 2026-07-28 while archiving a folderless session. Same shape as the eight file
+// writers: one instance fixed, the class assumed closed.
 //
 // Never re-introduce a `session.cwd` condition around the handoff ITEM. The cwd
 // only decides WHERE the handoff lands (repo HANDOFF.md vs a topic-keyed file in
@@ -4798,11 +4798,11 @@ async function archiveWithHandoff(session) {
  * Is this session NOT rooted in a real project?
  *
  * "Has a cwd" is not the same question, and assuming it was is why the archive menu
- * lied to the captain. His life-domain sessions (training, cycling journal, kombucha) are
- * all rooted at the META-HOME, so they DO have a cwd - the menu therefore promised
+ * lied. Life-domain sessions - a durable subject with no repo of its own - are all
+ * rooted at the META-HOME, so they DO have a cwd, and the menu therefore promised
  * "Save handoff to HANDOFF.md" while the backend, which checks for the meta-home
  * properly, correctly filed them by topic. The behaviour was right and the label was
- * wrong, which is worse than a plain bug: he concluded the feature was missing.
+ * wrong, which is worse than a plain bug: the reader concluded the feature was missing.
  *
  * Mirrors isMetaHomeRoot in main.js. Windows paths are case-insensitive and mix
  * separators, so both sides must fold to one form before comparing.
@@ -6267,7 +6267,7 @@ async function saveSecondMateHandoffsFor(mate, busy = null) {
   let n = 0;
   for (const sm of children) {
     const session = state.sessions.find((x) => (x.cliSessionId || x.sessionId) === sm.sessionId);
-    // A non-rooted second mate (no repo - training, kombucha, job hunting) used
+    // A non-rooted second mate (no repo - a life subject rather than a project) used
     // to be SKIPPED here, so retiring its first mate silently discarded its
     // handoff. It now files by topic instead (task 663ab4b6).
     if (!session) {
@@ -15127,7 +15127,7 @@ let dashboardArchiveGroupExpanded = false;
 //
 // "+ other..." vs "+ new domain..." reads as two buttons doing the same
 // thing (a folder picker) unless you already know a domain is a PERSISTENT,
-// non-repo project (gym, kombucha, ...) while "other" is a one-off pick for
+// non-repo project (gardening, beekeeping, ...) while "other" is a one-off pick for
 // this session only. Guard here so picking an already-known repo folder
 // (the mistake that's easy to make - "I just wanted to use Helm's own
 // folder") doesn't silently create a permanent, confusing duplicate chip

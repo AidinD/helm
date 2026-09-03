@@ -26,7 +26,7 @@ try {
     JSON.stringify({
       claudeAiMcpEverConnected: true,
       mcpServers: {
-        hevy: { command: "hevy-mcp" },
+        weather: { command: "weather-mcp" },
         "home-assistant": { url: "https://x/sse" },
         "asus-router": { command: "python" },
         Roblox_Studio: { command: "cmd.exe" },
@@ -38,7 +38,7 @@ try {
   );
 
   const tools = mcpAllowedToolsFromConfig(cfgPath);
-  assert(tools.includes("mcp__hevy"), "includes a plain local server (mcp__hevy)");
+  assert(tools.includes("mcp__weather"), "includes a plain local server (mcp__weather)");
   assert(tools.includes("mcp__home-assistant"), "includes a hyphenated server (mcp__home-assistant)");
   assert(tools.includes("mcp__asus-router") && tools.includes("mcp__Roblox_Studio"), "includes the other tool-safe servers");
   assert(!tools.some((t) => /claude\.ai|Atlassian| /.test(t)), "drops the remote 'claude.ai X' server (space/dot key)");

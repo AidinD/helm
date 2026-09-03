@@ -11,8 +11,8 @@ import fs from "node:fs";
 // the user hasn't set up and uses interactively / in Claude Desktop.
 //
 // The top-level `mcpServers` object keys in ~/.claude.json are the exact prefixes
-// the tools carry (`mcp__<key>__<tool>`), verified live (e.g. "hevy" ->
-// mcp__hevy__get-workout-count). Only tool-safe keys are kept: a --allowedTools
+// the tools carry (`mcp__<key>__<tool>`), verified live (e.g. "home-assistant" ->
+// mcp__home-assistant__GetLiveContext). Only tool-safe keys are kept: a --allowedTools
 // argv value with a space or dot (e.g. a remote "claude.ai Atlassian" server)
 // would either break the arg or not match - and those OAuth/remote servers don't
 // load in a headless -p run anyway, so dropping them costs nothing.

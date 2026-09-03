@@ -591,7 +591,7 @@ His instinct was about discoverability, and that was the right instinct pointed 
 
 ## 2026-08-02 - A handoff asks which topic rather than inventing one
 
-The captain archived "Träning och kost (Hevy)" and got a second handoff file, `traning-och-kost-hevy.md`, next to the `training-coaching.md` it belonged in.
+Archiving a Swedish-titled session produced a second handoff file named after the title, sitting next to the topic file it belonged in.
 Two files, one subject, and the toast cheerfully announced a new topic - so the failure looked like success.
 
 The chain had three links, and only the third was the interesting one.
@@ -762,7 +762,7 @@ Startup now passes a flag and yields to a page the user already chose.
 
 The topic-keyed handoff (task 663ab4b6) was added to one of THREE archive menus.
 The sidebar context menu and the Fleet archive button both kept gating the option on session.cwd - so a session with no project folder, the exact case the feature exists for, was offered only "Archive without a handoff" and its knowledge was dropped in silence.
-The captain hit this archiving "Traning och kost (Hevy)".
+Hit while archiving a session with no project folder of its own.
 One shared builder now, plus a test that fails if any archive menu is built outside it.
 Mutation-checked: re-introducing the cwd gate in the Fleet button trips four independent assertions.
 The cwd decides WHERE a handoff lands (repo HANDOFF.md versus a topic-keyed file in Helm's own store), never WHETHER it is offered.
@@ -883,7 +883,7 @@ Verified: test-expects-input-heuristic.mjs (12/12, SV+EN) + 6 deterministic asse
 
 ## 2026-07-15 - A meta-home session is a first mate only when bound to a mate (personal chats keep full MCP)
 
-The captain: "Helm doesn't see my Hevy connection." A personal session ("Träning och kost (Hevy)") rooted in the meta-home (/claude) lost its user MCP servers (Hevy, home-assistant, etc.).
+Reported as one of the user's own MCP servers no longer being visible in a chat. A personal session rooted in the meta-home lost the user's MCP servers entirely.
 Root: session:start applied the first-mate LEAN treatment - only helm_* tools, --strict-mcp-config (which strips the user's servers), and the first-mate manual injected - based on `isMetaHomeRoot(cwd)` ALONE.
 So every personal chat the captain keeps in the meta-home was stripped of its MCP and mis-framed as a first mate (it worked in a session OUTSIDE Helm, which has full MCP).
 Fix: a meta-home session is a first mate only when it is actually bound to a mate - `firstMateId = mateId || activeMates().find((m) => m.sessionId === resumeSessionId)?.mateId`, and the branch is gated on `isMetaHomeRoot(cwd) && firstMateId`.
@@ -1248,10 +1248,10 @@ Verified via CDP: mouse back walks archive→analysis→dashboard and forward re
 
 ## 2026-07-10 - "First mate" = bound to a mate, not just rooted at the meta-home
 
-A personal chat rooted in the meta-home dir (the Claude rules folder) - e.g. "Träning och kost (Hevy)" - was wrongly tagged "◆ Helm" and shown the "first mate X% full - hand off" nudge, because `isOrchestratorSession` keyed purely on `cwd === orchestratorHome`. That was the original (pre-named-mates) signal; it over-matches now that the captain also keeps personal chats in that dir.
+A personal chat rooted in the meta-home dir (the Claude rules folder) was wrongly tagged "◆ Helm" and shown the "first mate X% full - hand off" nudge, because `isOrchestratorSession` keyed purely on `cwd === orchestratorHome`. That was the original (pre-named-mates) signal; it over-matches now that the captain also keeps personal chats in that dir.
 Refined it to: a session is a first mate iff it's BOUND to an active mate (its cli/session id is in some `mate.sessionId`). refresh() now fetches active mates each poll into `mateSessionIds`. A brand-new mate session binds on its first turn; until then the pane carries `isOrchestrator` via paneOverrides, so the composer nudge still works during that window. `manualHelmSessions` in config was already dormant (unused), so nothing else depended on the old signal.
 
-Verified: CDP - the real Hevy session (at meta-home) no longer classifies as orchestrator; a synthetic meta-home session classifies only when its id is in `mateSessionIds`; 0 console errors.
+Verified: CDP - a real personal session at the meta-home no longer classifies as orchestrator; a synthetic meta-home session classifies only when its id is in `mateSessionIds`; 0 console errors.
 
 ## 2026-07-10 - A theme carries identity (icons + mate names), not just colors
 
@@ -1387,7 +1387,7 @@ Fixed to call the existing targeted-repaint path, `fillDashboardSections()` (its
 Verified via a new `scripts/e2e/test-dashboard-chip-select.mjs`: a marker element planted as a direct child of `#dashboardPage` survives a chip click under the fix and is wiped under the pre-fix code (confirmed both ways - scrollTop itself was not a reliable signal since real dashboard content can be tall enough on its own to keep it numerically valid after a rebuild).
 
 **Bug/confusion: "+ other..." vs "+ new domain..." read as two buttons doing the same thing, and there was no way to undo picking the wrong one.**
-"+ other..." picks a folder for just this session; "+ new domain..." permanently registers a non-repo life-domain project (gym, kombucha, ...) as a recurring chip.
+"+ other..." picks a folder for just this session; "+ new domain..." permanently registers a non-repo life-domain project (gardening, beekeeping, ...) as a recurring chip.
 The captain picked "+ new domain..." on Helm's own (already-a-repo) folder by accident and had no way to remove the resulting pin - `removeDomain`/`domains:remove` existed in the backend (`src/lib/domains.js`, IPC in `main.js`) but no UI ever called it.
 Fixed: tooltips on both buttons explaining the distinction, a guard in `promptRegisterDomain` that rejects registering a domain pointed at an already-known repo path (toast points at "+ other..." instead), and a remove (×) control on domain chips wired to the existing IPC handler.
 Not covered by an automated test - registration goes through a native OS folder-picker dialog that CDP cannot drive; exercised manually.
@@ -5203,14 +5203,14 @@ project's CLAUDE.md points a fresh session at HANDOFF.md first.
 
 **Decision:** a session with no project repo files its handoff into a Helm-owned,
 topic-keyed store at `<meta-home>/.helm/handoffs/<slug>.md` - one latest-only
-markdown file per subject (training, kombucha, job-search).
+markdown file per subject (garden-planning, bikupor, model-trains).
 The topic is proposed by a cheap Haiku classifier that is shown the topics
 already on file, then resolved deterministically by `resolveHandoffCategory`,
 which reuses an existing topic whenever the proposal matches it word-wise.
 
 **Context:** the whole handoff mechanism was anchored to `cwd`.
 Writing went to `<cwd>/HANDOFF.md` and reading came from `<cwd>`, so a non-rooted
-second mate (the captain's training/kost session is the reported case) had two broken
+second mate (a non-rooted personal session is the reported case) had two broken
 outcomes: with an empty cwd the "save handoff" action was not even offered and
 the knowledge was silently dropped on retire; with a meta-home cwd every such
 session would overwrite ONE shared HANDOFF.md.
@@ -5234,9 +5234,9 @@ decide. `resolveHandoffCategory` enforces the match-an-existing-topic rule in
 plain code, so near-duplicates (training / training-log) collapse into one file
 instead of scattering, and a junk or unusable proposal can never create a stray
 or path-escaping file (slugs are ASCII kebab-case, separators stripped).
-Live-checked across five real subjects: Swedish "Träning och kost" and "CV och
-ansökningar" both reused the existing English topics, while a tax-return session
-correctly opened a new `finances` topic.
+Live-checked across five real subjects: two Swedish-titled sessions both reused
+the existing English topics they belonged to, while a session on a subject with
+no topic on file correctly opened a new one.
 
 ## 2026-07-27 - Session-status FSM increment 5: `launching`, and the hybrid made explicit (Epic f3d096fa)
 
@@ -5991,16 +5991,17 @@ reviewer is for.
 
 ## 2026-08-03 - A handoff topic can be guessed wrong, and the guess used to overwrite
 
-The captain: "Archive by topic gjorde helt fel" - a handoff about his professional leadership
-development was filed under the topic holding his exercise-and-diet notes, and replaced them.
+Reported as "Archive by topic gjorde helt fel" - a handoff about one subject was filed under
+the topic holding an unrelated subject's notes, and replaced them.
 
 Three separate causes, and the fix for each is different.
 
 **The name came from translating a title, not from reading the note.**
-The classifier is given both the note and the session title, and "Träning och kost" came back
-as `training-coaching` - "kost" (diet) rendered as "coaching".
-That name then reads, in English, as professional development, which is what later drew a
-leadership note to it.
+The classifier is given both the note and the session title, and a Swedish title came back
+translated word for word - one of its words has two senses in English, and the classifier
+picked the wrong one.
+The resulting name reads, in English, as a different subject entirely, which is what later
+drew a note about that other subject to it.
 The prompt now says to name the topic from what the NOTE is about, never to translate the
 title word for word, and to prefer the plainest unambiguous word (exercise, diet) over one
 that means different things in different parts of a life (training, coaching, development).
@@ -6023,9 +6024,9 @@ mistake destructive, and it was.
 One version per topic - enough to undo a mis-file, not enough to turn the folder into a
 history.
 
-**The captain's own data:** the misfiled note was re-filed as `leadership-development`, with the
+**In the affected folder:** the misfiled note was re-filed under a topic of its own, with the
 original kept under `superseded/`.
-Whether an exercise-and-diet handoff existed before it and was overwritten cannot be
+Whether an earlier handoff on that topic existed before it and was overwritten cannot be
 established from the folder - the overwrite left no copy, which is precisely the hazard now
 fixed.
 Either way a handoff is a derived summary and the session it came from still exists, so
@@ -6751,7 +6752,7 @@ No design decision here beyond "fix the root cause, don't skip/mute" - included 
 
 ## 2026-08-09 - Crew iterations now strip MCP, same as first-mate sessions
 
-Crew iterations (`goalOrchestrator.js`'s `claude -p` spawn) inherited whatever MCP servers were configured globally, unlike first-mate sessions which already pass `--mcp-config '{"mcpServers":{}}' --strict-mcp-config` (main.js, decided earlier - first mates are meant to be lean, doing code work with built-in tools only). Nothing had carried that same restriction down to crew, so a crew iteration could see and pay to list unrelated servers (router/home-assistant/hevy/etc) it never needed. Fixed by adding the same flags to the crew spawn unconditionally, with `test-crew-strict-mcp.mjs` asserting it. Not a new principle, just closing a gap where an existing one (first-mate MCP isolation) had not been extended to a tier built the same way.
+Crew iterations (`goalOrchestrator.js`'s `claude -p` spawn) inherited whatever MCP servers were configured globally, unlike first-mate sessions which already pass `--mcp-config '{"mcpServers":{}}' --strict-mcp-config` (main.js, decided earlier - first mates are meant to be lean, doing code work with built-in tools only). Nothing had carried that same restriction down to crew, so a crew iteration could see and pay to list unrelated servers it never needed. Fixed by adding the same flags to the crew spawn unconditionally, with `test-crew-strict-mcp.mjs` asserting it. Not a new principle, just closing a gap where an existing one (first-mate MCP isolation) had not been extended to a tier built the same way.
 
 ## 2026-08-09 - Shipped-version resolution: order-independent, and only positive results cached
 

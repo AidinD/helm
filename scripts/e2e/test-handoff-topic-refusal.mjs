@@ -1,9 +1,9 @@
 // A handoff must never invent a topic behind your back.
 //
-// The bug (the captain, 2026-08-02): he archived "Träning och kost (Hevy)" and got a
-// second handoff file, traning-och-kost-hevy.md, sitting next to the
-// training-coaching.md it belonged in. Two files, one subject, and nothing said
-// anything had gone wrong - the toast happily announced a new topic.
+// The bug (reported 2026-08-02): archiving a session called "Trädgård och växthus
+// (Odlingslogg)" produced a second handoff file, tradgard-och-vaxthus-odlingslogg.md,
+// sitting next to the garden-planning.md it belonged in. Two files, one subject, and
+// nothing said anything had gone wrong - the toast happily announced a new topic.
 //
 // The chain: the topic classifier returned nothing (it is a real `claude` call
 // with a 30s budget, and a cold start alone measured 15.5s), the caller fell back
@@ -39,8 +39,8 @@ const ok = (c, m) => {
 const J = JSON.stringify;
 
 // --- 1. the refusal ------------------------------------------------------
-const existing = ["cykelloggen", "training-coaching"];
-const refused = planHandoffFiling({ proposed: null, existing, title: "Träning och kost (Hevy)" });
+const existing = ["fagelholkarna", "garden-planning"];
+const refused = planHandoffFiling({ proposed: null, existing, title: "Trädgård och växthus (Odlingslogg)" });
 ok(refused.needsCategory === true, `no topic + existing topics -> refuse and ask (${J(refused)})`);
 ok(!refused.category, "the refusal carries no category at all - nothing can quietly use one");
 ok(
@@ -48,7 +48,7 @@ ok(
   `the caller is handed the topics to choose from (${J(refused.existing)})`
 );
 ok(
-  refused.suggestion === "traning-och-kost-hevy",
+  refused.suggestion === "tradgard-och-vaxthus-odlingslogg",
   `and a suggested new name, clearly labelled as coming from the title (${J(refused.suggestion)})`
 );
 
@@ -59,21 +59,21 @@ ok(
 );
 
 // --- 2. the first topic on a clean store is not worth blocking on --------
-const firstEver = planHandoffFiling({ proposed: null, existing: [], title: "Träning och kost (Hevy)" });
+const firstEver = planHandoffFiling({ proposed: null, existing: [], title: "Trädgård och växthus (Odlingslogg)" });
 ok(
-  firstEver.needsCategory !== true && firstEver.category === "traning-och-kost-hevy",
+  firstEver.needsCategory !== true && firstEver.category === "tradgard-och-vaxthus-odlingslogg",
   `with NO topics on file the title is accepted - nothing to split (${J(firstEver)})`
 );
 
 // --- 3. the fallback is matched, not taken literally ---------------------
-const folded = planHandoffFiling({ proposed: null, existing: ["training", "kombucha"], title: "Training log" });
-ok(folded.category === "training", `a fallback title folds into an existing topic (${J(folded)})`);
+const folded = planHandoffFiling({ proposed: null, existing: ["garden", "bikupor"], title: "Garden log" });
+ok(folded.category === "garden", `a fallback title folds into an existing topic (${J(folded)})`);
 ok(folded.isNew === false, "and is not announced as a new topic");
 
 // --- 4. an explicit choice always wins -----------------------------------
-const chosen = planHandoffFiling({ proposed: "training-coaching", existing, title: "Träning och kost (Hevy)" });
+const chosen = planHandoffFiling({ proposed: "garden-planning", existing, title: "Trädgård och växthus (Odlingslogg)" });
 ok(
-  chosen.category === "training-coaching" && chosen.isNew === false,
+  chosen.category === "garden-planning" && chosen.isNew === false,
   `re-sending with an explicit topic files it there (${J(chosen)})`
 );
 
@@ -108,24 +108,24 @@ ok(
 // --- a GUESS at an existing topic asks too ----------------------------------
 // Filing into a topic REPLACES what it holds, so guessing which existing topic a
 // note belongs to is exactly as unsafe as inventing a name. The old near-miss rule
-// reused a topic silently on one shared word, which put a handoff about the captain's
-// leadership development into the topic holding his exercise-and-diet notes and
-// overwrote them (2026-08-03). The rule cannot be made correct lexically -
-// "training" -> "training-coaching" is right, "coaching" -> "training-coaching" is
-// wrong, and the two are structurally identical - so it must ask.
-// The real case, verbatim: this is the pair that actually mis-filed.
-const nearMissPlan = planHandoffFiling({ proposed: "coaching", existing: ["training-coaching"], title: "Leadership" });
+// reused a topic silently on one shared word, which filed a handoff about one subject
+// into the topic holding an unrelated subject's notes and overwrote them (2026-08-03).
+// The rule cannot be made correct lexically - "garden" -> "garden-planning" is right,
+// "planning" -> "garden-planning" is wrong, and the two are structurally identical - so
+// it must ask.
+// The shape of the pair that actually mis-filed.
+const nearMissPlan = planHandoffFiling({ proposed: "planning", existing: ["garden-planning"], title: "Compost" });
 ok(nearMissPlan.needsCategory === true, "a near-miss on an existing topic ASKS instead of reusing it silently");
-ok(nearMissPlan.nearMiss === "training-coaching", `and names the topic it was drawn to (${nearMissPlan.nearMiss})`);
-ok(nearMissPlan.suggestion === "coaching", "while offering the new topic it would otherwise have created");
+ok(nearMissPlan.nearMiss === "garden-planning", `and names the topic it was drawn to (${nearMissPlan.nearMiss})`);
+ok(nearMissPlan.suggestion === "planning", "while offering the new topic it would otherwise have created");
 // The mirror case shows why guessing cannot be fixed lexically: identical shape,
 // opposite correct answer. Both must ask.
 ok(
-  planHandoffFiling({ proposed: "training", existing: ["training-coaching"], title: "t" }).needsCategory === true,
+  planHandoffFiling({ proposed: "garden", existing: ["garden-planning"], title: "t" }).needsCategory === true,
   "and so does the case where reusing would have been RIGHT - the two are indistinguishable"
 );
-const exactPlan = planHandoffFiling({ proposed: "exercise-and-diet", existing: ["exercise-and-diet"], title: "x" });
-ok(exactPlan.needsCategory !== true && exactPlan.category === "exercise-and-diet", "an EXACT match still decides on its own - no needless interruption");
+const exactPlan = planHandoffFiling({ proposed: "greenhouse-notes", existing: ["greenhouse-notes"], title: "x" });
+ok(exactPlan.needsCategory !== true && exactPlan.category === "greenhouse-notes", "an EXACT match still decides on its own - no needless interruption");
 
 // Overwriting a topic must keep the version it replaced, or a mis-file is
 // destructive rather than merely wrong.

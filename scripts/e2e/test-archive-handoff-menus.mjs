@@ -1,8 +1,8 @@
 // Class-level check: EVERY archive menu offers to save a handoff, including for a
 // session with no project folder.
 //
-// The bug this exists to stop coming back (the captain, 2026-07-28, archiving "Träning
-// och kost (Hevy)"): three separate places in the renderer build an archive menu.
+// The bug this exists to stop coming back (reported 2026-07-28, archiving a session
+// with no project folder): three separate places in the renderer build an archive menu.
 // Task 663ab4b6 added the topic-keyed handoff - the whole point of which is
 // sessions with NO project folder - to exactly one of them. The other two kept
 // `session.cwd ? [handoff item] : []`, so a folderless session was offered only
@@ -93,7 +93,7 @@ const build = new Function(
 )(archiveWithHandoff, { orchestratorHome: "D:/Sync/claude-home" });
 
 // --- 1. behaviour: the folderless session is the whole point --------------
-const folderless = { title: "Träning och kost (Hevy)", cwd: null };
+const folderless = { title: "Trädgård och växthus (Odlingslogg)", cwd: null };
 const items = build(folderless, { plainArchive: () => calls.push(["plain", folderless.title]) });
 ok(items.length === 2, `a folderless session gets both options (${items.length})`);
 ok(
@@ -105,9 +105,9 @@ ok(
   `worded so it says where it goes - by topic, since there is no repo to write to (${items[0].label})`
 );
 
-// Backslashes, a different case and a trailing separator on purpose: his real
-// sessions carry the Windows form, and the meta-home is stored forward-slashed.
-const metaRooted = build({ title: "Traning och kost", cwd: "D:\\SYNC\\claude-home\\" }, { plainArchive: () => {} });
+// Backslashes, a different case and a trailing separator on purpose: real sessions
+// carry the Windows form, and the meta-home is stored forward-slashed.
+const metaRooted = build({ title: "Tradgard och vaxthus", cwd: "D:\\SYNC\\claude-home\\" }, { plainArchive: () => {} });
 ok(
   /by topic/.test(metaRooted[0].label),
   `a session rooted AT the meta-home is by-topic too, not HANDOFF.md (${metaRooted[0].label})`
@@ -140,7 +140,7 @@ ok(afterRuns === 2, `after() runs on the plain branch too (${afterRuns})`);
 // --- 3. behaviour: the labels carry the session name when asked -----------
 const named = build(folderless, { plainArchive: () => {}, nameInLabel: true });
 ok(
-  named.every((it) => it.label.includes("Träning och kost (Hevy)")),
+  named.every((it) => it.label.includes("Trädgård och växthus (Odlingslogg)")),
   `nameInLabel puts the title on both entries (${named.map((i) => i.label).join(" | ")})`
 );
 

@@ -5,12 +5,12 @@ requireLive("starts a real first-mate session to check its tool gating");
 // actually bound to a mate (mateId passed, or resumed-and-bound). A personal chat
 // the captain keeps in the meta-home (/claude) - no mateId - must NOT get the
 // first-mate treatment: no first-mate system prompt, and (the point) the user's
-// full MCP set instead of the lean strict config that stripped Hevy etc.
+// full MCP set instead of the lean strict config that strips the user's own servers.
 //
 // We verify via the transcript's MCP set: a first mate is launched with the
 // lean helm-dispatch MCP server (helm_* tools) and --strict-mcp-config, so
 // "helm-dispatch" appears in its transcript. A personal chat is NOT, so it has
-// zero helm-dispatch (and therefore keeps the user's full MCP set - Hevy etc.).
+// zero helm-dispatch (and therefore keeps the user's full MCP set).
 // This directly checks the thing that broke, not a proxy.
 //
 // Two cheap claude turns.
@@ -117,7 +117,7 @@ try {
   assert(!!personalId, `the no-mate meta-home session completed (${personalId})`);
   const personalTx = personalId ? findTranscript(personalId) : null;
   const personalHasFm = personalTx ? fs.readFileSync(personalTx, "utf8").includes(FM_MARKER) : true;
-  assert(personalHasFm === false, "a no-mate meta-home session is NOT a first mate: no helm-dispatch MCP -> keeps the user's full MCP set (Hevy etc.)");
+  assert(personalHasFm === false, "a no-mate meta-home session is NOT a first mate: no helm-dispatch MCP -> keeps the user's full MCP set");
 
   // 2) First mate: meta-home, WITH mateId -> IS a first mate.
   const mateId = mate0.mateId;

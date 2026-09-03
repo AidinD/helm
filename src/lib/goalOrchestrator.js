@@ -322,7 +322,7 @@ export function buildIterationArgs({ schema, systemPrompt, model, effort, guardS
     "--permission-mode",
     "bypassPermissions",
     // Strip MCP servers from this crew iteration. Without this it inherits the user's
-    // globally-configured MCP servers (router, home-assistant, hevy, ...) from the ambient
+    // globally-configured MCP servers, whatever they happen to be, from the ambient
     // config - exactly the leak first-mate sessions avoid with --strict-mcp-config
     // (main.js:2321). A crew iteration does autonomous code work (Edit/Bash/git - built-in
     // tools) inside an isolated worktree; it needs none of those MCP tools, and inheriting

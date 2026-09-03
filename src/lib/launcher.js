@@ -104,8 +104,8 @@ export function startSession({ cwd, prompt, model, effort, permissionMode, resum
   }
   // First-mate tier: strict isolation. A first mate should launch LEAN with
   // ONLY the helm_* dispatch tools from the inline mcpConfig above, not the
-  // machine's other ~20 MCP servers (Roblox, hevy, home-assistant, Unity,
-  // hibob, Atlassian, etc.) it would otherwise inherit from the user's global
+  // machine's other ~20 MCP servers - a developer workstation easily carries
+  // twenty of them - which it would otherwise inherit from the user's global
   // config. Passed ONLY on the first-mate launch path in main.js - never for a
   // regular chat session, which still needs the user's full MCP set. Same flag
   // spelling already proven in scripts/e2e/test-first-mate-fleet-state.mjs.

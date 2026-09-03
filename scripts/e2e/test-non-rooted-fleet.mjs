@@ -1,7 +1,7 @@
-// Two things the captain found in one screenshot on 2026-08-02, both about sessions that
+// Two things reported in one screenshot on 2026-08-02, both about sessions that
 // are NOT rooted in a project.
 //
-// 1. "Träning och kost finns i needs you men inte i captain."
+// 1. A non-rooted session appeared in the needs-you queue but not in Captain.
 //    Its Fleet node was parked in the archivedSecondMates overlay before un-archive
 //    learned to clear it, so the later fix helped future archives and did nothing for
 //    the entry already on disk. The session was live and visible in the queue, and
@@ -90,7 +90,7 @@ try {
   // The label must agree with the BACKEND, which is the thing that decides. Ask it.
   const backend = await app.eval(`(async () => {
     const home = state.orchestratorHome;
-    const a = await window.helm.saveHandoff(home, "probe from the test", "Kombucha test");
+    const a = await window.helm.saveHandoff(home, "probe from the test", "Bikupor test");
     const b = await window.helm.saveHandoff(null, "probe from the test", "Training test");
     return { metaHomeTopicKeyed: a?.topicKeyed === true, noneTopicKeyed: b?.topicKeyed === true, cat: a?.category };
   })()`);
@@ -110,33 +110,33 @@ try {
   // clearly-labelled new one, and resolve with what was clicked.
   const picked = await app.eval(`(async () => {
     const p = pickHandoffTopic(
-      { existing: ["training-coaching", "kombucha"], suggestion: "traning-och-kost-hevy", error: "The topic classifier did not answer within 120s." },
-      "Träning och kost (Hevy)"
+      { existing: ["garden-planning", "bikupor"], suggestion: "tradgard-och-vaxthus-odlingslogg", error: "The topic classifier did not answer within 120s." },
+      "Trädgård och växthus (Odlingslogg)"
     );
     const menu = document.getElementById("contextMenu");
     const labels = [...menu.querySelectorAll(".item")].map(el => el.textContent);
     const hidden = menu.classList.contains("hidden");
-    const row = [...menu.querySelectorAll(".item")].find(el => el.textContent.startsWith("training-coaching"));
+    const row = [...menu.querySelectorAll(".item")].find(el => el.textContent.startsWith("garden-planning"));
     row.click();
     return { labels, hidden, chosen: await p };
   })()`);
   ok(picked.hidden === false, "the picker actually opens");
   ok(
-    picked.labels.some((l) => l.includes("training-coaching")),
+    picked.labels.some((l) => l.includes("garden-planning")),
     `it lists the existing topics to choose from (${J(picked.labels)})`
   );
   ok(
-    picked.labels.some((l) => l.includes("New topic: traning-och-kost-hevy")),
+    picked.labels.some((l) => l.includes("New topic: tradgard-och-vaxthus-odlingslogg")),
     "the title-derived name is offered, but labelled as a NEW topic rather than taken silently"
   );
   ok(
     picked.labels.some((l) => l.includes("did not answer")),
     "and it says why it is asking - the classifier failing used to be invisible"
   );
-  ok(picked.chosen === "training-coaching", `clicking a topic resolves it (${J(picked.chosen)})`);
+  ok(picked.chosen === "garden-planning", `clicking a topic resolves it (${J(picked.chosen)})`);
 
   const dismissed = await app.eval(`(async () => {
-    const p = pickHandoffTopic({ existing: ["training-coaching"], suggestion: "x" }, "t");
+    const p = pickHandoffTopic({ existing: ["garden-planning"], suggestion: "x" }, "t");
     closeContextMenu();
     return await p;
   })()`);

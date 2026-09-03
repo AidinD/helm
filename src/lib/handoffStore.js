@@ -5,14 +5,14 @@ import { writeFileAtomicSync } from "./atomicWrite.js";
 // Durable handoffs for sessions that have NO project repo (task 663ab4b6).
 //
 // The repo-backed handoff writes <cwd>/HANDOFF.md, which only works when a
-// session owns a folder. A non-rooted second mate - training, kombucha, job
-// hunting - has no such folder, so its handoff had nowhere to go: the "save
+// session owns a folder. A non-rooted second mate - a durable life subject
+// rather than a repo - has no such folder, so its handoff had nowhere to go: the "save
 // handoff" action was not even offered, and a meta-home-rooted session would
 // have written into ONE shared HANDOFF.md that every other such session
 // overwrites. Either way the knowledge was lost.
 //
 // So: a Helm-owned store keyed by TOPIC instead of by path. One markdown file
-// per category (training.md, kombucha.md, job-search.md, ...), latest-only just
+// per category (garden-planning.md, bikupor.md, model-trains.md, ...), latest-only just
 // like HANDOFF.md, living under the meta-home so it syncs and can be versioned
 // with everything else Helm keeps there.
 //
@@ -110,8 +110,8 @@ export function writeHandoff(metaHome, slug, text, { title = null, now = Date.no
     "\n";
   // Keep the version being replaced. "Latest-only" is about what a later session
   // READS - it was never meant to make a filing mistake destructive, and it was:
-  // a leadership handoff was filed under the topic holding the captain's physical
-  // training notes, and overwriting it left no copy of what had been there
+  // a handoff was filed under a topic holding notes on an unrelated subject,
+  // and overwriting it left no copy of what had been there
   // (2026-08-03). One previous version per topic is enough to undo a mis-file by
   // hand, costs one small file, and does not turn the folder into a history.
   let superseded = null;
@@ -196,9 +196,9 @@ export function resolveHandoffCategory(proposed, existing = [], fallback = "gene
  * refusal nobody can test is a refusal that quietly stops happening.
  *
  * The rule: when no topic could be picked AND topics already exist, ASK - never
- * invent one from the session title. Inventing is what put the Hevy training
- * handoff in its own file next to the training topic it belonged in, looking for
- * all the world like it had worked (the captain, 2026-08-02). With NO topics on file
+ * invent one from the session title. Inventing is what put one session's handoff in
+ * its own file next to the topic it belonged in, looking for all the world like it
+ * had worked (reported 2026-08-02). With NO topics on file
  * yet there is nothing to mis-split, so the title is a fine first topic name.
  *
  * Returns { needsCategory: true, existing, suggestion } or { category, isNew }.

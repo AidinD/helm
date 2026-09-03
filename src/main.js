@@ -1225,8 +1225,8 @@ ipcMain.handle("context:saveHandoff", async (_event, { cwd, text, title, categor
   if (!text || !text.trim()) {
     return { ok: false, error: "Nothing to save" };
   }
-  // A session with NO project folder (a non-rooted second mate - training,
-  // kombucha, job hunting) has no HANDOFF.md to write, and meta-home-rooted
+  // A session with NO project folder (a non-rooted second mate - a durable life
+  // subject rather than a repo) has no HANDOFF.md to write, and meta-home-rooted
   // ones would all fight over ONE shared file. File those by TOPIC instead
   // (task 663ab4b6). Everything with a real repo keeps the repo-local file.
   if (!cwd || isMetaHomeRoot(cwd)) {
@@ -1509,7 +1509,7 @@ function unarchiveSecondMateForNewWork(id) {
  * one: the session shows in the needs-you queue and is invisible in Captain, with no
  * control anywhere that can un-park it.
  *
- * the captain hit exactly that. His "Träning och kost (Hevy)" node was parked before
+ * A real report hit exactly that: a non-rooted session's node was parked before
  * un-archive learned to clear it (fix 3fa55c2), so the fix helps future archives and
  * did nothing for the entry already on disk. It sat there for days while the session
  * was plainly live two panels away.
@@ -2511,7 +2511,7 @@ ipcMain.handle("dialog:pickFolder", async () => {
 });
 
 // --- Non-repo "life-domain" projects (PLAN.md's non-repo project types) —
-// plain folders (gym, cycling, kombucha, etc) that are first-class project
+// plain folders (gardening, cycling, beekeeping, etc) that are first-class project
 // types alongside git repos, backed by domains.js's small persisted
 // registry. A session rooted in a domain's folder works exactly like a repo
 // session (same session:start handler, same automatic CLAUDE.md + memory
@@ -3014,13 +3014,13 @@ ipcMain.handle(
     let launchTier = null;
     // A meta-home session is a FIRST MATE only when it is actually bound to one -
     // either the pane passed its mateId, or a resumed session resolves to a mate by
-    // its binding. A meta-home session with NO mate (a personal chat the captain
-    // keeps in /claude - training/Hevy, health/home-assistant, etc.) is NOT a first
-    // mate: it must keep the user's full MCP set and get no first-mate framing.
+    // its binding. A meta-home session with NO mate - a personal chat the captain
+    // keeps in the meta-home, whose whole value is the user's own MCP servers - is
+    // NOT a first mate: it must keep the full MCP set and get no first-mate framing.
     // Deciding by cwd ALONE stripped every meta-home chat of its MCP servers and
-    // injected the first-mate manual into it (the captain: "Helm doesn't see my Hevy
-    // connection" - a direct personal session rooted in /claude was classed as a
-    // first mate).
+    // injected the first-mate manual into it. The report was that one of those
+    // servers had stopped being visible in a chat rooted there; the server was fine,
+    // the session had been classed as a first mate.
     const firstMateId = mateId || (resumeSessionId ? activeMates().find((m) => m.sessionId === resumeSessionId)?.mateId || null : null);
     // The assistant seat, resolved the same two ways: the pane passed its id, or a resumed
     // session resolves to it by its binding. Deliberately NOT found through activeMates() -
@@ -3112,8 +3112,8 @@ ipcMain.handle(
           }
         }
         // First mates launch LEAN: only the helm_* dispatch tools above, not
-        // the machine's other MCP servers (Roblox, hevy, home-assistant, Unity,
-        // hibob, Atlassian, etc.) a normal chat session inherits from the
+        // the machine's other MCP servers - a workstation easily carries twenty -
+        // which a normal chat session inherits from the
         // user's global config. A dispatched second-mate run is a separate
         // runGoal path (never this handler), so this only ever narrows a
         // first-mate launch.

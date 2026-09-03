@@ -5969,7 +5969,7 @@ button.primary {
 }
 
 /* Distinguishes a repo chip (folder icon) from a non-repo "life-domain"
-   project chip (its own icon, e.g. gym/cycling/kombucha). */
+   project chip (its own icon, e.g. gardening/cycling/beekeeping). */
 .dash-chip-ic {
   font-size: 11.5px;
   opacity: 0.85;

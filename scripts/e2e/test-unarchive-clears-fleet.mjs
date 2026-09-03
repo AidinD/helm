@@ -1,12 +1,12 @@
 // E2E through the real app: un-archiving a session must bring it back EVERYWHERE,
 // not just in the sidebar.
 //
-// Found by the captain on 2026-07-28: he un-archived "Träning och kost (Hevy)" and it still
-// did not appear under Captain. Cause: there are two independent archive lists -
+// Reported on 2026-07-28: un-archiving a non-rooted session still did not bring it
+// back under Captain. Cause: there are two independent archive lists -
 // `archivedSessions` for the session, and `archivedSecondMates` for its node in the
 // Fleet view, keyed "sess_<id>". Archiving from the Fleet button writes the second;
 // un-archiving the session only ever cleared the first. So the session came back in
-// one view and stayed invisible in the one he actually uses.
+// one view and stayed invisible in the one the reporter actually uses.
 //
 // A one-way overlay is the mirror image of the bug the overlay was introduced to fix
 // ("archive keeps coming back"), which is why this test asserts the ROUND TRIP rather
