@@ -484,6 +484,55 @@ function commandName(word) {
 }
 
 // ---------------------------------------------------------------------------
+// Design artifacts, and the ONE place a destination is allowed to matter
+// ---------------------------------------------------------------------------
+
+/**
+ * Where an artifact lives inside a project. Sibling of `.helm-goal`, and named the same way
+ * for the same reason: Helm's own bookkeeping, not the project's code.
+ */
+export const ARTIFACT_DIR = ".helm-artifacts";
+
+/**
+ * Is this write landing in the artifacts directory?
+ *
+ * ## Why a destination check exists here at all, when the guard refuses to be destination-aware
+ *
+ * That refusal is real and it is tested: a path check cannot tell a valid write from one that
+ * silently corrupts the store it lands in, so no BAN in this file is allowed to turn on where
+ * a write is going. `test-assistant-tier.mjs` pins that for the tier whose policy is a ban.
+ *
+ * A budget is not a ban, and the difference is what makes this safe rather than an exception
+ * to the rule. A second mate may write; the only question the budget answers is how much it
+ * changes in one turn before a human should look. So the failure mode of a wrong match here is
+ * an UNCOUNTED write, not an unguarded one - the write was permitted either way. That is a
+ * different order of consequence from the one the refusal protects.
+ *
+ * The problem it solves is real and was blocking a feature: iterating a design artifact IS
+ * writing, three edits in and a second mate has spent its whole turn budget on a mockup that
+ * is not project code. Deciding that by asking what a file IS would be a judgement the guard
+ * cannot make; deciding it by a directory the mate has to put the file in is mechanical.
+ *
+ * ## Deliberately narrow
+ *
+ * TOOLS ONLY, never a shell command. Where a shell command writes cannot be read off the
+ * command with any honesty, and a guess in that direction is how a real exemption becomes a
+ * hole. A mate that wants the exemption uses the write tool, which is what it would do anyway.
+ *
+ * SEGMENT match, not substring, so a directory merely named like this one does not qualify.
+ */
+export function isArtifactPath(filePath) {
+  const s = String(filePath || "").trim();
+  if (!s) {
+    return false;
+  }
+  return s
+    .replace(/\\/g, "/")
+    .split("/")
+    .some((segment) => segment.toLowerCase() === ARTIFACT_DIR);
+}
+
+// ---------------------------------------------------------------------------
 // The read-only allowlist
 // ---------------------------------------------------------------------------
 
@@ -1067,6 +1116,12 @@ export function decideToolCall({ tier, tool, input = {}, writesThisTurn = 0, bud
     const isWrite = isMutatingTool || shellMutatesFile(input.command);
     if (!isWrite) {
       return { decision: "allow", isWrite: false };
+    }
+    // An artifact costs no budget. Tool writes only, and only into the named directory - see
+    // isArtifactPath for why a destination may decide a BUDGET here while it may never decide
+    // a BAN anywhere else in this file.
+    if (isMutatingTool && !isShell && isArtifactPath(input.file_path || input.notebook_path)) {
+      return { decision: "allow", isWrite: false, artifact: true };
     }
     if (writesThisTurn >= budget) {
       return { decision: "deny", isWrite: true, reason: secondMateDenial(writesThisTurn, budget) };

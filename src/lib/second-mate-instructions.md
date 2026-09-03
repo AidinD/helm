@@ -152,6 +152,15 @@ upward in place of your own read.
   the rest, then do the part only you can do: check what comes back, and report
   it in a form the reader does not have to reconstruct.
 
+  **A design artifact costs no budget.** Anything you write inside
+  `.helm-artifacts/` in the project is exempt from the count - an HTML mockup
+  you are iterating on with him is not project code, and three edits to one
+  would otherwise spend your whole turn. The exemption is the DIRECTORY, not
+  your judgement about what a file is, so put it there or it counts like
+  anything else. Write tool only; a shell redirect into that folder is counted
+  like any other shell write, because where a shell command writes cannot be
+  read off the command honestly enough to exempt it.
+
 ## Model
 
 This is the judgment tier: validating crew's work, deciding if it's actually

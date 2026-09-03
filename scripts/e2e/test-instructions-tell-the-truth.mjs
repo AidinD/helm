@@ -180,6 +180,33 @@ claim(
 // consult by name. A renamed seat would turn it into a page of instructions pointing at
 // nothing, silently, which is the exact failure the second-mate manual already paid for.
 console.log("");
+{
+  // The artifact exemption is only reachable if the mate knows the directory's name, and the
+  // name has to be the one the guard actually matches - a manual naming a different folder
+  // would be an instruction that quietly costs budget every time it is followed.
+  claim(
+    secondMate,
+    "second-mate-instructions.md",
+    "A design artifact costs no budget",
+    "and the guard really exempts a directory rather than a judgement about the file",
+    /export function isArtifactPath/.test(tierGuard)
+  );
+  claim(
+    secondMate,
+    "second-mate-instructions.md",
+    "`.helm-artifacts/`",
+    "and it names the SAME directory the guard matches on",
+    /ARTIFACT_DIR = "\.helm-artifacts"/.test(tierGuard)
+  );
+  claim(
+    secondMate,
+    "second-mate-instructions.md",
+    "a shell redirect into that folder is counted",
+    "and the exemption really is tools-only, so that sentence is not a courtesy",
+    /isMutatingTool && !isShell && isArtifactPath/.test(tierGuard)
+  );
+}
+
 console.log("-- assistant-instructions.md --");
 {
   const seatKeys = [...personas.matchAll(/key:\s*"([a-z-]+)"/g)].map((m) => m[1]);
