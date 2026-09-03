@@ -1,4 +1,4 @@
-# Can the app lane run on a machine that is not the author's? One question, cheaply.
+# The app lane, on GitHub's machines instead of the author's.
 #
 # WHY THIS IS A PROBE AND NOT THE APP LANE
 # 153 of the 308 checks in scripts/e2e launch the real Electron app, and none of them run in
@@ -21,29 +21,31 @@
 # expected is how a workflow gets ignored.
 #
 # NOT A GATE. Read-only, writes nothing, must not be a required check.
-name: app-lane-probe
+name: app-lane
 
 on:
   workflow_dispatch:
     inputs:
       checks:
-        description: "Space-separated app checks to run (default: a small representative set)"
+        description: "Space-separated app checks to run. Empty runs the WHOLE app lane."
         required: false
-        default: "test-frameless-header.mjs test-command-palette.mjs test-chat-markdown.mjs"
+        default: ""
 
 permissions:
   contents: read
 
 concurrency:
-  group: app-lane-probe-${{ github.ref }}
+  group: app-lane-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  probe:
+  app-lane:
     # Windows for the same reason the pure lane is on Windows, and one more: this app is
     # Windows-targeted, and an Electron start on Linux would answer a question nobody asked.
     runs-on: windows-latest
-    timeout-minutes: 25
+    # ~153 checks at roughly 20s each. 90 leaves room for a slow runner without letting a
+    # hung check burn an hour of somebody's minutes.
+    timeout-minutes: 90
     steps:
       - name: Check out Helm
         uses: actions/checkout@v4
@@ -149,33 +151,65 @@ jobs:
       # is set explicitly here because the whole question is whether a hidden window can lay
       # out and be driven over the debugger on a machine with no interactive desktop session
       # of the kind a developer has.
-      - name: Probe - can the app start and be driven here
+      - name: The app lane
         working-directory: helm
         shell: bash
         env:
           HELM_E2E_HIDDEN: "1"
         run: |
           set +e
+          if [ -n "${{ github.event.inputs.checks }}" ]; then
+            echo "Running only the named checks: ${{ github.event.inputs.checks }}"
+            files="${{ github.event.inputs.checks }}"
+          else
+            # The whole app lane, discovered the same way the repo's own runner discovers it:
+            # a check is app-lane if it IMPORTS the harness. Listing them here would be a
+            # second definition of "app lane" that drifts from the runner's.
+            files=$(node -e "
+              const fs = require('node:fs');
+              const dir = 'scripts/e2e';
+              const out = [];
+              for (const f of fs.readdirSync(dir)) {
+                if (!f.startsWith('test-') || !f.endsWith('.mjs')) { continue; }
+                const src = fs.readFileSync(dir + '/' + f, 'utf8');
+                if (/^\s*(?:import\s|const\s*\{[^}]*\}\s*=\s*await\s+import\()[^\n]*harness\.mjs/m.test(src)) {
+                  out.push(f);
+                }
+              }
+              out.sort();
+              console.log(out.join(' '));
+            ")
+            echo "Discovered $(echo $files | wc -w) app-lane checks"
+          fi
+
           failed=0
-          for check in ${{ github.event.inputs.checks }}; do
+          ran=0
+          declare -a red=()
+          for check in $files; do
+            ran=$((ran+1))
             echo "########## $check"
             node "scripts/e2e/$check"
             code=$?
+            if [ $code -ne 0 ]; then
+              failed=$((failed+1))
+              red+=("$check")
+            fi
             echo "---------- $check exited $code"
-            if [ $code -ne 0 ]; then failed=$((failed+1)); fi
           done
+
           echo ""
-          echo "PROBE RESULT"
-          echo "  This answers ONE question: whether Electron starts and the harness attaches"
-          echo "  on a hosted runner. It is NOT app-lane coverage - 153 checks launch the app"
-          echo "  and this ran a handful of them by hand."
-          if [ $failed -eq 0 ]; then
-            echo "  Every probed check passed, so the app lane is worth widening here."
-          else
-            echo "  $failed probed check(s) failed. Read the output above before concluding it"
-            echo "  cannot work: a check can fail on a runner for reasons that have nothing to"
-            echo "  do with Electron starting (no git identity, no user profile, a path that"
-            echo "  only exists on a developer machine). Whether the APP started is the answer"
-            echo "  being sought, and the harness prints that."
+          echo "APP LANE RESULT"
+          echo "  ran $ran, failed $failed"
+          if [ $failed -gt 0 ]; then
+            echo "  red:"
+            for r in "${red[@]}"; do echo "    - $r"; done
           fi
+          echo ""
+          echo "  WHAT THIS DOES AND DOES NOT SAY"
+          echo "  It covers the checks that launch the real app. The pure lane is a separate"
+          echo "  workflow and is NOT included here, so neither job on its own is the suite -"
+          echo "  read them together or read neither as coverage."
+          echo "  The viewport is locked by the harness (1960x988, scale 1), so a geometry"
+          echo "  assertion measures the same thing here as on a workstation. Without that lock"
+          echo "  this lane measured whatever the runner's virtual display happened to be."
           exit $failed

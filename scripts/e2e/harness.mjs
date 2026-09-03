@@ -848,6 +848,54 @@ class Harness {
     // Enable the domains we use and start collecting console output.
     await this.cdp.send("Runtime.enable");
     await this.cdp.send("Page.enable");
+    // A LOCKED VIEWPORT, so a layout measurement means the same thing everywhere.
+    //
+    // The app asks for a 1960x988 window. Electron clamps that to the display's work area, so
+    // the size a check actually measures is a property of whatever screen the run happens to
+    // have. On a hosted CI runner the virtual display is around 1024 wide, and a check that
+    // asserted "the chat column is narrower than the pane" failed there - correctly, given a
+    // 1007px pane and a 1040px max-width that then does not bind. Not a bug in the app, and
+    // not a bug in the check: the two ran against different geometry.
+    //
+    // Shrinking the window to something that fits any display would have made the same
+    // assertion fail on the author's machine too, which is worse rather than fairer. So the
+    // RENDERER's viewport is overridden instead - device metrics are not limited by the
+    // physical screen, so the page lays out at this size on a hosted runner and on a
+    // workstation alike, and every geometry assertion in the suite becomes reproducible.
+    //
+    // The size is the app's own window size, minus nothing: matching it means the checks keep
+    // measuring the layout they were written against, so this is a determinism change and not
+    // a re-baselining.
+    //
+    // HELM_E2E_VIEWPORT=0 turns it off for a check that genuinely wants the real window - a
+    // display-scaling or multi-monitor question, say, which this would hide.
+    if (process.env.HELM_E2E_VIEWPORT !== "0") {
+      const [w, h] = String(process.env.HELM_E2E_VIEWPORT || "1960x988")
+        .split("x")
+        .map((n) => Number.parseInt(n, 10));
+      const width = Number.isFinite(w) && w > 0 ? w : 1960;
+      const height = Number.isFinite(h) && h > 0 ? h : 988;
+      try {
+        await this.cdp.send("Emulation.setDeviceMetricsOverride", {
+          width,
+          height,
+          // 1, deliberately. A runner has no display scaling and a workstation may have some;
+          // pinning it is the difference between a pixel assertion that reproduces and one
+          // that depends on somebody's monitor settings.
+          deviceScaleFactor: 1,
+          mobile: false,
+        });
+        this.viewport = { width, height, locked: true };
+      } catch (err) {
+        // Not fatal. An override that cannot be applied leaves the run measuring the real
+        // window, which is what every check did before this existed - so the honest outcome
+        // is a warning and a recorded flag, not a failed launch.
+        this.viewport = { width: null, height: null, locked: false, error: err?.message || String(err) };
+        console.warn(`[e2e-harness] could not lock the viewport (${this.viewport.error}); geometry checks will measure the real window`);
+      }
+    } else {
+      this.viewport = { width: null, height: null, locked: false, reason: "HELM_E2E_VIEWPORT=0" };
+    }
     this.cdp.on("Runtime.consoleAPICalled", (p) => {
       const text = (p.args || [])
         .map((a) => a.value ?? a.description ?? "")

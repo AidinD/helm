@@ -85,7 +85,15 @@ ok(split.app > 0, "there ARE checks that launch the app, so the coverage stateme
   ok(statement.includes(String(split.fast)), "and the live pure-lane count");
   ok(statement.includes(String(split.total)), "and the live suite size");
   ok(/NOT run here/.test(statement), "and says outright that the app lane is not run here");
-  ok(/no workflow COVERS them/.test(statement), "and that no other workflow covers them either - a reader must not assume a second job exists");
+  // The two FACTS a reader needs, not a sentence. This assertion has now been broken twice by
+  // the wording changing while the truth did not - first when a probe workflow appeared, then
+  // when it grew into the real app lane. Pinning prose makes the check fail for the right
+  // reason and the wrong cause, every time somebody improves a paragraph.
+  ok(/app-lane/.test(statement), "the statement NAMES the workflow that does run them, so a reader can go and look");
+  ok(
+    /says nothing/i.test(statement) && /green tick|this job/i.test(statement),
+    "and says a green tick on THIS job says nothing about them - which is the whole point of printing any of this"
+  );
   // MECHANICALLY, not by phrase. This assertion used to match the sentence "no workflow in
   // this repository runs them", which is a claim about the repo checked by reading the claim.
   // The moment a manual probe workflow appeared, the sentence had to change and the check
