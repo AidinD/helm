@@ -88,7 +88,10 @@ const DRIVES_A_MODEL = /^\s*requireLive\s*\(/m;
  * How the suite actually splits, read off the files rather than declared anywhere.
  *
  * `app` is the number this whole script exists to state out loud: checks that launch a
- * real Electron window, which no workflow in this repository runs.
+ * real Electron window, which no workflow runs as coverage. A manual probe workflow
+ * (app-lane-probe) can drive a handful of them by hand to answer whether Electron starts
+ * on a hosted runner at all - that is a question, not coverage, and it is triggered by a
+ * person rather than by a push.
  */
 export function classifySuite(dir = E2E_DIR) {
   const files = fs
@@ -142,7 +145,13 @@ export function coverageStatement(split, observed = {}) {
     `  ${split.app} of them launch the REAL Electron app with a window. They are NOT run here,`
   );
   lines.push(
-    "    and no workflow in this repository runs them. A green tick on this job says nothing"
+    "    and no workflow COVERS them. A manual probe (app-lane-probe) can run a handful"
+  );
+  lines.push(
+    "    by hand to answer whether Electron starts on a hosted runner, which is a question"
+  );
+  lines.push(
+    "    and not coverage. A green tick on this job says nothing"
   );
   lines.push("    whatsoever about them - it is roughly half the behaviour Helm is judged on.");
   if (excludedNotRun.length > 0) {

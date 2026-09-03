@@ -99,6 +99,37 @@ ok(
   "so a syntax error cannot be mistaken for a guard doing its job - which is the one that looks most like success"
 );
 
+// --- a non-JavaScript file is mutable too --------------------------------------------------
+// The parse gate runs `node --check`, which cannot read YAML - so the first version refused a
+// perfectly valid mutation of a workflow file with an unknown-extension error. Refusing a
+// VALID mutation is the same class of lie as accepting a broken one: the run reports nothing
+// while looking like it reported something. Found by using the helper on real work, and the
+// case belongs here so the narrowing cannot be undone silently.
+{
+  fs.writeFileSync(path.join(repo, "config.yml"), "mode: strict\n");
+  fs.writeFileSync(
+    path.join(repo, "checks", "yaml.mjs"),
+    `import fs from "node:fs";
+const body = fs.readFileSync(new URL("../config.yml", import.meta.url), "utf8");
+const strict = /mode: strict/.test(body);
+console.log((strict ? "OK   - " : "FAIL - ") + "the config is strict");
+console.log(strict ? "VERIFY OK" : "VERIFY FAILED");
+process.exit(strict ? 0 : 1);
+`
+  );
+  const yamlRun = runMutations({
+    repo,
+    checks: ["checks/yaml.mjs"],
+    mutations: [{ label: "the yaml setting is flipped", file: "config.yml", from: "mode: strict", to: "mode: loose" }],
+  });
+  ok(yamlRun.killed.length === 1, `a YAML mutation is run rather than refused (killed ${yamlRun.killed.length}, refused ${yamlRun.refused.length})`);
+  ok(
+    yamlRun.refused.length === 0,
+    `and not turned away for having an extension node cannot parse (${(yamlRun.refused[0] || {}).why || "none"})`
+  );
+  ok(fs.readFileSync(path.join(repo, "config.yml"), "utf8") === "mode: strict\n", "and it is restored like any other file");
+}
+
 // --- and the file is put back, whatever happened ------------------------------------------
 const after = fs.readFileSync(path.join(repo, "lib", "rule.mjs"), "utf8");
 ok(after === before, "every mutated file is restored byte-identically afterwards");

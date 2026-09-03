@@ -1,0 +1,118 @@
+# Can the app lane run on a machine that is not the author's? One question, cheaply.
+#
+# WHY THIS IS A PROBE AND NOT THE APP LANE
+# 153 of the 308 checks in scripts/e2e launch the real Electron app, and none of them run in
+# CI - which the pure lane says out loud on every run, because a green tick that covers half
+# the behaviour and looks complete is the failure this repo has spent months removing.
+#
+# Running all 153 would cost roughly an hour of runner time per push and needs a real
+# `npm install` (Electron is a ~100MB download; `npm ci` is not an option here because two
+# dependencies are `file:` paths to sibling repositories and the lockfile is behind). Before
+# spending any of that on a schedule, there is exactly one thing worth knowing:
+#
+#     does Electron start, and does the harness's debugger connection attach, on a
+#     GitHub-hosted Windows runner at all?
+#
+# Everything else about widening this is trivial once that answer is yes, and pointless if it
+# is no. So this runs a handful of representative checks, by hand, and answers that.
+#
+# MANUAL ONLY. No push trigger and no schedule until the answer is known - committing to
+# nightly cost on a guess is how a CI bill becomes a surprise, and a scheduled red nobody
+# expected is how a workflow gets ignored.
+#
+# NOT A GATE. Read-only, writes nothing, must not be a required check.
+name: app-lane-probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      checks:
+        description: "Space-separated app checks to run (default: a small representative set)"
+        required: false
+        default: "test-frameless-header.mjs test-command-palette.mjs test-chat-markdown.mjs"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: app-lane-probe-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    # Windows for the same reason the pure lane is on Windows, and one more: this app is
+    # Windows-targeted, and an Electron start on Linux would answer a question nobody asked.
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out Helm
+        uses: actions/checkout@v4
+        with:
+          path: helm
+
+      - name: Check out keel into node_modules (the sibling package Helm imports)
+        uses: actions/checkout@v4
+        with:
+          repository: AidinD/keel
+          path: helm/node_modules/keel
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      # `npm install --ignore-scripts` on purpose, and both halves of that matter.
+      #
+      # INSTALL, not `ci`: the lockfile is behind on the `file:` siblings, so `ci` refuses.
+      # IGNORE-SCRIPTS: this repo's own postinstall check refuses an install when a fatal
+      # sibling is missing, which is right on a developer's machine and wrong here - keel is
+      # already placed by hand above, and @jot/core is deliberately absent. Skipping scripts
+      # also skips other packages' install hooks, which is a smaller blast radius than letting
+      # an unrelated dependency run code on a runner.
+      #
+      # Electron itself IS needed and its download is the expensive part; there is no way to
+      # answer this workflow's question without it.
+      - name: Install dependencies (Electron included - this is the expensive step)
+        working-directory: helm
+        run: npm install --ignore-scripts --no-audit --no-fund
+
+      - name: Confirm Electron is actually here
+        working-directory: helm
+        shell: bash
+        run: |
+          test -d node_modules/electron || { echo "Electron did not install - the probe cannot answer its question."; exit 1; }
+          node -e "const p=require('electron/package.json'); console.log('electron ' + p.version)"
+
+      # The one thing being measured. HELM_E2E_HIDDEN=1 is the harness default anyway, but it
+      # is set explicitly here because the whole question is whether a hidden window can lay
+      # out and be driven over the debugger on a machine with no interactive desktop session
+      # of the kind a developer has.
+      - name: Probe - can the app start and be driven here
+        working-directory: helm
+        shell: bash
+        env:
+          HELM_E2E_HIDDEN: "1"
+        run: |
+          set +e
+          failed=0
+          for check in ${{ github.event.inputs.checks }}; do
+            echo "########## $check"
+            node "scripts/e2e/$check"
+            code=$?
+            echo "---------- $check exited $code"
+            if [ $code -ne 0 ]; then failed=$((failed+1)); fi
+          done
+          echo ""
+          echo "PROBE RESULT"
+          echo "  This answers ONE question: whether Electron starts and the harness attaches"
+          echo "  on a hosted runner. It is NOT app-lane coverage - 153 checks launch the app"
+          echo "  and this ran a handful of them by hand."
+          if [ $failed -eq 0 ]; then
+            echo "  Every probed check passed, so the app lane is worth widening here."
+          else
+            echo "  $failed probed check(s) failed. Read the output above before concluding it"
+            echo "  cannot work: a check can fail on a runner for reasons that have nothing to"
+            echo "  do with Electron starting (no git identity, no user profile, a path that"
+            echo "  only exists on a developer machine). Whether the APP started is the answer"
+            echo "  being sought, and the harness prints that."
+          fi
+          exit $failed

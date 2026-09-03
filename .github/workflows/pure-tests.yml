@@ -10,8 +10,10 @@
 #
 # WHAT IT DOES NOT DO - read this before trusting a green tick
 # Roughly half the checks in scripts/e2e launch the REAL Electron app with a window.
-# They are not run here, and no workflow in this repository runs them. There is no
-# virtual display and no headless harness for them yet; adding one is real work, and
+# They are not run here, and no workflow COVERS them. There is a manual probe workflow
+# (app-lane-probe) that drives a handful by hand to answer one question - whether Electron
+# starts and the debugger attaches on a hosted runner - which is a question, not coverage,
+# and it is triggered by a person rather than by a push. Widening it is real work, and
 # pretending otherwise is the failure this repo has spent months fighting. The job
 # prints the exact count at runtime (scripts/ci-fast-lane.mjs) so the claim cannot go
 # stale, and it prints it whether the run is green or red.

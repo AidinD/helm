@@ -85,7 +85,40 @@ ok(split.app > 0, "there ARE checks that launch the app, so the coverage stateme
   ok(statement.includes(String(split.fast)), "and the live pure-lane count");
   ok(statement.includes(String(split.total)), "and the live suite size");
   ok(/NOT run here/.test(statement), "and says outright that the app lane is not run here");
-  ok(/no workflow in this repository runs them/.test(statement), "and that no other workflow covers them either - a reader must not assume a second job exists");
+  ok(/no workflow COVERS them/.test(statement), "and that no other workflow covers them either - a reader must not assume a second job exists");
+  // MECHANICALLY, not by phrase. This assertion used to match the sentence "no workflow in
+  // this repository runs them", which is a claim about the repo checked by reading the claim.
+  // The moment a manual probe workflow appeared, the sentence had to change and the check
+  // failed - correctly, but for the wrong reason: it was guarding wording, not truth.
+  //
+  // So the truth is checked against the workflows themselves: any OTHER workflow that runs
+  // app-lane checks must be manual-only. A scheduled or push-triggered one would be coverage,
+  // and then the statement above is a lie that nobody would be reminded to fix - which is
+  // exactly the shape of defect this whole file exists to prevent.
+  {
+    const dir = new URL("../../.github/workflows/", import.meta.url);
+    const files = fs.readdirSync(dir).filter((f) => /\.ya?ml$/.test(f) && f !== "pure-tests.yml");
+    const offenders = [];
+    for (const f of files) {
+      const body = fs.readFileSync(new URL(f, dir), "utf8");
+      // Does it drive app-lane checks at all? The harness is what makes a check app-lane, and
+      // a workflow that runs them names them or names the runner script.
+      const runsAppChecks = /scripts\/e2e\//.test(body) || /run-tests\.mjs(?!.*--fast)/.test(body);
+      if (!runsAppChecks) {
+        continue;
+      }
+      const manualOnly = /workflow_dispatch/.test(body) && !/^\s*push:/m.test(body) && !/^\s*schedule:/m.test(body);
+      if (!manualOnly) {
+        offenders.push(f);
+      }
+    }
+    ok(
+      offenders.length === 0,
+      offenders.length === 0
+        ? `and every other workflow that touches app checks is manual-only (${files.length} other workflow(s) read)`
+        : `these workflows run app checks automatically, so the "not covered" statement is now false: ${offenders.join(", ")}`
+    );
+  }
   for (const file of Object.keys(EXCLUDED)) {
     ok(statement.includes(file), `the excluded check ${file} is named in the statement rather than merely not counted`);
   }

@@ -105,12 +105,19 @@ export function runMutations({ repo, checks, mutations, env = {} }) {
 
       writeFile(m.file, source.replace(m.from, m.to));
 
-      // A mutant that does not parse fails every check for the wrong reason.
-      const parsed = spawnSync(process.execPath, ["--check", path.join(repo, m.file)], { encoding: "utf8" });
-      if (parsed.status !== 0) {
-        writeFile(m.file, source);
-        refused.push({ mutation: m, why: `the mutated file does not parse, so a red run would prove nothing: ${String(parsed.stderr || "").split("\n")[1] || ""}`.trim() });
-        continue;
+      // A mutant that does not parse fails every check for the wrong reason - but ONLY files
+      // node can parse get this gate. The first version ran `node --check` on everything and
+      // refused a perfectly good mutation of a YAML workflow with an unknown-extension error.
+      // Found by using this helper on real work rather than on its own fixture, and worth
+      // saying: refusing a VALID mutation is the same class of lie as accepting a broken one,
+      // because the run reports nothing while looking like it reported something.
+      if (/\.(js|mjs|cjs)$/.test(m.file)) {
+        const parsed = spawnSync(process.execPath, ["--check", path.join(repo, m.file)], { encoding: "utf8" });
+        if (parsed.status !== 0) {
+          writeFile(m.file, source);
+          refused.push({ mutation: m, why: `the mutated file does not parse, so a red run would prove nothing: ${String(parsed.stderr || "").split("\n")[1] || ""}`.trim() });
+          continue;
+      }
       }
 
       const failures = runChecks();
