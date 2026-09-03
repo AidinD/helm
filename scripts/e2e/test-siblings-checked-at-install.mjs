@@ -110,6 +110,27 @@ try {
   ok(/@jot\/core/.test(degraded.err), "and still says which package is missing");
   ok(/starts, degraded/.test(degraded.err), "and that the app starts without it, so the warning is not read as a failure");
 
+  // THE LAYOUT THAT IS FINE AND USED TO FAIL. A package placed directly into node_modules
+  // resolves perfectly well with no sibling directory anywhere - which is exactly how CI
+  // provides keel. The first version of this check tested the file: TARGET first, so it
+  // reported "not cloned" and failed the install for a package that was right there and
+  // loadable. A check that refuses a working setup is worse than none: it gets switched off,
+  // and then it is not there for the case it was written for.
+  {
+    const solo = path.join(tmp, "solo");
+    fs.mkdirSync(path.join(solo, "scripts"), { recursive: true });
+    fs.mkdirSync(path.join(solo, "node_modules", "keel"), { recursive: true });
+    fs.copyFileSync(path.join(repo, "scripts", "check-siblings.mjs"), path.join(solo, "scripts", "check-siblings.mjs"));
+    fs.writeFileSync(path.join(solo, "package.json"), JSON.stringify({ name: "helm", dependencies: { keel: "file:../keel" } }));
+    fs.writeFileSync(path.join(solo, "node_modules", "keel", "package.json"), JSON.stringify({ name: "keel" }));
+    const resolvable = runIn(solo);
+    ok(
+      resolvable.code === 0,
+      `a package sitting in node_modules with NO sibling directory passes (exit ${resolvable.code}) - resolvability is the rule, not where the source lives`
+    );
+    ok(resolvable.err.trim() === "", `and says nothing at all about it (${resolvable.err.trim().slice(0, 80) || "silent"})`);
+  }
+
   // Cloned but not built is its own message, because its fix is a build and not a clone.
   fs.mkdirSync(path.join(tmp, "jot"), { recursive: true });
   fs.writeFileSync(path.join(tmp, "jot", "package.json"), "{}");

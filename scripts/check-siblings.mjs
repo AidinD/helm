@@ -59,8 +59,25 @@ for (const [name, spec] of siblings) {
   const target = path.resolve(repo, String(spec).replace(/^file:/, ""));
   const linked = path.join(repo, "node_modules", ...name.split("/"));
 
-  // Three distinct states, because they have three different fixes.
+  // RESOLVABILITY FIRST, and this order is the whole correctness of the check.
+  //
+  // What matters is whether node can load the package, not where its source sits. Those two
+  // coincide on a developer's machine - npm links node_modules/<name> at the file: target - and
+  // they do NOT have to: a package placed directly into node_modules by other means resolves
+  // perfectly well with no sibling directory anywhere.
+  //
+  // The first version tested the TARGET first and so failed a perfectly good tree, on CI, where
+  // keel is checked out straight into node_modules and `../keel` does not exist. It reported
+  // "not cloned" and failed the install for a package that was right there and loadable. A
+  // check that refuses a working setup is worse than none: it gets switched off, and then it is
+  // not there for the case it was written for.
+  //
+  // So the target states below are DIAGNOSIS, reached only when the package does not resolve.
+  // They explain a failure; they do not define one.
   let state = null;
+  if (fs.existsSync(path.join(linked, "package.json"))) {
+    continue;
+  }
   if (!fs.existsSync(target)) {
     // "cloned but not built" only when the target's PARENT is itself a checkout - which is
     // what `../jot/dist-core` looks like when jot is cloned and unbuilt. Testing merely that
@@ -71,8 +88,9 @@ for (const [name, spec] of siblings) {
     state = fs.existsSync(path.join(path.dirname(target), "package.json")) ? "not-built" : "not-cloned";
   } else if (!fs.existsSync(path.join(target, "package.json"))) {
     state = "not-built";
-  } else if (!fs.existsSync(path.join(linked, "package.json"))) {
-    // The source is there but node cannot reach it - a dangling link, or npm never made one.
+  } else {
+    // The source is there and the package does not resolve - a dangling link, or npm never
+    // made one. Reached only because the resolvability test above already said no.
     state = "not-linked";
   }
   if (!state) {
