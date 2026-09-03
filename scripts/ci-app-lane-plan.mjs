@@ -23,10 +23,10 @@ const e2e = path.join(repo, "scripts", "e2e");
  * Checks the hosted runner cannot execute meaningfully, and why.
  *
  * `kind` separates two very different debts:
- *   own-data   the check reads whatever is on the author's machine rather than a fixture it
- *              built. It cannot pass anywhere else, and it is barely a test anywhere - its
- *              result changes when he archives a card or tidies a folder, with no code
- *              involved. The fix is a fixture, and it is tracked as its own task.
+ *   own-data   the check reads whatever happens to be on the developer machine it runs on,
+ *              rather than a fixture it built. It cannot pass anywhere else, and it is barely
+ *              a test anywhere - its result changes when a card is archived or a folder
+ *              tidied, with no code involved. The fix is a fixture, tracked separately.
  *   runner     something about the hosted environment, not about Helm. Worth understanding,
  *              but nothing here is wrong.
  */
@@ -58,7 +58,7 @@ const EXCLUDED = {
   },
   "test-orchestrator-root.mjs": {
     kind: "own-data",
-    why: "asserts the meta-home has a CLAUDE.md and a populated memory directory - true of the author's, not of a fresh one",
+    why: "asserts the meta-home has a CLAUDE.md and a populated memory directory - true of a long-used one, not of a fresh one",
     removeWhen: "it builds a meta-home fixture with those files in it",
   },
   "test-jot-tab.mjs": {
@@ -105,9 +105,10 @@ note.push("");
 note.push(`  ${all.length} checks launch the real app. ${run.length} of them run here.`);
 note.push(`  ${Object.keys(EXCLUDED).length} are EXCLUDED BY NAME and counted as neither passed nor failed:`);
 note.push("");
-note.push(`  ${ownData.length} read the author's own machine rather than a fixture they built. They cannot`);
-note.push("  pass anywhere else - and they are weak checks anywhere, because their result changes");
-note.push("  when he archives a card or tidies a folder with no code involved:");
+note.push(`  ${ownData.length} read whatever happens to be on the machine they run on, rather than a fixture`);
+note.push("  they built. They cannot pass anywhere else - and they are weak checks anywhere,");
+note.push("  because their result changes when a card is archived or a folder tidied, with no");
+note.push("  code involved:");
 for (const [f, e] of ownData) {
   note.push(`      - ${f}`);
   note.push(`          ${e.why}`);

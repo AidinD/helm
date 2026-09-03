@@ -1,4 +1,4 @@
-# The app lane, on GitHub's machines instead of the author's.
+# The app lane, on GitHub's machines instead of a developer's.
 #
 # WHAT THIS IS
 # 155 of the checks in scripts/e2e launch the real Electron app, and for months none of them
