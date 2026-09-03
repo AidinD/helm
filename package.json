@@ -14,7 +14,8 @@
     "test:fast": "node scripts/run-tests.mjs --fast",
     "test:reviews": "node scripts/run-tests.mjs review acceptance intent gauntlet",
     "icon": "node scripts/generate-icon.mjs",
-    "prepare": "git config core.hooksPath .githooks"
+    "prepare": "git config core.hooksPath .githooks",
+    "postinstall": "node scripts/check-siblings.mjs"
   },
   "build": {
     "appId": "com.aidin.helm",
