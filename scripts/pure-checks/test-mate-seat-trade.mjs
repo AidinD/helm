@@ -36,7 +36,19 @@ const ok = (cond, label, detail = "") => {
   ok(MATE_SLOT_COUNT === 2, "but the DEFAULT stays small - the trade starts from calm", `${MATE_SLOT_COUNT}`);
   ok(clampMateSlots(MATE_SLOT_MAX + 50) === MATE_SLOT_MAX, "a garbled value is still caught");
   ok(clampMateSlots("nonsense") === MATE_SLOT_COUNT, "and an unusable one falls back to the default");
-  ok(clampMateSlots(0) === MATE_SLOT_COUNT, "zero is not a seat count");
+  // ZERO BECAME A SEAT COUNT ON 2026-09-04, and the reversal is the change rather than a
+  // loosening. The keeps-at-least-one floor was right while a coordinator was the only seat
+  // you could work in: an app with none had no way in. Work happens in project seats now, and
+  // those are created by opening a project, so zero coordinators is a legitimate state and
+  // "+ Session" is always there to leave it.
+  //
+  // What the old assertion was really protecting is that an UNSET value does not read as
+  // zero, and that is asserted right below - Number(null) is 0, so absence had to start being
+  // checked before the number was.
+  ok(clampMateSlots(0) === 0, "zero coordinators is a real answer now, not a value to be clamped away");
+  ok(clampMateSlots(null) === MATE_SLOT_COUNT, "but an UNSET count is still the default - absence is not a choice of zero");
+  ok(clampMateSlots(undefined) === MATE_SLOT_COUNT, "and neither is a missing one");
+  ok(clampMateSlots(-1) === MATE_SLOT_COUNT, "a negative count is still nonsense and falls back");
   ok(clampMateSlots(9) === 9, "a number he could plausibly choose passes through untouched");
 }
 

@@ -58,8 +58,19 @@ const SUCCESSION_MAX_HOPS = 1000;
 
 /** Clamp a requested slot count to something sane; anything unusable falls back to the default. */
 export function clampMateSlots(n) {
+  // UNSET is not zero, and Number() disagrees: Number(null) is 0, so a config field that has
+  // never been written would have read as a deliberate "no coordinators" the moment zero
+  // became a legal answer. Absence is checked before the number is.
+  if (n === null || n === undefined || n === "") {
+    return MATE_SLOT_COUNT;
+  }
   const v = Math.trunc(Number(n));
-  if (!Number.isFinite(v) || v < 1) {
+  // ZERO IS A REAL ANSWER since 2026-09-04, and it used to be swallowed here. Removing the
+  // last coordinator writes a slot count of 0, and clamping that back up to the default meant
+  // the keeps-at-least-one floor survived one level below the check that was deleted - two
+  // coordinators would spring back on the next render with nothing on screen explaining why.
+  // A MISSING or unparseable value still means the default; only a deliberate 0 means none.
+  if (!Number.isFinite(v) || v < 0) {
     return MATE_SLOT_COUNT;
   }
   return Math.min(v, MATE_SLOT_MAX);

@@ -100,6 +100,7 @@ import {
 import { planSweep, describeSweep, reconcileSweepReport } from "./lib/worktreeSweep.js";
 import { docsStaleness, staleProjectsAsync, docsNudgeCandidates, DOCS_NUDGE_ACTIVE_DAYS } from "./lib/docsStaleness.js";
 import { loadDomains } from "./lib/domains.js";
+import { projectsNeedingSeats } from "./lib/seatBackfill.js";
 import { ensureMates, ensureAssistantSeat, assistantSeat, activeMates, findMateById, loadMates, renameMate, retireAndRespawn, bindMateSession, consumeMateHandoff, setMatePersona, rethemeMateNames, retireMateSlot, clampMateSlots, ensureSeatForProject, isProjectPick, projectSeats, MATE_SLOT_COUNT, MATE_SLOT_MAX } from "./lib/mates.js";
 
 // How many first mates the captain wants. Two by default; configurable since
@@ -2778,10 +2779,11 @@ ipcMain.handle("mates:add", () => {
 // read as the app refusing to do what it was asked.
 ipcMain.handle("mates:remove", (_event, { mateId } = {}) => {
   try {
+    // THE KEEPS-AT-LEAST-ONE FLOOR IS GONE. It was right while a coordinator was the only
+    // seat you could work in - an app with none had no way in. Work happens in project seats
+    // now, and those are created by opening a project, so zero coordinators is a legitimate
+    // state and "+ Session" is always there to leave it.
     const current = configuredMateSlots();
-    if (current <= 1) {
-      return { ok: false, error: "Helm keeps at least one first mate.", active: activeMates() };
-    }
     const mate = mateId ? findMateById(mateId) : null;
     if (!mate || mate.status !== "active") {
       return { ok: false, error: "That first mate isn't on watch.", active: activeMates() };
@@ -4829,6 +4831,50 @@ function reconcileStaleRunningRecords() {
  * review with a note saying the run was interrupted, because the one thing the
  * board must never do is claim a machine is working on something when none is.
  */
+/**
+ * Open a seat for every project that already has work, so removing the captain widget
+ * relocates its rows instead of hiding them.
+ *
+ * WHY THIS IS A STEP AND NOT A CONSEQUENCE. A project only gets a seat when the captain picks
+ * it in "+ Session". Every project he worked in BEFORE that existed has a node and no seat, so
+ * its node's parent is the lane - and the captain widget is the only surface that renders a
+ * lane-parented row. Removing that widget without this pass would take a live session off the
+ * board while it kept running, which is the exact failure the decision names: a seat with live
+ * work always has a widget, because the board's crowding is the governor and a seat that can
+ * run hidden makes the board stop showing the cost.
+ *
+ * Idempotent, because ensureSeatForProject returns the existing seat for a checkout. Runs at
+ * startup beside the other reconcilers; a failure is logged and skipped, never fatal - an app
+ * that will not start is worse than a board that is one row short.
+ *
+ * AUTO NODES ARE DELIBERATELY EXCLUDED. They have their own lane and their own widget, which
+ * is not being removed, and giving a project a seat because an unattended run touched it would
+ * put a row on the board for work the captain never opened - inflating the very count the
+ * governor is measured by.
+ */
+function reconcileSeatsForActiveProjects() {
+  // The DECISION lives in seatBackfill.js as a pure function so it can be checked without an
+  // app, a store or a filesystem. This is only the I/O around it: which nodes exist, and
+  // opening a seat for each answer.
+  const wanted = projectsNeedingSeats(deriveSecondMates(loadGoalRunHistory()), {
+    metaHomeRoot: resolveMetaHome(),
+    exists: (dir) => fs.existsSync(dir),
+  });
+  let opened = 0;
+  for (const project of wanted) {
+    try {
+      const before = projectSeats().length;
+      ensureSeatForProject(project);
+      if (projectSeats().length > before) {
+        opened += 1;
+      }
+    } catch (err) {
+      console.error("[helm] could not open a seat for", project, err?.message || err);
+    }
+  }
+  return { looked: wanted.length, opened };
+}
+
 function reconcileStrandedAutoCards() {
   const { jot } = autoCaptainConfig();
   let stranded;
@@ -6725,6 +6771,17 @@ function startDispatchWatcher() {
       const { checked, fixed } = reconcileStaleRunningRecords();
       if (fixed > 0) {
         console.log(`[helm] reconciled ${fixed} stale "running" goal-run record(s) out of ${checked}`);
+      }
+      // AFTER the stale-record pass, so a project whose only "work" was a record that has
+      // just been corrected to interrupted is judged on the corrected history rather than the
+      // lying one.
+      try {
+        const { looked, opened } = reconcileSeatsForActiveProjects();
+        if (opened > 0) {
+          console.log(`[helm] opened ${opened} project seat(s) for ${looked} project(s) that already had work`);
+        }
+      } catch (seatErr) {
+        console.error("[helm] project-seat reconciliation failed:", seatErr?.message || seatErr);
       }
     } catch (err) {
       console.error("[helm] stale goal-run reconciliation failed:", err?.message || err);

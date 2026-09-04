@@ -199,9 +199,18 @@ ok(
   !/isLiveWorkNode\(s\) && isAutoStartedNode\(s\)/.test(autoFilterLine),
   "and no longer demands a session the auto flow cannot produce"
 );
+// The Captain widget is GONE (2026-09-04), so the filter this counted no longer exists. What
+// it was protecting - that auto runs appear in exactly one column and are not double-listed as
+// the captain's own work - is now protected by there being no second column to list them in.
+// Asserted as the absence, because a count of a filter that was deleted would pass at zero for
+// the wrong reason and keep passing if a Direct surface came back.
 ok(
-  (code.match(/isLiveWorkNode\(s\) && !isAutoStartedNode\(s\)/g) || []).length === 1,
-  "the Direct surface (the Captain widget) excludes auto runs - the classic Fleet column that was the other copy is gone (task 337895ce)"
+  !/widgetBodyCaptain/.test(code),
+  "the Captain widget is gone, so an auto run has no second column to be double-listed in"
+);
+ok(
+  /projectSeat: widgetBodyProjectSeat/.test(code),
+  "and its population moved to per-project seats rather than simply disappearing"
 );
 ok(!/s\.isSessionNode && s\.startedBy === "auto"/.test(code), "the broken filter is gone, not merely bypassed");
 ok(

@@ -13082,7 +13082,11 @@ function driftFootEl(text, parkedCount = 0) {
 const WIDGET_CATALOG = {
   quota: { label: "Quota", span: 4, accent: "grn", singleton: true },
   needsYou: { label: "Needs you", span: 8, accent: "acc", singleton: true },
-  captain: { label: "Captain", span: 4, accent: "mate", singleton: true },
+  // The Captain widget is gone (2026-09-04). Its population - the project sessions the
+  // captain started himself - are named project seats now, each with a widget of its own, so
+  // there is one way to have a working session instead of three overlapping ones. Removing it
+  // was safe only after two things landed first: project seats got a widget, and a startup
+  // pass opened a seat for every project that already had work.
   auto: { label: "Auto", span: 4, accent: "mate", singleton: true },
   firstMate: { label: "First mate", span: 4, accent: "mate", perMate: true },
   // The assistant seat. A singleton rather than perMate: there is one, always, and it is not
@@ -13122,7 +13126,11 @@ function nextWidgetInstanceId(layout, type) {
 function widgetLayout(mates) {
   const saved = state.config?.dashboardWidgets?.layout;
   if (Array.isArray(saved) && saved.length > 0) {
-    return saved;
+    // A saved layout outlives the catalog. Anyone who has used this board has "captain" in
+    // theirs, and a widget whose type has no spec renders as an untitled empty box with no
+    // way to tell what it was. Dropped by the general rule rather than by name, so the next
+    // removal needs no second change here.
+    return saved.filter((w) => w && WIDGET_CATALOG[w.type]);
   }
   const layout = [
     { id: "w-needs", type: "needsYou", span: 8, orientation: "horizontal" },
@@ -13135,7 +13143,6 @@ function widgetLayout(mates) {
     // Standing, and placed with the seats rather than among the readouts: it is somewhere to
     // go, not something to look at.
     { id: "w-assistant", type: "assistant", span: 4 },
-    { id: "w-captain", type: "captain", span: 4 },
     { id: "w-auto", type: "auto", span: 4 },
     { id: "w-docsDrift", type: "docsDrift", span: 4 },
   );
@@ -13461,15 +13468,6 @@ function widgetBodyProjectSeat(data, widget) {
   // the node for its own project rather than everything it happens to have dispatched.
   const sms = (data.secondMates || []).filter((s) => s.firstMateId === seat.mateId);
   return fleetMateCardEl(seat, sms, data.boardSummary || {});
-}
-
-function widgetBodyCaptain(data) {
-  // "Direct - your own work": the captain's own sessions, exactly as the Fleet
-  // section renders them (+ Session button, per-session jump-in and Archive).
-  const directSms = (data.secondMates || []).filter(
-    (s) => s.firstMateId === "direct" && isLiveWorkNode(s) && !isAutoStartedNode(s)
-  );
-  return fleetDirectCardEl(directSms);
 }
 
 function widgetBodyAuto(data) {
@@ -13941,7 +13939,6 @@ const WIDGET_BODIES = {
   quota: widgetBodyQuota,
   needsYou: widgetBodyNeedsYou,
   assistant: widgetBodyAssistant,
-  captain: widgetBodyCaptain,
   auto: widgetBodyAuto,
   firstMate: widgetBodyFirstMate,
   projectSeat: widgetBodyProjectSeat,

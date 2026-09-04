@@ -109,6 +109,25 @@ try {
     /\+ Session/.test(orphan.text) || /Open the project/.test(orphan.text),
     `it says how to bring the project back instead (${JSON.stringify((orphan.text || "").slice(0, 120))})`
   );
+
+  // THE CAPTAIN WIDGET IS GONE, and a saved layout still naming it must be dropped rather than
+  // drawn as an untitled empty box. Asserted here because this is the check that already has a
+  // board rendered and a layout it controls.
+  const removed = await app.eval(`(async () => {
+    await saveWidgetLayout([{ id: "w-captain", type: "captain", span: 4 }, { id: "w-auto", type: "auto", span: 4 }]);
+    await renderDashboardPage();
+    const menu = [];
+    return {
+      captainCard: !!document.querySelector('[data-widget-id="w-captain"]'),
+      widgets: [...document.querySelectorAll('.wd')].length,
+      inCatalog: typeof WIDGET_CATALOG.captain !== 'undefined',
+      autoStillThere: !!document.querySelector('[data-widget-id="w-auto"]'),
+    };
+  })()`);
+  log(JSON.stringify(removed));
+  assert(!removed.inCatalog, "the Captain widget is out of the catalog");
+  assert(!removed.captainCard, "a saved layout naming it draws nothing rather than an untitled empty box");
+  assert(removed.autoStillThere, "while the Auto widget beside it is untouched - the drop is by unknown type, not a purge");
 } catch (err) {
   exitCode = 1;
   log("ERROR:", err?.message || err);
