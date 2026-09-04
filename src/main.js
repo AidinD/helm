@@ -59,6 +59,7 @@ import { reviewCrewRun } from "./lib/crewReview.js";
 import { clearStaleIndexLocks } from "./lib/gitLocks.js";
 import { classifyWorkTree, refuseIfNotPrimary } from "./lib/primaryWorkTree.js";
 import { ask as askClaude } from "keel/claude";
+import { checkText as checkTextForPrivateNames } from "keel/privacy";
 // projectKey stays imported here even though the review BUILD moved to reviewQueueBuild.js:
 // `reviews:acknowledgeCommit` keys its acks by the same normalized project key, and dropping
 // this import turned that handler into a ReferenceError (found by review, 2026-08-12).
@@ -1298,13 +1299,51 @@ ipcMain.handle("context:saveHandoff", async (_event, { cwd, text, title, categor
     //
     // So the outcome travels with the answer. The caller can still ignore it - a handoff that
     // saved but did not commit is still a saved handoff - but it can no longer do so unknowingly.
+    //
+    // AND IT IS READ BEFORE IT IS COMMITTED. Nothing else in this app puts a file into somebody
+    // else's repository unread, and this one does it on every handoff: the note is a whole
+    // session narrative - card titles, ids, paths, whatever the session happened to be about -
+    // and it lands in whichever repository the session is rooted in, several of which are
+    // public. The push guard does cover the file, but it guards a PUSH, and by then the content
+    // is in local history and needs rewriting out rather than simply not writing it. Refusing
+    // here costs a warning; refusing there costs a rewrite.
+    //
+    // The rule is keel's, not a second copy of it living here - same visibility gate, same
+    // derived terms, same pervasiveness split as the push guard, so there is no softer
+    // definition of private on this path.
+    //
+    // The file is STILL SAVED. Saving is saving, and a note lost to a guard is a worse outcome
+    // than the one being prevented; uncommitted content in a working tree has not been
+    // published. So a refusal means "not committed, and here is which subject stopped it".
     let committed = false;
     let commitError = null;
+    let privacyRefusal = null;
     try {
+      const scan = checkTextForPrivateNames({ text, cwd, label: "HANDOFF.md" });
+      if (scan.checked && scan.hits.length > 0) {
+        const subjects = [...new Set(scan.hits.map((h) => h.term))];
+        privacyRefusal =
+          `the handoff was saved but NOT committed: it mentions ${subjects.length === 1 ? "a private subject" : "private subjects"} ` +
+          `(${subjects.join(", ")}) and ${cwd} is a repository this would publish it from. Edit the note, or commit it by hand ` +
+          `if the match is a coincidence.`;
+      }
+    } catch (err) {
+      // A guard that breaks the feature when the guard itself breaks is a guard somebody
+      // rips out. Say so and commit as before - the push gate is still downstream.
+      privacyRefusal = null;
+      commitError = `the private-name check could not run (${err?.message || err}), so the handoff was committed unchecked - the push guard still applies.`;
+    }
+    try {
+      if (privacyRefusal) {
+        throw new Error(privacyRefusal);
+      }
       execFileSync("git", ["-C", cwd, "add", "--", "HANDOFF.md"], { windowsHide: true });
       execFileSync("git", ["-C", cwd, "commit", "-m", "[handoff] Update session handoff"], { windowsHide: true });
       committed = true;
     } catch (err) {
+      if (privacyRefusal) {
+        return { ok: true, path: file, committed: false, commitError: privacyRefusal, privateSubjects: true };
+      }
       const text = `${err?.stderr || ""}${err?.stdout || ""}${err?.message || ""}`;
       // The identity case is named, because it is the one with an action attached and the one
       // a fresh machine hits. Everything else is reported as-is rather than guessed at.
@@ -1312,7 +1351,7 @@ ipcMain.handle("context:saveHandoff", async (_event, { cwd, text, title, categor
         ? "git has no user.name/user.email configured here, so the handoff was saved but not committed. Set them (git config --global user.email ...) and it will commit itself next time."
         : `the handoff was saved but not committed: ${String(text).split("\n").find((l) => l.trim()) || "git failed with no message"}`;
     }
-    return { ok: true, path: file, committed, commitError };
+    return { ok: true, path: file, committed, commitError, privateSubjects: false };
   } catch (err) {
     return { ok: false, error: err.message };
   }

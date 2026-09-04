@@ -71,7 +71,14 @@ export function runMutations({ repo, checks, mutations, env = {} }) {
         encoding: "utf8",
         env: { ...process.env, ...env },
       });
-      const lines = String(r.stdout || "").split("\n").filter((l) => l.startsWith("FAIL"));
+      // Three output shapes live in this suite and a fourth in keel, so anchoring on one of
+      // them reported "0 failing" for checks that had failed loudly. That is not cosmetic: a
+      // mutation KILLED with no visible reason may have been killed by a crash rather than by
+      // the assertion, which is a green run that proves nothing - the same class of lie the
+      // rest of this file exists to refuse.
+      const lines = String(r.stdout || "")
+        .split("\n")
+        .filter((l) => /^\s*(?:\[[^\]]+\]\s*)?(?:FAIL|not ok\b|VERIFY FAILED|AssertionError)/.test(l));
       if (r.status !== 0) {
         failures.push({ check, count: lines.length, first: (lines[0] || "(no FAIL line - it may have thrown)").slice(0, 160) });
       }
