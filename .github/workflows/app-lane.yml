@@ -18,13 +18,39 @@
 # An excluded check is reported as excluded and subtracted from the total. It is never
 # counted as passed, which is the only rule here that matters.
 #
-# MANUAL ONLY, for now. A nightly schedule is cheap at eleven minutes and is the obvious next
-# step, but it is a standing cost and therefore a decision, not a detail.
+# NIGHTLY since 2026-09-03, and by hand whenever you want it. The trigger block below carries
+# the reasoning for the cadence and the caveats that come with a scheduled workflow.
 #
 # NOT A GATE. Read-only, writes nothing, must not be a required check.
 name: app-lane
 
 on:
+  # NIGHTLY, on GitHub's machines. Nothing about this runs on a developer workstation, so it
+  # does not matter whether one is switched on - the runner is started, used and destroyed by
+  # GitHub.
+  #
+  # WHY NIGHTLY RATHER THAN ON EVERY PUSH. Eleven minutes is only a cost when somebody waits
+  # for it, and nobody does: the pure lane answers in well under two minutes on every push and
+  # is the signal you work against. This lane is the before-you-ship check, and its whole
+  # purpose is to run unattended - which is also why it is not worth making faster by sharing
+  # one Electron instance between checks. That would trade isolation, and an ordering-dependent
+  # suite is worse than a slow one for an app whose problem is being trusted.
+  #
+  # The trade against on-push, stated so it can be revisited: nightly finds a break the
+  # morning after, on-push finds it before later work is stacked on top of it. Both cost the
+  # same, which is nothing - the repository is public, so hosted minutes are free.
+  #
+  # THE TIME IS UTC and GitHub does not do time zones. 01:17 UTC is the small hours in
+  # Stockholm year-round (02:17 or 03:17 depending on daylight saving), which is what matters:
+  # the result is waiting in the morning either way. The odd minute is deliberate - the
+  # scheduler is heavily queued on the hour and a run asked for at :00 can drift by a long way.
+  #
+  # ONE THING TO KNOW ABOUT SCHEDULED WORKFLOWS: GitHub disables them after 60 days without
+  # activity in the repository. A quiet repo therefore stops being checked silently, which is
+  # exactly the failure this lane exists to prevent - so if it ever goes quiet, check that the
+  # schedule is still enabled before believing the last green result.
+  schedule:
+    - cron: "17 1 * * *"
   workflow_dispatch:
     inputs:
       checks:
