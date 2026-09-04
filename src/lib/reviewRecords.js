@@ -137,6 +137,30 @@ function safeId(taskId) {
   return /^[a-f0-9-]{8,64}$/.test(id) ? id : null;
 }
 
+/**
+ * Is this the WHOLE board id, or a prefix of one?
+ *
+ * The distinction is load-bearing and cost six invisible records before it was drawn. A review
+ * row carries the full Jot uuid, and the page looks its record up by that - so a record filed
+ * under the eight-character prefix everybody quotes in conversation lands in a filename nothing
+ * ever asks for. The card then reads "No review record: treat it as unreviewed", which is
+ * indistinguishable from nobody having written one.
+ *
+ * Six were on disk when this was added: three written the same day by an agent that had read
+ * the convention and still used the short form, and three older. That is the shape reliability
+ * direction 2 names - an id translation on the READ path with no counterpart on the write path.
+ *
+ * It refuses rather than resolves, and that is deliberate: resolving a prefix means reading the
+ * board to expand it, a prefix can match more than one card, and a writer that guesses which
+ * card it meant is worse than one that stops. The caller has the full id - it came from the
+ * board a moment earlier.
+ */
+function isWholeBoardId(taskId) {
+  return /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(
+    String(taskId || "").trim().toLowerCase()
+  );
+}
+
 export function reviewRecordPath(metaHome, taskId) {
   const id = safeId(taskId);
   return id ? path.join(reviewsDir(metaHome), `${id}.json`) : null;
@@ -323,6 +347,10 @@ export function reviewRecordProblems(rec) {
   }
   if (!safeId(rec.taskId)) {
     problems.push("taskId is missing or not a Jot id");
+  } else if (!isWholeBoardId(rec.taskId)) {
+    problems.push(
+      `taskId "${rec.taskId}" is a PREFIX, not the whole board id - the Review page looks a record up by the full uuid, so this one would be written to a filename nothing ever reads and the card would say no record exists. Use the id straight from the board.`
+    );
   }
   if (!rec.summary || !String(rec.summary).trim()) {
     problems.push("summary is empty - the reader needs to know what changed");
