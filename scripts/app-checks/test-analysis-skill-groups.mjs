@@ -159,7 +159,13 @@ try {
     `exactly one project-skills block, however many projects have skills (${projectBlocks.length})`
   );
   for (const b of projectBlocks) {
-    if (b.head === "Project skills") {
+    // The nothing-found case is recognised by WHAT IT CONTAINS, not by its heading text. It was
+    // matched as the exact string "Project skills", which the app never produces: skillListEl
+    // appends the count, so the empty block reads "Project skills · 0". On a machine that has
+    // projects with skills that branch is never taken, so the mismatch was invisible here and
+    // failed on a runner as "(0 has 0)" - a project block with no chips, which is the one thing
+    // the assertion below forbids. An empty state has an empty state in it; that is the test.
+    if (b.empty) {
       // The nothing-found case: it must say how many folders were looked at, not just 0.
       ok(
         /project folders Helm has sessions in|No project folders known yet/.test(b.empty),

@@ -28,12 +28,36 @@ let app;
 async function waitForReviewCards(timeoutMs = 20000) {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
-    const n = await app.eval(`document.querySelectorAll("#reviewPage .rev-item").length`);
-    if (n > 0 || Date.now() > deadline) {
+    // THIS FIXTURE'S cards, not any card. Waiting for `.rev-item` to exist was satisfied
+    // instantly by the unbound-commit row that is always on the page, so the wait returned
+    // before the seeded board had rendered and the scrape read an empty queue anyway. A
+    // precondition that is already true is not a wait.
+    // The card shows a SHORT id - the first eight characters - so waiting for the full
+    // "cccccccc-3333" was a condition that could never come true, and the wait burned its whole
+    // budget before the scrape ran anyway. Found by making the failure print the page.
+    //
+    // One card, not four: the critical-but-inadmissible one is what every assertion below is
+    // about, and the fourth fixture task has no record at all, so it renders somewhere else.
+    // A precondition should name the thing that must be there, not a count that happens to fit.
+    const n = await app.eval(
+      `[...document.querySelectorAll("#reviewPage .rev-item")].filter((el) => /cccccccc/.test(el.textContent || "")).length`
+    );
+    if (n >= 1 || Date.now() > deadline) {
       return n;
     }
     await new Promise((r) => setTimeout(r, 200));
   }
+}
+
+/** What the Review page actually holds, for a failure that has to be diagnosed from a log. */
+async function reviewPageOutline() {
+  return app.eval(`(() => {
+    const p = document.getElementById("reviewPage");
+    if (!p) { return "no #reviewPage in the DOM"; }
+    const heads = [...p.querySelectorAll("h3.rev-group")].map((h) => h.textContent.trim());
+    const cards = [...p.querySelectorAll(".rev-item")].map((c) => (c.textContent || "").replace(/\s+/g, " ").slice(0, 60));
+    return JSON.stringify({ headings: heads, cards: cards.slice(0, 8), cardCount: cards.length });
+  })()`);
 }
 let fails = 0;
 const ok = (c, m) => {
@@ -206,7 +230,13 @@ try {
   // The wait is on a PRECONDITION - that any review card exists - and never on the thing being
   // asserted. Polling for the criteria box would turn a real regression into a timeout, which
   // reads as slowness rather than as the feature being gone.
-  await waitForReviewCards();
+  const seenCards = await waitForReviewCards();
+  if (seenCards < 1) {
+    // Said BEFORE the assertions rather than instead of them: they still run and still report
+    // in their own words, but a log from a machine nobody can attach to now carries what the
+    // page held when they ran.
+    console.log(`INFO - the critical fixture card never rendered; the page held ${await reviewPageOutline()}`);
+  }
   const ui = await app.eval(`(() => {
     const p = document.getElementById("reviewPage");
     return {
