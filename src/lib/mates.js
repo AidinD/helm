@@ -384,7 +384,10 @@ export function ensureMates(root, slotCount = MATE_SLOT_COUNT) {
   const pool = namePoolForTheme(currentTheme());
   let changed = false;
   for (let slot = 0; slot < wanted; slot++) {
-    const held = state.mates.find((m) => m.status === "active" && m.slot === slot);
+    // activeMatesFrom, not a raw status filter: a slot is a COORDINATOR concept, and the
+    // assistant seat is deliberately slotless. Asking "is anyone active in this slot" let the
+    // assistant answer yes (see retireMateSlot) and the pool then never refilled that slot.
+    const held = activeMatesFrom(state.mates).find((m) => m.slot === slot);
     if (!held) {
       const takenNames = activeMatesFrom(state.mates).map((m) => m.name);
       state.mates.push({
@@ -644,7 +647,7 @@ function firstFreeSlot(mates) {
  */
 export function retireMateSlot(slot) {
   const state = readState();
-  const mate = state.mates.find((m) => m.status === "active" && m.slot === slot);
+  const mate = activeMatesFrom(state.mates).find((m) => m.slot === slot);
   if (!mate) {
     return null;
   }
@@ -652,9 +655,12 @@ export function retireMateSlot(slot) {
   mate.slot = null;
   mate.retiredAt = Date.now();
   mate.sessionId = null;
-  const remaining = state.mates
-    .filter((m) => m.status === "active")
-    .sort((a, b) => (a.slot ?? 0) - (b.slot ?? 0));
+  // Only coordinators are renumbered. Including every active mate swept the assistant seat
+  // into the sequence - its `slot: null` sorts as 0 under the `?? 0` the readers all use, so
+  // it was assigned slot 0, and ensureMates then saw that slot as held and refused to refill
+  // it. The pool lost a slot per retire, silently. Probed on 2026-09-04: ensureMates(root, 2)
+  // returned one coordinator after a single retire.
+  const remaining = activeMatesFrom(state.mates).sort((a, b) => (a.slot ?? 0) - (b.slot ?? 0));
   remaining.forEach((m, i) => {
     m.slot = i;
   });
