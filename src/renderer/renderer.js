@@ -13089,6 +13089,10 @@ const WIDGET_CATALOG = {
   // one of the coordinator pool (see mates.js). Its own accent so a glance separates the seat
   // that holds cross-project state from the seats that coordinate work.
   assistant: { label: "Assistant", span: 4, accent: "acc", singleton: true },
+  // A seat opened against a repository. perProjectSeat rather than perMate, because the
+  // seats come from different stores' worth of meaning: a coordinator is one of a numbered
+  // pool, a project seat exists because a project was opened. Both render the same card.
+  projectSeat: { label: "Project", span: 4, accent: "mate", perProjectSeat: true },
   docsDrift: { label: "Docs drift", span: 4, accent: "acc", singleton: true },
   review: { label: "Review", span: 4, accent: "acc", singleton: true },
   // Layout-only entries, so a row can be left deliberately short instead of the
@@ -13442,6 +13446,21 @@ function widgetBodyFirstMate(data, widget) {
   // its second mates with their own badges / jump-in / Archive.
   const sms = (data.secondMates || []).filter((s) => s.firstMateId === mate.mateId);
   return fleetMateCardEl(mate, sms, data.boardSummary || {});
+}
+
+function widgetBodyProjectSeat(data, widget) {
+  const seat = (data.projectSeats || []).find((m) => m.mateId === widget.mateId);
+  if (!seat) {
+    // NOT adopted from a pool, unlike a first-mate widget. A project seat's widget names one
+    // repository; handing it a different project's seat because that one happens to be
+    // unclaimed would silently retitle the card and point its actions at another checkout.
+    // An empty one says which project it is waiting for and stays empty.
+    return widgetEmpty("This project's seat is gone. Open the project from \"+ Session\" to bring it back, or remove the widget.");
+  }
+  // The same card a coordinator gets. What differs is where its work comes from, and that is
+  // the node for its own project rather than everything it happens to have dispatched.
+  const sms = (data.secondMates || []).filter((s) => s.firstMateId === seat.mateId);
+  return fleetMateCardEl(seat, sms, data.boardSummary || {});
 }
 
 function widgetBodyCaptain(data) {
@@ -13925,6 +13944,7 @@ const WIDGET_BODIES = {
   captain: widgetBodyCaptain,
   auto: widgetBodyAuto,
   firstMate: widgetBodyFirstMate,
+  projectSeat: widgetBodyProjectSeat,
   docsDrift: widgetBodyDocsDrift,
   review: widgetBodyReview,
 };
@@ -14180,6 +14200,23 @@ function widgetAddTile(data) {
         });
         continue;
       }
+      if (spec.perProjectSeat) {
+        for (const seat of data.projectSeats || []) {
+          const id = `w-project-${seat.mateId}`;
+          if (layout.some((w) => w.id === id)) {
+            continue;
+          }
+          items.push({
+            label: `Project · ${seat.name}`,
+            hint: truncatePathForMenu(seat.root || ""),
+            onClick: async () => {
+              await saveWidgetLayout([...layout, { id, type: "projectSeat", span: spec.span, mateId: seat.mateId }]);
+              await renderDashboardPage();
+            },
+          });
+        }
+        continue;
+      }
       if (spec.singleton && layout.some((w) => w.type === type)) {
         continue;
       }
@@ -14259,6 +14296,9 @@ async function renderWidgetDashboard(page) {
     // Separate from `mates` all the way through, the same way main returns it separately:
     // every reader of that array means coordinators by it.
     assistant: matesResult?.ok ? matesResult.assistant || null : null,
+    // Likewise separate. A project seat is a seat opened against a repository; it is not in
+    // the coordinator pool and must not be counted as one until stage 5 collapses the kinds.
+    projectSeats: matesResult?.ok ? matesResult.projects || [] : [],
     secondMates,
     boardSummary,
     goalsResult,

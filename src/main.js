@@ -100,7 +100,7 @@ import {
 import { planSweep, describeSweep, reconcileSweepReport } from "./lib/worktreeSweep.js";
 import { docsStaleness, staleProjectsAsync, docsNudgeCandidates, DOCS_NUDGE_ACTIVE_DAYS } from "./lib/docsStaleness.js";
 import { loadDomains } from "./lib/domains.js";
-import { ensureMates, ensureAssistantSeat, assistantSeat, activeMates, findMateById, loadMates, renameMate, retireAndRespawn, bindMateSession, consumeMateHandoff, setMatePersona, rethemeMateNames, retireMateSlot, clampMateSlots, ensureSeatForProject, isProjectPick, MATE_SLOT_COUNT, MATE_SLOT_MAX } from "./lib/mates.js";
+import { ensureMates, ensureAssistantSeat, assistantSeat, activeMates, findMateById, loadMates, renameMate, retireAndRespawn, bindMateSession, consumeMateHandoff, setMatePersona, rethemeMateNames, retireMateSlot, clampMateSlots, ensureSeatForProject, isProjectPick, projectSeats, MATE_SLOT_COUNT, MATE_SLOT_MAX } from "./lib/mates.js";
 
 // How many first mates the captain wants. Two by default; configurable since
 // 2026-08-02 (task 4bf2421c) because the fleet was hard-capped at two.
@@ -2742,10 +2742,16 @@ ipcMain.handle("mates:list", () => {
       ok: true,
       active: ensureMates(metaHome, configuredMateSlots()),
       assistant: ensureAssistantSeat(metaHome),
+      // Project seats, separate again for the same reason the assistant is separate: every
+      // existing reader of `active` means coordinators by it, and widening a field that is
+      // read from in forty places is the shape of bug this repo keeps finding. Unlike the
+      // other two this is not ensured here - a project seat exists because a project was
+      // opened, and inventing one on a list call is exactly what stage 3 removed.
+      projects: projectSeats(),
       all: loadMates(),
     };
   } catch (err) {
-    return { ok: false, error: err?.message || String(err), active: [], assistant: null, all: [] };
+    return { ok: false, error: err?.message || String(err), active: [], assistant: null, projects: [], all: [] };
   }
 });
 // Add a first mate. The fleet was fixed at two slots; this raises the configured
