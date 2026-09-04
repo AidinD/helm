@@ -2814,11 +2814,18 @@ ipcMain.handle("mates:rename", (_event, { mateId, name }) => {
 });
 ipcMain.handle("mates:retire", (_event, { mateId, handoff, persona, keepPersona }) => {
   try {
-    // Tear down the retiring mate's second-mate subtree FIRST, while its mateId
-    // is still the parent the second mates reference (task 58e9a433). Archives
-    // their sessions + drops their bindings so they don't linger as hidden
-    // orphans or stale proposals under a dead parent.
-    const torndown = tearDownSecondMatesFor(mateId);
+    // RETIRE NO LONGER TEARS THE SUBTREE DOWN, and the distinction is the point.
+    //
+    // Retire is the ordinary saturation refresh - the thing you do to a seat whose context
+    // has filled - and retireAndRespawn mints a successor carrying the same root. So the
+    // subtree has somewhere to go, and deriveSecondMates now resolves it there through the
+    // succeededBy link. Destroying running work on the most routine action in the model was
+    // never the intent; the teardown existed only because the successor used to be a fresh
+    // coordinator for a SLOT, unrelated to those second mates' projects (task 58e9a433).
+    //
+    // Dismiss is the other act and keeps the teardown: mates:remove has no successor, so
+    // there is nothing to re-parent to and its subtree really would be orphaned. The two
+    // paths were identical while both meant "this coordinator is gone".
     // `persona` set = a deliberate persona switch: respawn into it. keepPersona = an
     // ordinary refresh, which now CARRIES the outgoing mate's persona rather than resetting
     // it - refreshing context is not a decision to change the mate's character.
@@ -2826,7 +2833,10 @@ ipcMain.handle("mates:retire", (_event, { mateId, handoff, persona, keepPersona 
     // false, which is now the opposite of the default it would otherwise inherit. A caller
     // that says nothing must keep the persona; only an explicit false clears it.
     const mate = retireAndRespawn(mateId, handoff || null, persona || null, { keepPersona: keepPersona !== false });
-    return { ok: true, mate, tornDownSessionIds: torndown.sessionIds };
+    // Nothing was torn down, so nothing for the renderer to reflect as archived. Kept in the
+    // shape the caller already handles rather than removed, so the renderer needs no change
+    // in the same step - it maps an empty list to no action.
+    return { ok: true, mate, tornDownSessionIds: [] };
   } catch (err) {
     return { ok: false, error: err?.message || String(err) };
   }

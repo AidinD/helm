@@ -3,6 +3,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { writeJsonAtomicSync } from "./atomicWrite.js";
+import { currentSeatId } from "./mates.js";
 
 // Second-mate identity (the "named mates" model, corrected: a second mate is a
 // per-PROJECT SESSION the captain can jump into and steer directly - the
@@ -176,13 +177,24 @@ export function deriveSecondMates(runHistory, bindings = readBindings()) {
         // The auto node is top-of-chain under the auto-captain. Otherwise: a first-mate-
         // dispatched run names its own parent (the dispatcher); a second-mate-dispatched one
         // gets its parent from the binding below.
-        firstMateId: isAuto
-          ? AUTO_CAPTAIN
-          : dispatchedByDisplayKey
-            ? DIRECT_FIRST_MATE
-            : dispatchedBySecondMate
-              ? bindings[id]?.firstMateId || DIRECT_FIRST_MATE
-              : dispatcher,
+        // RESOLVED FORWARD through the succession, so a node dispatched by a seat that has
+        // since been retired hangs under the seat that replaced it instead of under a dead
+        // id. That is the whole of re-parenting, and note what it does NOT do: the node's
+        // own id is left alone. Rehashing it under the successor would mint a new key and
+        // strand the binding, which is where the sessionId lives - so "jump in" would break
+        // on every retire. A child keeps its identity and changes its parent.
+        //
+        // Applied uniformly, including to "direct" and "auto": neither is in the mates
+        // store, so the walk returns them unchanged. Asserted rather than assumed.
+        firstMateId: currentSeatId(
+          isAuto
+            ? AUTO_CAPTAIN
+            : dispatchedByDisplayKey
+              ? DIRECT_FIRST_MATE
+              : dispatchedBySecondMate
+                ? bindings[id]?.firstMateId || DIRECT_FIRST_MATE
+                : dispatcher
+        ),
         projectPath: r.projectPath,
         name: path.basename(r.projectPath) || r.projectPath,
         sessionId: null,
@@ -215,7 +227,9 @@ export function deriveSecondMates(runHistory, bindings = readBindings()) {
       // dispatched node learns its real first mate (the run record only carries
       // the dispatching second mate, not the first mate above it).
       if (b.firstMateId) {
-        sm.firstMateId = b.firstMateId;
+        // Same forward resolution as above: a binding written under a seat that has since
+        // been retired names the successor now.
+        sm.firstMateId = currentSeatId(b.firstMateId);
       }
       sm.status = b.status || (b.sessionId ? "created" : "proposed");
       sm.brief = b.brief || null;
@@ -233,7 +247,7 @@ export function deriveSecondMates(runHistory, bindings = readBindings()) {
     }
     byId.set(id, {
       secondMateId: id,
-      firstMateId: b.firstMateId || DIRECT_FIRST_MATE,
+      firstMateId: currentSeatId(b.firstMateId || DIRECT_FIRST_MATE),
       projectPath: b.projectPath,
       name: b.name || path.basename(b.projectPath) || b.projectPath,
       sessionId: b.sessionId || null,

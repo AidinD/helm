@@ -51,6 +51,10 @@ export const MATE_SLOT_COUNT = 2;
 // real session with a real cost. Set high enough that the clutter argues first.
 export const MATE_SLOT_MAX = 24;
 
+// How far currentSeatId will follow a succession chain before giving up and returning what
+// it has. A seat retired daily for four years does not reach this; a cycle hits it at once.
+const SUCCESSION_MAX_HOPS = 1000;
+
 /** Clamp a requested slot count to something sane; anything unusable falls back to the default. */
 export function clampMateSlots(n) {
   const v = Math.trunc(Number(n));
@@ -589,9 +593,51 @@ export function retireAndRespawn(mateId, pendingHandoff = null, persona = null, 
     // Consumed once (see consumeMateHandoff).
     pendingHandoff: pendingHandoff || null,
   };
+  // The succession link, and it is what turns retire from a deletion into a handover.
+  // Everything dispatched by the outgoing seat can now be resolved forward to the seat that
+  // took its place, so the subtree neither has to be destroyed nor left pointing at a dead
+  // id - the two options this replaces. See currentSeatId.
+  if (outgoing) {
+    outgoing.succeededBy = fresh.mateId;
+  }
   state.mates.push(fresh);
   writeState(state);
   return fresh;
+}
+
+/**
+ * The seat that a mate id means TODAY: follow the succession forward from a retired record
+ * to the one now holding the role. An active id, an unknown id, or a retired one with no
+ * successor is returned unchanged.
+ *
+ * Unknown ids are returned rather than nulled BECAUSE of what the callers pass: the synthetic
+ * dispatchers "direct" and "auto" are not seats and are not in this store, and a resolver
+ * that nulled them would silently strip the two identities that mean top-of-chain. That is a
+ * property worth asserting rather than relying on, and the check does.
+ *
+ * BOUNDED AND CYCLE-GUARDED, because a long-lived project accumulates a chain and a corrupt
+ * or hand-edited store can point one back at itself. A walk that ran away here would hang the
+ * Fleet render, which calls this once per node.
+ */
+export function currentSeatId(mateId, mates = null) {
+  if (!mateId) {
+    return mateId;
+  }
+  const all = mates || readState().mates;
+  const seen = new Set();
+  let id = mateId;
+  for (let hops = 0; hops < SUCCESSION_MAX_HOPS; hops++) {
+    if (seen.has(id)) {
+      return id;
+    }
+    seen.add(id);
+    const rec = all.find((m) => m.mateId === id);
+    if (!rec || rec.status === "active" || !rec.succeededBy) {
+      return id;
+    }
+    id = rec.succeededBy;
+  }
+  return id;
 }
 
 /**
