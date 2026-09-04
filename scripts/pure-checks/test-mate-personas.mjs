@@ -59,16 +59,25 @@ try {
   assert(threw, "setMatePersona rejects an unknown persona");
   assert(findMateById(mates[0].mateId).persona === "architect", "the rejected set left the persona unchanged");
 
-  const clearedRespawn = retireAndRespawn(mates[0].mateId, "handoff text");
-  assert(clearedRespawn.persona === null, "an ordinary retire resets the fresh mate to the plain coordinator");
+  // An ordinary retire now KEEPS the persona (2026-09-04): a persona decides what a seat is,
+  // so a saturation refresh that dropped it returned a different seat. Clearing on purpose is
+  // keepPersona: false with no persona, asserted below.
+  const keptRespawn = retireAndRespawn(mates[0].mateId, "handoff text");
+  assert(keptRespawn.persona === "architect", "an ordinary retire keeps the fresh mate's persona");
+  const clearedRespawn = retireAndRespawn(keptRespawn.mateId, "handoff text", null, { keepPersona: false });
+  assert(clearedRespawn.persona === null, "and an explicit clear still resets it to the plain coordinator");
   assert(clearedRespawn.pendingHandoff === "handoff text", "the handoff still rides along on the respawn");
 
   const switched = retireAndRespawn(clearedRespawn.mateId, "carry", "teacher");
   assert(switched.persona === "teacher", "a persona SWITCH respawns into the chosen persona");
   assert(switched.pendingHandoff === "carry", "the switch also carries a handoff");
 
+  // An invalid key never becomes the persona - that is the rule this guards. What it falls
+  // back TO changed with the default: the seat keeps what it had, rather than being reset by
+  // a typo. Both halves are asserted, because "not bogus" alone would pass on a silent reset.
   const badSwitch = retireAndRespawn(switched.mateId, null, "bogus");
-  assert(badSwitch.persona === null, "an invalid persona on respawn falls back to null (never a bad key)");
+  assert(badSwitch.persona !== "bogus", "an invalid persona on respawn is never adopted as a key");
+  assert(badSwitch.persona === "teacher", "and it leaves the seat as it was rather than resetting it");
 } catch (err) {
   exit = 1;
   console.log("ERROR:", err.message);

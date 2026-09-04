@@ -512,7 +512,7 @@ export function renameMate(mateId, name) {
  * active mate. No-op-safe: if the id is unknown or already retired, still
  * guarantees the slot is filled.
  */
-export function retireAndRespawn(mateId, pendingHandoff = null, persona = null, { keepPersona = false } = {}) {
+export function retireAndRespawn(mateId, pendingHandoff = null, persona = null, { keepPersona = true } = {}) {
   const state = readState();
   const outgoing = state.mates.find((m) => m.mateId === mateId);
   const slot = outgoing && typeof outgoing.slot === "number" ? outgoing.slot : null;
@@ -526,6 +526,10 @@ export function retireAndRespawn(mateId, pendingHandoff = null, persona = null, 
   // Exclude the outgoing name too, and seed by the (now larger) total so the
   // respawn never lands on the same name - otherwise retire looks like a no-op.
   const takenNames = [...activeMatesFrom(state.mates).map((m) => m.name), outgoing?.name].filter(Boolean);
+  // Did the caller NAME a persona? A non-empty key that the catalog knows. An unknown key is
+  // not a naming - it never becomes the persona, and the seat keeps what it had rather than
+  // being reset by a typo.
+  const personaNamed = typeof persona === "string" && persona !== "" && isValidPersonaKey(persona);
   const fresh = {
     mateId: `mate_${crypto.randomUUID()}`,
     slot: targetSlot,
@@ -533,6 +537,17 @@ export function retireAndRespawn(mateId, pendingHandoff = null, persona = null, 
     root: root ? path.resolve(root) : null,
     status: "active",
     // Persona for the fresh mate.
+    //
+    // KEEPING IS THE DEFAULT, and under the seat model that is no longer a convenience.
+    // A persona decides what a seat IS - a meta-home seat carrying the assistant persona is
+    // a standing assistant - so dropping it on a saturation refresh returns the seat as a
+    // plain coordinator with the wrong manual and the wrong tools. It reads as the seat
+    // having forgotten itself rather than as a config default, which is the same complaint
+    // the comment below already records one level down.
+    //
+    // The default matters even though every call site in the app passes the flag explicitly:
+    // absence now means keep, so a future caller that omits it gets the safe answer rather
+    // than the destructive one.
     //
     // keepPersona = an ordinary refresh: KEEP what the outgoing mate was. Refreshing a
     // mate's context is not a decision to change its character, and resetting to the plain
@@ -544,10 +559,27 @@ export function retireAndRespawn(mateId, pendingHandoff = null, persona = null, 
     // retire+respawn because a system prompt cannot change mid-session. Choosing
     // Coordinator explicitly passes null and therefore clears it, which keepPersona must
     // not override.
-    persona: keepPersona
-      ? (isValidPersonaKey(outgoing?.persona) ? outgoing?.persona || null : null)
-      : isValidPersonaKey(persona)
-        ? persona || null
+    // A PASSED persona is checked first, and that ordering is the whole correctness of the
+    // flipped default. A caller that names a persona is asking for a switch, and once
+    // keeping became the default the old ordering made that argument unreachable unless the
+    // caller ALSO said keepPersona: false - so a deliberate switch would have been silently
+    // ignored. Two existing checks caught this within a minute of the flip.
+    //
+    // An INVALID key now leaves the seat as it was rather than resetting it to plain. It
+    // still never yields the bad key, which is what that rule was for; what changed is the
+    // fallback, because under the seat model a typo must not strip a seat's identity.
+    // Clearing on purpose has its own spelling: keepPersona: false with no persona.
+    //
+    // `personaNamed`, not `isValidPersonaKey(persona)`: that predicate answers "is this an
+    // acceptable value", and null IS acceptable - it is how you say "no persona". So it
+    // returns true for the argument being ABSENT, which as the first branch swallowed every
+    // ordinary refresh and handed back null while keepPersona sat there true. Validity and
+    // "the caller named one" are different questions and the flip is what made the
+    // difference load-bearing.
+    persona: personaNamed
+      ? persona
+      : keepPersona
+        ? (isValidPersonaKey(outgoing?.persona) ? outgoing.persona : null)
         : null,
     createdAt: Date.now(),
     retiredAt: null,

@@ -83,10 +83,14 @@ ok(cleared.persona === null, "and choosing Coordinator explicitly clears it - ke
 const nonsense = retireAndRespawn(cleared.mateId, null, "not-a-persona", { keepPersona: false });
 ok(nonsense.persona === null, "an invalid key lands on Coordinator rather than being stored");
 
-// The default must be the SAFE one for the old callers: no flag, no carry-over.
+// The default is now KEEP, and which way is "safe" inverted with it (2026-09-04). A persona
+// decides what a seat IS under the seat model, so the destructive answer for a caller that
+// says nothing is to drop it, not to carry it. Clearing keeps its own explicit spelling.
 setMatePersona(nonsense.mateId, "researcher");
 const noFlag = retireAndRespawn(nonsense.mateId, null, null);
-ok(noFlag.persona === null, "with no flag at all the old behaviour is unchanged, so nothing carries by accident");
+ok(noFlag.persona === "researcher", "with no flag at all the persona carries, because absence must not destroy identity");
+const explicitClear = retireAndRespawn(noFlag.mateId, null, null, { keepPersona: false });
+ok(explicitClear.persona === null, "and an explicit keepPersona: false still clears it");
 
 try {
   fs.rmSync(tmp, { recursive: true, force: true });

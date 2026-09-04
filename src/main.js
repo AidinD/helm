@@ -2822,7 +2822,10 @@ ipcMain.handle("mates:retire", (_event, { mateId, handoff, persona, keepPersona 
     // `persona` set = a deliberate persona switch: respawn into it. keepPersona = an
     // ordinary refresh, which now CARRIES the outgoing mate's persona rather than resetting
     // it - refreshing context is not a decision to change the mate's character.
-    const mate = retireAndRespawn(mateId, handoff || null, persona || null, { keepPersona: !!keepPersona });
+    // `keepPersona !== false`, not `!!keepPersona`: the coercion turned an ABSENT flag into
+    // false, which is now the opposite of the default it would otherwise inherit. A caller
+    // that says nothing must keep the persona; only an explicit false clears it.
+    const mate = retireAndRespawn(mateId, handoff || null, persona || null, { keepPersona: keepPersona !== false });
     return { ok: true, mate, tornDownSessionIds: torndown.sessionIds };
   } catch (err) {
     return { ok: false, error: err?.message || String(err) };
