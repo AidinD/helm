@@ -50,7 +50,29 @@ const seeded = {
     lastActivityAt: Date.now(),
   },
 };
-fs.writeFileSync(configPath, JSON.stringify({ helmSessions: seeded }, null, 2), "utf8");
+// A board of its own too, for the same reason its sibling check needed one: on a machine with
+// no Jot, the review queue correctly reports ok:false with "Couldn't read the Jot board at
+// ...", and this check is about the FALLBACK carrying the job, not about whether a board
+// exists. Seeding the sessions and forgetting the board left it failing on a runner for the
+// half of the question it was not asking.
+const boardPath = path.join(configDir, "todos.json");
+fs.writeFileSync(
+  boardPath,
+  JSON.stringify(
+    {
+      categories: [{ id: "cat-fixture", name: "Fixture" }],
+      todos: [{ id: "hwf-fixture-task", text: "a task sitting in review", status: "review", categoryId: "cat-fixture" }],
+    },
+    null,
+    2
+  ),
+  "utf8"
+);
+fs.writeFileSync(
+  configPath,
+  JSON.stringify({ helmSessions: seeded, jot: { enabled: true, path: boardPath.replace(/\\/g, "/") } }, null, 2),
+  "utf8"
+);
 process.env.HELM_CONFIG_PATH = configPath;
 
 const { launch } = await import("../checks-lib/harness.mjs");
