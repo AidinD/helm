@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { isValidPersonaKey } from "./personas.js";
 import { loadConfig } from "./config.js";
 import { writeJsonAtomicSync } from "./atomicWrite.js";
+import { canonicalFsPath } from "./fsPath.js";
 
 // First-mate identity (docs/first-mate-tier-design.md section 3 + the "named
 // mates" refinement). A first mate is a NAMED coordination context the captain
@@ -343,6 +344,19 @@ function pickName(taken, seed = 0, pool = NAUTICAL_NAMES) {
  */
 export const SEAT_COORDINATOR = "coordinator";
 export const SEAT_ASSISTANT = "assistant";
+/**
+ * A seat opened AGAINST A REPOSITORY - one per checkout, created by opening a project rather
+ * than by a slot count. Under the 2026-09-04 tier decision this is what "first mate" comes to
+ * mean, and the three kinds collapse into one at stage 5.
+ *
+ * It is a third kind DURING the migration rather than a coordinator with a project root, and
+ * that is a staging decision with a reason. activeMatesFrom filters the pool to coordinators,
+ * so a project seat cannot take a slot ensureMates is trying to fill - which is exactly the
+ * bug that ate a slot per retire this morning, and it would have come straight back in a new
+ * costume. The app keeps working with today's coordinators untouched while project seats
+ * appear beside them.
+ */
+export const SEAT_PROJECT = "project";
 
 const seatKind = (mate) => mate?.kind || SEAT_COORDINATOR;
 
@@ -456,6 +470,69 @@ export function ensureAssistantSeat(root) {
     status: "active",
     // Personas are a coordinator's temperament overlay. This seat has a manual of its own.
     persona: null,
+    createdAt: Date.now(),
+    retiredAt: null,
+  };
+  state.mates.push(seat);
+  writeState(state);
+  return seat;
+}
+
+/** Every active seat opened against a repository, in creation order. */
+export function projectSeats() {
+  return readState().mates.filter((m) => m.status === "active" && seatKind(m) === SEAT_PROJECT);
+}
+
+/**
+ * The seat for a project, creating it only if that checkout has none. ONE PER CHECKOUT, and
+ * enforced here rather than left to convention, because the state is reachable by opening the
+ * same project twice.
+ *
+ * Why enforced: the parallelism argument does not apply. Crew already gets isolated worktrees,
+ * so many crew runs on one repo are safe. What is unsafe is two ORCHESTRATORS holding opinions
+ * about one checkout with no shared view, deciding independently what to merge.
+ *
+ * WHICH COMPARISON, and this is a deliberate departure from the instruction to reuse
+ * secondMateId's normaliser. That one folds separators and case; canonicalFsPath also resolves
+ * the Windows 8.3 short name, which no amount of lowercasing folds and which has already made
+ * a path the process itself registered come back as unrecognised. Seat identity is a
+ * path-from-one-source against a path-from-another, which is precisely what that function
+ * exists for.
+ *
+ * And secondMateId's own normaliser is deliberately NOT touched: its output is hashed into
+ * every existing node id, so changing it would re-key them and strand the bindings that hold
+ * the sessions. Same trap as the one stage 2 avoided, one level over.
+ *
+ * A slot is not assigned. Slots belong to the coordinator pool, and the board's crowding is
+ * now set by how many projects are open rather than by a number - the count of open projects
+ * IS concurrency, where the number was a proxy for it.
+ */
+export function ensureSeatForProject(projectPath, { persona = null } = {}) {
+  if (!projectPath) {
+    throw new Error("ensureSeatForProject requires a projectPath");
+  }
+  const wanted = canonicalFsPath(projectPath);
+  if (!wanted) {
+    throw new Error("ensureSeatForProject requires a real path");
+  }
+  const state = readState();
+  const existing = state.mates.find(
+    (m) => m.status === "active" && seatKind(m) === SEAT_PROJECT && canonicalFsPath(m.root) === wanted
+  );
+  if (existing) {
+    return existing;
+  }
+  const takenNames = state.mates.filter((m) => m.status === "active").map((m) => m.name);
+  const seat = {
+    mateId: `mate_${crypto.randomUUID()}`,
+    // Explicitly null, like the assistant seat's: a 0 would collide with a coordinator's, and
+    // every slot-ordered reader normalises absence with `?? 0`.
+    slot: null,
+    kind: SEAT_PROJECT,
+    name: pickName(takenNames, state.mates.length, namePoolForTheme(currentTheme())),
+    root: path.resolve(projectPath),
+    status: "active",
+    persona: isValidPersonaKey(persona) ? persona || null : null,
     createdAt: Date.now(),
     retiredAt: null,
   };
