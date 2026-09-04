@@ -13134,6 +13134,13 @@ function widgetLayout(mates, projectSeats = []) {
     if (kept.length === saved.length) {
       return kept;
     }
+    // WHERE the replacements go, which is not a detail. Appending them put four project
+    // widgets at the bottom of the board, below Docs drift, while the space the Captain
+    // widget occupied closed up - so the rows moved twice: out of one column and down past
+    // everything else. They go where the dropped widget was instead, because that is where
+    // the eye already looks for that work.
+    const at = saved.findIndex((w) => !w || !WIDGET_CATALOG[w.type]);
+    const insertAt = at < 0 ? kept.length : Math.min(at, kept.length);
     // SOMETHING WAS DROPPED, and if it was the Captain widget its rows need somewhere to be.
     // Opening the seats was only half of it: a seat with no widget is exactly as invisible as
     // a row with no column, and the whole point of the backfill was that removing this widget
@@ -13142,12 +13149,14 @@ function widgetLayout(mates, projectSeats = []) {
     // Only when a drop actually happened, so this cannot keep adding widgets to a board the
     // captain has since tidied - a seat he removed from the board stays removed.
     const onBoard = new Set(kept.filter((w) => w.type === "projectSeat").map((w) => w.mateId));
+    const fresh = [];
     for (const seat of projectSeats || []) {
       if (onBoard.has(seat.mateId)) {
         continue;
       }
-      kept.push({ id: `w-project-${seat.mateId}`, type: "projectSeat", span: 4, mateId: seat.mateId });
+      fresh.push({ id: `w-project-${seat.mateId}`, type: "projectSeat", span: 4, mateId: seat.mateId });
     }
+    kept.splice(insertAt, 0, ...fresh);
     return kept;
   }
   const layout = [
