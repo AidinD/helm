@@ -213,7 +213,7 @@ try {
   // transition assertions as a crash rather than as the reset failing, which is a worse
   // message about a real problem.
   if (!settled) {
-    settled = { ms: 0, children: 0, placeholder: false, real: false, fromCache: null };
+    settled = { ms: 0, children: 0, placeholder: false, real: false, fromCache: null, payload: null, builds: null };
   }
 
   async function measureReviewTransition() {
@@ -238,12 +238,21 @@ try {
           real: true,
           // Read in the same tick as the transition, so it describes the payload that
           // actually landed on the placeholder and not a later repaint.
-          fromCache: page.textContent.includes('Showing the last known queue'),
+          //
+          // From the PAGE'S OWN STATEMENT of where the payload came from, not from the banner
+          // text. The banner says "checking for changes", which is a consequence of painting a
+          // cached payload rather than the fact itself - so an assertion on it was one
+          // copy-edit away from measuring the wrong thing, and was rightly downgraded to a
+          // printed note on 2026-09-02. Downgraded, and then nothing replaced it, which left
+          // this measurement unable to tell a fresh build from a cache hit at all.
+          fromCache: page.dataset.payload === 'cached',
+          payload: page.dataset.payload || null,
+          builds: page.dataset.builds || null,
         };
       }
       await new Promise(r => setTimeout(r, 25));
     }
-    return { ms: performance.now() - t0, children: page.childElementCount, placeholder, real: false, fromCache: null };
+    return { ms: performance.now() - t0, children: page.childElementCount, placeholder, real: false, fromCache: null, payload: page.dataset.payload || null, builds: page.dataset.builds || null };
   })()`);
   }
   // That duration is NOT asserted, and the number it prints will look alarming. Read it
@@ -272,17 +281,56 @@ try {
   // have passed except by the reset silently doing nothing, which is precisely the
   // trivially-green state it was written to end.
   //
-  // The property is still worth having and still unproven: that what replaces the
-  // placeholder is a freshly built queue rather than the last known one. The build counter
-  // this file already reads for the cold-cache check is the nearest honest observable, and it
-  // was rejected for a good reason - it says SOME build ran somewhere in the window, and the
-  // badge and the dashboard widget both ask for the queue too. Finding an observable that
-  // distinguishes THIS render's payload is its own task, and inventing one here would be the
-  // third guess in a row.
+  // AND WHAT REPLACED THE PLACEHOLDER WAS A FRESH BUILD, which is the third part of the
+  // sentence this measurement makes and the part that went unproven for two days.
   //
-  // Printed, so a human can see it, and not asserted, so it cannot lie.
-  console.log(
-    `      (the page ${settled.fromCache ? "WAS" : "was not"} showing "checking for changes" at the transition - a refresh in flight, which is not the same as a cached payload)`
+  // It was asserted off the "Showing the last known queue" banner, downgraded to a printed
+  // note on 2026-09-02 because that wording says "a refresh is in flight" rather than "this
+  // payload is cached" - and then nothing replaced it, so the measurement could not tell a
+  // fresh build from a cache hit at all. A cache hit would report a flattering number and
+  // read exactly like success.
+  //
+  // paintReviewPage now publishes where its payload came from, so the fact is read rather
+  // than inferred from prose written for a person.
+  // BOTH VALUES, because a stamp that always says "fresh" would pass every assertion below.
+  // A mutation proved that: this measurement only ever observes the fresh case, so the one
+  // situation the observable exists to detect - a cache hit reporting a flattering number -
+  // is the situation nothing here would notice. Asserted on the rule directly rather than by
+  // trying to catch the cached paint in the two-step render, which is a race.
+  const stamping = await app.eval(`(() => {
+    const page = document.getElementById('reviewPage');
+    const before = page.dataset.payload;
+    paintReviewPage({ rows: [], tally: { total: 0 }, cached: true, builds: 41 }, { refreshing: true });
+    const whenCached = { payload: page.dataset.payload, builds: page.dataset.builds };
+    paintReviewPage({ rows: [], tally: { total: 0 }, cached: false, builds: 42 }, { refreshing: false });
+    const whenFresh = { payload: page.dataset.payload, builds: page.dataset.builds };
+    return { before, whenCached, whenFresh };
+  })()`);
+  ok(
+    stamping.whenCached.payload === "cached",
+    `a cached payload is stamped "cached" (${JSON.stringify(stamping.whenCached)}) - without this the stamp could always say fresh and every assertion here would still pass`
+  );
+  ok(
+    stamping.whenFresh.payload === "fresh",
+    `and a freshly built one is stamped "fresh" (${JSON.stringify(stamping.whenFresh)})`
+  );
+  ok(
+    stamping.whenCached.builds === "41" && stamping.whenFresh.builds === "42",
+    `and the build number comes along, so two fresh paints are distinguishable from one (${stamping.whenCached.builds} then ${stamping.whenFresh.builds})`
+  );
+
+  ok(
+    settled.payload !== null,
+    `the page says where its payload came from (${JSON.stringify(settled.payload)}) - without that this cannot tell a build from a cache hit`
+  );
+  ok(
+    settled.fromCache === false,
+    `and what replaced the placeholder was a FRESH build, not the last known queue (payload ${JSON.stringify(
+      settled.payload
+    )}, build ${JSON.stringify(settled.builds)})` +
+      (settled.fromCache
+        ? " - the cache was re-warmed between the reset and the navigation, most likely by the review badge or the dashboard widget asking for the queue; that takes a build finishing inside a few milliseconds, so it is worth looking at rather than retrying"
+        : "")
   );
 } finally {
   await app.close();

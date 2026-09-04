@@ -3287,6 +3287,20 @@ function paintReviewPage(res, { refreshing = false } = {}) {
   if (!page) {
     return;
   }
+  // WHERE THIS PAINT CAME FROM, stated on the page rather than inferred from it.
+  //
+  // The two-step render can paint a cached payload and then a fresh one, and until now the
+  // only way to tell which was on screen was the "Showing the last known queue" banner - a
+  // side effect of the wording, in a sentence written for a person. A measurement that reads
+  // it is one copy-edit away from silently measuring the wrong thing, and the cost check DID
+  // stop asserting it for exactly that reason: the banner reads as "a refresh is in flight",
+  // which is a consequence of the payload being cached rather than the fact itself.
+  //
+  // So the fact is published. `builds` comes along because it distinguishes two fresh paints
+  // from one - a counter alone was never enough, but next to the provenance it says which
+  // build this is.
+  page.dataset.payload = res?.cached ? "cached" : "fresh";
+  page.dataset.builds = String(res?.builds ?? "");
   const allRows = res?.rows || [];
   const nonRepoCount = allRows.filter((r) => !r.repoPath).length;
   // Repo-rooted rows this filter would hold back - counted before it is applied, same
