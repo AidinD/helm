@@ -261,6 +261,12 @@ function renderLiveStats(index, pane) {
   if (pane.liveTokens > 0) {
     parts.push(pane.liveTokens >= 1000 ? `${(pane.liveTokens / 1000).toFixed(1)}k tokens` : `${pane.liveTokens} tokens`);
   }
+  // Only when there is something to say. A permanent "0 running tasks" is noise on every turn,
+  // and the whole line exists to be read at a glance while work is happening.
+  const running = runningTasksForPane(index);
+  if (running > 0) {
+    parts.push(`${running} running task${running === 1 ? "" : "s"}`);
+  }
   live.textContent = " · " + parts.join(" · ");
 }
 
@@ -19096,10 +19102,72 @@ document.getElementById("viewToggle").addEventListener("click", async (e) => {
 // delivery-order guarantee, so a dropped or reordered task_started is a
 // real possibility, not just a theoretical one. Backfills a minimal
 // placeholder rather than silently discarding the event.
+/**
+ * Which pane a launch belongs to, with the identity check that stops a reply landing in
+ * somebody else's session.
+ *
+ * Extracted rather than copied, because a copy is precisely what went wrong before: a second
+ * launchId->index map did this lookup WITHOUT the identity check, so sending in a pane and
+ * hitting "+" before the reply landed delivered the orphaned launch into the unrelated new
+ * session sitting at that index. Two callers now, one rule.
+ *
+ * Returns null when the launch has no pane to go to - the original was reassigned and the
+ * session is not open anywhere - which is a drop rather than a guess.
+ *
+ * @param {string} launchId
+ * @returns {{ index: number, pane: object, startedAt: number } | null}
+ */
+function resolvePaneForLaunch(launchId) {
+  const entry = launchPaneHistory.get(launchId);
+  if (!entry) {
+    return null;
+  }
+  const { pane, startedAt } = entry;
+  if (panes[entry.index] === pane) {
+    return { index: entry.index, pane, startedAt };
+  }
+  // The original pane was reassigned (e.g. navigated to the dashboard and back, which
+  // rebuilds the pane). If a pane is CURRENTLY showing the same session, redirect there - so
+  // a reopened pane keeps ticking and gets the completion, instead of the turn running
+  // invisibly and looking hung (a39286b7). If the session is not open anywhere, drop it.
+  const liveIdx = pane.cliSessionId ? panes.findIndex((p) => p && p.cliSessionId === pane.cliSessionId) : -1;
+  if (liveIdx < 0) {
+    return null;
+  }
+  return { index: liveIdx, pane: panes[liveIdx], startedAt };
+}
+
+/**
+ * How many background subagents THIS pane has running.
+ *
+ * The map is app-wide - one subagent registry for the whole window - so counting it whole and
+ * printing the number in a pane's status line would tell pane 2 about work pane 1 started.
+ * That is the shape this project keeps being bitten by: a label written in the mechanism's
+ * voice that the mechanism does not support. The owning launch is recorded when the task
+ * starts and resolved through the same rule every other launch-to-pane lookup uses.
+ *
+ * A task whose launch can no longer be resolved counts for nobody rather than for everybody.
+ *
+ * @param {number} index
+ * @returns {number}
+ */
+function runningTasksForPane(index) {
+  let n = 0;
+  for (const task of backgroundTasks.values()) {
+    if (task.status !== "running" || !task.launchId) {
+      continue;
+    }
+    if (resolvePaneForLaunch(task.launchId)?.index === index) {
+      n += 1;
+    }
+  }
+  return n;
+}
+
 function getOrCreateBackgroundTask(taskId) {
   let t = backgroundTasks.get(taskId);
   if (!t) {
-    t = { description: "Background task", status: "running", lastToolName: null, startedAt: Date.now() };
+    t = { description: "Background task", status: "running", lastToolName: null, startedAt: Date.now(), launchId: null };
     backgroundTasks.set(taskId, t);
   }
   return t;
@@ -19191,6 +19259,10 @@ window.helm.onSessionEvent((evt) => {
       status: "running",
       lastToolName: null,
       startedAt: Date.now(),
+      // Which launch spawned it, so a pane can count ITS OWN subagents. The map stays
+      // app-wide for the toolbar badge; this is the only thing that makes a per-pane
+      // number honest rather than the same global count printed in several places.
+      launchId: evt.launchId || null,
     });
     renderBackgroundTasksBadge();
     return;
@@ -19202,6 +19274,9 @@ window.helm.onSessionEvent((evt) => {
     // invisible even though it's genuinely running. getOrCreateBackgroundTask
     // backfills a minimal placeholder instead, so it still shows up.
     const t = getOrCreateBackgroundTask(evt.taskId);
+    // A placeholder made by an out-of-order progress event has no owner yet; the first event
+    // that carries one supplies it, rather than leaving the task counted by nobody forever.
+    t.launchId = t.launchId || evt.launchId || null;
     t.lastToolName = evt.lastToolName || t.lastToolName;
     renderBackgroundTasksBadge();
     return;
@@ -19278,24 +19353,12 @@ window.helm.onSessionEvent((evt) => {
   // "error", a genuine unbounded leak on every failed launch). Consolidating
   // on launchPaneHistory removes both problems: one map, one identity check,
   // used everywhere a launchId needs to find its way back to a pane.
-  const entry = launchPaneHistory.get(evt.launchId);
-  if (!entry) {
+  const resolved = resolvePaneForLaunch(evt.launchId);
+  if (!resolved) {
     return;
   }
-  let { index, pane, startedAt } = entry;
-  if (panes[index] !== pane) {
-    // The original pane was reassigned (e.g. navigated to the dashboard and back,
-    // which rebuilds the pane). If a pane is CURRENTLY showing the same session,
-    // redirect this live event to it - so a reopened pane keeps ticking and gets
-    // the completion, instead of the turn running invisibly and looking hung
-    // (a39286b7). If the session isn't open anywhere, drop the event as before.
-    const liveIdx = pane.cliSessionId ? panes.findIndex((p) => p && p.cliSessionId === pane.cliSessionId) : -1;
-    if (liveIdx < 0) {
-      return;
-    }
-    index = liveIdx;
-    pane = panes[liveIdx];
-  }
+  let { index, pane } = resolved;
+  const startedAt = resolved.startedAt;
   switch (evt.kind) {
     case "session":
       pane.cliSessionId = evt.sessionId;

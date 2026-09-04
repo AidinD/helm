@@ -49,6 +49,20 @@ if (process.env.FAKE_CLAUDE_THINKING) {
   });
 }
 
+// A background subagent starting, when asked for one. Same shape launcher.js parses: a system
+// event with subtype "task_started". Off unless a test sets it, so no existing check sees a
+// stream it did not see before.
+if (process.env.FAKE_CLAUDE_TASK) {
+  say({
+    type: "system",
+    subtype: "task_started",
+    session_id: sessionId,
+    task_id: process.env.FAKE_CLAUDE_TASK,
+    description: "stub background task",
+    subagent_type: "general-purpose",
+  });
+}
+
 const hold = Number(process.env.FAKE_CLAUDE_HOLD_MS || 0);
 setTimeout(() => {
   const reply =
