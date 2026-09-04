@@ -113,12 +113,25 @@ const repo = path.join(here, "..", "..");
 
 // --- and it is actually clean ---------------------------------------------------------------------
 {
+  // The binary, resolved rather than invoked through npx. `npx eslint` on a machine that has
+  // not installed it goes to the registry to fetch it, and with no terminal to answer for it
+  // that turned a 13-second check into one that hit the runner's 120-second timeout on every
+  // push - a red pure lane for a day, whose cause was a MISSING TOOL rather than a lint error.
+  // A check that cannot tell those two apart is worse than one that does not run.
+  const bin = path.join(repo, "node_modules", ".bin", process.platform === "win32" ? "eslint.cmd" : "eslint");
+  if (!fs.existsSync(bin)) {
+    // Said in the runner's own self-skip form, so it is reported as skipped and named at the
+    // end of a run rather than counted as a pass. A lane that has not linted must not look
+    // like a lane that linted and found nothing.
+    console.log("SKIPPED - eslint is not installed here, so this check cannot say whether the tree is clean. Run npm install, or install eslint in the job that runs this.");
+    process.exit(0);
+  }
   let output = "";
   let failed = false;
   try {
     // Default formatter: `compact` was dropped from core eslint, and asking for one that is
     // not installed fails in a way that reads exactly like a lint failure.
-    output = execFileSync("npx", ["eslint", "."], { cwd: repo, encoding: "utf8", shell: true, windowsHide: true });
+    output = execFileSync(bin, ["."], { cwd: repo, encoding: "utf8", shell: true, windowsHide: true });
   } catch (err) {
     failed = true;
     output = `${err.stdout || ""}${err.stderr || ""}`;

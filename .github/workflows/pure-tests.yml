@@ -86,6 +86,21 @@ jobs:
           }
           node -e "import('keel/storage').then(() => console.log('keel/storage loads'))"
 
+      # The ONE registry install in this job, and the exception is argued rather than assumed.
+      # Everything else here avoids npm on purpose - no lockfile drift, no Electron download -
+      # but eslint is a tool rather than an import, and without it the lint check cannot say
+      # whether the tree is clean. It used to reach for `npx eslint`, which went to the registry
+      # anyway and, with no terminal to answer for it, hit the 120-second per-check timeout on
+      # every push. That is how this lane was red for a day over a MISSING TOOL rather than a
+      # lint error.
+      #
+      # The check now self-skips when eslint is absent, so leaving this step out would be
+      # honest - it would just stop covering lint and say so. Installing it is the better half
+      # of that trade: a linter nobody runs in CI is a rule with no control behind it.
+      - name: Install eslint (the only thing this job fetches)
+        working-directory: helm
+        run: npm install --no-save --no-audit --no-fund --ignore-scripts eslint@^10.9.1
+
       # Deliberately NOT `npm test`. That launches the app once per app-lane check and
       # cannot work on a machine with no window. ci-fast-lane.mjs runs the pure lane
       # through the repo's own runner, cross-checks the runner's lane counts against the
