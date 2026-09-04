@@ -100,7 +100,7 @@ import {
 import { planSweep, describeSweep, reconcileSweepReport } from "./lib/worktreeSweep.js";
 import { docsStaleness, staleProjectsAsync, docsNudgeCandidates, DOCS_NUDGE_ACTIVE_DAYS } from "./lib/docsStaleness.js";
 import { loadDomains } from "./lib/domains.js";
-import { ensureMates, ensureAssistantSeat, assistantSeat, activeMates, findMateById, loadMates, renameMate, retireAndRespawn, bindMateSession, consumeMateHandoff, setMatePersona, rethemeMateNames, retireMateSlot, clampMateSlots, MATE_SLOT_COUNT, MATE_SLOT_MAX } from "./lib/mates.js";
+import { ensureMates, ensureAssistantSeat, assistantSeat, activeMates, findMateById, loadMates, renameMate, retireAndRespawn, bindMateSession, consumeMateHandoff, setMatePersona, rethemeMateNames, retireMateSlot, clampMateSlots, ensureSeatForProject, isProjectPick, MATE_SLOT_COUNT, MATE_SLOT_MAX } from "./lib/mates.js";
 
 // How many first mates the captain wants. Two by default; configurable since
 // 2026-08-02 (task 4bf2421c) because the fleet was hard-capped at two.
@@ -2801,6 +2801,28 @@ ipcMain.handle("mates:remove", (_event, { mateId } = {}) => {
     return { ok: true, active: ensureMates(resolveMetaHome(), current - 1) };
   } catch (err) {
     return { ok: false, error: err?.message || String(err), active: [] };
+  }
+});
+
+// Picking a project in "+ Session" is what opens a project (the captain, 2026-09-04), so it is
+// what mints its seat. Deliberately NOT session:start: crew runs start sessions rooted in
+// throwaway worktrees, and with one-seat-per-checkout enforced that would fill the board with
+// seats for folders that no longer exist. The board's crowding has to equal the projects the
+// captain opened, because that is the governor the whole slot decision now rests on.
+//
+// Returns the seat, or null for a pick that is not a project - the caller starts its session
+// either way, so a chat in the meta-home is unaffected by any of this.
+ipcMain.handle("mates:ensureForProject", (_event, { cwd } = {}) => {
+  try {
+    if (!isProjectPick(cwd, resolveMetaHome())) {
+      return { ok: true, seat: null, skipped: "not-a-project" };
+    }
+    return { ok: true, seat: ensureSeatForProject(cwd) };
+  } catch (err) {
+    // A seat is a convenience here, not a precondition: the session must still start even if
+    // the store cannot be written. Reported, never thrown at the caller.
+    console.error("[helm] could not ensure a seat for", cwd, err);
+    return { ok: false, error: err?.message || String(err), seat: null };
   }
 });
 

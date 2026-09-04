@@ -478,6 +478,29 @@ export function ensureAssistantSeat(root) {
   return seat;
 }
 
+/**
+ * Is picking this folder an act of opening a PROJECT, or just starting a chat?
+ *
+ * The captain's usual folders include the meta-home itself - the root holding the CLAUDE.md
+ * every session inherits - and picking it means an ordinary chat, not a project to orchestrate.
+ * Minting a seat for it would put a project seat on the board for the one folder that is not a
+ * project.
+ *
+ * This is the 2026-07-15 scar restated: first-mate treatment keyed on being rooted in the
+ * meta-home ALONE, and every personal chat kept there was mis-framed and stripped of its MCP.
+ * Root alone has never been the discriminator, and it is not one here either.
+ *
+ * A pure function taking the root as an argument, so it can be checked without an app, a
+ * config, or a filesystem scan for where the meta-home is.
+ */
+export function isProjectPick(cwd, metaHomeRoot) {
+  const c = canonicalFsPath(cwd);
+  if (!c) {
+    return false;
+  }
+  return c !== canonicalFsPath(metaHomeRoot);
+}
+
 /** Every active seat opened against a repository, in creation order. */
 export function projectSeats() {
   return readState().mates.filter((m) => m.status === "active" && seatKind(m) === SEAT_PROJECT);

@@ -12513,6 +12513,27 @@ function fleetCrewItemEl(run) {
 // Every item carries its full path as a hint, because the folder NAME alone is a
 // guess - "claude", "helm" and "scripts" all exist in more than one place here.
 const NEW_SESSION_RECENT_PICKS = 5;
+
+/**
+ * Choosing a folder in "+ Session" - the gesture that means "I am going to work on this".
+ *
+ * Both picks route through here rather than each calling openFreshDraftInPane, because the
+ * seat has to be ensured on BOTH and two call sites doing the same thing by hand is how one of
+ * them ends up not doing it.
+ *
+ * The seat is awaited but never blocking in effect: the handler answers from a local JSON
+ * store and reports its own failures, and the draft opens regardless. A folder that is not a
+ * project (the meta-home) mints nothing and still opens - see isProjectPick.
+ */
+async function chooseProjectForSession(cwd) {
+  try {
+    await window.helm.ensureSeatForProject(cwd);
+  } catch {
+    // Never let a seat that could not be written stop the session the captain asked for.
+  }
+  openFreshDraftInPane(cwd, "", { forceIndex: 0 });
+  navigateToPage("chat");
+}
 async function newSessionFolderMenuItems() {
   const items = [];
   const seen = new Set();
@@ -12529,10 +12550,7 @@ async function newSessionFolderMenuItems() {
     items.push({
       label: cwd.split(/[\\/]/).filter(Boolean).pop() || cwd,
       hint: truncatePathForMenu(cwd),
-      onClick: () => {
-        openFreshDraftInPane(cwd, "", { forceIndex: 0 });
-        navigateToPage("chat");
-      },
+      onClick: () => chooseProjectForSession(cwd),
     });
     return true;
   };
@@ -12571,8 +12589,7 @@ async function newSessionFolderMenuItems() {
       if (!folder) {
         return;
       }
-      openFreshDraftInPane(folder, "", { forceIndex: 0 });
-      navigateToPage("chat");
+      await chooseProjectForSession(folder);
     },
   });
   return items;

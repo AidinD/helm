@@ -260,6 +260,7 @@ contextBridge.exposeInMainWorld("helm", {
   rethemeMates: (fromTheme, toTheme) => ipcRenderer.invoke("mates:retheme", { fromTheme, toTheme }),
   retireMate: (mateId, handoff, persona, keepPersona) => ipcRenderer.invoke("mates:retire", { mateId, handoff, persona, keepPersona }),
   setMatePersona: (mateId, persona) => ipcRenderer.invoke("mates:setPersona", { mateId, persona }),
+  ensureSeatForProject: (cwd) => ipcRenderer.invoke("mates:ensureForProject", { cwd }),
   listPersonas: () => ipcRenderer.invoke("personas:list"),
   consumeMateHandoff: (mateId) => ipcRenderer.invoke("mates:consumeHandoff", { mateId }),
   // Links the CLI session currently embodying a mate, so "jump in" resumes it.
