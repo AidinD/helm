@@ -21,7 +21,7 @@
 //      at runtime
 //
 // PARTIAL COVERAGE THAT LOOKS COMPLETE IS WORSE THAN NONE. That is the whole reason
-// this was deferred for two months: roughly half the checks in scripts/e2e launch the
+// this was deferred for two months: roughly half the checks in the suite launch the
 // real Electron app with a window, an ordinary build machine has no window, and a
 // workflow that quietly runs only the cheap half would put a green tick on a repo
 // whose app-level behaviour nobody checked. So the app lane is not run here, is named
@@ -38,7 +38,10 @@ import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.join(here, "..");
-const E2E_DIR = path.join(here, "e2e");
+// The lanes are folders now, so this reads two directories instead of splitting one by
+// source. See run-tests.mjs for why the folder became the classifier.
+const APP_DIR = path.join(here, "app-checks");
+const PURE_DIR = path.join(here, "pure-checks");
 
 /*
  * Helm imports two packages that are not on npm: `keel` and `@jot/core`, both
@@ -74,14 +77,16 @@ export const EXCLUDED = Object.freeze({
  * The same two rules `run-tests.mjs` uses, for the same reason it reads them from the
  * source instead of keeping a list: a list is a second place to forget.
  *
- * These are a SECOND implementation of that rule, which is normally the thing to
- * avoid - so it is load-bearing that the two are compared at runtime rather than
- * trusted to agree. classifySuite's numbers are checked against the numbers
- * run-tests.mjs prints about its own run (interpretRunnerOutput), and a disagreement
- * fails the build. That turns "the coverage note quietly went stale" into "the build
- * is red and says which number moved".
+ * Since 2026-09-03 the lane split is a FOLDER, so this no longer re-derives it - it reads
+ * the same two directories run-tests.mjs runs. The numbers are still compared at runtime
+ * against the ones run-tests.mjs prints about its own run (interpretRunnerOutput), and a
+ * disagreement still fails the build: that turns "the coverage note quietly went stale"
+ * into "the build is red and says which number moved". What the import pattern below is
+ * for now is the GUARD - proving a folder and the behaviour of its files agree.
  */
-const LAUNCHES_APP = /^\s*(?:import\s|const\s*\{[^}]*\}\s*=\s*await\s+import\()[^\n]*harness\.mjs/m;
+// Exported so the folder guard can check the folders against BEHAVIOUR rather than against
+// another copy of this pattern. It is no longer a classifier here - the folders are.
+export const LAUNCHES_APP = /^\s*(?:import\s|const\s*\{[^}]*\}\s*=\s*await\s+import\()[^\n]*harness\.mjs/m;
 const DRIVES_A_MODEL = /^\s*requireLive\s*\(/m;
 
 /**
@@ -92,23 +97,23 @@ const DRIVES_A_MODEL = /^\s*requireLive\s*\(/m;
  * (app-lane) runs them on a hosted runner - it exists and it works, but it is triggered by a
  * person rather than by a push, so a green tick HERE still says nothing about them.
  */
-export function classifySuite(dir = E2E_DIR) {
-  const files = fs
-    .readdirSync(dir)
-    .filter((f) => f.startsWith("test-") && f.endsWith(".mjs"))
-    .sort();
-  const fastFiles = [];
-  const appFiles = [];
+export function classifySuite({ appDir = APP_DIR, pureDir = PURE_DIR } = {}) {
+  const read = (dir) =>
+    fs
+      .readdirSync(dir)
+      .filter((f) => f.startsWith("test-") && f.endsWith(".mjs"))
+      .sort();
+  const fastFiles = read(pureDir);
+  const appFiles = read(appDir);
+  const files = [...fastFiles, ...appFiles];
+  // Which lane a check is in comes from its folder. Whether it drives a real MODEL still
+  // comes from its source, because no folder carries that fact.
   const modelFiles = [];
-  for (const file of files) {
-    const src = fs.readFileSync(path.join(dir, file), "utf8");
-    if (LAUNCHES_APP.test(src)) {
-      appFiles.push(file);
-    } else {
-      fastFiles.push(file);
-    }
-    if (DRIVES_A_MODEL.test(src)) {
-      modelFiles.push(file);
+  for (const [dir, list] of [[pureDir, fastFiles], [appDir, appFiles]]) {
+    for (const file of list) {
+      if (DRIVES_A_MODEL.test(fs.readFileSync(path.join(dir, file), "utf8"))) {
+        modelFiles.push(file);
+      }
     }
   }
   const excludedFiles = Object.keys(EXCLUDED).filter((f) => fastFiles.includes(f));
@@ -138,7 +143,7 @@ export function coverageStatement(split, observed = {}) {
   const lines = [];
   lines.push("WHAT THIS RUN DOES NOT COVER");
   lines.push("");
-  lines.push(`  ${split.total} checks exist in scripts/e2e.`);
+  lines.push(`  ${split.total} checks exist across scripts/pure-checks and scripts/app-checks.`);
   lines.push(`  ${split.fast} of them are pure node. Those are the only ones this job can execute.`);
   lines.push(
     `  ${split.app} of them launch the REAL Electron app with a window. They are NOT run here,`
@@ -194,7 +199,7 @@ export function coverageStatement(split, observed = {}) {
  * Read `run-tests.mjs --fast`'s own report, and decide whether this job passed.
  *
  * Split out as a pure function on purpose: it is the honesty machinery, so it has to be
- * testable without a suite run behind it (scripts/e2e/test-ci-evidence-honest.mjs
+ * testable without a suite run behind it (scripts/pure-checks/test-ci-evidence-honest.mjs
  * feeds it synthetic reports, including the ones that must be refused).
  *
  * It refuses far more than a failing test. An output it cannot interpret, a lane count

@@ -24,7 +24,7 @@ pasted-images/
 .whisper/
 
 # Ad-hoc flow-review inspection screenshots (see inspect-flow.mjs)
-scripts/e2e/screenshots/flow-review/
+scripts/checks-lib/screenshots/flow-review/
 
 # The orchestration dispatch queue + budget/kill-switch live at
 # <metaHome>/.helm-dispatch/. That's an ABSOLUTE meta-home dir, never inside the
@@ -43,7 +43,7 @@ scripts/e2e/screenshots/flow-review/
 # notes are recoverable from the run's own transcript.
 .helm-goal/
 
-scripts/e2e/screenshots/frameless-header.png
+scripts/checks-lib/screenshots/frameless-header.png
 
 # Screenshot and capture output. Never committed - a screenshot of your own app
 # shows whatever was on screen. Helm had seven of these in a public repo before

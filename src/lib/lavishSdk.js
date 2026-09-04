@@ -343,7 +343,7 @@ export function buildArtifactSdkSource() {
  * `srcdoc` was rejected because it inherits the same way, but the app's
  * `default-src 'self'` left no route for the inline SDK. Verified live:
  * srcdoc -> CSP-blocked; this data: URL runs the SDK and blocks pasted scripts.
- * Follow-up (own focused pass, re-verify via scripts/e2e): pin the SDK sha256
+ * Follow-up (own focused pass, re-verify via the app checks): pin the SDK sha256
  * on THIS inner meta too, as defense-in-depth against any regression in
  * data:-frame CSP inheritance.
  *

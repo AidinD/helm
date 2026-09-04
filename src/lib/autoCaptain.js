@@ -347,6 +347,6 @@ export function selectStrandedAutoCards(state, opts = {}) {
 // but a test. So the three assertions arguing that the rename could not make the lane more
 // restrictive were guarding a function no user code reaches, which is worse than having no guard:
 // it read as protection. Deleted, and replaced by the parity check in
-// scripts/e2e/test-auto-triage-schema-parity.mjs, which asserts the thing that actually matters -
+// scripts/pure-checks/test-auto-triage-schema-parity.mjs, which asserts the thing that actually matters -
 // that the prompt, the schema and the live reader all name the SAME field.
 

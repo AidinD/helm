@@ -17,7 +17,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repo = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
-const e2e = path.join(repo, "scripts", "e2e");
+const appChecks = path.join(repo, "scripts", "app-checks");
 
 /**
  * Checks the hosted runner cannot execute meaningfully, and why.
@@ -73,15 +73,13 @@ const EXCLUDED = {
   },
 };
 
+// The lane IS the folder now (see run-tests.mjs). This used to re-derive it by reading every
+// file for a harness import - a second copy of the rule, kept honest only by luck. The folder
+// is the single source, and pure-checks/test-lane-folders-tell-the-truth.mjs proves it agrees
+// with what the files actually do.
 const all = fs
-  .readdirSync(e2e)
+  .readdirSync(appChecks)
   .filter((f) => f.startsWith("test-") && f.endsWith(".mjs"))
-  .filter((f) => {
-    // A check is app-lane if it IMPORTS the harness. Same test the repo's own runner uses -
-    // listing them would be a second definition of "app lane" that drifts from the first.
-    const src = fs.readFileSync(path.join(e2e, f), "utf8");
-    return /^\s*(?:import\s|const\s*\{[^}]*\}\s*=\s*await\s+import\()[^\n]*harness\.mjs/m.test(src);
-  })
   .sort();
 
 // A name that outlives its file is how an exclusion list rots into fiction.

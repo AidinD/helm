@@ -111,7 +111,7 @@ Landed 2026-07-11 (in Jot "review", awaiting the captain's bless-to-done): chat/
 
 Testing discipline (learned the hard way twice this session): an E2E must exercise the REAL trigger path, not a synthetic one.
 A test that force-renders or calls a function directly can pass while the real user path stays broken — the archive spinner and the composer focus both did exactly that.
-The CDP harness is in `scripts/e2e/`.
+The CDP harness is in `scripts/checks-lib/`, shared by both lanes.
 
 ## The captain's vision (14 points) → where each lands
 

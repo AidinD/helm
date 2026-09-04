@@ -72,7 +72,7 @@ npm test            # the full sweep, one Electron launch per app test
 node scripts/run-tests.mjs docs jot   # only files whose name matches a term
 ```
 
-Tests are discovered from `scripts/e2e/test-*.mjs`; a test that imports the CDP harness is treated as an app test and runs one at a time, because each launches a real Electron window and they would otherwise fight over focus.
+Tests live in two folders and the folder IS the lane: `scripts/pure-checks/` runs anywhere and starts nothing, `scripts/app-checks/` launches a real Electron window and runs one at a time because they would otherwise fight over focus. Shared machinery (the CDP harness, the live gate, the mutation helper) is in `scripts/checks-lib/`. A guard, `pure-checks/test-lane-folders-tell-the-truth.mjs`, fails the build if a file's folder disagrees with what running it actually does.
 
 Three conventions worth knowing:
 

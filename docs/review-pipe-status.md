@@ -60,7 +60,7 @@ read-only and it writes nothing.
 **Still inside, all of it:**
 
 - **The checks that launch the app are NOT run there.** Roughly half the checks in
-  `scripts/e2e` start the real Electron app with a window; a hosted runner has none,
+  `scripts/app-checks` start the real Electron app with a window; a hosted runner has none,
   and no headless harness or virtual display exists for them yet. No workflow in this
   repository runs them. They remain something only the author has ever executed. The
   job prints the live count of them on every run, green or red, so the gap cannot be
@@ -116,13 +116,13 @@ read-only and it writes nothing.
 
 ## The checks that guard it
 
-    node scripts/e2e/test-review-records.mjs          # 119 assertions, incl. forgery vectors
-    node scripts/e2e/test-acceptance.mjs              # criteria parsing + link-based coverage
-    node scripts/e2e/test-acceptance-gate.mjs         # the gate through the running app
-    node scripts/e2e/test-forged-run-presentation.mjs # a fabricated green, at every level
-    node scripts/e2e/test-atomic-write.mjs            # no store keeps a private rename
-    node scripts/e2e/test-jot-writers.mjs             # sign-off writes + the done-without-record audit
-    node scripts/e2e/test-ci-evidence-honest.mjs      # the CI coverage statement matches the suite's real split
+    node scripts/pure-checks/test-review-records.mjs          # 119 assertions, incl. forgery vectors
+    node scripts/pure-checks/test-acceptance.mjs              # criteria parsing + link-based coverage
+    node scripts/app-checks/test-acceptance-gate.mjs         # the gate through the running app
+    node scripts/app-checks/test-forged-run-presentation.mjs # a fabricated green, at every level
+    node scripts/pure-checks/test-atomic-write.mjs            # no store keeps a private rename
+    node scripts/pure-checks/test-jot-writers.mjs             # sign-off writes + the done-without-record audit
+    node scripts/pure-checks/test-ci-evidence-honest.mjs      # the CI coverage statement matches the suite's real split
 
 The last one is the guard on this section rather than on the pipe. It fails if the
 workflow's coverage statement stops matching the suite - a lane count hardcoded instead

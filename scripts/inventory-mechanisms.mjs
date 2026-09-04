@@ -30,7 +30,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const E2E = path.join(REPO_ROOT, "scripts", "e2e");
+const CHECK_DIRS = ["pure-checks", "app-checks"].map((n) => path.join(REPO_ROOT, "scripts", n));
 const HELM_HOME = process.env.HELM_HOME || path.join(os.homedir(), ".helm");
 
 // The meta-home is where the dispatch queue and review records live. Resolved the
@@ -87,12 +87,18 @@ const handoffs = listDir(path.join(META, ".helm", "handoffs"));
 // A test "covers" a mechanism when a token appears in its FILENAME or its SOURCE.
 // Tokens are deliberately identifier-shaped rather than words: matching the word
 // "error" scored 198 files, which is noise dressed as coverage.
-const testFiles = listDir(E2E).filter((f) => f.startsWith("test-") && f.endsWith(".mjs"));
+// Both lanes, named rather than inferred: reading one folder after the 2026-09-03 split
+// would report a confident inventory of half the suite.
+const testFiles = CHECK_DIRS.flatMap((d) =>
+  listDir(d)
+    .filter((f) => f.startsWith("test-") && f.endsWith(".mjs"))
+    .map((f) => path.join(d, f))
+);
 const sourceCache = new Map();
 function testSource(file) {
   if (!sourceCache.has(file)) {
     try {
-      sourceCache.set(file, fs.readFileSync(path.join(E2E, file), "utf8"));
+      sourceCache.set(file, fs.readFileSync(file, "utf8"));
     } catch {
       sourceCache.set(file, "");
     }

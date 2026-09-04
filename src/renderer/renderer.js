@@ -7143,7 +7143,7 @@ function inlineFormat(text) {
         a.title = href;
         nodes.push(a);
       } else {
-        // A relative path (scripts/e2e/foo.mjs) or anything not http: shown as the label
+        // A relative path (scripts/app-checks/foo.mjs) or anything not http: shown as the label
         // with the target beside it - readable, and not a clickable unknown scheme.
         const span = document.createElement("span");
         span.className = "md-link-plain";
@@ -7543,7 +7543,7 @@ function compactBoundaryEl(turn) {
 // it uses - as chips maybe, like in the other app."
 //
 // SKILLS are observable; MEMORY is not. That is measured, not assumed - see
-// scripts/e2e/test-skill-chips.mjs for both captures. In short: an invoked skill arrives as a
+// scripts/pure-checks/test-skill-chips.mjs for both captures. In short: an invoked skill arrives as a
 // `Skill` tool_use (`{"name":"Skill","input":{"skill":"probe-skill"}}`) followed by a
 // tool_result reading `Launching skill: probe-skill`, and BOTH the live stream-json stdout
 // launcher.js parses and the CLI's own session transcript carry it. A loaded CLAUDE.md /

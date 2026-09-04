@@ -134,7 +134,7 @@ export function modelTrustOf(rec) {
  * input the outcome depends on, so the outcome is exactly recomputable for every era. It is
  * computed by `classifyRunOutcome`, the module that already owns that rule, rather than
  * spelled out a second time here - a second spelling of one concept is a documented recurring
- * failure in this repo (see scripts/e2e/test-one-path-per-stop-reason.mjs).
+ * failure in this repo (see scripts/pure-checks/test-one-path-per-stop-reason.mjs).
  *
  * The stored `status` is deliberately left ALONE. It is a lie on 34 of the 48 records that
  * say "done" (measured 2026-09-02), but it is also the app's coarse lifecycle word -

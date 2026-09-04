@@ -15,7 +15,7 @@
 // so running them in parallel makes them fight over ports and focus.
 //
 // TOKENS. Fifteen checks drive a real model - a real first mate, a real second mate, a
-// real triage call. They self-skip unless --live (scripts/e2e/live-gate.mjs), which is
+// real triage call. They self-skip unless --live (scripts/checks-lib/live-gate.mjs), which is
 // enforced rather than remembered: test-live-checks-declared.mjs fails on any check that
 // reaches a model without declaring itself. Before that existed, eleven of them ran on
 // every `npm test` and one had drifted into the FAST lane, so even a "quick" run made a
@@ -29,7 +29,9 @@ import { execFileSync, spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const e2eDir = path.join(here, "e2e");
+const APP_DIR = path.join(here, "app-checks");
+const PURE_DIR = path.join(here, "pure-checks");
+const LIB_DIR = path.join(here, "checks-lib");
 const repo = path.join(here, "..");
 
 const args = process.argv.slice(2);
@@ -123,26 +125,30 @@ process.on("SIGINT", () => {
   process.exit(130);
 });
 
-// A test "launches the app" if it imports the CDP harness, and it "costs" if it calls the
-// shared live gate. Both are read from the source rather than kept in a list here: a list
-// is a second place to forget, and forgetting is what made the suite spend tokens quietly.
-const all = fs
-  .readdirSync(e2eDir)
-  .filter((f) => f.startsWith("test-") && f.endsWith(".mjs"))
-  .filter((f) => terms.length === 0 || terms.some((t) => f.includes(t)))
-  .map((f) => {
-    const src = fs.readFileSync(path.join(e2eDir, f), "utf8");
-    // An IMPORT of the harness, not a mention of it. A plain substring match put
-    // test-live-checks-declared in the app lane, because that file contains sample
-    // sources as strings - one of which imports the harness. It launches nothing, so
-    // it would have paid an Electron slot forever for a quotation.
-    const importsHarness = /^\s*(?:import\s|const\s*\{[^}]*\}\s*=\s*await\s+import\()[^\n]*harness\.mjs/m.test(src);
-    // Same rule for the gate: a CALL on its own line, not the name appearing in a
-    // string or a regex - which is how the guard test that enforces this rule got
-    // listed as one of the checks that spend tokens.
-    const callsGate = /^\s*requireLive\s*\(/m.test(src);
-    return { file: f, launches: importsHarness, costsTokens: callsGate };
-  });
+// WHICH LANE a check runs in is now its FOLDER, and deliberately the only signal for it.
+// It used to be read from the source on every run - app-lane if it imported the harness -
+// which was right about not keeping a hand-maintained list and wrong about where the fact
+// should live. One folder called "e2e" held 162 files that never start the app, so a reader
+// (and a counting script, and an agent) read the whole suite as end-to-end. Ending that
+// misreading is the entire point of the split.
+//
+// The import rule did not disappear, it changed job: it is a GUARD now, asserted by
+// pure-checks/test-lane-folders-tell-the-truth.mjs, which fails when a folder and the
+// behaviour of the files in it disagree. One list plus a proof, not two lists that can drift.
+const readLane = (dir, launches) =>
+  fs
+    .readdirSync(dir)
+    .filter((f) => f.startsWith("test-") && f.endsWith(".mjs"))
+    .filter((f) => terms.length === 0 || terms.some((t) => f.includes(t)))
+    .map((f) => {
+      // Whether a check SPENDS TOKENS is still read from its source - no folder carries that
+      // fact. The rule is a CALL on its own line, not the name appearing in a string or a
+      // regex, which is how the guard enforcing this rule once listed itself as costly.
+      const callsGate = /^\s*requireLive\s*\(/m.test(fs.readFileSync(path.join(dir, f), "utf8"));
+      return { file: f, dir, launches, costsTokens: callsGate };
+    });
+
+const all = [...readLane(PURE_DIR, false), ...readLane(APP_DIR, true)];
 
 const fast = all.filter((t) => !t.launches);
 const slow = fastOnly ? [] : all.filter((t) => t.launches);
@@ -275,7 +281,7 @@ console.log(`\n--- ${fast.length} fast tests (${FAST_LANE_WIDTH} at a time) ---`
 // failure and was not one.
 const fastResults = await runPooled(fast, FAST_LANE_WIDTH, async (t) => ({
   t,
-  r: await run(process.execPath, [path.join("scripts", "e2e", t.file), ...(live ? ["--live"] : [])], t.costsTokens ? 300000 : 120000),
+  r: await run(process.execPath, [path.join(t.dir, t.file), ...(live ? ["--live"] : [])], t.costsTokens ? 300000 : 120000),
 }));
 for (const { t, r } of fastResults) {
   console.log(`${mark(t, r)}  ${t.file}`);
@@ -289,7 +295,7 @@ if (slow.length) {
   let i = 0;
   for (const t of slow) {
     i += 1;
-    const r = await run(process.execPath, [path.join("scripts", "e2e", t.file), ...(live ? ["--live"] : [])], 300000);
+    const r = await run(process.execPath, [path.join(t.dir, t.file), ...(live ? ["--live"] : [])], 300000);
     console.log(`${mark(t, r)}  [${i}/${slow.length}] ${t.file}`);
     if (r.code !== 0) {
       failures.push({ file: t.file, out: r.out });
@@ -311,7 +317,7 @@ if (slow.length) {
     // sits at a path with no space, `#` or `?` in it - a clone under
     // "C:\My Projects" or a "v1#final" directory would have produced a URL that
     // silently pointed somewhere else, or truncated at the `#`.
-    pathToFileURL(path.join(e2eDir, "harness.mjs")).href
+    pathToFileURL(path.join(LIB_DIR, "harness.mjs")).href
   );
   const swept = await sweepAbandonedRuns();
   if (swept.killed.length || swept.removed.length) {

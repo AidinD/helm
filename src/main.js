@@ -5577,7 +5577,7 @@ ipcMain.handle("docs:staleness", (_event, { cwd }) => {
 // invocations instead of within one.
 let checkPortCursor = 0;
 // Every gauntlet check process currently running, so before-quit can take them
-// down with the app. A check is usually `node scripts/e2e/test-*.mjs`, which
+// down with the app. A check is usually `node scripts/app-checks/test-*.mjs`, which
 // launches a whole Electron of its OWN - so quitting Helm mid-run used to leave
 // a live E2E Helm behind with no parent to close it, and that orphan then held a
 // debug port and leaked a Chromium profile for as long as the machine stayed up.
@@ -7015,7 +7015,7 @@ let reviewQueueCache = null; // { at, payload, inputs }
 // only its synchronous span (near zero now that the build runs in the worker), and
 // window.helm cannot be stubbed from a test because contextBridge makes it read-only. A
 // counter on the payload is the one honest observable, and it is what pins the first
-// Review visit to a single build (scripts/e2e/test-view-switch-cost.mjs).
+// Review visit to a single build (scripts/app-checks/test-view-switch-cost.mjs).
 let reviewQueueBuilds = 0;
 // The build currently running, so concurrent callers join it instead of starting a second.
 // One build at a time. Two callers arriving on a cold cache each started their own - there
@@ -7841,7 +7841,7 @@ ipcMain.handle("reviews:runChecks", async (_event, { taskId } = {}) => {
   const results = [];
   for (const check of checks) {
     // Where a check RUNS is part of the check. The first cut defaulted to the
-    // meta-home, so every repo check ("node scripts/e2e/...") failed with exit 1
+    // meta-home, so every repo check ("node scripts/app-checks/...") failed with exit 1
     // simply because it ran in the wrong directory - and a red gauntlet that is
     // red for that reason is worse than no gauntlet, because it looks like a real
     // failure and it can never be made green.

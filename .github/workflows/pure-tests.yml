@@ -9,7 +9,7 @@
 # this repository wrote.
 #
 # WHAT IT DOES NOT DO - read this before trusting a green tick
-# Roughly half the checks in scripts/e2e launch the REAL Electron app with a window.
+# Roughly half the suite - everything in scripts/app-checks - launches the REAL Electron app.
 # They are not run HERE. A separate workflow (app-lane) does run them on a hosted runner -
 # that works now, and the harness locks the viewport so a geometry assertion means the same
 # thing there as on a workstation. But it is triggered by a person, not by a push, so nothing

@@ -1,7 +1,7 @@
 # The app lane, on GitHub's machines instead of a developer's.
 #
 # WHAT THIS IS
-# 155 of the checks in scripts/e2e launch the real Electron app, and for months none of them
+# The 156 checks in scripts/app-checks launch the real Electron app, and for months none of them
 # ran in CI - which the pure lane says out loud on every run, because a green tick that covers
 # half the behaviour and looks complete is the failure this repo has spent months removing.
 #
@@ -181,7 +181,7 @@ jobs:
           for check in $files; do
             ran=$((ran+1))
             echo "########## $check"
-            node "scripts/e2e/$check"
+            node "scripts/app-checks/$check"
             code=$?
             if [ $code -ne 0 ]; then
               failed=$((failed+1))

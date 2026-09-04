@@ -234,7 +234,7 @@ export function matePersonas() {
 // --- Advisory seats -------------------------------------------------------
 //
 // The tool ceiling for a consulted seat. This exact list is the OUTCOME of
-// measuring the CLI on 2026-08-04 (scripts/e2e/test-persona-agent-containment.mjs
+// measuring the CLI on 2026-08-04 (scripts/pure-checks/test-persona-agent-containment.mjs
 // re-checks it against the real binary), and the two findings behind it are both
 // counter-intuitive enough to write down:
 //

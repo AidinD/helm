@@ -92,7 +92,7 @@ function reportUnavailableStore(status) {
  * string "Could not locate Claude session files." even though Helm's own index was sitting
  * right there with sessions in it. That is a brand-new user's machine exactly: install
  * Helm, start a session in Helm, and the session Helm is running is invisible in Direct
- * and Fleet forever. Found by scripts/e2e/test-helm-session-index.mjs and
+ * and Fleet forever. Found by scripts/pure-checks/test-helm-session-index.mjs and
  * test-archive-overlay.mjs failing on a CI runner with no Claude installation while
  * passing on a developer machine - the tests were right and the app was wrong.
  *

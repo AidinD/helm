@@ -37,7 +37,7 @@ Hashing the file and then reading it again left a window where the board that go
 Worth stating because "the guard should retry" looks like a general rule and is not one - it depends on whether the caller holds a mutation that can be re-applied.
 
 **Evidence, because this class of bug is invisible in a single process.**
-`scripts/e2e/test-jot-concurrent-writes.mjs` spawns real competing processes and asserts the only contract that matters: every write either lands or is refused, never silently lost.
+`scripts/pure-checks/test-jot-concurrent-writes.mjs` spawns real competing processes and asserts the only contract that matters: every write either lands or is refused, never silently lost.
 Six processes, three rounds, 720 contended writes: none lost, none refused, and roughly 18% of writes hitting a collision that the retry absorbed instead of returning.
 With only the lock removed from `keel/storage` it loses writes - 7 of 720 measured here, and a reviewer measured 4, 0 and 3 of 240 in three runs of their own.
 Their middle run is the important one: loss needs two writers inside the same few microseconds, so a single clean run is not evidence that the lock is unnecessary, which is why the default is now the contended configuration and the loss assertion aggregates over rounds.
@@ -165,7 +165,7 @@ the model into a directory it then deletes.
 That flag is the point - transformers.js consults its cache before it considers the
 network, so a run that refuses remote files and still works proves every weight came off
 disk. "It was faster the second time" would not have.
-Then through the real app (`scripts/e2e/test-voice-transformers-fallback.mjs`), with
+Then through the real app (`scripts/app-checks/test-voice-transformers-fallback.mjs`), with
 `voiceEngine` set to `transformers`, over the actual renderer -> main -> utilityProcess ->
 voiceWorker path.
 
@@ -342,7 +342,7 @@ Anyone holding the installer can read it, and a token with `repo` scope reaches 
 Publish the installers to a separate public repo, or accept manual updates.
 
 **The honest limit, and the reason this cannot be called verified yet.**
-`scripts/e2e/test-auto-update.mjs` pins the wiring at source level and fetches the real feed unauthenticated, and six deliberate mutations all turn it red - including re-adding the credential gate.
+`scripts/pure-checks/test-auto-update.mjs` pins the wiring at source level and fetches the real feed unauthenticated, and six deliberate mutations all turn it red - including re-adding the credential gate.
 But reaching the actual update branch needs a packaged app, and there is nothing to update TO: the last release is 0.2.82 and `master` is now 0.2.102, so a packaged 0.2.82 would correctly report "already current".
 Proving it end to end takes one release, after which an installed copy should find the next one on its own. Until that happens this is a fix that has been argued for, not observed.
 
@@ -512,7 +512,7 @@ Writing that last one immediately caught itself: the file naming the dead export
 
 ## 2026-08-03 - The flaky Jot bridge test was a real data-loss bug in @jot/core, fixed there
 
-`scripts/e2e/test-jot-ipc-bridge.mjs` failed roughly every other `npm run test:fast` run (never alone), with `EPERM ... rename 'todos.json.tmp' -> 'todos.json'` from `@jot/core`'s save.
+`scripts/pure-checks/test-jot-ipc-bridge.mjs` failed roughly every other `npm run test:fast` run (never alone), with `EPERM ... rename 'todos.json.tmp' -> 'todos.json'` from `@jot/core`'s save.
 Two changes were tempting and both would have been wrong: give the test its own serialized slot in the runner, or retry the assertion.
 Either one hides a defect that belongs to the code Helm's Jot board actually writes through - the same path the auto-captain uses to move a card and tag it.
 
@@ -1040,7 +1040,7 @@ Verified (test-first-mate-guards.mjs): the hot trigger fires by turns; a live fi
 
 ## 2026-07-14 - Fleet/chat UI batch: mate name in chat, retire flash, context gauge for all mates
 
-Three p0 UI bugs, all fixed and E2E-verified (scripts/e2e/test-fleet-ui-fixes.mjs, deterministic, no API turns):
+Three p0 UI bugs, all fixed and E2E-verified (scripts/app-checks/test-fleet-ui-fixes.mjs, deterministic, no API turns):
 - 5fda2a96: openSessionInPane titled a mate-bound session by session.title (the prompt-derived title) instead of the mate's fleet name.
 Fix: resolve firstMateForSession/secondMateForSession (mirrors the needs-you queue), which corrects every chat entry point at once since they all route through openSessionInPane.
 - 96d34b98: retiring a first mate flashed its session under Captain tagged "2nd mate" for a few seconds.
@@ -1068,7 +1068,7 @@ Fix (text/prompt only, no mechanism change - the create->Fleet->jump-in->Opus su
 - first-mate-instructions.md: rewrote the "no hands-on work" bullet to key on the ACTION (never edit files / run builds / cd into a repo to work), not the cwd, closing the Bash-into-repo loophole.
 - helmDispatchServer.js: reframed helm_create_second_mate's description to lead with "register a second mate ... for BOTH the daily-loop step AND your response whenever the captain names a single project", explicitly "INSTEAD of exploring the repo or implementing yourself".
 
-Verified with a sandboxed live smoke test (scripts/e2e/test-first-mate-dispatches.mjs, throwaway git repo + temp meta-home, no real-Fleet side effect): given "Jag vill jobba med projektet X", the first mate's tool sequence was ToolSearch -> helm_create_second_mate, with zero Edit/Write - it dispatched on the first move instead of absorbing the work. One stochastic run, so signal not proof, but it directly confirms the tool-choice change.
+Verified with a sandboxed live smoke test (scripts/app-checks/test-first-mate-dispatches.mjs, throwaway git repo + temp meta-home, no real-Fleet side effect): given "Jag vill jobba med projektet X", the first mate's tool sequence was ToolSearch -> helm_create_second_mate, with zero Edit/Write - it dispatched on the first move instead of absorbing the work. One stochastic run, so signal not proof, but it directly confirms the tool-choice change.
 
 ## 2026-07-14 - Retire: carry-over is a choice, not automatic
 
@@ -1272,7 +1272,7 @@ Fix: a single `isHiddenFromHelm(session)` predicate in renderer.js (keyed on `se
 Also excluded hidden sessions from the main-process orchestrator sweep (`main.js`): a session the user removed from Helm must not be silently auto-classified or, more importantly, auto-COMPACTED (a mutation) in the background. `main.js` inlines a `Set` there rather than importing the renderer helper (separate process).
 Deliberately left alone: `knownRepos` derivations (hiding one session shouldn't make Helm forget the project) and the Archive page's own "Removed from Helm" section (that's the restore UI, it must list hidden sessions).
 Kept distinct from archived (`config.archivedSessions`, applied as `isArchived` in `readAllSessions`) throughout - they're separate concepts.
-Verified via a new CDP E2E (`scripts/e2e/test-hidden-sessions-filtered.mjs`): a hidden session is absent from the sidebar, Fleet Direct, and the attention queue, while a sibling visible session in the same cwd stays; 0 console errors.
+Verified via a new CDP E2E (`scripts/app-checks/test-hidden-sessions-filtered.mjs`): a hidden session is absent from the sidebar, Fleet Direct, and the attention queue, while a sibling visible session in the same cwd stays; 0 console errors.
 
 ## 2026-07-10 - Helm usage analytics (local, content-free)
 
@@ -1372,12 +1372,12 @@ Two fixes were on the table. A context-poor spawned session proposed writing our
 Chosen: Helm owns a `config.helmSessions` index (config.json, on D:\ - a REAL location, not the overlay; never Anthropic's schema). Same overlay pattern Helm already uses for titleOverrides/hiddenSessions. main.js records an entry the moment the CLI session id appears (so it shows while the first turn still runs), keyed by sessionId, with the cwd/model/title/timestamps Helm already knows; readAllSessions merges these with the Desktop list (Desktop file WINS on any id collision, so a resumed Desktop session is never doubled); session:archive routes a Helm-owned session's isArchived to our index. Status/last-role still derive from the transcript (which exists), so nothing downstream changed there.
 createIfAbsent gating: a fresh launch creates an entry, a resume only bumps an existing one (so resuming a Desktop session never fabricates a stray Helm entry); internal launches (summarize-carry-over) are excluded.
 Out of v1 scope (noted): durable folder-switch for a Helm session still warns rather than persists (switchSessionRootFolder's patchSessionMeta finds no Desktop file); rename already works (titleOverrides is a display overlay independent of the metadata file).
-Verified: unit test (scripts/e2e/test-helm-session-index.mjs, 7/7) proves merge + Desktop-wins dedup + archived-status, no claude/Electron needed. The full live path (real Helm chat -> entry in config.json -> shows in Direct -> archivable) is reliably verifiable BECAUSE config.json is on D:\ (unlike the rejected %APPDATA% approach) - to confirm on a real user-launched Helm.
+Verified: unit test (scripts/pure-checks/test-helm-session-index.mjs, 7/7) proves merge + Desktop-wins dedup + archived-status, no claude/Electron needed. The full live path (real Helm chat -> entry in config.json -> shows in Direct -> archivable) is reliably verifiable BECAUSE config.json is on D:\ (unlike the rejected %APPDATA% approach) - to confirm on a real user-launched Helm.
 
 ## 2026-07-08 - Three real dashboard/fleet bugs found and fixed after the captain's own manual test pass, plus a load-bearing architectural gap surfaced (not yet fixed)
 
 The captain asked Claude-in-Helm to fix two P0 Jot bugs (empty-cwd Direct sessions never matching back into the fleet list, and the Dashboard's "New session" button giving no feedback for an empty draft).
-Both were fixed correctly in `renderer.js`, but the fix sat uncommitted and the running dev app was never restarted, so no visible difference appeared - committed + restarted, then verified end to end via `scripts/e2e/test-draft-flash-cue.mjs` (updated; it encoded the pre-fix behavior on purpose) and `scripts/e2e/test-fleet-view.mjs` (regression, all green).
+Both were fixed correctly in `renderer.js`, but the fix sat uncommitted and the running dev app was never restarted, so no visible difference appeared - committed + restarted, then verified end to end via `scripts/app-checks/test-draft-flash-cue.mjs` (updated; it encoded the pre-fix behavior on purpose) and `scripts/e2e/test-fleet-view.mjs` (regression, all green).
 
 The captain's own manual test pass afterward surfaced three more real bugs, unrelated to the two above:
 
@@ -1767,7 +1767,7 @@ didn't work.
 Context: Helm is a native Electron app with no browser-servable dev server, so the standard preview_* / browser tools don't apply.
 The same ad-hoc CDP dance (launch electron with `--remote-debugging-port`, find the renderer target, drive it) had been hand-rolled repeatedly; this turns it into a small reusable module.
 
-**Files:** `scripts/e2e/harness.mjs` (the module) and `scripts/e2e/demo.mjs` (a verification script that drives Helm end to end).
+**Files:** `scripts/checks-lib/harness.mjs` (the module) and `scripts/checks-lib/demo.mjs` (a verification script that drives Helm end to end).
 Put under `scripts/` alongside the existing `scripts/kill-helm.ps1` / `restart-dev.sh` rather than a new `test/` tree, matching where the repo already keeps its dev tooling.
 This is a NEW standalone tool that only DRIVES the app from outside; it does not touch `src/` (main.js, renderer.js, preload.cjs).
 
@@ -1787,7 +1787,7 @@ The `--remote-debugging-port=<port>` flag is a per-launch unique token that appe
 `close()` resolves the matching main PID(s) and `taskkill /PID <pid> /T /F` each, taking the whole child tree (GPU/renderer/utility) with it and nothing else.
 Guarded against an invalid/low port to refuse a broadening match.
 
-**Verified end to end** (`node scripts/e2e/demo.mjs`): launched Helm on port 9333, waited for `#pageToggle`, screenshotted the chat dashboard, clicked the Focus tab, waited for `#focusPage` visible, screenshotted again, read console (0 messages, 0 errors), then clean shutdown.
+**Verified end to end** (`node scripts/checks-lib/demo.mjs`): launched Helm on port 9333, waited for `#pageToggle`, screenshotted the chat dashboard, clicked the Focus tab, waited for `#focusPage` visible, screenshotted again, read console (0 messages, 0 errors), then clean shutdown.
 Two real PNGs produced (1184x755, 137 KB + 66 KB, confirmed PNG signatures).
 Process check before vs after: 4 Helm `electron.exe` at start, 4 after, 0 strays on port 9333 - the user's session untouched, the launched instance fully gone.
 
@@ -5842,7 +5842,7 @@ the second kind of node existed.
 `isSessionNode` was never a fact about the work; it was a fact about where the renderer
 happened to learn of it. A predicate that names the real question cannot rot that way.
 
-**Evidence.** `scripts/e2e/test-auto-widget-visibility.mjs` executes the real predicates
+**Evidence.** `scripts/pure-checks/test-auto-widget-visibility.mjs` executes the real predicates
 and the real augmentation against a registered auto run copied from the captain's own
 `second-mates.json`, and keeps the OLD filter in the test as a witness that must find
 nothing - without it the test would pass on either implementation.
@@ -6352,7 +6352,7 @@ Three things were measured against the real CLI rather than reasoned about, and 
 
 So the ceiling is `["Read", "Grep", "Glob"]`, frozen, and the guarantee comes from the allow
 list rather than from naming things to forbid.
-`scripts/e2e/test-persona-agent-containment.mjs` re-measures it against the real binary; it is
+`scripts/pure-checks/test-persona-agent-containment.mjs` re-measures it against the real binary; it is
 opt-in (`HELM_LIVE_CLI_TESTS=1`) because it spends tokens, and the test runner now reports a
 self-skipped test as `skip` and names it, instead of counting an un-run check as a pass.
 
@@ -6472,7 +6472,7 @@ And one had drifted into the FAST lane, so `npm run test:fast` - the thing to ru
 That one also got KILLED at the fast lane's 120s cap while genuinely waiting on a model, which reads as a product failure and was not one.
 
 **One shared gate.**
-`scripts/e2e/live-gate.mjs` exports `requireLive(reason[, note])`: it prints a named SKIPPED line and exits 0 unless `--live` (or `HELM_LIVE_CLI_TESTS=1`).
+`scripts/checks-lib/live-gate.mjs` exports `requireLive(reason[, note])`: it prints a named SKIPPED line and exits 0 unless `--live` (or `HELM_LIVE_CLI_TESTS=1`).
 Called FIRST in a check, above the harness import and above any fixture writing, so a default run pays nothing for it.
 All fifteen use it now; the four hand-rolled gates are gone, with their extra sentences moved into the `note` argument rather than dropped.
 
@@ -7512,7 +7512,7 @@ the occupant in a warning keeps the run correct and still surfaces the stray.
 `taskkill /IM electron.exe` rule in CLAUDE.md. Everything here is keyed to a
 per-run temp profile, which no other app on the machine can be using.
 
-`scripts/e2e/test-e2e-no-strays.mjs` asserts the properties, not the presence of
+`scripts/app-checks/test-e2e-no-strays.mjs` asserts the properties, not the presence of
 the code: a failed launch leaves no directory, two runs on one port provably
 drive two different windows (each marks its own `window.__strayProbe` and reads
 back its own value), a tree-killed test run leaves no Electron, and a leftover
@@ -7580,7 +7580,7 @@ nowhere to print - the one class of failure this app cannot report about itself.
 `**/*` plus a hand-maintained deny list, and `.claude/` was not on it - so build 0.2.78
 packaged `.claude/worktrees/nostalgic-nobel-5872af`, a *live agent worktree*, at 12:01 while an
 agent was working in it. electron-builder writes the asar header (per-file offset, size,
-sha256) from a directory scan and streams the contents in a second pass. `scripts/e2e/harness.mjs`
+sha256) from a directory scan and streams the contents in a second pass. `scripts/checks-lib/harness.mjs`
 inside that worktree was 39407 bytes at scan time and a different size at copy time, so every
 one of the 834 files after it landed at the wrong offset - including `src/main.js`, which the
 app then read as the middle of an unrelated module. 1876 files verified against their own
@@ -7772,7 +7772,7 @@ reliability block is about. So the fix is not a better guess:
   reason, and Settings shows it. A build that cannot find its engine used to look exactly
   like one that could, until somebody spoke into it.
 
-`scripts/e2e/test-whisper-engine-packaged.mjs` reproduces the packaged **layout** on disk -
+`scripts/pure-checks/test-whisper-engine-packaged.mjs` reproduces the packaged **layout** on disk -
 keel's module copied to the depth a packaged app puts it at - rather than inspecting a built
 asar, which would only work after a build, on the machine that built it. It builds its
 environment explicitly in every case, because this machine's own `WHISPER_DIR` would
@@ -7894,6 +7894,6 @@ unreadable answer must not become permission to delete.
 Every one of these was believed. The instruction files say "is refused" and "the report
 records"; the comments say "SAFE precisely because"; the card said the engine was never found.
 Reading any of them tells you nothing about whether they are true, and five of five were not.
-`scripts/e2e/test-instructions-tell-the-truth.mjs` now pins each claim to the code that makes
+`scripts/pure-checks/test-instructions-tell-the-truth.mjs` now pins each claim to the code that makes
 it true and fails both when the mechanism goes and when the sentence does - a claim is only
 pinned while it is still being made.

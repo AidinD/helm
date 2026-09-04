@@ -108,7 +108,7 @@ export function startSession({ cwd, prompt, model, effort, permissionMode, resum
   // twenty of them - which it would otherwise inherit from the user's global
   // config. Passed ONLY on the first-mate launch path in main.js - never for a
   // regular chat session, which still needs the user's full MCP set. Same flag
-  // spelling already proven in scripts/e2e/test-first-mate-fleet-state.mjs.
+  // spelling already proven in scripts/pure-checks/test-first-mate-fleet-state.mjs.
   if (strictMcpConfig) {
     args.push("--strict-mcp-config");
   }

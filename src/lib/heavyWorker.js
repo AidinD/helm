@@ -21,7 +21,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // HELM_HEAVY_WORKER_MODULE is a test seam. The fallback below is the safety net the whole
 // design rests on - "if the worker cannot start, everything still works, just slower" - and
 // until it was pointed at a deliberately broken worker, that sentence was an argument rather
-// than a tested fact (review, 2026-08-12). scripts/e2e/test-heavy-worker-fallback.mjs points
+// than a tested fact (review, 2026-08-12). scripts/app-checks/test-heavy-worker-fallback.mjs points
 // it at a worker that never reports ready.
 const WORKER_PATH = process.env.HELM_HEAVY_WORKER_MODULE || path.join(__dirname, "..", "worker", "heavy.mjs");
 

@@ -23,7 +23,7 @@
 // assistantStoreServer.js, mirroring how helmDispatchServer.js separates its tool
 // implementations from its transport - except that this half is exported, because
 // the refusals are the part worth testing directly rather than only through a
-// spawned process (scripts/e2e/test-assistant-store.mjs drives both).
+// spawned process (scripts/pure-checks/test-assistant-store.mjs drives both).
 import fs from "node:fs";
 import path from "node:path";
 import { isTransientLock, MAX_ATTEMPTS, backoffMs, sleepSync } from "keel/storage";
@@ -343,7 +343,7 @@ export function writeGoals(args = {}) {
  * paragraph, with nothing anywhere saying the other was lost. `appendFileSync`
  * cannot lose a sibling's line - the write goes at whatever the end of the file is
  * at the moment it lands. This is the same exemption `usage.js` and `helmUsage.js`
- * already hold, and scripts/e2e/test-atomic-write.mjs names them rather than
+ * already hold, and scripts/pure-checks/test-atomic-write.mjs names them rather than
  * pattern-matching them, precisely so the exemption has to be argued.
  *
  * What appendFileSync does NOT get for free is the Dropbox lock retry, which the
