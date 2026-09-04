@@ -37,9 +37,15 @@ const EXCLUDED = {
     removeWhen: "it seeds its own board fixture instead of reading the live one",
   },
   "test-analysis-skill-groups.mjs": {
-    kind: "own-data",
-    why: "needs projects that HAVE skills on disk, and finds none on a runner",
-    removeWhen: "it creates the project-with-skills layout it asserts about",
+    // Reason corrected 2026-09-04 after looking rather than assuming. The first reason said it
+    // needs projects with skills on disk; it does not - it already builds a fixture, and
+    // listSkills filters out any project whose skill count is zero, so the assertion that failed
+    // could not have been reached by a project with no skills. The runner's message was
+    // "(0 has 0)", meaning the block's own heading came back as "0", which points at the DOM
+    // scrape picking up something that is not a skills block rather than at the data.
+    kind: "runner",
+    why: "the block scrape returns a heading of \"0\" there, so the failure is about what the page renders on that machine, not about skills - and it is not understood yet",
+    removeWhen: "somebody reproduces the scrape on a runner and either fixes the selector or names the real cause",
   },
   "test-docs-staleness.mjs": {
     kind: "own-data",
@@ -55,11 +61,6 @@ const EXCLUDED = {
     kind: "own-data",
     why: "asserts a complete, non-empty session list; a runner has 0 sessions",
     removeWhen: "it seeds sessions rather than reading the machine's",
-  },
-  "test-orchestrator-root.mjs": {
-    kind: "own-data",
-    why: "asserts the meta-home has a CLAUDE.md and a populated memory directory - true of a long-used one, not of a fresh one",
-    removeWhen: "it builds a meta-home fixture with those files in it",
   },
   "test-jot-tab.mjs": {
     kind: "runner",
