@@ -1,5 +1,56 @@
 # Decisions
 
+## 2026-09-03 - The assertions were never the cost, and two of us guessed the shape instead of measuring
+
+Helm's suite was described as having no test pyramid: no unit tests, everything end-to-end.
+The description was wrong, the diagnosis built on it was wrong, and the correction is worth keeping because both mistakes are the kind that feel like analysis.
+
+**The count that started it read a folder name as content.**
+One directory, `scripts/e2e`, held 318 checks.
+162 of them never start the app.
+A count of the directory therefore reported the whole suite as end-to-end, and a `ls test/*.mjs` returning nothing was read as "no unit tests" when the fast layer was simply not in a folder called `test`.
+Both readings are defensible from the outside, which is the point: the naming was doing the misleading, not the counter.
+The fast layer holds 61% of the suite's assertions and runs in 45 seconds.
+
+**Then the fix was aimed at the wrong variable, twice.**
+The first proposal was to build a unit layer under the most-changed code.
+The second - mine - was to move app-lane checks down into the fast lane, starting with six that assert against whatever happens to be on the machine.
+Both are test-SHAPE explanations for a runtime complaint, and neither was measured first.
+
+Measuring took ten minutes and ended both:
+
+    harness launch + close      ~4,600 ms   (three runs: 4,140 / 4,611 / 5,195)
+    UI ready after launch       1-4 ms
+    a typical check's own work  ~1,500 ms
+
+Roughly three quarters of an app check is starting and stopping Electron, repeated 156 times.
+The assertions are close to free.
+Building a unit layer moves nothing, because the assertions were never the cost.
+Relocating six checks saves about 26 seconds out of eleven minutes, which is a rounding error dressed as a fix.
+
+**Why both of us reached for test shape first.**
+Test shape is the explanation available without measuring; a runtime explanation requires an experiment.
+That is the same gravity well that produced the imbalance in the first place: end-to-end is what you can write without understanding the unit - drive the app, observe, assert - while a unit test requires knowing what the unit promises.
+An agent building quickly takes the path of least understanding, and an agent diagnosing quickly takes the path of least measurement.
+Not carelessness in either direction, and it pulls the same way in every project built fast.
+
+**What the measurement did not license.**
+The obvious conclusion - share one Electron instance across the 104 checks that launch plainly, and save seven of the eleven minutes - was rejected, and the reason is the one defect the same investigation had just condemned.
+A check that passes because the previous check left the app in the right state is exactly the ambient-state failure the six machine-reading checks were criticised for, manufactured deliberately and at scale.
+The failure would be intermittent and ordering-dependent, which is the most expensive kind to diagnose, and for an app whose stated problem is that it is not trusted, a fast suite that occasionally lies is a worse trade than a slow one that does not.
+Grouping into provably non-interfering sets was the better version of the idea, and running the lane in a shuffled order periodically would turn "these are independent" from an assertion into evidence - but neither is needed once the lane runs somewhere nobody is waiting.
+
+**The real cost of a slow lane is not the waiting. It is that the lane gets skipped.**
+That reframing is what settled it.
+The app lane is manual-only in CI, so it does not run on push; locally it is not run either, and not because of the duration - a window popping up interrupts other work.
+Eleven minutes on a hosted runner costs nobody anything, because nobody is watching it.
+So the answer was neither a new test layer nor a faster one: run the fast lane locally on every change, and let the slow lane run where its duration is not a person's problem.
+
+**What actually shipped from this.**
+The folder split, so the misreading cannot recur: `pure-checks/`, `app-checks/`, and `checks-lib/` for the shared machinery, with the folder as the single classifier and a guard proving it agrees with behaviour.
+The eight checks CI cannot run meaningfully, named with a reason and a removal condition, reported as excluded and subtracted rather than counted as passed.
+Nothing was made faster, and saying so plainly is part of the entry.
+
 ## 2026-09-03 - Centralising the atomic write quietly ate a different retry loop
 
 `mutateJotFile`'s doc comment promised it would "retry from a fresh read if the file moved in our window".
