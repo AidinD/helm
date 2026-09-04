@@ -80,6 +80,13 @@ try {
       chips: [...b.querySelectorAll(".skill-chip")].map((c) => c.textContent.trim()),
       empty: (b.querySelector(".pane-empty")?.textContent || "").trim(),
       childCount: b.children.length,
+      // Kept so a failure on a machine nobody can attach a debugger to carries its own
+      // diagnosis. On a hosted runner this check reported "(0 has 0)" - a block whose heading
+      // was the string "0" - and nothing in the output said what that block WAS. Two guesses
+      // were spent on it, both wrong. A scrape that fails should hand over the thing it
+      // scraped, not a number derived from it.
+      classes: b.className,
+      outline: b.outerHTML.replace(/\s+/g, " ").slice(0, 220),
     }));
     return { blocks };
   })()`);
@@ -166,7 +173,10 @@ try {
       b.hints.some((h) => /[\\/]/.test(h)),
       `with its full path on screen, since a folder name is ambiguous (${JSON.stringify(b.hints)})`
     );
-    ok(b.chips.length > 0, `and only projects that HAVE skills are offered (${b.head} has ${b.chips.length})`);
+    ok(
+      b.chips.length > 0,
+      `and only projects that HAVE skills are offered (${JSON.stringify(b.head)} has ${b.chips.length}; classes ${JSON.stringify(b.classes)}; ${b.outline})`
+    );
   }
 
   // The picker: one pill per project with skills, exactly one selected, and clicking

@@ -17,6 +17,24 @@ import { launch } from "../checks-lib/harness.mjs";
 import { writeReviewRecord, readReviewRecord } from "../../src/lib/reviewRecords.js";
 
 let app;
+
+/**
+ * Wait until the Review page has rendered at least one card, or give up after 20s.
+ *
+ * Deliberately does not throw on timeout: the assertions that follow are the ones that should
+ * report a problem, and in their own words. A throw here would replace "the criteria are not on
+ * the card" with a stack trace about waiting.
+ */
+async function waitForReviewCards(timeoutMs = 20000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const n = await app.eval(`document.querySelectorAll("#reviewPage .rev-item").length`);
+    if (n > 0 || Date.now() > deadline) {
+      return n;
+    }
+    await new Promise((r) => setTimeout(r, 200));
+  }
+}
 let fails = 0;
 const ok = (c, m) => {
   console.log(`${c ? "OK  " : "FAIL"} - ${m}`);
@@ -179,7 +197,16 @@ try {
 
   // And the page renders all of it.
   await app.eval(`navigateToPage("review")`);
-  await new Promise((r) => setTimeout(r, 1200));
+  // Waited FOR rather than slept THROUGH. A fixed 1200ms was enough on a workstation and not on
+  // a hosted runner, where the page was still building: the scrape found one unbound-commit
+  // heading and none of the fixture's cards, and seven assertions failed describing a feature
+  // that works. Nothing about that failure said "too early", which is what makes a sleep the
+  // wrong instrument.
+  //
+  // The wait is on a PRECONDITION - that any review card exists - and never on the thing being
+  // asserted. Polling for the criteria box would turn a real regression into a timeout, which
+  // reads as slowness rather than as the feature being gone.
+  await waitForReviewCards();
   const ui = await app.eval(`(() => {
     const p = document.getElementById("reviewPage");
     return {

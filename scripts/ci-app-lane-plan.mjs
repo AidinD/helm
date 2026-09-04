@@ -31,28 +31,6 @@ const appChecks = path.join(repo, "scripts", "app-checks");
  *              but nothing here is wrong.
  */
 const EXCLUDED = {
-  "test-acceptance-gate.mjs": {
-    // Reason corrected 2026-09-04 by reading the runner's output instead of assuming. The old
-    // reason said it reads the real board; it does not - it already builds its own board, its
-    // own meta home and its own review records, and every DATA assertion passes on a runner.
-    // What fails is the seven that scrape the rendered page: an unbound-commit row sorts above
-    // the fixture's cards there, so the position-based assertions ("rendered FIRST", "its
-    // heading comes first") point at the wrong card and the criteria boxes are not on it.
-    kind: "runner",
-    why: "its page assertions assume the fixture's card sorts first, and an unbound-commit row from the fixture repo outranks it on a runner - the data half passes there, only the DOM scrape fails",
-    removeWhen: "the page assertions find their card by task id instead of by position, or the fixture repo stops producing an unbound-commit row",
-  },
-  "test-analysis-skill-groups.mjs": {
-    // Reason corrected 2026-09-04 after looking rather than assuming. The first reason said it
-    // needs projects with skills on disk; it does not - it already builds a fixture, and
-    // listSkills filters out any project whose skill count is zero, so the assertion that failed
-    // could not have been reached by a project with no skills. The runner's message was
-    // "(0 has 0)", meaning the block's own heading came back as "0", which points at the DOM
-    // scrape picking up something that is not a skills block rather than at the data.
-    kind: "runner",
-    why: "the block scrape returns a heading of \"0\" there, so the failure is about what the page renders on that machine, not about skills - and it is not understood yet",
-    removeWhen: "somebody reproduces the scrape on a runner and either fixes the selector or names the real cause",
-  },
   "test-jot-tab.mjs": {
     kind: "runner",
     why: "dies on spawnSync of cmd.exe with ENOENT before asserting anything",
