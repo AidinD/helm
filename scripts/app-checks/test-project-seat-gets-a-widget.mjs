@@ -128,6 +128,13 @@ try {
   assert(!removed.inCatalog, "the Captain widget is out of the catalog");
   assert(!removed.captainCard, "a saved layout naming it draws nothing rather than an untitled empty box");
   assert(removed.autoStillThere, "while the Auto widget beside it is untouched - the drop is by unknown type, not a purge");
+  // AND THE SEATS TAKE ITS PLACE. Opening the seats was only half the job: a seat with no
+  // widget is exactly as invisible as a row with no column. Dropping the Captain widget from a
+  // saved layout therefore puts the project seats on the board in the space it vacated.
+  assert(
+    removed.widgets >= 3,
+    "the project seats take the place the Captain widget vacated, so its rows are relocated rather than hidden (" + removed.widgets + " widgets)"
+  );
 } catch (err) {
   exitCode = 1;
   log("ERROR:", err?.message || err);

@@ -13123,14 +13123,32 @@ function nextWidgetInstanceId(layout, type) {
 }
 
 /** The saved layout, or a seeded default (one first-mate widget per active mate). */
-function widgetLayout(mates) {
+function widgetLayout(mates, projectSeats = []) {
   const saved = state.config?.dashboardWidgets?.layout;
   if (Array.isArray(saved) && saved.length > 0) {
     // A saved layout outlives the catalog. Anyone who has used this board has "captain" in
     // theirs, and a widget whose type has no spec renders as an untitled empty box with no
     // way to tell what it was. Dropped by the general rule rather than by name, so the next
     // removal needs no second change here.
-    return saved.filter((w) => w && WIDGET_CATALOG[w.type]);
+    const kept = saved.filter((w) => w && WIDGET_CATALOG[w.type]);
+    if (kept.length === saved.length) {
+      return kept;
+    }
+    // SOMETHING WAS DROPPED, and if it was the Captain widget its rows need somewhere to be.
+    // Opening the seats was only half of it: a seat with no widget is exactly as invisible as
+    // a row with no column, and the whole point of the backfill was that removing this widget
+    // must relocate work rather than hide it. So the seats take the place the widget vacated.
+    //
+    // Only when a drop actually happened, so this cannot keep adding widgets to a board the
+    // captain has since tidied - a seat he removed from the board stays removed.
+    const onBoard = new Set(kept.filter((w) => w.type === "projectSeat").map((w) => w.mateId));
+    for (const seat of projectSeats || []) {
+      if (onBoard.has(seat.mateId)) {
+        continue;
+      }
+      kept.push({ id: `w-project-${seat.mateId}`, type: "projectSeat", span: 4, mateId: seat.mateId });
+    }
+    return kept;
   }
   const layout = [
     { id: "w-needs", type: "needsYou", span: 8, orientation: "horizontal" },
@@ -13138,6 +13156,9 @@ function widgetLayout(mates) {
   ];
   for (const mate of mates || []) {
     layout.push({ id: `w-mate-${mate.mateId}`, type: "firstMate", span: 4, mateId: mate.mateId });
+  }
+  for (const seat of projectSeats || []) {
+    layout.push({ id: `w-project-${seat.mateId}`, type: "projectSeat", span: 4, mateId: seat.mateId });
   }
   layout.push(
     // Standing, and placed with the seats rather than among the readouts: it is somewhere to
@@ -14152,7 +14173,7 @@ function widgetAddTile(data) {
   tile.textContent = "+ Add widget";
   tile.addEventListener("click", (e) => {
     e.stopPropagation();
-    const layout = rebindFirstMateWidgets(widgetLayout(data.mates), data.mates).layout;
+    const layout = rebindFirstMateWidgets(widgetLayout(data.mates, data.projectSeats), data.mates).layout;
     const items = [];
     // Which mates a widget already shows, by BINDING rather than by widget id: after a
     // widget adopts a mate its id still carries the retired mate's, so an id check would
@@ -14334,7 +14355,7 @@ async function renderWidgetDashboard(page) {
   // A first-mate widget adopts a mate on watch when the one it was bound to is gone
   // (task acb34a24). Persisted when it actually happens, so the adoption is stable and
   // the Add-widget menu offers the same answer this render just drew.
-  const rebound = rebindFirstMateWidgets(widgetLayout(mates), mates);
+  const rebound = rebindFirstMateWidgets(widgetLayout(mates, data.projectSeats), mates);
   const layout = rebound.layout;
   if (rebound.changed) {
     try {

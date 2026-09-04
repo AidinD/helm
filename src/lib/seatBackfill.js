@@ -1,4 +1,5 @@
 import { isProjectPick } from "./mates.js";
+import { normalizeFsPath } from "./fsPath.js";
 
 /**
  * Which checkouts should have a project seat opened for them, given the nodes the board would
@@ -42,14 +43,30 @@ export function projectsNeedingSeats(nodes, { metaHomeRoot, exists } = {}) {
     if (!isProjectPick(project, metaHomeRoot)) {
       continue;
     }
-    const key = project.replace(/[\\/]+$/, "").toLowerCase();
+    // normalizeFsPath, not a hand-rolled fold. The first version of this line lowercased and
+    // stripped a trailing separator and left the SEPARATORS alone, so one repo spelled with
+    // backslashes and again with forward slashes counted twice - measured on the real history,
+    // which asked for "helm" two times. ensureSeatForProject would have refused the second, so
+    // no duplicate seat could be created; what was wrong was the number this function reports,
+    // and a count nobody can trust is the wrong thing to be measuring the board's crowding by.
+    const key = normalizeFsPath(project);
     if (seen.has(key)) {
       continue;
     }
     seen.add(key);
-    // A folder that is gone cannot be opened, and a seat rooted at a deleted checkout is a
-    // permanently empty row nothing can clear.
-    if (typeof exists === "function" && !exists(project)) {
+    // A DELETED CHECKOUT still gets a seat when a session is live in it, and that exception is
+    // the whole reason this is not a one-line existence test.
+    //
+    // The rule without it is defensible - a seat rooted at a folder nobody can open is a
+    // permanently empty row. But hiding a RUNNING session is the failure this entire pass
+    // exists to prevent, and it is not hypothetical: the real history has a node with a live
+    // session whose worktree has since been removed. Turning it away left work in flight with
+    // no surface anywhere, which is worse than a row that explains itself.
+    //
+    // Finished crew in a folder that is gone is a different case and stays excluded: nothing
+    // is running, so there is nothing to lose sight of.
+    const stillThere = typeof exists === "function" ? exists(project) : true;
+    if (!stillThere && !node.sessionId) {
       continue;
     }
     out.push(project);

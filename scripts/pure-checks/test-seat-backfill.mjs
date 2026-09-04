@@ -63,20 +63,40 @@ ok(
   call([{ projectPath: META, sessionId: "s1", crew: [] }]).length === 0,
   "the meta-home is not a project, so a chat kept there never becomes a seat"
 );
+// A DELETED CHECKOUT: it depends on whether anything is still running in it, and this pair is
+// the answer to "what happens to a node the backfill cannot open a folder for". Found in the
+// real history rather than imagined - a node with a live session whose worktree had been
+// removed, which the first version of this rule turned away and thereby hid.
 ok(
-  call([{ projectPath: GONE, sessionId: "s1", crew: [] }]).length === 0,
-  "a deleted checkout earns nothing - a seat rooted there is a permanently empty row"
+  call([{ projectPath: GONE, sessionId: "s1", crew: [] }]).length === 1,
+  "a deleted checkout with a LIVE SESSION still earns a seat - hiding running work is worse than a row that explains itself"
 );
-ok(call([{ sessionId: "s1", crew: [] }]).length === 0, "a node with no project at all is skipped");
+ok(
+  call([{ projectPath: GONE, sessionId: null, crew: [{ id: "r1" }] }]).length === 0,
+  "but finished crew in a folder that is gone earns nothing - there is nothing left to lose sight of"
+);
+// A NODE WITH NO PROJECT cannot reach here from the app: deriveSecondMates skips a run with no
+// projectPath, and the union that adds proposal-only nodes requires one on the binding. The
+// guard stays anyway and is asserted, because "cannot happen" is a claim about today's callers
+// and this function is now imported by a startup path that will grow more of them.
+ok(call([{ sessionId: "s1", crew: [] }]).length === 0, "a node with no project at all is skipped rather than crashing");
 ok(call([]).length === 0 && call(null).length === 0, "no nodes, no seats, and no crash on nothing");
 
 // --- one per checkout, however many rows name it ---------------------------------------------
+// EVERY SPELLING, including the separators. The first version of this de-duplication folded
+// case and a trailing slash and left the separators alone, so one repo written with backslashes
+// and again with forward slashes counted twice. The fixture below did not catch it because it
+// only varied case and a trailing slash; the real history did, asking for "helm" two times.
+// ensureSeatForProject would have refused the second seat, so nothing duplicate could be
+// created - what was wrong was the COUNT, which is the number the board's crowding is judged by.
 const dupes = call([
   { projectPath: ALPHA, sessionId: "s1", crew: [] },
   { projectPath: ALPHA + "/", sessionId: "s2", crew: [] },
   { projectPath: ALPHA.toUpperCase(), sessionId: null, crew: [{ id: "r1" }] },
+  { projectPath: ALPHA.replace(/\//g, "\\"), sessionId: "s3", crew: [] },
+  { projectPath: ALPHA.replace(/\//g, "\\") + "\\", sessionId: "s4", crew: [] },
 ]);
-ok(dupes.length === 1, `three rows naming one checkout ask for one seat (${dupes.length})`);
+ok(dupes.length === 1, `five spellings of one checkout ask for one seat (${dupes.length})`);
 
 // --- the realistic mixture, which is the case that actually runs at startup -------------------
 const mixed = call([
@@ -84,7 +104,7 @@ const mixed = call([
   { projectPath: BETA, sessionId: null, crew: [{ id: "r2" }] },
   { projectPath: BETA, sessionId: "s3", crew: [], startedBy: "auto" },
   { projectPath: META, sessionId: "s4", crew: [] },
-  { projectPath: GONE, sessionId: "s5", crew: [] },
+  { projectPath: GONE, sessionId: null, crew: [{ id: "r5" }] },
   { projectPath: ALPHA, sessionId: null, crew: [] },
 ]);
 ok(
