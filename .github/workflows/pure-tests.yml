@@ -65,17 +65,46 @@ jobs:
       # (@jot/core) is a build artefact of another repo and is NOT provided here - the
       # single check that needs it is excluded by name in scripts/ci-fast-lane.mjs and
       # reported as excluded rather than passed.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      # Fail with a sentence instead of with 130 identical module-resolution errors.
+      - name: Install eslint (the only thing this job fetches)
+        working-directory: helm
+        run: npm install --no-save --no-audit --no-fund --ignore-scripts eslint@^10.9.1
+
+      # Deliberately NOT `npm test`. That launches the app once per app-lane check and
+      # cannot work on a machine with no window. ci-fast-lane.mjs runs the pure lane
+      # through the repo's own runner, cross-checks the runner's lane counts against the
+      # suite on disk, and refuses to report a pass if the two disagree.
+      # npm install PRUNES a hand-placed sibling. npm sees `keel: file:../keel`, finds no such
+      # directory beside the repo on a runner, and deletes the node_modules/keel that was
+      # checked out here - leaving a dangling symlink in its place, which actions/checkout then
+      # cannot write into (ENOENT: mkdir node_modules\keel). The app lane hit this twice and
+      # this job hit it once: 105 of 158 checks failed the moment an install was added, because
+      # keel had quietly been removed underneath them.
+      #
+      # So the order is load-bearing: install FIRST, clear whatever npm left where keel belongs,
+      # and only then check keel out.
+      - name: Clear the dangling link npm left where keel belongs
+        working-directory: helm
+        shell: bash
+        run: |
+          if [ -e node_modules/keel ] || [ -L node_modules/keel ]; then
+            rm -rf node_modules/keel
+            echo "removed what npm left at node_modules/keel"
+          else
+            echo "nothing at node_modules/keel"
+          fi
+          mkdir -p node_modules
+
       - name: Check out keel into node_modules (the sibling package Helm imports)
         uses: actions/checkout@v4
         with:
           repository: AidinD/keel
           path: helm/node_modules/keel
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-
-      # Fail with a sentence instead of with 130 identical module-resolution errors.
       - name: Confirm keel resolved
         working-directory: helm
         shell: bash
@@ -97,14 +126,6 @@ jobs:
       # The check now self-skips when eslint is absent, so leaving this step out would be
       # honest - it would just stop covering lint and say so. Installing it is the better half
       # of that trade: a linter nobody runs in CI is a rule with no control behind it.
-      - name: Install eslint (the only thing this job fetches)
-        working-directory: helm
-        run: npm install --no-save --no-audit --no-fund --ignore-scripts eslint@^10.9.1
-
-      # Deliberately NOT `npm test`. That launches the app once per app-lane check and
-      # cannot work on a machine with no window. ci-fast-lane.mjs runs the pure lane
-      # through the repo's own runner, cross-checks the runner's lane counts against the
-      # suite on disk, and refuses to report a pass if the two disagree.
       - name: Pure module checks (the app lane is NOT covered)
         working-directory: helm
         run: node scripts/ci-fast-lane.mjs
