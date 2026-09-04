@@ -38,10 +38,6 @@ const domainsPath = process.env.HELM_DOMAINS_PATH || path.join(__dirname, "..", 
  * @property {string} icon - a single emoji shown on the project chip.
  */
 
-export function domainsFilePath() {
-  return domainsPath;
-}
-
 /** Reads the registry. Returns [] if none exists yet or the file is corrupt. */
 export function loadDomains() {
   if (!fs.existsSync(domainsPath)) {

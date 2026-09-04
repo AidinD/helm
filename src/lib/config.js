@@ -222,10 +222,6 @@ export function writeConfig(config) {
   }
 }
 
-export function configFilePath() {
-  return configPath;
-}
-
 /**
  * Reads customGroupOrder from the desktop app config. Those clusters key
  * sessionIds as "code:local_..." and group them under cg-<uuid> ids. We turn

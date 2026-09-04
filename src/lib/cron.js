@@ -68,7 +68,7 @@ function parseField(spec, { min, max }) {
 
 // Parse a full "m h dom mon dow" expression into { minute, hour, dom, month,
 // dow } where each is a Set or null. Throws on malformed input.
-export function parseCron(expr) {
+function parseCron(expr) {
   const parts = String(expr || "").trim().split(/\s+/);
   if (parts.length !== 5) {
     throw new Error(`cron: expected 5 fields, got ${parts.length} in "${expr}"`);
@@ -83,7 +83,7 @@ export function parseCron(expr) {
 }
 
 /** True if `date` (local time) satisfies the parsed cron fields. */
-export function cronMatches(date, fields) {
+function cronMatches(date, fields) {
   if (fields.minute && !fields.minute.has(date.getMinutes())) {
     return false;
   }

@@ -295,19 +295,6 @@ function emptyIndex(jotPath) {
 // consumer that genuinely needs it should read it explicitly, not get it by
 // default), images, createdAt, completedAt (irrelevant to "what should I do
 // / how is this session's linked work doing").
-export function projectTodoForContext(todo) {
-  if (!todo) {
-    return null;
-  }
-  return {
-    id: todo.id,
-    text: todo.text || "",
-    status: todo.status || "open",
-    priority: typeof todo.priority === "number" ? todo.priority : null,
-    categoryId: todo.categoryId ?? null,
-    parentId: todo.parentId ?? null,
-  };
-}
 
 /**
  * Every top-level task currently sitting in "review", with its category name -

@@ -188,7 +188,7 @@ export function quotaResetFireAt(quotaWindows, now = Date.now(), graceMs = 60_00
   return soonest === null ? null : soonest + graceMs;
 }
 
-export function scheduledPromptLabel(fireAt, waitForQuota, now = Date.now()) {
+function scheduledPromptLabel(fireAt, waitForQuota, now = Date.now()) {
   const mins = Math.max(0, Math.round((fireAt - now) / 60000));
   const when = mins >= 120 ? `${Math.round(mins / 60)}h` : mins >= 1 ? `${mins}m` : "under a minute";
   return waitForQuota ? `at quota reset (~${when})` : `in ${when}`;

@@ -21,10 +21,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // HELM_ROUTINES_PATH is a test-only seam (tests point it at a temp file).
 const routinesPath = process.env.HELM_ROUTINES_PATH || path.join(__dirname, "..", "..", "routines.json");
 
-export function routinesFilePath() {
-  return routinesPath;
-}
-
 function readAll() {
   if (!fs.existsSync(routinesPath)) {
     return [];

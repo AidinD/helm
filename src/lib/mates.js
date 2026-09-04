@@ -278,10 +278,6 @@ function currentTheme() {
   }
 }
 
-export function matesFilePath() {
-  return matesPath;
-}
-
 // State shape: { mates: [ { mateId, slot, name, root, status, createdAt,
 // retiredAt } ] }. Tolerant of the legacy flat-array shape (mates keyed by
 // root): those become `retired` records with no slot, so historical run

@@ -117,7 +117,7 @@ const CLARIFICATION_FOLLOW_UP = "Add what's missing and it will be picked up aga
  * What survives is what the USER wrote, which is exactly what should make a held
  * card eligible again.
  */
-export function stripAutoNotes(description) {
+function stripAutoNotes(description) {
   const NL = String.fromCharCode(10);
   return String(description || "")
     .split(NL)

@@ -311,26 +311,19 @@ console.log("\n-- dead exports --");
   // one, exported and documented, describing a naming problem it did not solve
   // because nothing called it - and the rows it was for did not render at all.
   //
-  // A RATCHET, not a clean-slate demand. These 15 predate the check; listing them is
-  // not licensing them, it is refusing to hide them while still failing the moment a
-  // sixteenth appears. Delete one and remove its line - the list only shrinks.
-  const KNOWN_DEAD = new Set([
-
-    "autoCaptain.js: stripAutoNotes",
-    "config.js: configFilePath",
-    "cron.js: parseCron",
-    "cron.js: cronMatches",
-    "dispatchQueue.js: dispatchRoot",
-    "dispatchQueue.js: fleetStatePath",
-    "domains.js: domainsFilePath",
-    "helmRoutines.js: routinesFilePath",
-    "jot.js: projectTodoForContext",
-    "mates.js: matesFilePath",
-    "scheduledPrompts.js: scheduledPromptLabel",
-    "whisperStream.js: parseStreamChunk",
-    "worktree.js: worktreePathFor",
-    "worktree.js: copyEnvFiles",
-  ]);
+  // A RATCHET that has been paid off. The list held fourteen entries that predated the
+  // check; listing them was not licensing them, and on 2026-09-04 they were dealt with
+  // one at a time rather than carried any longer. It is empty now, so ANY dead export
+  // fails - which is the ratchet arriving at its point rather than a change of rule.
+  //
+  // ONE DISTINCTION THE LIST DID NOT MAKE, and it decided what happened to each: this
+  // check finds a dead EXPORT, which is not the same as dead code. It ignores the
+  // defining file when looking for callers, so a helper used only inside its own module
+  // appears here too. Eight of the fourteen were that: the export was dead, the function
+  // was not, and they were unexported rather than deleted. The other six had no caller
+  // anywhere in the repository and are gone. Reading the list as "fourteen functions to
+  // delete" would have removed eight working helpers.
+  const KNOWN_DEAD = new Set([]);
   const fresh = dead.filter((d) => !KNOWN_DEAD.has(d));
   ok(fresh.length === 0, `no NEW dead export in src/lib${fresh.length ? `: ${fresh.join(", ")}` : ` (${dead.length} known, unchanged)`}`);
   const revived = [...KNOWN_DEAD].filter((d) => !dead.includes(d));

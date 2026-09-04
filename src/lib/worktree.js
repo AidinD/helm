@@ -40,9 +40,6 @@ export function worktreesRootFor(projectPath) {
 }
 
 /** Full path for a given project + worktree id, without creating anything. */
-export function worktreePathFor(projectPath, id) {
-  return path.join(worktreesRootFor(projectPath), id);
-}
 
 function runGit(projectPath, args) {
   return execFileSync("git", ["-C", projectPath, ...args], {
@@ -203,7 +200,7 @@ export function worktreeExists(projectPath, worktreePath) {
  */
 const ENV_FILE_NAMES = [".env", ".env.local"];
 
-export function copyEnvFiles(projectPath, worktreePath) {
+function copyEnvFiles(projectPath, worktreePath) {
   const copied = [];
   for (const name of ENV_FILE_NAMES) {
     const src = path.join(projectPath, name);

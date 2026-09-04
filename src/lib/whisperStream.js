@@ -133,7 +133,7 @@ const REPRINT_BOUNDARY = CLEAR_LINE + " ".repeat(100) + CLEAR_LINE;
  *   { kind: "committed", text } — a "\n" boundary committed `text` (the
  *                                 partial as of that boundary) to scrollback
  */
-export function parseStreamChunk(state, chunk) {
+function parseStreamChunk(state, chunk) {
   state.buffer += chunk;
   const events = [];
 
