@@ -153,12 +153,15 @@ ok(/note:/.test(finishBody), "and it says on the card what happened and where th
 ok(/finishAutoRun\(todo\.id, result, meta\)/.test(mainSrc), "the run's completion calls the finish handler");
 ok(/dispatchedBy: smId/.test(mainSrc), "the run is dispatched UNDER the project's second mate, so it appears beneath it");
 ok(
-  /const smId = secondMateId\(AUTO_CAPTAIN, where\.projectPath\)/.test(mainSrc),
+  // Either spelling. AUTO_LANE replaced AUTO_CAPTAIN as the argument name on 2026-09-04 -
+  // same value, but it is a LANE now rather than a dispatcher. The property asserted here is
+  // that the auto node is derived from the PROJECT, which holds under either name.
+  /const smId = secondMateId\((AUTO_CAPTAIN|AUTO_LANE), where\.projectPath\)/.test(mainSrc),
   "and that second mate is per PROJECT, under the auto-captain's own identity - one row per repo, with its runs underneath"
 );
 // Anchored on the auto tick's own body. `mainSrc` has comments stripped (a source
 // check that matches a comment proves nothing), so the marker has to be code.
-const tick = mainSrc.slice(mainSrc.indexOf("const smId = secondMateId(AUTO_CAPTAIN, where.projectPath)"));
+const tick = mainSrc.slice(mainSrc.indexOf("const smId = secondMateId(AUTO_LANE, where.projectPath)"));
 const tickBody = tick.slice(0, 4000);
 ok(/startGoalRun\(\{/.test(tickBody), "it goes through the same autopilot path a first mate's dispatch uses");
 ok(/writeReport\(metaHome, report\)/.test(tickBody), "and writes a report, so jumping into the second mate can tell you what happened");

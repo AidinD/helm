@@ -37,15 +37,25 @@ function ok(condition, what) {
   }
 }
 
-const PROJECT = "D:/Repo/Tools/fixture-project";
+const PROJECT = path.join(tmp, "fixture-project");
 
 try {
   const root = path.join(tmp, "meta-home");
   fs.mkdirSync(root, { recursive: true });
+  fs.mkdirSync(PROJECT, { recursive: true });
   mates.ensureMates(root, 1);
-  const first = mates.activeMates()[0];
 
-  // A crew run dispatched by that seat, which is what mints a project node.
+  // THE SEAT IS THE PROJECT'S SEAT, not a coordinator, and that changed on 2026-09-04 with the
+  // rest of stage 4. A project node's parent is no longer whoever dispatched to it - the
+  // dispatcher does not enter its identity OR its parentage - so a coordinator retiring says
+  // nothing about where that node hangs. The seat opened against the checkout is what does.
+  //
+  // The succession link this file is about is unchanged and still load-bearing: it is what a
+  // node dispatched BY A NODE resolves its binding's parent through, and it is what makes the
+  // lookup below find the successor rather than nothing.
+  const first = mates.ensureSeatForProject(PROJECT);
+
+  // A crew run in that project, which is what mints its node.
   const history = [{ id: "run1", projectPath: PROJECT, dispatchedBy: first.mateId, status: "done" }];
   const before = sm.deriveSecondMates(history, {});
   ok(before.length === 1, `one project node before the retire (${before.length})`);
@@ -58,6 +68,11 @@ try {
 
   const successor = mates.retireAndRespawn(first.mateId, null);
   ok(successor.mateId !== first.mateId, "retiring mints a successor");
+  ok(
+    successor.kind === "project",
+    `and the successor is the same KIND of seat, not a coordinator wearing its root (${successor.kind})`
+  );
+  ok(successor.slot === null, "so it does not take a slot in the coordinator pool either");
   ok(
     mates.currentSeatId(first.mateId) === successor.mateId,
     `the retired id resolves forward to it (${mates.currentSeatId(first.mateId)})`

@@ -105,7 +105,11 @@ try {
       .join("\n");
   const mainSrc = stripComments(fs.readFileSync(new URL("../../src/main.js", import.meta.url), "utf8"));
   ok(
-    /const smId = secondMateId\(AUTO_CAPTAIN, where\.projectPath\)/.test(mainSrc),
+    // AUTO_LANE since 2026-09-04. The constant holds the same value; what changed is that the
+    // first argument is a LANE rather than a dispatcher, so the name now says which question it
+    // answers. Both spellings are accepted here, because this assertion is about the auto node
+    // being derived from the PROJECT - which is true under either name.
+    /const smId = secondMateId\((AUTO_CAPTAIN|AUTO_LANE), where\.projectPath\)/.test(mainSrc),
     "the dispatch derives the second mate from the PROJECT (under the auto-captain), so tasks in one repo share it"
   );
   ok(/dispatchedBy: smId/.test(mainSrc), "and hangs each task's run underneath it");

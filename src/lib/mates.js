@@ -478,6 +478,19 @@ export function ensureAssistantSeat(root) {
   return seat;
 }
 
+/** The active seat opened against this checkout, or null. Never creates one. */
+export function projectSeatForPath(projectPath) {
+  const wanted = canonicalFsPath(projectPath);
+  if (!wanted) {
+    return null;
+  }
+  return (
+    readState().mates.find(
+      (m) => m.status === "active" && seatKind(m) === SEAT_PROJECT && canonicalFsPath(m.root) === wanted
+    ) || null
+  );
+}
+
 /**
  * Is picking this folder an act of opening a PROJECT, or just starting a chat?
  *
@@ -634,9 +647,19 @@ export function retireAndRespawn(mateId, pendingHandoff = null, persona = null, 
   // not a naming - it never becomes the persona, and the seat keeps what it had rather than
   // being reset by a typo.
   const personaNamed = typeof persona === "string" && persona !== "" && isValidPersonaKey(persona);
+  // WHAT KIND THE SUCCESSOR IS, and this was missing until a project seat was retired for the
+  // first time. A fresh record with no kind defaults to coordinator, so refreshing a saturated
+  // project seat returned a coordinator rooted in a repository - a seat of a different kind
+  // wearing the old one's root. Exactly the failure the persona default had, one field over:
+  // a refresh must not change what a seat IS.
+  //
+  // A coordinator keeps its slot; anything else is slotless by construction, and reusing the
+  // outgoing slot for a seat that never had one would put it in the pool.
+  const outgoingKind = seatKind(outgoing);
   const fresh = {
     mateId: `mate_${crypto.randomUUID()}`,
-    slot: targetSlot,
+    kind: outgoingKind,
+    slot: outgoingKind === SEAT_COORDINATOR ? targetSlot : null,
     name: pickName(takenNames, state.mates.length, namePoolForTheme(currentTheme())),
     root: root ? path.resolve(root) : null,
     status: "active",

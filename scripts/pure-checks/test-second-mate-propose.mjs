@@ -52,10 +52,24 @@ try {
   list = sm.deriveSecondMates([run], sm.readBindings());
   assert(list.length === 3, "a run-derived SM unions with the proposed ones (3 total)");
   assert(list.find((x) => x.projectPath === "D:/tmp/projC").crew.length === 1, "the run-derived SM carries its crew");
-  // Guards the Slice-3 report-up fix: the parent first mate is DERIVABLE from the
-  // run history (dispatchedBy), not only from a proposeSecondMate binding - this
-  // is what helm_report_up's parentMateId resolution now reads.
-  assert(list.find((x) => x.projectPath === "D:/tmp/projC").firstMateId === "mate_1", "a run-derived SM's firstMateId comes from the run's dispatchedBy (report-up parent is derivable)");
+  // REVERSED ON 2026-09-04. This used to require that a node's parent be derivable from the
+  // run's dispatchedBy, which was the Slice-3 report-up fix. With the tier above a project seat
+  // removed, the dispatcher is not the parent any more: a node's parent is the seat opened
+  // against that checkout, or the lane when none has been. Reading the parent off the
+  // dispatcher is in fact how a leaked session key once became a node's parent, so the general
+  // rule closes a defect rather than only changing an answer.
+  //
+  // What the old assertion existed to protect - that a parent is derivable from run history
+  // alone, without a proposeSecondMate binding - still holds, and is asserted as such.
+  const derived = list.find((x) => x.projectPath === "D:/tmp/projC");
+  assert(
+    derived.firstMateId === "direct",
+    `a run-derived node with no seat opened for its checkout takes the lane as its parent, not the dispatcher (${derived.firstMateId})`
+  );
+  assert(
+    derived.firstMateId !== "mate_1",
+    "and specifically not whoever dispatched it - that tier is gone"
+  );
 } finally {
   try {
     fs.rmSync(path.dirname(tmp), { recursive: true, force: true });

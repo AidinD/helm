@@ -118,7 +118,7 @@ import { listSlashItems } from "./lib/slashCommands.js";
 import { trackHelmUsage, summarizeHelmUsage, summarizeReviewActions } from "./lib/helmUsage.js";
 import { mcpAllowedToolsFromConfig, namedMcpServersFromConfig } from "./lib/userMcp.js";
 import { initAutoUpdate } from "./lib/autoUpdate.js";
-import { deriveSecondMates, bindSecondMateSession, renameSecondMate, readBindings, proposeSecondMate, secondMateIdForSession, secondMateId, removeSecondMates, resolveSecondMateId, isDisplaySecondMateId, migrateDisplayKeyBindings, releaseDisplayKeyedSession, AUTO_CAPTAIN } from "./lib/secondMates.js";
+import { deriveSecondMates, bindSecondMateSession, renameSecondMate, readBindings, proposeSecondMate, secondMateIdForSession, secondMateId, removeSecondMates, resolveSecondMateId, isDisplaySecondMateId, migrateDisplayKeyBindings, releaseDisplayKeyedSession, AUTO_CAPTAIN, PROJECT_LANE, AUTO_LANE } from "./lib/secondMates.js";
 import {
   AUTO_WIDTH_CAP,
   AUTO_CAPTAIN_TAGS,
@@ -5046,7 +5046,7 @@ async function autoCaptainTick({ force = false } = {}) {
       // AUTO_CAPTAIN, not "direct": the auto-captain gets its OWN per-project node so it
       // never collides with a MANUAL captain second mate on the same project (which used to
       // pull the manual one into the Auto lane - the reported bug).
-      const smId = secondMateId(AUTO_CAPTAIN, where.projectPath);
+      const smId = secondMateId(AUTO_LANE, where.projectPath);
       try {
         // Named after the PROJECT, because that is what this row now represents.
         // The task titles belong on the crew rows underneath it. Idempotent -
@@ -6392,7 +6392,7 @@ function processDispatchRequests(metaHome) {
           continue;
         }
         try {
-          unarchiveSecondMateForNewWork(secondMateId(request.dispatchedBy || "direct", proposeProject));
+          unarchiveSecondMateForNewWork(secondMateId(PROJECT_LANE, proposeProject));
           const sm = proposeSecondMate(request.dispatchedBy || "direct", proposeProject, { brief: request.brief });
           writeAck(metaHome, dispatchId, { status: "accepted", secondMateId: sm.secondMateId });
           writeFleetStateSnapshot(metaHome);
@@ -6431,7 +6431,7 @@ function processDispatchRequests(metaHome) {
           reject("A relay needs a non-empty message.");
           continue;
         }
-        const smId = secondMateId(request.dispatchedBy || "direct", relayProject);
+        const smId = secondMateId(PROJECT_LANE, relayProject);
         try {
           unarchiveSecondMateForNewWork(smId);
           proposeSecondMate(request.dispatchedBy || "direct", relayProject, {});

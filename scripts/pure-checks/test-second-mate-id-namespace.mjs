@@ -126,15 +126,34 @@ ok(
   `the node sits under the captain, not under an id that is itself a session (${node?.firstMateId}) - a phantom's parent was the sess_ key, which no widget can render`
 );
 
-// The migration must not be a blanket "anything unknown goes to direct": a run genuinely
-// dispatched by a FIRST mate still belongs to that first mate's node for the same project.
+// THIS ASSERTION WAS REVERSED ON 2026-09-04, and the reversal is the change rather than a
+// relaxation of it.
+//
+// It used to require that a run dispatched by a named first mate keeps a node of its own, so
+// that the display-key migration could not become a blanket "anything unknown goes to direct".
+// That was right while a project could have several nodes, one per dispatcher. The tier above
+// a project seat is gone, so a project has ONE node per lane and the dispatcher does not enter
+// its identity at all - which is the point of the change, not a side effect.
+//
+// What the old assertion was protecting is still protected, one field over: a node dispatched
+// BY A NODE (an sm_ id) still attaches to that node rather than being swept into the project
+// lane, and that is asserted above. The blanket the old wording feared would have taken those
+// too.
 const mixed = deriveSecondMates([
   ...history,
   { goalRunId: "r4", projectPath: PROJECT, dispatchedBy: "mate_abc", tier: "second-mate", status: "done", goal: "first-mate dispatched" },
 ]);
 ok(
-  mixed.length === 2 && mixed.some((s) => s.firstMateId === "mate_abc"),
-  `a first-mate-dispatched run keeps its own node (${mixed.length} nodes) - the translation is scoped to the display key, not applied to every dispatcher it does not recognise`
+  mixed.length === 1,
+  `a first-mate-dispatched run lands on the project's one node rather than minting its own (${mixed.length} nodes)`
+);
+ok(
+  !mixed.some((s) => s.firstMateId === "mate_abc"),
+  "and the dispatcher is not its parent either - a lane node's parent is the project's seat, or the lane"
+);
+ok(
+  mixed[0] && mixed[0].crew.length === history.length + 1,
+  `so every run for that project is under the one node (${mixed[0] ? mixed[0].crew.length : 0} of ${history.length + 1})`
 );
 
 fs.rmSync(tmp, { recursive: true, force: true });

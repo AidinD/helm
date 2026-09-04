@@ -3,7 +3,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { writeJsonAtomicSync } from "./atomicWrite.js";
-import { currentSeatId } from "./mates.js";
+import { currentSeatId, projectSeatForPath } from "./mates.js";
 
 // Second-mate identity (the "named mates" model, corrected: a second mate is a
 // per-PROJECT SESSION the captain can jump into and steer directly - the
@@ -34,14 +34,62 @@ export const DIRECT_FIRST_MATE = "direct";
 // lane. Like "direct", it is top-of-chain (reports to the captain, not up to a first mate).
 export const AUTO_CAPTAIN = "auto";
 
+/**
+ * THE TWO LANES A PROJECT NODE CAN BE IN, and the first argument to secondMateId is one of
+ * these - NOT a dispatcher. It stopped being a dispatcher on 2026-09-04, when the tier above a
+ * project seat was removed and a project's node stopped depending on who dispatched to it.
+ *
+ * The VALUES are frozen at what they were, and that is the whole reason this is a substitution
+ * rather than a rewrite. Hashing the same bytes means every existing node keeps its id, and
+ * the bindings - which hold the sessionId that jump-in resumes - are not re-keyed. Measured on
+ * the real stores before choosing: the literal version re-keys 56 runs and 2 bindings to reach
+ * an end state this reaches by moving 7 runs and no bindings at all.
+ *
+ * WHAT THIS IS NOT, said out loud because the parameter surviving is exactly how the removed
+ * tier grows back: a reader who sees a first argument and concludes it varies per dispatcher
+ * will add a case for one. It cannot vary. laneOrThrow refuses anything else, so that belief
+ * fails immediately instead of quietly minting a node nothing else can find.
+ */
+export const PROJECT_LANE = DIRECT_FIRST_MATE;
+export const AUTO_LANE = AUTO_CAPTAIN;
+
+function laneOrThrow(lane) {
+  if (lane !== PROJECT_LANE && lane !== AUTO_LANE) {
+    throw new Error(
+      "secondMateId takes a LANE (PROJECT_LANE or AUTO_LANE), not a dispatcher - got " +
+        JSON.stringify(lane) +
+        ". A project's node no longer depends on who dispatched to it (2026-09-04)."
+    );
+  }
+  return lane;
+}
+
 function normPath(p) {
   return path.resolve(p).replace(/[\\/]+$/, "").toLowerCase();
 }
 
-/** Deterministic id for a second mate = the (firstMate, project) pair it coordinates. */
-export function secondMateId(firstMateId, projectPath) {
-  const key = `${firstMateId || DIRECT_FIRST_MATE}::${normPath(projectPath)}`;
+/** Deterministic id for a project's node in one lane. See PROJECT_LANE for why it is a lane. */
+export function secondMateId(lane, projectPath) {
+  const key = `${laneOrThrow(lane || PROJECT_LANE)}::${normPath(projectPath)}`;
   return "sm_" + crypto.createHash("sha1").update(key).digest("hex").slice(0, 12);
+}
+
+/**
+ * Was this node id minted from a DISPATCHER rather than a lane - the pre-2026-09-04 shape?
+ *
+ * Recomputable because a binding carries the firstMateId and projectPath it was written with,
+ * so the old key can be reproduced and compared without reversing a hash. Same approach as the
+ * two migrations already in deriveSecondMates: route at read time, rewrite nothing.
+ */
+function isDispatcherKeyedId(id, firstMateId, projectPath) {
+  if (!id || !firstMateId || !projectPath) {
+    return false;
+  }
+  if (firstMateId === PROJECT_LANE || firstMateId === AUTO_LANE) {
+    return false;
+  }
+  const key = `${firstMateId}::${normPath(projectPath)}`;
+  return id === "sm_" + crypto.createHash("sha1").update(key).digest("hex").slice(0, 12);
 }
 
 // A second mate has exactly ONE id namespace, and this is the only function that
@@ -81,7 +129,7 @@ export function resolveSecondMateId(id, projectPath) {
   if (!projectPath) {
     return null;
   }
-  return secondMateId(DIRECT_FIRST_MATE, projectPath);
+  return secondMateId(PROJECT_LANE, projectPath);
 }
 
 /** The persisted per-second-mate overrides: { [secondMateId]: { sessionId, name } }. */
@@ -136,7 +184,49 @@ export function removeSecondMates(ids) {
  * for tests); crew are the raw run records, newest last, so the renderer can
  * roll up status/counts however it likes.
  */
-export function deriveSecondMates(runHistory, bindings = readBindings()) {
+/**
+ * The parent a project's node should name: its seat if one has been opened for that checkout,
+ * otherwise whatever it resolved to before. An AUTO node keeps its lane - the two columns must
+ * agree on which rows are whose, and giving the auto node a seat parent would put it in both.
+ */
+function seatParentFor(projectPath, fallback) {
+  if (!projectPath || fallback === AUTO_LANE) {
+    return fallback;
+  }
+  return projectSeatForPath(projectPath)?.mateId || fallback;
+}
+
+/**
+ * Bindings written under the old dispatcher-keyed id, moved onto the lane id at READ time.
+ *
+ * Not needed for either store measured on 2026-09-04 - both bindings there were already lane
+ * keyed - and written anyway, because proposeSecondMate can still produce one and the
+ * installed app keeps a store at a path neither session has read. It costs one comparison per
+ * binding when there is nothing to move.
+ *
+ * A binding already sitting on the canonical id wins: a real current node is never replaced by
+ * a historical one that happens to hash into the same place.
+ */
+function withDispatcherKeysRouted(bindings) {
+  const out = {};
+  const moved = [];
+  for (const [id, b] of Object.entries(bindings || {})) {
+    if (b && b.projectPath && isDispatcherKeyedId(id, b.firstMateId, b.projectPath)) {
+      moved.push([secondMateId(PROJECT_LANE, b.projectPath), b]);
+      continue;
+    }
+    out[id] = b;
+  }
+  for (const [id, b] of moved) {
+    if (!out[id]) {
+      out[id] = b;
+    }
+  }
+  return out;
+}
+
+export function deriveSecondMates(runHistory, rawBindings = readBindings()) {
+  const bindings = withDispatcherKeysRouted(rawBindings);
   const byId = new Map();
   for (const r of runHistory || []) {
     if (!r || !r.projectPath) {
@@ -151,25 +241,28 @@ export function deriveSecondMates(runHistory, bindings = readBindings()) {
     // (ship-review). Second-mate ids are "sm_<hash>"; first mates are
     // "mate_<uuid>" or the synthetic "direct".
     const dispatchedBySecondMate = typeof dispatcher === "string" && dispatcher.startsWith("sm_");
-    // LEGACY: a run dispatched before the display key stopped leaking (see
-    // resolveSecondMateId) carries "sess_<sessionId>" as its dispatcher. Route it
-    // to the node the fixed path now produces, so crew stranded on a phantom
-    // reappears under the second mate that actually ran it - without rewriting
-    // history, the same migration shape the auto routing below already uses.
-    const dispatchedByDisplayKey = isDisplaySecondMateId(dispatcher);
+    // The LEGACY display-key branch that used to sit here is gone, and its migration is not
+    // lost - it became unconditional. A run dispatched before the display key stopped leaking
+    // carries "sess_<sessionId>"; that is not an sm_ id, so it now lands on the project lane
+    // like every other non-node dispatcher. The special case existed only to route it to a
+    // node the general rule did not reach, and the general rule reaches it now.
     // An AUTO-started run always belongs to the project's AUTO node - even a LEGACY one
     // dispatched under the old shared "direct" second-mate id. Without this, one auto run
     // landed on a MANUAL second mate that happened to share the project and flipped it into
     // the Auto lane (the reported bug). Routing by startedBy, not just the dispatcher id, also
     // migrates existing runs so the collision clears without rewriting history.
     const isAuto = r.startedBy === "auto";
+    // The lane decides the id now, not the dispatcher. A run dispatched by a named seat used
+    // to mint a node of its own per project; it lands on the project's one node instead, which
+    // is the collapse this change is for. A run dispatched BY A NODE still attaches to that
+    // node - those are historical rows whose dispatcher cannot always be attributed (two in
+    // the real history match no known mate), and inventing an attribution for them would be
+    // worse than leaving them where they are.
     const id = isAuto
-      ? secondMateId(AUTO_CAPTAIN, r.projectPath)
-      : dispatchedByDisplayKey
-        ? secondMateId(DIRECT_FIRST_MATE, r.projectPath)
-        : dispatchedBySecondMate
-          ? dispatcher
-          : secondMateId(dispatcher, r.projectPath);
+      ? secondMateId(AUTO_LANE, r.projectPath)
+      : dispatchedBySecondMate
+        ? dispatcher
+        : secondMateId(PROJECT_LANE, r.projectPath);
     let sm = byId.get(id);
     if (!sm) {
       sm = {
@@ -186,15 +279,24 @@ export function deriveSecondMates(runHistory, bindings = readBindings()) {
         //
         // Applied uniformly, including to "direct" and "auto": neither is in the mates
         // store, so the walk returns them unchanged. Asserted rather than assumed.
-        firstMateId: currentSeatId(
-          isAuto
-            ? AUTO_CAPTAIN
-            : dispatchedByDisplayKey
-              ? DIRECT_FIRST_MATE
-              : dispatchedBySecondMate
-                ? bindings[id]?.firstMateId || DIRECT_FIRST_MATE
-                : dispatcher
-        ),
+        // THE DISPATCHER IS NO LONGER THE PARENT EITHER, and that is the half of this change
+        // that is easy to miss. A lane node's parent is the project's SEAT when one has been
+        // opened, and the lane itself otherwise - which is what puts today's direct rows under
+        // their project seat's widget instead of under a Captain column.
+        //
+        // Reading the parent off the dispatcher was how a phantom got one: a run carrying a
+        // leaked "sess_<sessionId>" display key made that key the node's parent, and no widget
+        // can render a session as a first mate. The old code special-cased the display key to
+        // avoid it. The special case is gone because the general rule no longer looks at the
+        // dispatcher at all, which closes the class rather than the one instance.
+        //
+        // A node dispatched BY A NODE still takes its parent from its binding: those are
+        // historical rows and the binding is the only place their parent was ever recorded.
+        firstMateId: isAuto
+          ? AUTO_LANE
+          : dispatchedBySecondMate
+            ? seatParentFor(r.projectPath, currentSeatId(bindings[id]?.firstMateId || PROJECT_LANE))
+            : seatParentFor(r.projectPath, PROJECT_LANE),
         projectPath: r.projectPath,
         name: path.basename(r.projectPath) || r.projectPath,
         sessionId: null,
@@ -228,8 +330,8 @@ export function deriveSecondMates(runHistory, bindings = readBindings()) {
       // the dispatching second mate, not the first mate above it).
       if (b.firstMateId) {
         // Same forward resolution as above: a binding written under a seat that has since
-        // been retired names the successor now.
-        sm.firstMateId = currentSeatId(b.firstMateId);
+        // been retired names the successor now, and the project's seat wins over both.
+        sm.firstMateId = seatParentFor(sm.projectPath, currentSeatId(b.firstMateId));
       }
       sm.status = b.status || (b.sessionId ? "created" : "proposed");
       sm.brief = b.brief || null;
@@ -247,7 +349,7 @@ export function deriveSecondMates(runHistory, bindings = readBindings()) {
     }
     byId.set(id, {
       secondMateId: id,
-      firstMateId: currentSeatId(b.firstMateId || DIRECT_FIRST_MATE),
+      firstMateId: seatParentFor(b.projectPath, currentSeatId(b.firstMateId || PROJECT_LANE)),
       projectPath: b.projectPath,
       name: b.name || path.basename(b.projectPath) || b.projectPath,
       sessionId: b.sessionId || null,
@@ -272,7 +374,14 @@ export function proposeSecondMate(firstMateId, projectPath, { brief = null, assi
   if (!projectPath) {
     throw new Error("proposeSecondMate requires a projectPath");
   }
-  const id = secondMateId(firstMateId, projectPath);
+  // A proposal names a project, and a project has one node PER LANE. The lane comes from
+  // whether this is the auto-captain, never from a named dispatcher - keying an auto proposal
+  // into the project lane collapsed it onto the manual node, which is the exact collision the
+  // auto-captain identity was introduced to prevent. Two checks caught it within a minute.
+  //
+  // firstMateId is still stored on the binding as the PARENT, which is a different question
+  // from the key.
+  const id = secondMateId(firstMateId === AUTO_LANE ? AUTO_LANE : PROJECT_LANE, projectPath);
   const bindings = readBindings();
   const existing = bindings[id] || {};
   bindings[id] = {
