@@ -50,7 +50,21 @@ const checksIn = (dir) =>
 
 const app = checksIn(APP_DIR);
 const pure = checksIn(PURE_DIR);
-const launches = (dir, f) => LAUNCHES_APP.test(fs.readFileSync(path.join(dir, f), "utf8"));
+// "Starts the app" is normally read off the harness import, and one check cannot be: proving a
+// broken install reports itself means starting Electron with a deliberately broken
+// node_modules, which is the one thing the harness cannot do - it attaches to an app that came
+// up. It spawns the binary directly.
+//
+// Sniffing for a second shape was the first attempt and it is withdrawn. Two patterns had to
+// agree about what a launch looks like, the rule stopped being one sentence, and debugging why
+// a file matched in isolation and not here cost more than the rule is worth. A check that
+// starts the app another way now SAYS so, in one line, and the guard reads the declaration.
+// Explicit beats inferred for a fact the author already knows.
+const DECLARES_LAUNCH = /^\s*\/\/\s*STARTS-APP:\s*\S/m;
+const launches = (dir, f) => {
+  const src = fs.readFileSync(path.join(dir, f), "utf8");
+  return LAUNCHES_APP.test(src) || DECLARES_LAUNCH.test(src);
+};
 
 // --- the two directions ---------------------------------------------------------------
 const quietLaunchers = pure.filter((f) => launches(PURE_DIR, f));

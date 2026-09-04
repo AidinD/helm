@@ -82,7 +82,7 @@ jobs:
       # directory beside the repo on a runner, and deletes the node_modules/keel that was
       # checked out here - leaving a dangling symlink in its place, which actions/checkout then
       # cannot write into (ENOENT: mkdir node_modules\keel). The app lane hit this twice and
-      # this job hit it once: 105 of 158 checks failed the moment an install was added, because
+      # this job hit it once: 105 checks failed the moment an install was added, because
       # keel had quietly been removed underneath them.
       #
       # So the order is load-bearing: install FIRST, clear whatever npm left where keel belongs,
