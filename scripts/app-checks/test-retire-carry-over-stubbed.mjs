@@ -53,7 +53,7 @@ process.env.HELM_SECOND_MATES_PATH = path.join(tmp, "second-mates.json");
 process.env.HELM_GOAL_RUN_HISTORY_PATH = path.join(tmp, "goal-run-history.json");
 process.env.HELM_META_HOME_OVERRIDE = metaHome;
 process.env.HELM_E2E_PORT = process.env.HELM_E2E_PORT || "9377";
-process.env.HELM_CLAUDE_BIN = path.join(here, "fixtures", "fake-claude.cmd");
+process.env.HELM_CLAUDE_BIN = path.join(here, "..", "checks-lib", "fixtures", "fake-claude.cmd");
 process.env.FAKE_CLAUDE_HOLD_MS = "200";
 
 fs.writeFileSync(process.env.HELM_CONFIG_PATH, JSON.stringify({}), "utf8");

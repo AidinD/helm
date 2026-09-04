@@ -55,7 +55,7 @@ process.env.HELM_GOAL_RUN_HISTORY_PATH = path.join(tmp, "goal-run-history.json")
 process.env.HELM_META_HOME_OVERRIDE = metaHome;
 process.env.HELM_E2E_PORT = process.env.HELM_E2E_PORT || "9375";
 // The stub, and a turn long enough to observe the lock it holds.
-process.env.HELM_CLAUDE_BIN = path.join(here, "fixtures", "fake-claude.cmd");
+process.env.HELM_CLAUDE_BIN = path.join(here, "..", "checks-lib", "fixtures", "fake-claude.cmd");
 process.env.FAKE_CLAUDE_HOLD_MS = "6000";
 
 const { secondMateId } = await import("../../src/lib/secondMates.js");

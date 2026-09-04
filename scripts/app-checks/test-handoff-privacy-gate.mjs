@@ -59,7 +59,18 @@ function newRepo(name) {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), `helm-handoff-${name}-`));
   const git = (...args) => execFileSync("git", ["-C", repo, ...args], { encoding: "utf8", windowsHide: true });
   git("init", "-q", "-b", "main");
-  git("-c", "user.name=T", "-c", "user.email=t@t", "commit", "--allow-empty", "-q", "-m", "initial");
+  // A REPO-LOCAL identity, not a `-c` on one command. The second half of this check asserts
+  // that an ordinary handoff still commits, and a machine with no global git identity - every
+  // fresh one, and every hosted runner - cannot commit at all. Without this the check fails
+  // there for a reason that has nothing to do with the privacy gate, and says
+  // "git has no user.name/user.email configured here" while looking like a broken gate.
+  //
+  // Found by the app lane on a runner, hours after fixing exactly this class in
+  // test-handoff-file - where the identity IS the subject, so that check asserts both worlds
+  // instead. Here it is setup, so it is pinned rather than branched on.
+  git("config", "user.name", "Fixture");
+  git("config", "user.email", "fixture@example.invalid");
+  git("commit", "--allow-empty", "-q", "-m", "initial");
   return { repo, git };
 }
 

@@ -95,6 +95,40 @@ for (const helper of ["harness.mjs", "live-gate.mjs", "mutate.mjs"]) {
   ok(fs.existsSync(path.join(LIB_DIR, helper)), `checks-lib/ holds ${helper}, reachable from either lane as ../checks-lib/${helper}`);
 }
 
+// --- a path BUILT at runtime into the shared folder has to resolve too ---------------------
+// The split moved `fixtures/` into checks-lib, and four checks reach it not by importing but by
+// building the path: `path.join(here, "fixtures", "fake-claude.cmd")`, handed to the launcher as
+// the stub CLI. Rewriting import specifiers left those untouched, the launcher takes the value
+// verbatim without checking it exists, and three checks went red with failures that read like
+// broken features - a relay not holding a session, a summary turn producing nothing.
+//
+// Two things made it survive review. A constructed path is invisible to any check that reads
+// import statements, which is what I had written to prove the move. And running four app checks
+// by hand missed all three, because a sample is not coverage - the full lane on a hosted runner
+// is what found them.
+for (const dir of [APP_DIR, PURE_DIR]) {
+  const built = [];
+  for (const file of checksIn(dir)) {
+      // Comments stripped FIRST. Without it this check flagged its own documentation - the
+      // paragraph above quotes the very call it looks for, and a scanner that matches a
+      // comment reports an example as a defect. Commenting a real one out would also hide it.
+      const src = fs
+        .readFileSync(path.join(dir, file), "utf8")
+        .replace(/\/\*[\s\S]*?\*\//g, " ")
+        .replace(/^\s*\/\/.*$/gm, " ");
+    for (const m of src.matchAll(/path\.join\(\s*here\s*,\s*((?:"[^"]+"\s*,?\s*)+)\)/g)) {
+      const parts = [...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]);
+      if (!fs.existsSync(path.resolve(dir, ...parts))) {
+        built.push(`${file} -> ${parts.join("/")}`);
+      }
+    }
+  }
+  ok(
+    built.length === 0,
+    `every path built from \`here\` in ${path.basename(dir)}/ resolves${built.length ? `: ${built.join(", ")}` : ""}`
+  );
+}
+
 // --- both lanes are non-trivial -----------------------------------------------------------
 // A split that quietly emptied one side would pass every assertion above. This is the
 // sanity floor, not a coverage target: the numbers only have to be plausible.

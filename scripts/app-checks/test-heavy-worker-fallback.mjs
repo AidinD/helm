@@ -19,7 +19,7 @@ import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 // Set BEFORE launch: the harness copies process.env into the app it spawns.
-process.env.HELM_HEAVY_WORKER_MODULE = path.join(here, "fixtures", "never-ready-worker.mjs");
+process.env.HELM_HEAVY_WORKER_MODULE = path.join(here, "..", "checks-lib", "fixtures", "never-ready-worker.mjs");
 
 const { launch } = await import("../checks-lib/harness.mjs");
 

@@ -35,7 +35,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const THOUGHT_FIRST = "Reading the two call sites before deciding anything.";
 const THOUGHT_LAST = "Settling on the watermark approach rather than a per-row flag.";
 
-process.env.HELM_CLAUDE_BIN = path.join(here, "fixtures", "fake-claude.cmd");
+process.env.HELM_CLAUDE_BIN = path.join(here, "..", "checks-lib", "fixtures", "fake-claude.cmd");
 // Two lines, so the "which part" choice is exercised: the LAST one is what a live indicator
 // should show, and the first is where it started.
 process.env.FAKE_CLAUDE_THINKING = `${THOUGHT_FIRST}\n\n${THOUGHT_LAST}`;
