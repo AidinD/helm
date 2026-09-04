@@ -32,9 +32,15 @@ const appChecks = path.join(repo, "scripts", "app-checks");
  */
 const EXCLUDED = {
   "test-acceptance-gate.mjs": {
-    kind: "own-data",
-    why: "reads the real task board and asserts on cards with acceptance criteria; a runner has no board, so it sees 0 cards",
-    removeWhen: "it seeds its own board fixture instead of reading the live one",
+    // Reason corrected 2026-09-04 by reading the runner's output instead of assuming. The old
+    // reason said it reads the real board; it does not - it already builds its own board, its
+    // own meta home and its own review records, and every DATA assertion passes on a runner.
+    // What fails is the seven that scrape the rendered page: an unbound-commit row sorts above
+    // the fixture's cards there, so the position-based assertions ("rendered FIRST", "its
+    // heading comes first") point at the wrong card and the criteria boxes are not on it.
+    kind: "runner",
+    why: "its page assertions assume the fixture's card sorts first, and an unbound-commit row from the fixture repo outranks it on a runner - the data half passes there, only the DOM scrape fails",
+    removeWhen: "the page assertions find their card by task id instead of by position, or the fixture repo stops producing an unbound-commit row",
   },
   "test-analysis-skill-groups.mjs": {
     // Reason corrected 2026-09-04 after looking rather than assuming. The first reason said it
@@ -46,21 +52,6 @@ const EXCLUDED = {
     kind: "runner",
     why: "the block scrape returns a heading of \"0\" there, so the failure is about what the page renders on that machine, not about skills - and it is not understood yet",
     removeWhen: "somebody reproduces the scrape on a runner and either fixes the selector or names the real cause",
-  },
-  "test-docs-staleness.mjs": {
-    kind: "own-data",
-    why: "says it outright in its own failure - 0 stale projects ON THE REAL BOARD",
-    removeWhen: "it builds a board with a known-stale project rather than hoping one exists",
-  },
-  "test-heavy-worker.mjs": {
-    kind: "own-data",
-    why: "asserts the review queue builds through the worker, which needs review data the runner does not have",
-    removeWhen: "it seeds the queue it measures",
-  },
-  "test-heavy-worker-fallback.mjs": {
-    kind: "own-data",
-    why: "asserts a complete, non-empty session list; a runner has 0 sessions",
-    removeWhen: "it seeds sessions rather than reading the machine's",
   },
   "test-jot-tab.mjs": {
     kind: "runner",

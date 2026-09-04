@@ -14,12 +14,44 @@
 //
 // It launches the app, so it runs in the SLOW lane.
 // Run:  node scripts/e2e/test-heavy-worker-fallback.mjs
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 // Set BEFORE launch: the harness copies process.env into the app it spawns.
 process.env.HELM_HEAVY_WORKER_MODULE = path.join(here, "..", "checks-lib", "fixtures", "never-ready-worker.mjs");
+
+// A config with sessions IN IT, so "the list comes back complete" is a claim about the
+// fallback rather than about this machine. It used to assert count > 0 against whatever the
+// developer's real config happened to hold - green here, red on a hosted runner with none,
+// and telling you nothing either way. Two seeded sessions is enough: the question is whether
+// the fallback returns what exists, not how much exists.
+const configDir = fs.mkdtempSync(path.join(os.tmpdir(), "helm-hwfallback-"));
+const configPath = path.join(configDir, "config.json");
+const seeded = {
+  "hwf-session-one": {
+    sessionId: "hwf-session-one",
+    cliSessionId: "hwf-session-one",
+    cwd: configDir.replace(/\\/g, "/"),
+    model: "claude-sonnet-5",
+    title: "seeded session one",
+    createdAt: 1,
+    lastActivityAt: Date.now(),
+  },
+  "hwf-session-two": {
+    sessionId: "hwf-session-two",
+    cliSessionId: "hwf-session-two",
+    cwd: configDir.replace(/\\/g, "/"),
+    model: "claude-sonnet-5",
+    title: "seeded session two",
+    createdAt: 2,
+    lastActivityAt: Date.now(),
+  },
+};
+fs.writeFileSync(configPath, JSON.stringify({ helmSessions: seeded }, null, 2), "utf8");
+process.env.HELM_CONFIG_PATH = configPath;
 
 const { launch } = await import("../checks-lib/harness.mjs");
 
@@ -36,9 +68,23 @@ try {
   await app.waitForSelector("#pageToggle");
 
   // The session list must still come back, complete. This is the fallback doing its job.
-  const sessions = await app.eval(`window.helm.getSessions().then(r => ({ count: (r.sessions||[]).length, error: r.error || null, hasConfig: !!r.config }))`);
+  // The seeded ids are asked for BY NAME, not just counted. A count alone passes for the wrong
+  // reason on a machine that has its own sessions: 127 >= 2 is true whether or not the two
+  // seeded ones came back, so the number would prove nothing about the fallback here and only
+  // work on an empty runner by accident.
+  const sessions = await app.eval(
+    `window.helm.getSessions().then(r => ({
+       count: (r.sessions||[]).length,
+       error: r.error || null,
+       hasConfig: !!r.config,
+       seeded: (r.sessions||[]).filter(s => String(s.sessionId||s.cliSessionId||"").startsWith("hwf-session-")).map(s => s.sessionId||s.cliSessionId).sort(),
+     }))`
+  );
   ok(!sessions.error && sessions.hasConfig, `the session list still loads with a broken worker (error: ${sessions.error || "none"})`);
-  ok(sessions.count > 0, `and it is complete, not empty: ${sessions.count} sessions`);
+  ok(
+    sessions.seeded.length === Object.keys(seeded).length,
+    `and it is complete rather than truncated - both seeded sessions came back by id (${JSON.stringify(sessions.seeded)}, out of ${sessions.count} total)`
+  );
 
   // And the expensive one.
   const reviews = await app.eval(`window.helm.listReviews().then(r => ({ ok: r.ok, rows: (r.rows||[]).length, hasTally: !!r.tally }))`);
@@ -69,6 +115,7 @@ try {
   ok(/did not report ready|exited/i.test(status.lastError), `and the reason survives rather than being overwritten by a bare exit code (${status.lastError})`);
 } finally {
   await app.close();
+  fs.rmSync(configDir, { recursive: true, force: true });
 }
 
 console.log(

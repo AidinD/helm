@@ -155,9 +155,26 @@ try {
   assert(withFresh.rows.length === 0, "a doc edit you just made DOES silence it - you're reconciling right now");
   execFileSync("git", ["-C", midRepo, "checkout", "--", "PLAN.md"], { windowsHide: true });
 
-  // The IPC, on the real board: shape + the cache.
+  // The IPC with no arguments, which reads the machine's own project list: shape + the cache.
+  //
+  // TWO LEGITIMATE WORLDS, and this used to assert only one of them. `ok` is false when the
+  // candidate list could not be built for a REASON - and an absent Claude Desktop session store
+  // is such a reason, deliberately, so that an empty board does not look like a finished one.
+  // Every machine without the Desktop app installed is in that world, including every hosted
+  // runner, and asserting ok === true there fails for something that is working as designed.
+  // The old failure text blamed "0 stale projects on the real board", which was never the cause.
+  //
+  // So the assertion is on the pair: either it answered, or it said why it could not.
   const board = await app.eval(`window.helm.staleProjects()`);
-  assert(board?.ok === true && Array.isArray(board.rows), `docs:staleProjects returns rows (${board?.rows?.length} stale project(s) on the real board)`);
+  assert(Array.isArray(board?.rows), `docs:staleProjects always returns a rows array (${JSON.stringify(board?.rows)})`);
+  if (board?.ok === true) {
+    assert(!board.error, `it answered, so it carries no error (${JSON.stringify(board.error)})`);
+  } else {
+    assert(
+      typeof board?.error === "string" && board.error.length > 10,
+      `it did not answer, and says why in a sentence rather than looking like a clean board (${JSON.stringify(board?.error)})`
+    );
+  }
   const wellFormed = (board.rows || []).every(
     (r) => typeof r.path === "string" && typeof r.name === "string" && typeof r.commitsSince === "number" && r.commitsSince >= r.threshold
   );

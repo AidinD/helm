@@ -10,8 +10,46 @@
 // app looking fine.
 //
 // It launches the real app, so it runs in the SLOW lane.
-// Run:  node scripts/e2e/test-heavy-worker.mjs
-import { launch } from "../checks-lib/harness.mjs";
+// Run:  node scripts/app-checks/test-heavy-worker.mjs
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+// A BOARD OF ITS OWN, because "the review queue builds" is a claim about the worker and this
+// check used to make it against whichever board happened to be on the machine. On a machine
+// with no Jot at all the queue correctly reports ok:false with "Couldn't read the Jot board
+// at ...", which is right behaviour and a wrong reason to fail a worker check - the worker
+// carried the job perfectly and got handed nothing to build from.
+//
+// One task in review is enough. The question is whether the job runs in the utility process
+// and survives the trip back, not how big the queue is.
+const boardDir = fs.mkdtempSync(path.join(os.tmpdir(), "helm-heavyworker-"));
+const boardPath = path.join(boardDir, "todos.json");
+fs.writeFileSync(
+  boardPath,
+  JSON.stringify(
+    {
+      categories: [{ id: "cat-fixture", name: "Fixture" }],
+      todos: [
+        {
+          id: "hw-fixture-task",
+          text: "a task sitting in review",
+          status: "review",
+          categoryId: "cat-fixture",
+          description: "seeded so the queue has something to build",
+        },
+      ],
+    },
+    null,
+    2
+  ),
+  "utf8"
+);
+const configPath = path.join(boardDir, "config.json");
+fs.writeFileSync(configPath, JSON.stringify({ jot: { path: boardPath.replace(/\\/g, "/") } }, null, 2), "utf8");
+process.env.HELM_CONFIG_PATH = configPath;
+
+const { launch } = await import("../checks-lib/harness.mjs");
 
 let exit = 0;
 const ok = (c, m) => {
@@ -93,6 +131,7 @@ try {
   );
 } finally {
   await app.close();
+  fs.rmSync(boardDir, { recursive: true, force: true });
 }
 
 console.log(
