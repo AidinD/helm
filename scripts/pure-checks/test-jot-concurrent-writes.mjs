@@ -276,13 +276,10 @@ const locksBefore = new Set(fs.readdirSync(os.tmpdir()).filter((f) => f.startsWi
 // The last round's board, kept so the leftover-lock check below can write to the SAME file the
 // workers were contending on. A lock is keyed by the path it guards, so a write to a fresh
 // board would sail past a leftover lock and prove nothing about it.
-let lastBoard = null;
-let lastRoundDir = null;
 
 for (let round = 0; round < ROUNDS; round += 1) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "helm-jot-concurrent-"));
   const board = seedBoard(dir);
-  lastBoard = board;
 
   const started = Date.now();
   const results = await runRound(board);
@@ -305,15 +302,7 @@ for (let round = 0; round < ROUNDS; round += 1) {
   const temps = fs.readdirSync(dir).filter((f) => f.includes(".tmp"));
   ok(temps.length === 0, `round ${round + 1}: no orphaned temp files (found ${temps.length})`);
 
-  // Every round but the LAST is removed here. The last one survives so the leftover-lock
-  // check below can write to the board these workers were actually contending on - a lock is
-  // keyed by the path it guards, so a fresh board would prove nothing about it. Removed at
-  // the end of the file instead.
-  if (round < ROUNDS - 1) {
-    fs.rmSync(dir, { recursive: true, force: true });
-  } else {
-    lastRoundDir = dir;
-  }
+  fs.rmSync(dir, { recursive: true, force: true });
 }
 
 const total = totalPerRound * ROUNDS;
@@ -383,32 +372,42 @@ for (let waited = 0; waited < 3000 && leaked.length > 0; waited += 250) {
 if (leaked.length === 0) {
   ok(true, "no write lock was left behind");
 } else {
-  const { mutateJotFile } = await import(JOT_MODULE);
-  const startedAt = Date.now();
-  const after = mutateJotFile(lastBoard, (data) => {
-    data.todos.push({ id: "after-the-locks", text: "written after a leftover lock", status: "open", categoryId: "cat1" });
-    return data;
-  });
-  const tookMs = Date.now() - startedAt;
-  // TWO OUTCOMES, and both are correct - which is the whole point of the rule being tested.
-  // A lock whose owner is GONE must not block: it is broken and the write lands. A lock a LIVE
-  // process still holds must block: that is a lock doing its job, and a straggler worker still
-  // finishing as this runs is exactly that case. Demanding the write always land made this
-  // assertion fail under lane load for correct behaviour - the first version of it did, once.
+  // ASKED, NOT TAKEN. The first version of this wrote to the board to see whether the leftover
+  // lock blocked anything - and that write BROKE the lock, which a straggler worker then
+  // reported as "no longer ours - it was taken over mid-write". The check had started causing
+  // the very hazard it was watching for. A test that interferes with its subject is worse than
+  // one that only counts files.
   //
-  // What must never happen is the third outcome: refused for no stated reason, or refused
-  // while nobody holds anything.
-  if (after && after.ok) {
-    ok(true, `a leftover lock whose owner is gone does not block the next write (${leaked.join(", ")}, ${tookMs}ms)`);
-    ok(tookMs < 5000, `and it is not made to wait for it (${tookMs}ms)`);
-  } else {
-    ok(
-      typeof after?.error === "string" && /live writer is holding/.test(after.error),
-      `the next write was refused, and only because a LIVE holder still has the lock - which is a lock working (${JSON.stringify(after && after.error)})`
-    );
-    console.log("INFO - a straggler still held the lock when this ran; the refusal is the correct answer, not a leak");
+  // The invariant does not need a write to observe. A lock is abandoned when its OWNER's
+  // process is gone; that is the whole rule. So read the claim the holder wrote into it and ask
+  // the operating system about that pid. A leftover whose owner is dead cannot block anybody. A
+  // leftover whose owner is ALIVE is a lock doing its job, and the run simply outlasted it.
+  const owners = leaked.map((name) => {
+    const claim = path.join(os.tmpdir(), name, "owner.json");
+    try {
+      const { pid } = JSON.parse(fs.readFileSync(claim, "utf8"));
+      let alive = true;
+      try {
+        process.kill(pid, 0);
+      } catch (err) {
+        alive = err.code === "EPERM";
+      }
+      return { name, pid, alive };
+    } catch {
+      return { name, pid: null, alive: null };
+    }
+  });
+  const stuck = owners.filter((o) => o.alive === true);
+  const unreadable = owners.filter((o) => o.alive === null);
+  ok(
+    stuck.length === 0,
+    `every lock still on disk is either gone or owned by a DEAD process, so nothing is blocked (${JSON.stringify(owners)})`
+  );
+  if (unreadable.length > 0) {
+    // No claim inside means it died between the mkdir and the write, which the age rule covers.
+    console.log(`INFO - ${unreadable.length} leftover lock(s) carry no readable owner claim; the age rule is what breaks those`);
   }
-  console.log(`INFO - ${leaked.length} lock director${leaked.length === 1 ? "y" : "ies"} outlived the run and ${leaked.length === 1 ? "was" : "were"} broken on the next write: ${leaked.join(", ")}`);
+  console.log(`INFO - ${leaked.length} lock director${leaked.length === 1 ? "y" : "ies"} outlived the run: ${leaked.join(", ")}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -454,8 +453,3 @@ console.log(
 );
 process.exit(code);
 
-
-// The one round kept back for the leftover-lock check.
-if (lastRoundDir) {
-  fs.rmSync(lastRoundDir, { recursive: true, force: true });
-}

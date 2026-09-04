@@ -202,7 +202,23 @@ try {
       head: el.closest(".analysis-block").querySelector("h3").textContent,
     };
   })()`);
-  ok(picker.present, "a project picker renders inside the block");
+  // A picker only exists when there is something to pick BETWEEN. The machine running this
+  // decides that: here the author has several projects carrying their own skills, on a hosted
+  // runner there are none, and "a picker renders" is then a claim about the machine rather than
+  // about the app. The conditional is not a softening - the empty state is asserted just as
+  // hard, and one of the two branches always runs.
+  const projectsWithSkills = view.blocks.filter((b) => b.head.startsWith("Project skills") && !b.empty).length;
+  if (projectsWithSkills === 0) {
+    ok(
+      !picker.present,
+      "no project on this machine carries its own skills, so there is no picker - and the block says so rather than showing an empty control"
+    );
+    ok(
+      view.blocks.some((b) => b.head.startsWith("Project skills") && /project folders|No project folders known yet/.test(b.empty)),
+      "and the empty state names how hard it looked"
+    );
+  } else {
+  ok(picker.present, `a project picker renders inside the block (${projectsWithSkills} project(s) with skills)`);
   ok(picker.selected.length === 1, `with exactly one project selected (${JSON.stringify(picker.selected)})`);
   ok(
     picker.labels.every((l) => /· \d+$/.test(l)),
@@ -237,6 +253,7 @@ try {
     ok(swapped.selected.length === 1, `and one pill is selected afterwards (${JSON.stringify(swapped.selected)})`);
   } else {
     console.log("   (only one project has skills on this machine - the swap half of the picker was not exercised)");
+  }
   }
 
   const pluginBlock = view.blocks.find((b) => b.head.startsWith("Plugin skills"));
