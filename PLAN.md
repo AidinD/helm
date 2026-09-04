@@ -739,6 +739,22 @@ in practice, not building preemptively.
   the deep "start a fresh session with this feedback as prompt" wiring (v1 drops
   it into the composer), Mermaid/text-range/layout-audit parity, and running
   artifact-authored scripts.
+  **A further gap, and the one that costs most: the loop covers the planning
+  phase only.** A mockup is annotated, the feedback reaches the composer, and
+  the mockup then stops existing. Nothing binds it to the work that implements
+  it, and nothing compares the result back against it. Two failure modes follow
+  from that, and both have been observed in practice. First, a brief written
+  from a mockup summarises it, and whatever the summary drops is silently not
+  built - the building agent never sees the mockup itself, so it cannot notice
+  the omission, and a blanket "the mockup is direction, not specification" note
+  makes this certain rather than likely. Second, no step in the flow asks
+  whether the built screen looks like the agreed one, so a release can verify
+  tests, types and the update chain while the single thing the job was about
+  goes unchecked. What is missing is a durable mockup reference that travels
+  with the task, plus a comparison step before work is handed back. The
+  annotation SDK already produces the anchors such a comparison would need, and
+  a mockup carrying real names must be reachable by path without being
+  committed to the repo it describes.
 - **Voice input (OpenSuperWhisper / local Whisper)** — voice as the primary
   prompt-composition method. Standalone, no architecture dependency, fastest
   of everything here to prototype. Best first experiment.
