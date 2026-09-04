@@ -212,7 +212,19 @@ ok(
 // The Auto widget must not wear the captain's wording now that it has content.
 ok(/fleetDirectCardEl\(autoSms, \{ as: "auto" \}\)/.test(code), "the Auto widget asks for the auto-labelled card");
 ok(/isAuto \? "Auto-captain" : "Captain"/.test(code), "which is titled Auto-captain, not Captain");
-ok(/if \(!isAuto\) \{\s*top\.append\(startBtn\);/.test(code), "and offers no '+ Session' button in the column nothing is started by hand in");
+// The property this used to check was "the auto column has no + Session button", asserted by
+// matching the guard that kept it off. That guard is gone because the button is gone from BOTH
+// cards - it moved to the dashboard topbar on 2026-09-04, ahead of stage 4 removing the captain
+// card it used to live in. So the property now holds more strongly than the old assertion could
+// express, and it is stated directly rather than through a mechanism that no longer exists.
+ok(
+  !/top\.append\(startBtn\)/.test(code),
+  "no fleet card carries its own + Session button - the picker lives on the dashboard now"
+);
+ok(
+  /topbar\.append\(heading, newSessionButtonEl\(\)\)/.test(code),
+  "and it is mounted on the dashboard topbar, which is what the auto column must still not have"
+);
 
 console.log(
   exit === 0

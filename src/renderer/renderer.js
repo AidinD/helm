@@ -12515,6 +12515,24 @@ function fleetCrewItemEl(run) {
 const NEW_SESSION_RECENT_PICKS = 5;
 
 /**
+ * The "+ Session" control. One builder, because for the length of stage 4 there is a version
+ * of this app in which the button has moved and the widget it came from has not yet gone, and
+ * two hand-written copies is how the surviving one ends up behaving differently.
+ */
+function newSessionButtonEl() {
+  const btn = document.createElement("button");
+  btn.className = "fleet-btn";
+  btn.textContent = "+ Session";
+  btn.title = "Start a fresh session - pick from your usual folders, or browse";
+  btn.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    const rect = btn.getBoundingClientRect();
+    showContextMenu(rect.left, rect.bottom + 4, await newSessionFolderMenuItems());
+  });
+  return btn;
+}
+
+/**
  * Choosing a folder in "+ Session" - the gesture that means "I am going to work on this".
  *
  * Both picks route through here rather than each calling openFreshDraftInPane, because the
@@ -12631,19 +12649,10 @@ function fleetDirectCardEl(sms, { as = "captain" } = {}) {
   role.className = "fleet-mate-role";
   role.textContent = isAuto ? "started from the board, lands in review" : "work you drive yourself";
   idBox.append(name, role);
-  const startBtn = document.createElement("button");
-  startBtn.className = "fleet-btn";
-  startBtn.textContent = "+ Session";
-  startBtn.title = "Start a fresh session - pick from your usual folders, or browse";
-  startBtn.addEventListener("click", async (e) => {
-    e.stopPropagation();
-    const rect = startBtn.getBoundingClientRect();
-    showContextMenu(rect.left, rect.bottom + 4, await newSessionFolderMenuItems());
-  });
+  // The "+ Session" button used to live here. It is on the dashboard topbar now, because
+  // this card is what stage 4 removes and the picker has to outlive it. The card is otherwise
+  // unchanged and still lists the captain's own sessions.
   top.append(anchor, idBox);
-  if (!isAuto) {
-    top.append(startBtn);
-  }
   card.append(top);
 
   const list = document.createElement("div");
@@ -14274,7 +14283,14 @@ async function renderWidgetDashboard(page) {
   heading.append(h2, sub);
   // The "Classic layout" toggle is gone - there is no classic layout to switch to
   // anymore (task 337895ce). Add-widget lives on the grid's own add tile.
-  topbar.append(heading);
+  //
+  // "+ Session" lives HERE rather than inside the captain widget, and the move is a
+  // precondition for stage 4 rather than a tidy-up. Picking a project in this menu is what
+  // opens that project's seat (the captain, 2026-09-04), and the cut removes the captain widget -
+  // so leaving the picker inside it would delete the only way to open a project on the same
+  // commit that makes project seats the way you work. Moved first, and verified, so the
+  // removal that follows cannot take it with it.
+  topbar.append(heading, newSessionButtonEl());
 
   const grid = document.createElement("div");
   grid.className = "wd-grid";
