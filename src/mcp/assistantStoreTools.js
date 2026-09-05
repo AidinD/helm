@@ -353,11 +353,28 @@ export function writeGoals(args = {}) {
  * reimplemented here on keel's own predicate and backoff rather than on a private
  * guess at which errno means "wait".
  *
- * The day heading is created with an EXCLUSIVE create ("wx"), not with
- * "if (!exists) write". Two processes appending to a fresh day would both see the
- * file missing and both seed it, leaving two `# 2026-09-02` headings. An exclusive
- * create makes exactly one of them win and the loser's EEXIST is the correct
- * answer, not an error.
+ * The day heading is created EXCLUSIVELY, not with "if (!exists) write". Two processes
+ * appending to a fresh day would both see the file missing and both seed it, leaving two
+ * `# 2026-09-02` headings. Exactly one wins and the loser's EEXIST is the correct answer,
+ * not an error.
+ *
+ * BUT AN EXCLUSIVE CREATE IS NOT ENOUGH, and the paragraph above used to stop here while the
+ * store lost writes. `writeFileSync(file, heading, { flag: "wx" })` is two steps, and the
+ * file is visible and EMPTY between them:
+ *
+ *     A  open(file, "wx")        the file now exists and is empty
+ *     B  seed -> EEXIST          "somebody else created it", which is right
+ *     B  appendFileSync(entry)   the end of an empty file is offset 0
+ *     A  write(heading)          also offset 0, on top of B's entry
+ *
+ * A's write is not an append - it is the create's own write, at the start of the file - so
+ * anything that landed in that window is overwritten while its writer was told ok. Reported by
+ * CI as "8 reported success, 7 landed across 1 day file", and the single day file is what ruled
+ * out the midnight straddle this comment used to blame. Reproduced deterministically, and a
+ * control run confirmed the detector sees a loss when the window is held open.
+ *
+ * So seedDayFile below never writes at offset 0 of a file anyone else can see. See its own
+ * comment for how.
  */
 function withLockRetry(file, attempt) {
   for (let n = 0; n < MAX_ATTEMPTS; n += 1) {
@@ -381,9 +398,53 @@ function withLockRetry(file, attempt) {
   return { ok: false, error: "the file stayed locked" };
 }
 
-/** Creates the day's file with its `# YYYY-MM-DD` heading, or leaves the winner's alone. */
-function seedDayFile(file, day) {
-  return withLockRetry(file, () => fs.writeFileSync(file, `# ${day}\n`, { encoding: "utf8", flag: "wx" }));
+/**
+ * Creates the day's file with its `# YYYY-MM-DD` heading already in it, or leaves the
+ * winner's alone.
+ *
+ * ALREADY IN IT is the whole point. The heading is written to a temp file first and the temp is
+ * then hard-linked into place: link() either creates the name or fails EEXIST, and the content
+ * it names was complete before the name existed. There is no instant at which this file is
+ * visible and empty, so there is no window for an append to land at offset 0 and be overwritten.
+ *
+ * `link` is injectable so the fallback below can be driven in a test. A branch nobody can reach
+ * is a branch nobody has checked, and this one only runs on a filesystem this machine does not
+ * have.
+ *
+ * THE FALLBACK, for a volume with no hard links: create the file EMPTY, then put the heading in
+ * through the same append path as everything else. That gives up the guarantee that the heading
+ * is the first line - a racing entry can land before it - and keeps the one that matters, which
+ * is that nothing is ever overwritten. Losing the ordering of a heading is a cosmetic defect in
+ * one day file; losing an entry is a day that is missing a line nobody knows was written.
+ */
+export function seedDayFile(file, day, { link = fs.linkSync } = {}) {
+  const heading = `# ${day}\n`;
+  const tmp = `${file}.seed-${process.pid}-${Math.random().toString(36).slice(2, 10)}`;
+  try {
+    fs.writeFileSync(tmp, heading, "utf8");
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err) };
+  }
+  try {
+    const linked = withLockRetry(file, () => link(tmp, file));
+    if (linked.ok) {
+      // EEXIST arrives as { ok: true, alreadyThere: true } - somebody else seeded it, which
+      // is the outcome we wanted.
+      return linked;
+    }
+    const created = withLockRetry(file, () => fs.writeFileSync(file, "", { encoding: "utf8", flag: "wx" }));
+    if (!created.ok || created.alreadyThere) {
+      return created;
+    }
+    const headed = withLockRetry(file, () => fs.appendFileSync(file, heading, "utf8"));
+    return headed.ok ? { ok: true } : headed;
+  } finally {
+    try {
+      fs.unlinkSync(tmp);
+    } catch {
+      // A temp we cannot remove is not a failed seed - the day file is already correct.
+    }
+  }
 }
 
 /** The append itself. One call, so the write lands wherever the end of the file is. */
