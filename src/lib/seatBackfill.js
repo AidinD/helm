@@ -16,10 +16,11 @@ import { normalizeFsPath } from "./fsPath.js";
  *
  * @param {Array} nodes            derived project nodes (deriveSecondMates output)
  * @param {string} metaHomeRoot    the coordinator root, which is never a project
- * @param {(p: string) => boolean} exists  does this folder still exist
+ * @param {(p: string) => boolean} exists      does this folder still exist
+ * @param {(id: string) => boolean} isArchived has the captain archived this session
  * @returns {string[]} checkout paths, de-duplicated, in the order first seen
  */
-export function projectsNeedingSeats(nodes, { metaHomeRoot, exists } = {}) {
+export function projectsNeedingSeats(nodes, { metaHomeRoot, exists, isArchived } = {}) {
   const out = [];
   const seen = new Set();
   for (const node of nodes || []) {
@@ -33,10 +34,18 @@ export function projectsNeedingSeats(nodes, { metaHomeRoot, exists } = {}) {
     if (node.startedBy === "auto") {
       continue;
     }
-    // Work means a bound session or crew underneath - the same pair the board already uses to
-    // decide whether a row is worth showing. A node with neither is a proposal nobody engaged,
-    // and it needs no seat until somebody does.
-    const hasWork = !!node.sessionId || (Array.isArray(node.crew) && node.crew.length > 0);
+    // A BOUND SESSION IS NOT THE SAME AS A LIVE ONE, and the first version of this rule read
+    // it as if it were. A binding records the session that last embodied a node; archiving is
+    // the captain saying he is done with it. One of the eight seats the first run opened was
+    // earned by a session archived 53 days earlier - the rule asked "is there a sessionId"
+    // where it meant "is anything happening here", which is the same mistake as asking whether
+    // a folder exists when the question was whether work is in flight.
+    //
+    // UNKNOWN IS NOT ARCHIVED. A session Helm has no record of - one started outside its own
+    // index - cannot be judged, and the bias here is already settled by the deleted-checkout
+    // case: a seat too many is a row he can remove, a seat too few is work he cannot see.
+    const sessionCounts = !!node.sessionId && !(typeof isArchived === "function" && isArchived(node.sessionId));
+    const hasWork = sessionCounts || (Array.isArray(node.crew) && node.crew.length > 0);
     if (!hasWork) {
       continue;
     }
@@ -66,7 +75,7 @@ export function projectsNeedingSeats(nodes, { metaHomeRoot, exists } = {}) {
     // Finished crew in a folder that is gone is a different case and stays excluded: nothing
     // is running, so there is nothing to lose sight of.
     const stillThere = typeof exists === "function" ? exists(project) : true;
-    if (!stillThere && !node.sessionId) {
+    if (!stillThere && !sessionCounts) {
       continue;
     }
     out.push(project);

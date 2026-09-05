@@ -82,6 +82,31 @@ ok(
 ok(call([{ sessionId: "s1", crew: [] }]).length === 0, "a node with no project at all is skipped rather than crashing");
 ok(call([]).length === 0 && call(null).length === 0, "no nodes, no seats, and no crash on nothing");
 
+// --- AN ARCHIVED SESSION IS NOT WORK ----------------------------------------------------------
+// The first run of this rule opened eight seats, and one of them was earned by a session the
+// captain had archived 53 days earlier. A binding records the session that LAST embodied a
+// node; archiving is him saying he is done with it. The rule asked "is there a sessionId"
+// where it meant "is anything happening here" - the same mistake as asking whether a folder
+// exists when the question was whether work is in flight.
+const archivedCall = (nodes) =>
+  projectsNeedingSeats(nodes, { metaHomeRoot: META, exists, isArchived: (id) => id === "gone-session" });
+ok(
+  archivedCall([{ projectPath: ALPHA, sessionId: "gone-session", crew: [] }]).length === 0,
+  "a node whose only claim is an ARCHIVED session earns no seat",
+);
+ok(
+  archivedCall([{ projectPath: ALPHA, sessionId: "gone-session", crew: [{ id: "r1" }] }]).length === 1,
+  "but crew underneath still earns one - the run happened whatever became of the session",
+);
+ok(
+  archivedCall([{ projectPath: ALPHA, sessionId: "other-session", crew: [] }]).length === 1,
+  "and an UNKNOWN session still counts: unjudgeable is not archived, and a seat too many is a row he can remove",
+);
+ok(
+  archivedCall([{ projectPath: GONE, sessionId: "gone-session", crew: [] }]).length === 0,
+  "a deleted checkout whose session is archived earns nothing either - both halves of that exception are gone",
+);
+
 // --- one per checkout, however many rows name it ---------------------------------------------
 // EVERY SPELLING, including the separators. The first version of this de-duplication folded
 // case and a trailing slash and left the separators alone, so one repo written with backslashes

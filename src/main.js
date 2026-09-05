@@ -4877,9 +4877,13 @@ function reconcileSeatsForActiveProjects() {
   // The DECISION lives in seatBackfill.js as a pure function so it can be checked without an
   // app, a store or a filesystem. This is only the I/O around it: which nodes exist, and
   // opening a seat for each answer.
+  const archived = new Set(loadConfig().archivedSessions || []);
   const wanted = projectsNeedingSeats(deriveSecondMates(loadGoalRunHistory()), {
     metaHomeRoot: resolveMetaHome(),
     exists: (dir) => fs.existsSync(dir),
+    // Helm's OWN archive list is authoritative here - see the note at applySessionArchive
+    // about the Claude app dropping the isArchived flag it does not own.
+    isArchived: (id) => archived.has(id),
   });
   let opened = 0;
   for (const project of wanted) {
