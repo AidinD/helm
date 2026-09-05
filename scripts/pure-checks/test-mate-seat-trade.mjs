@@ -59,7 +59,13 @@ const main = fs.readFileSync(new URL("../../src/main.js", import.meta.url), "utf
 {
   ok(/label: "New first mate…"/.test(src), "a seat can be added from the widget menu");
   ok(/window\.helm\.addMate\(\)/.test(src), "and adding one really adds to the fleet");
-  ok(/saveWidgetLayout\(\[\.\.\.layout, \{ id: `w-mate-\$\{added\.mateId\}`/.test(src), "the widget appears with it - one action, not two");
+  // The widget id prefix became w-seat- on 2026-09-05: there is one kind of widget now, so a
+  // prefix naming one of the old kinds would be the taxonomy surviving in an identifier. What
+  // this asserts is unchanged - adding a seat puts its widget on the board in the same action.
+  ok(
+    /saveWidgetLayout\(\[\.\.\.layout, \{ id: `w-seat-\$\{added\.mateId\}`/.test(src),
+    "the widget appears with it - one action, not two"
+  );
 
   ok(/Dismiss \$\{mate\?\.name \|\| "this first mate"\} from the fleet/.test(src), "and a seat can be given back from the same menu");
   ok(/window\.helm\.removeMate\(widget\.mateId\)/.test(src), "which removes the mate, not only its widget");

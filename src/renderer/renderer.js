@@ -13100,15 +13100,24 @@ const WIDGET_CATALOG = {
   // was safe only after two things landed first: project seats got a widget, and a startup
   // pass opened a seat for every project that already had work.
   auto: { label: "Auto", span: 4, accent: "mate", singleton: true },
-  firstMate: { label: "First mate", span: 4, accent: "mate", perMate: true },
+  // ONE ENTRY FOR EVERY SEAT. There is one kind of seat, so there is one kind of widget - the
+  // rendering was merged first and the MENU was not, which left three categories on the one
+  // surface he actually uses. "jag ville att allt skulle vara first mate och något annat
+  // bestämmer om det blir en assistant eller project" - the something else is the seat's tag,
+  // and it decides what the seat IS, not which widget shows it.
+  firstMate: { label: "First mate", span: 4, accent: "mate", perSeat: true },
   // The assistant seat. A singleton rather than perMate: there is one, always, and it is not
   // one of the coordinator pool (see mates.js). Its own accent so a glance separates the seat
   // that holds cross-project state from the seats that coordinate work.
-  assistant: { label: "Assistant", span: 4, accent: "acc", singleton: true },
+  // LEGACY TYPES. Saved layouts name these, and widgetLayout drops any widget whose type the
+  // catalog does not know - so removing them would delete widgets off his board. They render
+  // through the same body as everything else and are hidden from the add menu, because
+  // offering them is what made the taxonomy visible.
+  assistant: { label: "First mate", span: 4, accent: "mate", legacy: true },
   // A seat opened against a repository. perProjectSeat rather than perMate, because the
   // seats come from different stores' worth of meaning: a coordinator is one of a numbered
   // pool, a project seat exists because a project was opened. Both render the same card.
-  projectSeat: { label: "Project", span: 4, accent: "mate", perProjectSeat: true },
+  projectSeat: { label: "First mate", span: 4, accent: "mate", legacy: true },
   docsDrift: { label: "Docs drift", span: 4, accent: "acc", singleton: true },
   review: { label: "Review", span: 4, accent: "acc", singleton: true },
   // Layout-only entries, so a row can be left deliberately short instead of the
@@ -14249,18 +14258,39 @@ function widgetAddTile(data) {
     // Which mates a widget already shows, by BINDING rather than by widget id: after a
     // widget adopts a mate its id still carries the retired mate's, so an id check would
     // offer the adopted mate again and put a second widget on the board for it.
-    const shown = new Set(layout.filter((w) => w.type === "firstMate").map((w) => w.mateId));
+    // By BINDING rather than by widget id, and across every seat-shaped widget type: after a
+    // widget adopts a mate its id still carries the retired mate's, so an id check would offer
+    // the adopted seat again and put a second widget on the board for it.
+    const seatTypes = new Set(["firstMate", "assistant", "projectSeat"]);
+    const shown = new Set(layout.filter((w) => seatTypes.has(w.type)).map((w) => w.mateId).filter(Boolean));
+    // The standing seat's widget has never carried a mateId - it was a singleton and had
+    // nothing to carry - so it is recognised by type as well, or it would be offered twice.
+    const standingShown = layout.some((w) => w.type === "assistant" && !w.mateId);
     for (const [type, spec] of Object.entries(WIDGET_CATALOG)) {
-      if (spec.perMate) {
-        for (const mate of data.mates || []) {
-          const id = `w-mate-${mate.mateId}`;
-          if (shown.has(mate.mateId) || layout.some((w) => w.id === id)) {
+      if (spec.legacy) {
+        continue;
+      }
+      if (spec.perSeat) {
+        // EVERY seat, in one list. Not three lists with three prefixes: what a seat IS shows
+        // on its card, and repeating it as a menu category is the taxonomy he asked to lose.
+        const everySeat = [
+          ...(data.assistant ? [data.assistant] : []),
+          ...(data.mates || []),
+          ...(data.projectSeats || []),
+        ];
+        for (const seat of everySeat) {
+          const id = `w-seat-${seat.mateId}`;
+          const isStanding = data.assistant && seat.mateId === data.assistant.mateId;
+          if (shown.has(seat.mateId) || layout.some((w) => w.id === id) || (isStanding && standingShown)) {
             continue;
           }
           items.push({
-            label: `First mate · ${mate.name}`,
+            label: `${spec.label} · ${seat.name}`,
+            // The root is what tells two seats apart once they all read "First mate", and it
+            // is the thing that decides what the seat is.
+            hint: truncatePathForMenu(seat.root || ""),
             onClick: async () => {
-              await saveWidgetLayout([...layout, { id, type: "firstMate", span: spec.span, mateId: mate.mateId }]);
+              await saveWidgetLayout([...layout, { id, type: "firstMate", span: spec.span, mateId: seat.mateId }]);
               await renderDashboardPage();
             },
           });
@@ -14281,29 +14311,12 @@ function widgetAddTile(data) {
             }
             const added = (res.active || []).find((m) => !(data.mates || []).some((x) => x.mateId === m.mateId));
             if (added) {
-              await saveWidgetLayout([...layout, { id: `w-mate-${added.mateId}`, type: "firstMate", span: spec.span, mateId: added.mateId }]);
+              await saveWidgetLayout([...layout, { id: `w-seat-${added.mateId}`, type: "firstMate", span: spec.span, mateId: added.mateId }]);
               showToast(`${added.name} joined the fleet.`);
             }
             await renderDashboardPage();
           },
         });
-        continue;
-      }
-      if (spec.perProjectSeat) {
-        for (const seat of data.projectSeats || []) {
-          const id = `w-project-${seat.mateId}`;
-          if (layout.some((w) => w.id === id)) {
-            continue;
-          }
-          items.push({
-            label: `Project · ${seat.name}`,
-            hint: truncatePathForMenu(seat.root || ""),
-            onClick: async () => {
-              await saveWidgetLayout([...layout, { id, type: "projectSeat", span: spec.span, mateId: seat.mateId }]);
-              await renderDashboardPage();
-            },
-          });
-        }
         continue;
       }
       if (spec.singleton && layout.some((w) => w.type === type)) {
