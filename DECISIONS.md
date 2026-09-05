@@ -1,5 +1,19 @@
 # Decisions
 
+## 2026-09-05 - Two correct reads composed into a wrong answer
+
+A measurement script read the installed app's run history by an explicit path and its bindings by the default one. Both reads succeeded, both stores were real, and the default resolved to the DEV checkout: 2 bindings against the installed store's 13. The numbers that came out described a machine that does not exist.
+
+They were wrong in every direction and plausible in every direction - 9 nodes and 4 seats is exactly what a smaller install looks like. They survived a night, reached the captain twice through another session, and were corrected only because the app was actually started and the result disagreed. The truth was 12 nodes and 8 seats.
+
+**The rule, and it is narrower than "be careful": when a script reads more than one store, every read names its path explicitly. A default is a bug in a measurement script.**
+
+Not in production code, where a default is how a store finds itself. In a script whose whole output is a number about a specific machine, a default silently answers a question about a different one.
+
+**Why no check catches this.** Nothing failed. Neither read was wrong. The composition was wrong, and there is no assertion to write about a value that has no independent expectation - the number being measured is the number nobody knows yet, which is why it is being measured. A review does not catch it either: both lines look correct, and they are.
+
+What did catch it was running the thing and reading what it actually did. That is the only control available for a measurement, and it is the reason a number quoted from a script and a number observed in the app are different kinds of evidence.
+
 ## 2026-09-05 - Meta-home seats are named, because a second one now exists to name
 
 The seat model allowed exactly one seat rooted in the meta-home. It now allows any number, each identified by name rather than by being the only one of its kind.
