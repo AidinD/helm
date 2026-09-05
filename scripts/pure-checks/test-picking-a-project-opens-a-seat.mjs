@@ -55,7 +55,8 @@ ok(mates.isProjectPick(nested, metaHome), "a folder inside the meta-home is stil
 // --- and what the rule is FOR --------------------------------------------------------------
 try {
   const seat = mates.ensureSeatForProject(project);
-  ok(seat.kind === "project", "picking a project mints its seat");
+  // A tag rather than a kind since 2026-09-05 - see test-seat-identity-is-a-tag for why.
+  ok((seat.tags || []).includes("project"), "picking a project mints its seat");
   ok(mates.projectSeats().length === 1, "one seat for one project");
 
   // The property that makes the governor honest: picking the same project again from the

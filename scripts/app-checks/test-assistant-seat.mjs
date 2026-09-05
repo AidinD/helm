@@ -39,7 +39,12 @@ try {
   ok(listed?.ok === true, "mates:list answers");
   ok(!!listed?.assistant, "and it carries an assistant seat, created on first ask rather than needing a setup step");
   ok(listed?.assistant?.name === "Assistent", `the seat has its fixed name rather than a random one (${listed?.assistant?.name})`);
-  ok(listed?.assistant?.kind === "assistant", "and is marked as its own kind of seat");
+  // A TAG since 2026-09-05, not a kind. The seat is no longer a category of its own - there is
+  // one kind of seat, and what this one IS it carries.
+  ok(
+    (listed?.assistant?.tags || []).includes("assistant"),
+    `and carries the tag that says what it is (${JSON.stringify(listed?.assistant?.tags)})`
+  );
   ok(listed?.assistant?.slot === null, "with no slot - it is singular, not one of a numbered pool");
 
   // The exclusion that keeps every existing reader honest. `active` is what forty places mean
@@ -53,7 +58,7 @@ try {
   // Idempotent: asking twice must not mint a second seat.
   const again = await app.eval(`window.helm.listMates()`);
   ok(again?.assistant?.mateId === listed?.assistant?.mateId, "asking again returns the same seat rather than creating another");
-  const assistants = (again?.all || []).filter((m) => m.kind === "assistant" && m.status === "active");
+  const assistants = (again?.all || []).filter((m) => (m.tags || []).includes("assistant") && m.status === "active");
   ok(assistants.length === 1, `exactly one active assistant exists in the store (${assistants.length})`);
 
   // --- the dashboard -----------------------------------------------------------------------

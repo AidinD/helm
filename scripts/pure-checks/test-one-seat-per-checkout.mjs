@@ -50,7 +50,14 @@ try {
   ok(mates.activeMates().length === 2, "the coordinator pool starts at two");
 
   const a1 = mates.ensureSeatForProject(projectA);
-  ok(a1.kind === "project", `opening a project mints a project seat (${a1.kind})`);
+  // A TAG, not a kind, since 2026-09-05. What a seat is stopped being a category it belongs
+  // to and became something it carries, so that "assistant" and a temperament are two choices
+  // rather than one list where picking either excludes the other.
+  ok(
+    (a1.tags || []).includes("project"),
+    `opening a project mints a project seat (${JSON.stringify(a1.tags)})`
+  );
+  ok(a1.kind === undefined, "and it carries no kind at all - the tag is the only source now");
   ok(a1.slot === null, "with no slot, because slots belong to the coordinator pool");
   ok(!!a1.name, `and a real name (${JSON.stringify(a1.name)})`);
 
@@ -82,7 +89,7 @@ try {
   // slot per retire this morning, and a third kind is how it is kept out.
   ok(mates.activeMates().length === 2, "the coordinator pool is still two, untouched by three project seats");
   ok(
-    !mates.activeMates().some((m) => (m.kind || "coordinator") === "project"),
+    !mates.activeMates().some((m) => (m.tags || []).includes("project")),
     "and no project seat appears in the pool"
   );
   mates.retireMateSlot(0);

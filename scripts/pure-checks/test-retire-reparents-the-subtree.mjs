@@ -68,9 +68,12 @@ try {
 
   const successor = mates.retireAndRespawn(first.mateId, null);
   ok(successor.mateId !== first.mateId, "retiring mints a successor");
+  // Same assertion, one field over: identity is a tag as of 2026-09-05. What it protects is
+  // unchanged and is the reason this line exists - a refreshed project seat that came back
+  // pooled would be a seat of a different sort wearing the old one's root.
   ok(
-    successor.kind === "project",
-    `and the successor is the same KIND of seat, not a coordinator wearing its root (${successor.kind})`
+    (successor.tags || []).includes("project"),
+    `and the successor is still WHAT IT WAS, not a pooled seat wearing its root (${JSON.stringify(successor.tags)})`
   );
   ok(successor.slot === null, "so it does not take a slot in the coordinator pool either");
   ok(

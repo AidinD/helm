@@ -349,10 +349,14 @@ function pickName(taken, seed = 0, pool = NAUTICAL_NAMES) {
  * jumps into and both attribute dispatched work by mateId; different kind because almost
  * every rule about slots, naming and respawn applies to one and not the other.
  *
- * A record with no `kind` is a coordinator. Every mate written before 2026-09-02 predates
- * this field, and defaulting rather than migrating means an existing mates.json keeps working
- * untouched.
+ * SUPERSEDED 2026-09-05: what a seat IS is a tag now, not a kind - see SEAT_TAG_ASSISTANT.
+ * The kinds below are still READ so a record written in the three days they existed can be
+ * understood, and a record with neither is a pooled seat. Nothing writes them.
  */
+// NOTHING WRITES THESE ANY MORE. They are the vocabulary of records written between
+// 2026-09-02 and 2026-09-05, kept so seatTags can read one - the same reason a record with no
+// kind at all is still readable. A new seat carries a tag and no kind, and the day no store
+// holds a pre-tag record these can go.
 export const SEAT_COORDINATOR = "coordinator";
 export const SEAT_ASSISTANT = "assistant";
 /**
@@ -556,7 +560,6 @@ export function ensureAssistantSeat(root) {
     // Explicitly null rather than absent: a slot of 0 would collide with a coordinator's, and
     // the slot-ordered readers all use `?? 0`, so absent and 0 are indistinguishable there.
     slot: null,
-    kind: SEAT_ASSISTANT,
     tags: [SEAT_TAG_ASSISTANT],
     name: "Assistent",
     root: path.resolve(root),
@@ -653,7 +656,6 @@ export function ensureSeatForProject(projectPath, { persona = null } = {}) {
     // Explicitly null, like the assistant seat's: a 0 would collide with a coordinator's, and
     // every slot-ordered reader normalises absence with `?? 0`.
     slot: null,
-    kind: SEAT_PROJECT,
     tags: [SEAT_TAG_PROJECT],
     name: pickName(takenNames, state.mates.length, namePoolForTheme(currentTheme())),
     root: path.resolve(projectPath),
@@ -745,16 +747,17 @@ export function retireAndRespawn(mateId, pendingHandoff = null, persona = null, 
   //
   // A coordinator keeps its slot; anything else is slotless by construction, and reusing the
   // outgoing slot for a seat that never had one would put it in the pool.
-  const outgoingKind = seatKind(outgoing);
-  // The tags come across for the same reason the kind and the persona do: a refresh must not
-  // change what a seat IS. This is the third field to need that sentence, which is the
-  // argument for identity living in ONE of them rather than being spread across three.
+  // The tags come across for the same reason the persona does: a refresh must not change what
+  // a seat IS. That sentence has now been needed for persona, kind and tags, which is the
+  // argument for identity living in ONE field - and after this commit it does.
   const outgoingTags = seatTags(outgoing);
   const fresh = {
     mateId: `mate_${crypto.randomUUID()}`,
-    kind: outgoingKind,
     tags: [...outgoingTags],
-    slot: outgoingKind === SEAT_COORDINATOR ? targetSlot : null,
+    // A POOLED seat keeps its slot; a tagged one is slotless by construction, and handing it
+    // the outgoing slot would put it in the pool. Read off the tag now rather than the kind, so
+    // a successor of a pre-tag record is judged by the same rule as everything else.
+    slot: outgoingTags.length === 0 ? targetSlot : null,
     name: pickName(takenNames, state.mates.length, namePoolForTheme(currentTheme())),
     root: root ? path.resolve(root) : null,
     status: "active",
