@@ -35,8 +35,63 @@ const REPORTS_SUBDIR = "reports";
 // mate reads with helm_collect_reports (the pull model, design section 2).
 const ACKS_SUBDIR = "acks";
 
+const LEGACY_CALLS_FILE = "legacy-tool-calls.jsonl";
+
 function dispatchRoot(metaHome) {
   return path.join(metaHome, DISPATCH_DIRNAME);
+}
+
+/**
+ * A call that arrived under a tool's OLD name, appended so the aliases can be removed on a
+ * measurement rather than on an assumption.
+ *
+ * ONLY the old names are recorded, so an empty file IS the answer - nothing to filter, nothing
+ * to interpret. And it is a side effect: the call proceeds whether or not this succeeds, or the
+ * record becomes a way for a rename to break the thing it was meant to keep working.
+ *
+ * Append-only because the server is short-lived - one process per session under `claude -p` -
+ * so nothing can be held in memory and counted later.
+ *
+ * The absence of exactly this is why helm_report_up could produce nothing for eight weeks with
+ * nobody able to say whether it had been called and refused or never called at all.
+ */
+export function recordLegacyToolCall(metaHome, name, { now = Date.now() } = {}) {
+  if (!metaHome || !name) {
+    return false;
+  }
+  try {
+    fs.mkdirSync(dispatchRoot(metaHome), { recursive: true });
+    fs.appendFileSync(
+      path.join(dispatchRoot(metaHome), LEGACY_CALLS_FILE),
+      JSON.stringify({ name, at: new Date(now).toISOString() }) + "\n",
+      "utf8"
+    );
+    return true;
+  } catch {
+    // Never the reason a tool call fails.
+    return false;
+  }
+}
+
+/** Every legacy call recorded so far, oldest first. A missing file means none. */
+export function readLegacyToolCalls(metaHome) {
+  try {
+    return fs
+      .readFileSync(path.join(dispatchRoot(metaHome), LEGACY_CALLS_FILE), "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => {
+        try {
+          return JSON.parse(line);
+        } catch {
+          // A torn line from a crashed append is not a reason to lose the rest.
+          return null;
+        }
+      })
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
 }
 
 export function requestsDir(metaHome) {

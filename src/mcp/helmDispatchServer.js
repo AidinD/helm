@@ -38,7 +38,9 @@ import {
   readAck,
   readReports,
   readFleetState,
+  recordLegacyToolCall,
 } from "../lib/dispatchQueue.js";
+import { LEGACY_TOOL_ALIASES } from "../lib/seatTools.js";
 
 const META_HOME = process.env.HELM_META_HOME || "";
 const MATE_ID = process.env.HELM_MATE_ID || null;
@@ -153,32 +155,32 @@ const TOOLS = [
     inputSchema: { type: "object", properties: {} },
   },
   {
-    name: "helm_create_second_mate",
+    name: "helm_open_project",
     description:
-      "FIRST MATES ONLY: register a second mate for a project. Use it for BOTH the daily-loop 'lay out A, B, C' step AND, crucially, as your response whenever the captain names a single project to work on ('I want to work on dinghy') - reach for this INSTEAD of exploring the repo or implementing yourself. It ALSO covers work that has no project yet ('build me a new app'): pass an absolute path plus create:true and the folder is created for you, so a brand-new build is still a second mate's job and never yours. It does NOT spin up a session: it lazily registers the assignment so the second mate appears in the Fleet, and its session spins up only when the captain jumps into it (or you relay to it). So the pattern is: create it, then tell the captain to jump into it in the Fleet. Idempotent per project.",
+      "THE STANDING SEAT ONLY: open a project's first mate. Use it for BOTH the daily-loop 'lay out A, B, C' step AND, crucially, as your response whenever the captain names a single project to work on ('I want to work on dinghy') - reach for this INSTEAD of exploring the repo or implementing yourself. It ALSO covers work that has no project yet ('build me a new app'): pass an absolute path plus create:true and the folder is created for you, so a brand-new build is still a project seat's job and never yours. It does NOT spin up a session: it lazily registers the assignment so the project appears in the Fleet, and its session spins up only when the captain jumps into it (or you relay to it). So the pattern is: create it, then tell the captain to jump into it in the Fleet. Idempotent per project.",
     inputSchema: {
       type: "object",
       properties: {
         project: { type: "string", description: "Project name (see helm_list_projects) or absolute repo path." },
-        brief: { type: "string", description: "What this second mate should own for the project (the assignment)." },
+        brief: { type: "string", description: "What this project's first mate should own (the assignment)." },
         create: {
           type: "boolean",
           description:
-            "Set true when the project does not exist yet, and pass an absolute path for `project`. Creates the folder and registers a second mate rooted there. Without this a new build has nowhere to be delegated to, and the only route left is doing it yourself - which is not a route you have.",
+            "Set true when the project does not exist yet, and pass an absolute path for `project`. Creates the folder and registers a first mate rooted there. Without this a new build has nowhere to be delegated to, and the only route left is doing it yourself - which is not a route you have.",
         },
       },
       required: ["project"],
     },
   },
   {
-    name: "helm_relay_to_second_mate",
+    name: "helm_relay_to_project",
     description:
-      "FIRST MATES ONLY: drive a second mate WITHOUT the captain jumping in (the daily loop's 'orchestrate via the first mate' mode). Sends a message to the project's second mate; it works asynchronously (spins up if needed, dispatches its own crew, etc.) and reports back UP to you via helm_report_up - so this returns immediately, and you pick up the result with helm_collect_reports on a later turn. Use it to delegate + move on, not to converse in real time.",
+      "THE STANDING SEAT ONLY: drive a project's first mate WITHOUT the captain jumping in. Sends a message to that project's first mate; it works asynchronously (spins up if needed, dispatches its own crew, etc.) and reports back UP to you via helm_report_up - so this returns immediately, and you pick up the result with helm_collect_reports on a later turn. Use it to delegate + move on, not to converse in real time.",
     inputSchema: {
       type: "object",
       properties: {
         project: { type: "string", description: "Project name (see helm_list_projects) or absolute repo path." },
-        message: { type: "string", description: "What you want the second mate to do." },
+        message: { type: "string", description: "What you want that project's first mate to do." },
       },
       required: ["project", "message"],
     },
@@ -504,12 +506,26 @@ async function toolResumeCrew(args = {}) {
 }
 
 function callTool(name, args) {
+  // AN OLD NAME STILL WORKS, and the fact that it was used is written down.
+  //
+  // Renaming an MCP tool fails silently: a saved instruction or a running session calls the old
+  // name, the tool is not offered, and nothing errors anywhere - the seat behaves as though it
+  // never occurred to it. So the old names answer, and every call under one is recorded, so the
+  // aliases can be removed on a measurement instead of on an assumption about who has switched.
+  //
+  // Recording first and unconditionally: a failure to write must never stop the call, and the
+  // record must not depend on the tool underneath succeeding.
+  const canonical = LEGACY_TOOL_ALIASES[name];
+  if (canonical) {
+    recordLegacyToolCall(META_HOME, name);
+    return callTool(canonical, args);
+  }
   switch (name) {
     case "helm_dispatch":
       return toolDispatch(args || {});
-    case "helm_create_second_mate":
+    case "helm_open_project":
       return toolCreateSecondMate(args || {});
-    case "helm_relay_to_second_mate":
+    case "helm_relay_to_project":
       return toolRelay(args || {});
     case "helm_resume_fleet":
       return toolResumeFleet();

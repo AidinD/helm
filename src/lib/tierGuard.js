@@ -170,16 +170,21 @@ const MUTATING_TOOLS = new Set(["write", "edit", "notebookedit", "multiedit"]);
 // silently missed". Same reasoning, same fix.
 const WRITE_SHAPED = ["write", "edit", "patch", "creat", "delete", "remove", "rename", "upload", "commit", "push", "replace", "insert", "append", "mkdir", "save", "agent", "task", "workflow", "spawn", "dispatch", "worktree", "cron", "schedul", "sendmessage", "remotetrigger"];
 // Whole names only, so neither list can widen by accident. These are read tools and Helm's own
-// delegation tools - `helm_create_second_mate` contains "creat" and is the single most
-// important thing a blocked first mate must still be able to call.
+// delegation tools, which are the thing a blocked seat must still be able to call. The example
+// used to be `helm_create_second_mate` containing "creat"; that tool is `helm_open_project`
+// since 2026-09-05 and contains no stem at all. `helm_dispatch` contains "dispatch" and always
+// will, so the exemption below is no less load-bearing than it was - only its illustration
+// changed.
 const NOT_WRITE_SHAPED = new Set(["todowrite", "taskcreate", "taskupdate", "websearch", "webfetch", "read", "grep", "glob", "ls"]);
 
 /**
  * Servers whose writes this guard has no opinion about, by name prefix.
  *
  * `helm_` was the first and the reason is stated above: the delegation tools are the thing a
- * blocked seat must still be able to call, and `helm_create_second_mate` happens to contain
- * "creat".
+ * blocked seat must still be able to call, and `helm_dispatch` happens to contain "dispatch".
+ * The original example was `helm_create_second_mate` and "creat"; that tool was renamed on
+ * 2026-09-05 and no longer contains a stem, which is exactly how someone talks themselves out
+ * of a rule that is still doing work.
  *
  * The personal stores are here for a sharper reason, found on 2026-09-02 while wiring the
  * assistant seat. "MCP tools are not this guard's business" was believed to be true in
