@@ -64,6 +64,7 @@ freshStore("boot");
 const store = await import(pathToFileURL(toolsPath).href);
 const { readGoals, writeGoals, appendLog, readLog, changesSince } = store;
 const { isValidDay, isDirectChildOf, resolveDayFile, logDir, goalsFile, todayStamp, resolveStoreDir } = store;
+const { seedDayFile } = store;
 
 const TODAY = todayStamp();
 
@@ -275,6 +276,96 @@ const TODAY = todayStamp();
   const bigDay = budgeted.days.find((d) => d.date === d1);
   ok(bigDay.truncated === true && bigDay.text.length === 12000, `a long day is truncated at a stated budget (${bigDay.text.length})`);
   ok(/assistant_read_log/.test(bigDay.note || ""), "and names the tool that returns the rest");
+}
+
+// --- the day file is never visible and empty -------------------------------
+//
+// THE PROPERTY THE LOST WRITE WAS ABOUT. A day file that exists but has no heading yet is a
+// file whose end is offset 0, so an append into that window lands there and the seeding write
+// then goes on top of it. CI caught it once as "8 reported success, 7 landed across 1 day
+// file", which is the fingerprint: one file, one heading, one entry gone, and every writer told
+// ok. Reproduced deterministically before this was changed.
+//
+// Asserted at the seam rather than by racing. A race reproduces it perhaps once in a hundred
+// runs on a fast machine, so a race alone is a regression guard that is usually green on the
+// broken code - which is worse than none, because it teaches you to trust it. What is checked
+// here instead is the thing that makes the race harmless: at the moment the day file's NAME
+// comes into existence, its content is already complete.
+{
+  const dir = freshStore("seed-window");
+  fs.mkdirSync(logDir(dir), { recursive: true });
+  const day = todayStamp();
+  const file = resolveDayFile(dir, day).file;
+
+  let sawCompleteBeforeVisible = null;
+  let linkCalled = 0;
+  const seeded = seedDayFile(file, day, {
+    link: (tmp, dest) => {
+      linkCalled += 1;
+      // Both halves, together: the content is already there, and the name is not yet.
+      sawCompleteBeforeVisible = fs.readFileSync(tmp, "utf8") === `# ${day}\n` && !fs.existsSync(dest);
+      fs.linkSync(tmp, dest);
+    },
+  });
+
+  ok(seeded.ok, `the day file is seeded (${seeded.error || "ok"})`);
+  ok(linkCalled === 1, `and it goes through one atomic create-with-content (${linkCalled} call(s))`);
+  ok(
+    sawCompleteBeforeVisible === true,
+    "the heading is complete BEFORE the day file's name exists, so there is no empty file to append into"
+  );
+  ok(fs.readFileSync(file, "utf8") === `# ${day}\n`, "and the file that appears carries it");
+  ok(
+    fs.readdirSync(logDir(dir)).filter((f) => f.includes(".seed-")).length === 0,
+    "with no temp left beside it"
+  );
+
+  // The loser of the race gets EEXIST, which is the answer it wanted, and writes nothing.
+  fs.appendFileSync(file, "\nan entry that was already here\n", "utf8");
+  const again = seedDayFile(file, day);
+  ok(again.ok && again.alreadyThere === true, `a second seeder is told the day already exists (${JSON.stringify(again)})`);
+  ok(
+    fs.readFileSync(file, "utf8").includes("an entry that was already here"),
+    "and it does not overwrite what is already in the file - the whole bug, in one assertion"
+  );
+
+  // THE FALLBACK ARM, for a volume with no hard links. Driven, because a branch nobody can
+  // reach is a branch nobody has checked, and this one never runs on this machine.
+  const dir2 = freshStore("seed-fallback");
+  fs.mkdirSync(logDir(dir2), { recursive: true });
+  const file2 = resolveDayFile(dir2, day).file;
+  const viaFallback = seedDayFile(file2, day, {
+    link: () => {
+      const err = new Error("hard links are not supported here");
+      err.code = "EPERM";
+      throw err;
+    },
+  });
+  ok(viaFallback.ok, `the fallback seeds the day too (${viaFallback.error || "ok"})`);
+  const fallbackBody = fs.readFileSync(file2, "utf8");
+  ok(
+    fallbackBody.split("\n").filter((l) => l === `# ${day}`).length === 1,
+    `with exactly one heading (${JSON.stringify(fallbackBody)})`
+  );
+  // And it must not write at offset 0 either: an entry that got in first survives, even though
+  // the heading then arrives after it. Ordering is what the fallback gives up; content is not.
+  const dir3 = freshStore("seed-fallback-racer");
+  fs.mkdirSync(logDir(dir3), { recursive: true });
+  const file3 = resolveDayFile(dir3, day).file;
+  const raced = seedDayFile(file3, day, {
+    link: (tmp, dest) => {
+      // A racer that created the file by appending, in the instant before this seeder acted.
+      fs.appendFileSync(dest, "\nentry from the racer\n", "utf8");
+      const err = new Error("hard links are not supported here");
+      err.code = "EPERM";
+      throw err;
+    },
+  });
+  ok(raced.ok, `the fallback survives finding the file already there (${raced.error || "ok"})`);
+  ok(
+    fs.readFileSync(file3, "utf8").includes("entry from the racer"),
+    "and the racer's entry is still on disk - nothing is ever written at offset 0"
+  );
 }
 
 // --- a concurrent append never clobbers a sibling ---------------------------
