@@ -13640,6 +13640,26 @@ function seatForWidget(data, widget) {
   return everySeat.find((m) => m.mateId === wanted) || null;
 }
 
+/**
+ * Drop the legacy no-id assistant widget when the standing seat already has its own bound
+ * widget elsewhere on the board. A coordinator's `firstMate`/`projectSeat` widget carries its
+ * mateId; the legacy assistant widget carries none and resolves to data.assistant by tag alone
+ * (seatForWidget above). Promoting that same coordinator to assistant makes both widgets
+ * resolve to one seat, so the seat shows twice - the same de-dup rule placeProjectSeatWidgets
+ * already applies to other seat-shaped widgets.
+ */
+function dropRedundantAssistantWidget(layout, data) {
+  const seat = data?.assistant;
+  if (!seat?.mateId) {
+    return layout;
+  }
+  const boundElsewhere = (layout || []).some((w) => w.type !== "assistant" && w.mateId === seat.mateId);
+  if (!boundElsewhere) {
+    return layout;
+  }
+  return (layout || []).filter((w) => !(w.type === "assistant" && !w.mateId));
+}
+
 function widgetBodySeat(data, widget) {
   const seat = seatForWidget(data, widget);
   if (!seat) {
@@ -14546,7 +14566,7 @@ async function renderWidgetDashboard(page) {
       ? (data.projectSeats || []).map((seat) => seat.mateId)
       : [];
   const placed = placeProjectSeatWidgets(rebound.layout, data.projectSeats, alreadyPlaced);
-  const layout = placed.layout;
+  const layout = dropRedundantAssistantWidget(placed.layout, data);
   // THE MIGRATION HAS TO BE WRITTEN DOWN THE FIRST TIME, even when it changes no widget, and
   // this is the second thing the check caught. Read-time migration usually costs nothing to
   // repeat; this one is not idempotent, because it snapshots "every project seat that exists

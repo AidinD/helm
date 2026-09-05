@@ -2794,8 +2794,13 @@ ipcMain.handle("mates:setAssistant", (_event, { mateId, on = true } = {}) => {
       return { ...res, active: activeMates(), assistant: assistantSeat(), projects: projectSeats() };
     }
     // Re-read rather than reusing `before`: setSeatAssistant wrote the store between them.
-    const next = clampMateSlots(on ? before - 1 : before + 1);
-    writeConfig({ ...loadConfig(), firstMateSlots: next });
+    // A redundant call (res.changed === false) moved no tag, so the slot count must not move
+    // either - otherwise a stale duplicate widget's "demote" click drifts firstMateSlots away
+    // from the real coordinator-pool size with nothing left to explain it.
+    const next = res.changed ? clampMateSlots(on ? before - 1 : before + 1) : before;
+    if (res.changed) {
+      writeConfig({ ...loadConfig(), firstMateSlots: next });
+    }
     return {
       ok: true,
       seat: res.seat,

@@ -566,6 +566,11 @@ export function assistantSeat() {
  * A PROJECT SEAT IS REFUSED. Its root is a checkout and the assistant's store is the meta
  * home's, so the two would disagree about where the seat is - and a seat that is both is a
  * kind again, which is what the tags replaced.
+ *
+ * `changed` says whether a tag actually moved. The caller adjusts firstMateSlots by one per
+ * real promotion/demotion; a redundant call (already the assistant and asked to stay, or
+ * already not and asked to leave) must report `changed: false` or that count drifts from the
+ * actual pool size with nothing to explain it later.
  */
 export function setSeatAssistant(mateId, on = true) {
   const state = readState();
@@ -581,13 +586,16 @@ export function setSeatAssistant(mateId, on = true) {
   }
   if (!on) {
     if (!seatHasTag(seat, SEAT_TAG_ASSISTANT)) {
-      return { ok: true, seat };
+      return { ok: true, seat, changed: false };
     }
     seat.tags = [];
     seat.slot = firstFreeSlot(state.mates);
     compactCoordinatorSlots(state);
     writeState(state);
-    return { ok: true, seat };
+    return { ok: true, seat, changed: true };
+  }
+  if (seatHasTag(seat, SEAT_TAG_ASSISTANT)) {
+    return { ok: true, seat, changed: false };
   }
   for (const other of state.mates) {
     if (other.mateId !== seat.mateId && other.status === "active" && seatHasTag(other, SEAT_TAG_ASSISTANT)) {
@@ -609,7 +617,7 @@ export function setSeatAssistant(mateId, on = true) {
   // reason spelled out on retireMateSlot.
   compactCoordinatorSlots(state);
   writeState(state);
-  return { ok: true, seat };
+  return { ok: true, seat, changed: true };
 }
 
 /** The active seat opened against this checkout, or null. Never creates one. */
