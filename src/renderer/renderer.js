@@ -13130,34 +13130,12 @@ function widgetLayout(mates, projectSeats = []) {
     // theirs, and a widget whose type has no spec renders as an untitled empty box with no
     // way to tell what it was. Dropped by the general rule rather than by name, so the next
     // removal needs no second change here.
-    const kept = saved.filter((w) => w && WIDGET_CATALOG[w.type]);
-    if (kept.length === saved.length) {
-      return kept;
-    }
-    // WHERE the replacements go, which is not a detail. Appending them put four project
-    // widgets at the bottom of the board, below Docs drift, while the space the Captain
-    // widget occupied closed up - so the rows moved twice: out of one column and down past
-    // everything else. They go where the dropped widget was instead, because that is where
-    // the eye already looks for that work.
-    const at = saved.findIndex((w) => !w || !WIDGET_CATALOG[w.type]);
-    const insertAt = at < 0 ? kept.length : Math.min(at, kept.length);
-    // SOMETHING WAS DROPPED, and if it was the Captain widget its rows need somewhere to be.
-    // Opening the seats was only half of it: a seat with no widget is exactly as invisible as
-    // a row with no column, and the whole point of the backfill was that removing this widget
-    // must relocate work rather than hide it. So the seats take the place the widget vacated.
-    //
-    // Only when a drop actually happened, so this cannot keep adding widgets to a board the
-    // captain has since tidied - a seat he removed from the board stays removed.
-    const onBoard = new Set(kept.filter((w) => w.type === "projectSeat").map((w) => w.mateId));
-    const fresh = [];
-    for (const seat of projectSeats || []) {
-      if (onBoard.has(seat.mateId)) {
-        continue;
-      }
-      fresh.push({ id: `w-project-${seat.mateId}`, type: "projectSeat", span: 4, mateId: seat.mateId });
-    }
-    kept.splice(insertAt, 0, ...fresh);
-    return kept;
+    // Drop widgets whose type the catalog no longer knows, and nothing else. Placing the
+    // project seats used to happen here, conditioned on a drop having occurred - which meant
+    // a board that had never carried a Captain widget got no project widgets at all. His did
+    // not: eight seats existed and none were on the board. See placeProjectSeatWidgets, where
+    // the placement now lives with a condition about the seats rather than about the drop.
+    return saved.filter((w) => w && WIDGET_CATALOG[w.type]);
   }
   const layout = [
     { id: "w-needs", type: "needsYou", span: 8, orientation: "horizontal" },
@@ -13177,6 +13155,52 @@ function widgetLayout(mates, projectSeats = []) {
     { id: "w-docsDrift", type: "docsDrift", span: 4 },
   );
   return layout;
+}
+
+/**
+ * Put every project seat on the board, ONCE.
+ *
+ * THE CONDITION IS THE WHOLE PROBLEM. Placing them on every render re-adds a widget the
+ * captain deliberately removed, which makes the board impossible to tidy. Placing them only
+ * when something was dropped from the saved layout - the first attempt - meant a board that
+ * had never carried a Captain widget got nothing, and his had not carried one for weeks: eight
+ * seats existed, the "+" menu offered all eight, and the board showed none.
+ *
+ * So the condition is neither. It is a one-time marker: the seats are placed on the first
+ * render that has any, and never again. Removing one afterwards is permanent, which is what
+ * makes the board's crowding a governor he can actually operate.
+ *
+ * Returns the layout and whether anything changed, so the caller persists deliberately rather
+ * than relying on some other change happening to trigger a save - which is how the previous
+ * version could have inserted widgets that were never written down.
+ */
+function placeProjectSeatWidgets(layout, projectSeats, alreadyPlaced) {
+  const seats = projectSeats || [];
+  if (alreadyPlaced || seats.length === 0) {
+    return { layout, changed: false };
+  }
+  const onBoard = new Set((layout || []).filter((w) => w.type === "projectSeat").map((w) => w.mateId));
+  const fresh = seats
+    .filter((seat) => !onBoard.has(seat.mateId))
+    .map((seat) => ({ id: `w-project-${seat.mateId}`, type: "projectSeat", span: 4, mateId: seat.mateId }));
+  if (fresh.length === 0) {
+    // Already all there. Still counts as placed, so the marker gets written and this stops
+    // asking - otherwise a board he later empties would refill on the next render.
+    return { layout, changed: true };
+  }
+  // WHERE they go: with the other seats rather than at the end. Appending them put them below
+  // Docs drift while the space they were replacing closed up, so the rows moved twice. After
+  // the last seat-shaped widget is where the eye already looks for a seat.
+  const isSeat = (w) => w.type === "firstMate" || w.type === "assistant" || w.type === "projectSeat";
+  let at = -1;
+  (layout || []).forEach((w, i) => {
+    if (isSeat(w)) {
+      at = i;
+    }
+  });
+  const next = [...(layout || [])];
+  next.splice(at < 0 ? next.length : at + 1, 0, ...fresh);
+  return { layout: next, changed: true };
 }
 
 /**
@@ -13278,8 +13302,8 @@ async function seedNewWidgets(save = (patch) => window.helm.setConfig(patch)) {
   await save({ dashboardWidgets: next });
 }
 
-async function saveWidgetLayout(layout) {
-  const next = { ...(state.config?.dashboardWidgets || {}), layout };
+async function saveWidgetLayout(layout, extra = null) {
+  const next = { ...(state.config?.dashboardWidgets || {}), layout, ...(extra || {}) };
   state.config = { ...state.config, dashboardWidgets: next };
   await window.helm.setConfig({ dashboardWidgets: next });
 }
@@ -14365,8 +14389,20 @@ async function renderWidgetDashboard(page) {
   // (task acb34a24). Persisted when it actually happens, so the adoption is stable and
   // the Add-widget menu offers the same answer this render just drew.
   const rebound = rebindFirstMateWidgets(widgetLayout(mates, data.projectSeats), mates);
-  const layout = rebound.layout;
-  if (rebound.changed) {
+  const placed = placeProjectSeatWidgets(
+    rebound.layout,
+    data.projectSeats,
+    !!state.config?.dashboardWidgets?.projectSeatsPlacedAt
+  );
+  const layout = placed.layout;
+  if (placed.changed) {
+    try {
+      await saveWidgetLayout(layout, { projectSeatsPlacedAt: Date.now() });
+    } catch {
+      // A failed write must not stop the board drawing. The widgets are placed for THIS
+      // render either way; the marker simply stays unset and it is tried again next time.
+    }
+  } else if (rebound.changed) {
     try {
       await saveWidgetLayout(layout);
     } catch {

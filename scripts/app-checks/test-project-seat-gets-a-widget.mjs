@@ -128,12 +128,34 @@ try {
   assert(!removed.inCatalog, "the Captain widget is out of the catalog");
   assert(!removed.captainCard, "a saved layout naming it draws nothing rather than an untitled empty box");
   assert(removed.autoStillThere, "while the Auto widget beside it is untouched - the drop is by unknown type, not a purge");
-  // AND THE SEATS TAKE ITS PLACE. Opening the seats was only half the job: a seat with no
-  // widget is exactly as invisible as a row with no column. Dropping the Captain widget from a
-  // saved layout therefore puts the project seats on the board in the space it vacated.
+  // THE PLACEMENT IS NOT TIED TO THE DROP ANY MORE, and this is the case that forced it. His
+  // board had not carried a Captain widget for weeks: eight seats existed, the add menu
+  // offered all eight, and the board showed none - because placement was conditioned on a
+  // widget having been DROPPED rather than on the seats not being there. Conditioning on the
+  // mechanism instead of the property, one more time.
+  //
+  // It is now a one-time marker, so the seats arrive on a board that never had a Captain
+  // widget, and a seat he removes afterwards stays removed.
+  const placement = await app.eval(`(async () => {
+    state.config = { ...state.config, dashboardWidgets: { layout: [{ id: "w-auto", type: "auto", span: 4 }] } };
+    await renderDashboardPage();
+    const projects = () => [...document.querySelectorAll(".wd")].filter((c) => (c.dataset.widgetId || "").startsWith("w-project-")).length;
+    const placed = projects();
+    const marker = !!state.config?.dashboardWidgets?.projectSeatsPlacedAt;
+    // Now tidy the board and render again: they must not come back.
+    await saveWidgetLayout([{ id: "w-auto", type: "auto", span: 4 }]);
+    await renderDashboardPage();
+    return { placed, marker, afterTidy: projects() };
+  })()`);
+  log(JSON.stringify(placement));
   assert(
-    removed.widgets >= 3,
-    "the project seats take the place the Captain widget vacated, so its rows are relocated rather than hidden (" + removed.widgets + " widgets)"
+    placement.placed === 2,
+    "a board that never carried a Captain widget still gets one widget per project seat (" + placement.placed + ")"
+  );
+  assert(placement.marker, "and the one-time marker is written");
+  assert(
+    placement.afterTidy === 0,
+    "so removing them afterwards is permanent - the board can be tidied (" + placement.afterTidy + ")"
   );
 } catch (err) {
   exitCode = 1;
