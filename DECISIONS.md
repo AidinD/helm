@@ -1,5 +1,24 @@
 # Decisions
 
+## 2026-09-05 - One seat kind, and identity is a property rather than a widget
+
+There is one seat and one widget for it. A seat's identity - assistant, project, and later supervisor - is a property of the seat, on its own axis, and never a separate kind with a surface of its own.
+
+**Stated by the person, from the board rather than from the code**, after looking at a screen showing a widget titled with a role name beside two titled with the tier name: only first mates, and a first mate behaves either as an assistant or as a project. That is not a new direction. It is the 2026-09-04 two-axes entry, which this implementation did not follow.
+
+**The implementation drifted, and it is traceable rather than mysterious.** The standing seat was asked for as a widget and built as one, correctly. Then it turned out to be capturing a slot from the coordinator pool at retirement, and the fix made it slotless - which required something to distinguish it, which became a kind, which became a surface. Every step was locally right. The end state is a taxonomy nobody chose: three kinds where the model has one, and a picker offering a temperament on a seat whose kind has already decided what it is. The dropdown reads "Coordinator" on a seat that is not one, which is where a person could see the incoherence without reading a line of source.
+
+**The file already held both models, ten lines apart.** One function sets the identity as a kind and the temperament to null, commented as "a temperament overlay; this seat has a manual of its own". Another, in the same file, says that a meta-home seat *carrying the assistant persona* is a standing assistant. The second is the model; the first is what runs.
+
+**What decides the identity, and this is the part the earlier entry got wrong.** That entry said the root decides the kind. It cannot: two standing seats now share the meta-home root and must not share a toolset, so a root-derived identity hands the second one the first one's permissions on the day it exists. This is the 2026-07-15 revert restated - rooting alone was tried as the way to make a seat what it is, and taken back. **The root may propose an identity and must never be one.** The tool allowlist is already keyed on the seat rather than on where it sits, and that split is what makes this correction cheap instead of structural.
+
+**A consequence that is not cosmetic: the standing seat gets an ordinary name.** It is currently named for its role, in a different language from every other identifier in the codebase, and that name is how other sessions address it. Under one kind it takes a name from the same pool as its peers, which means **addressing it by name stops working and addressing it by identity starts** - "the seat whose identity is assistant", resolved once, rather than a string duplicated across manuals that drift. The rename is the smaller half; the addressing is the half that breaks callers, and it breaks them silently, because a message to a name nobody holds is not an error anywhere.
+
+**Where this lands in the migration.** It is not a new stage. The stage that removes the seat kind is exactly this change, and its four kind-predicates are the four places identity has to come from instead. The named-standing-seats decision from earlier today is the same edit again: named seats with distinct identities on a shared root is what one kind plus an identity axis *means*. Three cards, one change - and that is worth saying, because sequencing them as three is how the accessor gets rewritten three times.
+
+**What must not be lost in the collapse.** The reason the standing seat is not simply a coordinator with another manual still holds and is about writes, not about widgets: the tier denies writing by tool with no notion of a path, and a seat whose output is a sentence written down in the same turn cannot run under that. The write access comes from which store surfaces the launch attaches, and never from the guard relaxing. One kind must not become one permission set.
+
+
 ## 2026-09-05 - Two correct reads composed into a wrong answer
 
 A measurement script read the installed app's run history by an explicit path and its bindings by the default one. Both reads succeeded, both stores were real, and the default resolved to the DEV checkout: 2 bindings against the installed store's 13. The numbers that came out described a machine that does not exist.
