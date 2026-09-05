@@ -2,10 +2,21 @@
 //
 // Say at INSTALL time that a sibling package is missing, instead of at first launch.
 //
-// This repo depends on two packages by `file:` path, and neither is published. npm is happy to
-// leave a DANGLING SYMLINK for one and still exit 0, so `npm install` reports success and the
-// app then dies on its first import with a module-resolution error - no window, no dialog,
-// nothing. That is how somebody installed Helm and found it simply did not start.
+// This repo depends on packages that are not published. One is still a `file:` sibling, and npm
+// is happy to leave a DANGLING SYMLINK for it and exit 0 anyway, so `npm install` reports
+// success and the app then dies on its first import with a module-resolution error - no window,
+// no dialog, nothing. That is how somebody installed Helm and found it simply did not start.
+//
+// ## What is checked is what must RESOLVE, not what is spelled `file:`
+//
+// keel moved to a git tag on 2026-09-05, and the first version of this check lost sight of it
+// the moment it did: the list was built by filtering the dependencies for `file:`, so changing
+// how the package arrives silently emptied the check of the one package it calls fatal. Nothing
+// failed. The test one directory over went on printing "so the check calls a missing keel
+// FATAL" and passing, because it was reading a severity entry the script could no longer reach.
+//
+// The property is that node can LOAD the package. How it was specified is only how it got
+// there, and it decides the DIAGNOSIS below - not whether the package is looked at.
 //
 // The runtime half of that is fixed: the optional package is imported lazily now and its
 // absence degrades with a message. What was left is this - the install saying so, while
@@ -34,15 +45,21 @@ const repo = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const pkg = JSON.parse(fs.readFileSync(path.join(repo, "package.json"), "utf8"));
 
 /**
- * What each `file:` dependency costs when it is absent. Named rather than guessed: whether a
- * missing package kills the process or degrades a feature is a fact about the imports, and a
- * check that assumed one answer for both would be wrong in one direction or the other.
+ * What each dependency costs when it is absent. Named rather than guessed: whether a missing
+ * package kills the process or degrades a feature is a fact about the imports, and a check that
+ * assumed one answer for both would be wrong in one direction or the other.
+ *
+ * `fix` answers the sibling states (a folder that is missing, unbuilt, or unlinked). `fixMissing`
+ * answers a package that simply is not in node_modules, which is the only way a tagged
+ * dependency can be absent - sending somebody to clone a sibling there would name a directory
+ * the dependency no longer mentions.
  */
 const SEVERITY = {
   keel: {
     fatal: true,
     why: "imported at the top of main.js and of lib/atomicWrite.js, which nearly everything imports - the process throws before any of Helm's own code can report it",
     fix: "clone it beside this repo: git clone https://github.com/AidinD/keel ../keel",
+    fixMissing: "run npm install - it comes from the tag named in package.json; if you are developing both, npm link ../keel",
   },
   "@jot/core": {
     fatal: false,
@@ -52,11 +69,15 @@ const SEVERITY = {
 };
 
 const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
-const siblings = Object.entries(deps).filter(([, spec]) => String(spec).startsWith("file:"));
+// Everything classified above, plus any `file:` sibling that is not - so adding a sibling
+// without classifying it is still reported, and moving a classified one off `file:` does not
+// quietly drop it out of the check.
+const checked = Object.entries(deps).filter(([name, spec]) => name in SEVERITY || String(spec).startsWith("file:"));
 
 const problems = [];
-for (const [name, spec] of siblings) {
-  const target = path.resolve(repo, String(spec).replace(/^file:/, ""));
+for (const [name, spec] of checked) {
+  const isSibling = String(spec).startsWith("file:");
+  const target = isSibling ? path.resolve(repo, String(spec).replace(/^file:/, "")) : null;
   const linked = path.join(repo, "node_modules", ...name.split("/"));
 
   // RESOLVABILITY FIRST, and this order is the whole correctness of the check.
@@ -78,7 +99,11 @@ for (const [name, spec] of siblings) {
   if (fs.existsSync(path.join(linked, "package.json"))) {
     continue;
   }
-  if (!fs.existsSync(target)) {
+  if (!isSibling) {
+    // Nothing to diagnose: there is no folder this was meant to come from. It was declared and
+    // it is not installed.
+    state = "not-installed";
+  } else if (!fs.existsSync(target)) {
     // "cloned but not built" only when the target's PARENT is itself a checkout - which is
     // what `../jot/dist-core` looks like when jot is cloned and unbuilt. Testing merely that
     // the parent exists was wrong and said so out loud: for `../keel` the parent is this
@@ -96,7 +121,12 @@ for (const [name, spec] of siblings) {
   if (!state) {
     continue;
   }
-  const sev = SEVERITY[name] || { fatal: true, why: "declared as a file: dependency of this repo", fix: `provide it at ${target}` };
+  const sev = SEVERITY[name] || {
+    fatal: true,
+    why: "declared as a dependency of this repo",
+    fix: `provide it at ${target}`,
+    fixMissing: "run npm install",
+  };
   problems.push({ name, spec, target, state, ...sev });
 }
 
@@ -105,6 +135,7 @@ if (problems.length === 0) {
 }
 
 const label = {
+  "not-installed": "it is not in node_modules - the install never put it there",
   "not-cloned": "its folder does not exist",
   "not-built": "the folder is there but has no package.json - it looks cloned but not built",
   "not-linked": "the source is there, but node_modules has no working link to it (npm exits 0 on a dangling one)",
@@ -120,9 +151,11 @@ out.push("");
 for (const p of [...fatal, ...degraded]) {
   out.push(`  ${p.name}  (${p.spec})`);
   out.push(`      ${label[p.state]}`);
-  out.push(`      expected at: ${p.target}`);
+  if (p.target) {
+    out.push(`      expected at: ${p.target}`);
+  }
   out.push(`      ${p.fatal ? "WITHOUT IT HELM DOES NOT START" : "without it Helm starts, degraded"}: ${p.why}`);
-  out.push(`      fix: ${p.fix}`);
+  out.push(`      fix: ${p.state === "not-installed" ? p.fixMissing || p.fix : p.fix}`);
   out.push("");
 }
 if (fatal.length) {

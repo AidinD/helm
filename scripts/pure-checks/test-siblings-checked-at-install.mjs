@@ -1,8 +1,16 @@
 // A missing sibling package is reported at INSTALL time, and its severity matches the imports.
 //
-// This repo depends on two unpublished packages by `file:` path. npm leaves a dangling symlink
-// and still exits 0, so an install reports success and the app dies on its first import - no
-// window, no dialog. That is how somebody installed Helm and found it simply did not start.
+// This repo depends on unpublished packages: one `file:` sibling and one git tag. npm leaves a
+// dangling symlink for a missing sibling and still exits 0, so an install reports success and
+// the app dies on its first import - no window, no dialog. That is how somebody installed Helm
+// and found it simply did not start.
+//
+// THIS CHECK ITSELF FAILED THAT WAY ON 2026-09-05, which is why the scope is asserted below
+// and not assumed. keel moved from `file:../keel` to a tag; the script picked what to check by
+// filtering the dependencies for `file:`, so keel left the check silently - and this file went
+// on printing "so the check calls a missing keel FATAL, and fails the install", and passing,
+// because it was reading a severity entry the script could no longer reach. A green line
+// describing something that is no longer happening is the defect, not the missing coverage.
 //
 // The point of this check is not that a script exists. It is that the script's JUDGEMENT still
 // matches the code:
@@ -41,15 +49,29 @@ ok(
   `the check is wired as postinstall (${pkg.scripts?.postinstall || "(not wired)"}) - a script nobody runs says nothing at install time`
 );
 
-// --- every file: dependency is classified -------------------------------------------------
+// --- every unpublished dependency is IN SCOPE, however it is spelled -----------------------
+// Driven against a fake tree further down rather than trusted from the filter here: what has
+// to hold is that a declared package which does not resolve gets reported, and how the script
+// picks what to look at is only one of the ways that can stop being true.
 const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
-const siblings = Object.entries(deps)
-  .filter(([, spec]) => String(spec).startsWith("file:"))
-  .map(([name]) => name);
-ok(siblings.length > 0, `there are file: dependencies to check (${siblings.join(", ")})`);
-for (const name of siblings) {
-  ok(script.includes(`"${name}"`) || new RegExp(`^\\s*${name}:`, "m").test(script), `${name} is classified in the check`);
+const unpublished = Object.entries(deps).filter(([, spec]) =>
+  ["file:", "github:", "git+"].some((prefix) => String(spec).startsWith(prefix))
+);
+ok(
+  unpublished.length > 0,
+  `there are unpublished dependencies to check (${unpublished.map(([n, v]) => `${n}=${v}`).join(", ")})`
+);
+for (const [name] of unpublished) {
+  const classified = script.includes(`${name}: {`) || script.includes(`"${name}": {`);
+  ok(classified, `${name} is classified in the check`);
 }
+// The line that makes the rest of this file honest. keel stopped being a file: dependency on
+// 2026-09-05 and a check written against `file:` stopped looking at it that same minute, with
+// nothing failing anywhere. If this assertion ever fails, the two below it need re-reading.
+ok(
+  !String(deps.keel || "").startsWith("file:"),
+  `keel is not a file: sibling any more (${deps.keel}) - a check that selected on file: would not be looking at it`
+);
 
 // --- and the classification matches the imports -------------------------------------------
 // The load-bearing half. Both directions, because a check that only asserted "keel is fatal"
@@ -129,6 +151,33 @@ try {
       `a package sitting in node_modules with NO sibling directory passes (exit ${resolvable.code}) - resolvability is the rule, not where the source lives`
     );
     ok(resolvable.err.trim() === "", `and says nothing at all about it (${resolvable.err.trim().slice(0, 80) || "silent"})`);
+  }
+
+  // THE CASE THAT SILENTLY LEFT THE CHECK: a package declared by TAG that is not in
+  // node_modules. There is no folder to diagnose and no sibling to clone, so the message has
+  // to say the install never put it there and name npm install - and the exit code is still 1,
+  // because a missing keel is fatal however it was going to arrive.
+  {
+    const tagged = path.join(tmp, "tagged");
+    fs.mkdirSync(path.join(tagged, "scripts"), { recursive: true });
+    fs.mkdirSync(path.join(tagged, "node_modules"), { recursive: true });
+    fs.copyFileSync(path.join(repo, "scripts", "check-siblings.mjs"), path.join(tagged, "scripts", "check-siblings.mjs"));
+    fs.writeFileSync(
+      path.join(tagged, "package.json"),
+      JSON.stringify({ name: "helm", dependencies: { keel: "github:AidinD/keel#v0.1.18" } })
+    );
+    const missing = runIn(tagged);
+    ok(missing.code === 1, `a tagged keel that is not installed FAILS the install (exit ${missing.code})`);
+    ok(/not in node_modules/.test(missing.err), "and says the install never put it there");
+    ok(/npm install/.test(missing.err), "and names npm install rather than a clone that would not help");
+    ok(!/expected at:/.test(missing.err), "and names no folder, because a tag does not come from one");
+
+    // And it goes quiet once the package is loadable - the same rule as everywhere else here,
+    // so this state cannot be satisfied by a sibling directory node never reads.
+    fs.mkdirSync(path.join(tagged, "node_modules", "keel"), { recursive: true });
+    fs.writeFileSync(path.join(tagged, "node_modules", "keel", "package.json"), JSON.stringify({ name: "keel" }));
+    const installed = runIn(tagged);
+    ok(installed.code === 0 && installed.err.trim() === "", `and passes once it is really there (exit ${installed.code})`);
   }
 
   // Cloned but not built is its own message, because its fix is a build and not a clone.

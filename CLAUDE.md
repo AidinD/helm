@@ -19,22 +19,35 @@ first-mate capability gap) - read it before any orchestration/dispatch work.
 
 ## Helm depends on keel
 
-**keel** (github.com/AidinD/keel) is the suite's shared layer, linked as
-`file:../keel` — so it must be checked out at `D:\Repo\Tools\keel`. It is a real
-`dependency`, not a devDependency: Helm ships its source unbuilt, so the import is
-live at runtime and electron-builder has to pack it. Tend and Brief are the same
-case and have shipped that way.
+**keel** (github.com/AidinD/keel) is the suite's shared layer. Since 2026-09-05 it is a
+**git dependency pinned to a tag** (`github:AidinD/keel#v0.1.18`), not a `file:../keel`
+sibling. It is a real `dependency`, not a devDependency: Helm ships its source unbuilt,
+so the import is live at runtime and electron-builder has to pack it.
 
-`npm install` does **not** fail when the sibling is missing — npm 11 links a
-missing `file:` dependency to a dangling symlink and exits 0. The failure lands at
-the first import, and here that is `src/lib/atomicWrite.js`, which every durable
-store goes through.
+**Why the change.** `npm install` does NOT fail when a `file:` sibling is missing - npm 11
+links it to a dangling symlink and exits 0, and the failure lands at the first import,
+which here is `src/lib/atomicWrite.js` and therefore every durable store. A tag fails at
+install instead, which is where a missing dependency belongs. Chosen over publishing to
+npm because it is reversible and needs no registry.
 
-That file is now a thin binding of `keel/storage`. The implementation is the one
-Helm wrote — it was the best in the suite, so it became the shared one — and the
-fourteen modules that import from `./atomicWrite.js` did not change. Editing keel
-changes Helm immediately with no rebuild step, so run `npm test` in keel before
-assuming a change there is fine.
+**What it costs, and the way back.** Editing `../keel` no longer changes Helm: node_modules
+holds a copy of the tag. When you are actually developing both, run `npm link ../keel` in
+Helm and the sibling is live again until the next install. Run `npm test` in keel before
+tagging.
+
+**Bumping keel.** Commit in keel, bump its `version` to match, tag it, push both, then
+point Helm's `package.json` at the new tag. **Do not move an existing tag** -
+`package-lock.json` pins the commit sha, so a moved tag installs the old code and reports
+the old version, which looks exactly like the bump not having happened. Found by doing it.
+
+**And keel's own `prepare` must survive an install that is not a git checkout.** It points
+git at `.githooks`, which is right for a clone and fatal for a consumer: the package lands
+somewhere that is not a repository, `git config` exits non-zero, and the whole install
+fails with exit 128. It is guarded now.
+
+`src/lib/atomicWrite.js` is a thin binding of `keel/storage`. The implementation is the one
+Helm wrote - it was the best in the suite, so it became the shared one - and the fourteen
+modules that import from `./atomicWrite.js` did not change.
 
 ## Moving a Jot task to review (do not skip the record)
 
