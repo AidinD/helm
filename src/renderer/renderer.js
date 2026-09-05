@@ -13486,13 +13486,41 @@ function widgetBodyNeedsYou(data, widget) {
  * so the empty text says "loading", not "none", because "none" would be a lie about a seat
  * that always exists.
  */
-function widgetBodyAssistant(data) {
-  if (!data.assistant) {
+/**
+ * EVERY SEAT RENDERS THE SAME CARD, because there is one kind of seat.
+ *
+ * There were three bodies - one per widget type - and they differed in where they looked the
+ * seat up and in nothing else that mattered: all three ended in the same fleetMateCardEl call.
+ * Three lookups for one question is the taxonomy-in-several-places problem the tag change just
+ * removed from the store, and it had a copy here.
+ *
+ * the captain's words, which are what makes this the model change rather than tidying: "jag vill att
+ * assistenten ska vara samma widget som en first mate ... heta och bete sig som en first mate".
+ * This is the BEHAVE half. What it is CALLED is vocabulary and belongs to that card, not this
+ * one - mixing them produces a diff where nobody can see which half broke.
+ *
+ * The nodes under a seat fall out rather than being special-cased: nothing names the standing
+ * seat as its parent, so it gets an empty list without anyone saying so.
+ */
+function seatForWidget(data, widget) {
+  const wanted = widget?.mateId;
+  const everySeat = [...(data.mates || []), ...(data.projectSeats || []), ...(data.assistant ? [data.assistant] : [])];
+  if (!wanted) {
+    // The standing seat's widget has never carried a mateId - it was a singleton, so there was
+    // nothing to carry. Kept working rather than migrated, the same choice made for records
+    // written before tags.
+    return data.assistant || null;
+  }
+  return everySeat.find((m) => m.mateId === wanted) || null;
+}
+
+function widgetBodySeat(data, widget) {
+  const seat = seatForWidget(data, widget);
+  if (!seat) {
     return widgetEmpty("Reading the seat…");
   }
-  // No second mates under it: this seat coordinates by asking and by handing work over, and
-  // any crew it dispatches belongs to the project seat that ends up owning the work.
-  return fleetMateCardEl(data.assistant, [], data.boardSummary || {});
+  const sms = (data.secondMates || []).filter((s) => s.firstMateId === seat.mateId);
+  return fleetMateCardEl(seat, sms, data.boardSummary || {});
 }
 
 function widgetBodyFirstMate(data, widget) {
@@ -13500,28 +13528,26 @@ function widgetBodyFirstMate(data, widget) {
   if (!mate) {
     // Only reachable when there is no unclaimed mate left to adopt (see
     // resolveFirstMateWidgetMates) - so this is an empty SLOT, not a stale binding, and
-    // it fills itself the moment a first mate joins the fleet.
+    // it fills itself the moment a first mate joins the fleet. Kept as its own message
+    // because it is about ADOPTION, which a pool widget has and a bound one does not.
     return widgetEmpty("No first mate for this slot yet - it takes the next one that joins the fleet. Add one from \"+ Add widget\", or remove the slot.");
   }
-  // The REAL first-mate card: persona picker, context gauge, retire nudge, and
-  // its second mates with their own badges / jump-in / Archive.
-  const sms = (data.secondMates || []).filter((s) => s.firstMateId === mate.mateId);
-  return fleetMateCardEl(mate, sms, data.boardSummary || {});
+  return widgetBodySeat(data, widget);
 }
 
 function widgetBodyProjectSeat(data, widget) {
   const seat = (data.projectSeats || []).find((m) => m.mateId === widget.mateId);
   if (!seat) {
+    // Its own message for the same reason as above, and the opposite one: this widget names a
+    // repository and must NOT adopt, so an empty one says which project it is waiting for
+    // rather than promising to fill itself.
     // NOT adopted from a pool, unlike a first-mate widget. A project seat's widget names one
     // repository; handing it a different project's seat because that one happens to be
     // unclaimed would silently retitle the card and point its actions at another checkout.
     // An empty one says which project it is waiting for and stays empty.
     return widgetEmpty("This project's seat is gone. Open the project from \"+ Session\" to bring it back, or remove the widget.");
   }
-  // The same card a coordinator gets. What differs is where its work comes from, and that is
-  // the node for its own project rather than everything it happens to have dispatched.
-  const sms = (data.secondMates || []).filter((s) => s.firstMateId === seat.mateId);
-  return fleetMateCardEl(seat, sms, data.boardSummary || {});
+  return widgetBodySeat(data, widget);
 }
 
 function widgetBodyAuto(data) {
@@ -13992,7 +14018,7 @@ async function paintReviewWidget(el = document.getElementById("widgetReviewBody"
 const WIDGET_BODIES = {
   quota: widgetBodyQuota,
   needsYou: widgetBodyNeedsYou,
-  assistant: widgetBodyAssistant,
+  assistant: widgetBodySeat,
   auto: widgetBodyAuto,
   firstMate: widgetBodyFirstMate,
   projectSeat: widgetBodyProjectSeat,
