@@ -22,7 +22,11 @@ There is one seat and one widget for it. A seat's identity - assistant, project,
 
 **Where this lands in the migration.** It is not a new stage. The stage that removes the seat kind is exactly this change, and its four kind-predicates are the four places identity has to come from instead. The named-standing-seats decision from earlier today is the same edit again: named seats with distinct identities on a shared root is what one kind plus an identity axis *means*. Three cards, one change - and that is worth saying, because sequencing them as three is how the accessor gets rewritten three times.
 
+**A name is not an identifier here, and that is stronger than the addressing point above.** Under one kind the standing seat draws from the ordinary name pool - and the respawn path renames on every refresh by design, so that a retirement does not look like a no-op. A seat's name is therefore genuinely temporary: **anything holding a name is holding something that expires.** The fixed-name lookup goes the same way as the caller-facing one. Resolve by identity once, and pass the name around for display only.
+
 **What must not be lost in the collapse.** The reason the standing seat is not simply a coordinator with another manual still holds and is about writes, not about widgets: the tier denies writing by tool with no notion of a path, and a seat whose output is a sentence written down in the same turn cannot run under that. The write access comes from which store surfaces the launch attaches, and never from the guard relaxing. One kind must not become one permission set.
+
+**And the two ways that could fail are not symmetrical, so the direction is decided in advance.** A standing seat wrongly given a project seat's permissions can write code into somebody's repository - silent, durable, and discovered later by whoever reads the diff. A project seat wrongly given a standing seat's cannot write its own log, which is annoying, immediate and visible to the person it inconveniences. One of those is a defect you find; the other is a defect that finds you. **If the permission sets are ever collapsed by accident, they must collapse toward the narrower one**, which means the default for a seat whose identity cannot be established is the project set and never the standing one.
 
 
 ## 2026-09-05 - Two correct reads composed into a wrong answer
