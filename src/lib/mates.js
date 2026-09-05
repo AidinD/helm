@@ -372,6 +372,84 @@ export const SEAT_PROJECT = "project";
 const seatKind = (mate) => mate?.kind || SEAT_COORDINATOR;
 
 /**
+ * WHAT A SEAT IS, as a tag it carries rather than a kind it belongs to.
+ *
+ * There is one kind of seat. What distinguishes them is where they are rooted, which
+ * temperament they wear, and what they are FOR - and the third is this. It is deliberately not
+ * a persona: putting identity in that list makes "assistant" mutually exclusive with "red
+ * team", which is the exact collision the two-axes decision was written to remove. Temperament
+ * is how a seat behaves; a tag is what it is; they are chosen separately.
+ *
+ * WHAT THE OLD KIND WAS PAYING FOR INVISIBLY: a kind allowed exactly one standing seat by
+ * construction. A tag allows any number, which is the point - meta-home seats are named now -
+ * but it means every lookup that needs exactly one has to SAY so, and say it loudly. See
+ * theSeatTagged.
+ */
+export const SEAT_TAG_ASSISTANT = "assistant";
+export const SEAT_TAG_PROJECT = "project";
+
+/**
+ * The tags a seat carries, derived for a record written before tags existed.
+ *
+ * Derived rather than migrated, the same choice `kind` itself made on 2026-09-02: an existing
+ * mates.json keeps working untouched, and nothing has to rewrite a store to read it. A record
+ * that HAS tags is believed; one that does not is read through its kind.
+ */
+function seatTags(mate) {
+  if (Array.isArray(mate?.tags)) {
+    return mate.tags;
+  }
+  const kind = seatKind(mate);
+  if (kind === SEAT_ASSISTANT) {
+    return [SEAT_TAG_ASSISTANT];
+  }
+  if (kind === SEAT_PROJECT) {
+    return [SEAT_TAG_PROJECT];
+  }
+  return [];
+}
+
+/** Does this seat carry the tag? */
+function seatHasTag(mate, tag) {
+  return seatTags(mate).includes(tag);
+}
+
+/**
+ * Every ACTIVE seat carrying the tag, in store order.
+ *
+ * Not exported: every question outside this module is about a PARTICULAR seat - the standing
+ * one, this checkout is one - and those have their own accessors. Exporting the tag layer
+ * would invite callers to re-derive those questions, which is the taxonomy-in-four-places
+ * problem this change exists to end.
+ */
+function seatsTagged(tag, mates = null) {
+  return (mates || readState().mates).filter((m) => m.status === "active" && seatHasTag(m, tag));
+}
+
+/**
+ * The one active seat carrying this tag, or null - and LOUD when there is more than one.
+ *
+ * A kind made "exactly one" true by construction, so nothing ever had to check it. A tag does
+ * not, and `find()` does not fail when a question stops having one answer: it returns the
+ * first and looks like it worked, which is how a caller silently comes to mean "whichever seat
+ * is first in the array". That failure has now appeared three times in a week in this file's
+ * neighbourhood - a persona default, a missing kind, a slot filter - so this one is caught
+ * where it happens rather than found later.
+ *
+ * Throwing is the right shape because there is no sensible answer to return. A null would read
+ * as "no such seat" and send the caller down a create-it path, which would make a second one.
+ */
+function theSeatTagged(tag, mates = null) {
+  const found = seatsTagged(tag, mates);
+  if (found.length > 1) {
+    throw new Error(
+      `${found.length} active seats are tagged "${tag}" (${found.map((m) => m.name).join(", ")}) - this lookup needs exactly one. Name the seat you mean, or retire the others.`
+    );
+  }
+  return found[0] || null;
+}
+
+/**
  * Active COORDINATORS only, and that exclusion is load-bearing rather than tidy.
  *
  * `buildFirstMateMcpConfig` falls back to `activeMates()[0]` for a meta-home launch that
@@ -381,7 +459,10 @@ const seatKind = (mate) => mate?.kind || SEAT_COORDINATOR;
  * assistant is reached through assistantSeat() instead, deliberately.
  */
 function activeMatesFrom(mates) {
-  return mates.filter((m) => m.status === "active" && seatKind(m) === SEAT_COORDINATOR);
+  // An untagged seat is a coordinator. Reading it as "carries no identity tag" rather than as
+  // "kind is coordinator" is what lets the kinds collapse without this predicate changing
+  // again: a seat is in the pool because nothing else claims it, not because of a label.
+  return mates.filter((m) => m.status === "active" && seatTags(m).length === 0);
 }
 
 /** Returns all persisted mates (active + retired). */
@@ -450,7 +531,7 @@ export function ensureMates(root, slotCount = MATE_SLOT_COUNT) {
  * history rather than the seat.
  */
 export function assistantSeat() {
-  return readState().mates.find((m) => m.status === "active" && seatKind(m) === SEAT_ASSISTANT) || null;
+  return theSeatTagged(SEAT_TAG_ASSISTANT);
 }
 
 /**
@@ -476,6 +557,7 @@ export function ensureAssistantSeat(root) {
     // the slot-ordered readers all use `?? 0`, so absent and 0 are indistinguishable there.
     slot: null,
     kind: SEAT_ASSISTANT,
+    tags: [SEAT_TAG_ASSISTANT],
     name: "Assistent",
     root: path.resolve(root),
     status: "active",
@@ -496,9 +578,7 @@ export function projectSeatForPath(projectPath) {
     return null;
   }
   return (
-    readState().mates.find(
-      (m) => m.status === "active" && seatKind(m) === SEAT_PROJECT && canonicalFsPath(m.root) === wanted
-    ) || null
+    seatsTagged(SEAT_TAG_PROJECT).find((m) => canonicalFsPath(m.root) === wanted) || null
   );
 }
 
@@ -527,7 +607,7 @@ export function isProjectPick(cwd, metaHomeRoot) {
 
 /** Every active seat opened against a repository, in creation order. */
 export function projectSeats() {
-  return readState().mates.filter((m) => m.status === "active" && seatKind(m) === SEAT_PROJECT);
+  return seatsTagged(SEAT_TAG_PROJECT);
 }
 
 /**
@@ -563,9 +643,7 @@ export function ensureSeatForProject(projectPath, { persona = null } = {}) {
     throw new Error("ensureSeatForProject requires a real path");
   }
   const state = readState();
-  const existing = state.mates.find(
-    (m) => m.status === "active" && seatKind(m) === SEAT_PROJECT && canonicalFsPath(m.root) === wanted
-  );
+  const existing = seatsTagged(SEAT_TAG_PROJECT, state.mates).find((m) => canonicalFsPath(m.root) === wanted);
   if (existing) {
     return existing;
   }
@@ -576,6 +654,7 @@ export function ensureSeatForProject(projectPath, { persona = null } = {}) {
     // every slot-ordered reader normalises absence with `?? 0`.
     slot: null,
     kind: SEAT_PROJECT,
+    tags: [SEAT_TAG_PROJECT],
     name: pickName(takenNames, state.mates.length, namePoolForTheme(currentTheme())),
     root: path.resolve(projectPath),
     status: "active",
@@ -667,9 +746,14 @@ export function retireAndRespawn(mateId, pendingHandoff = null, persona = null, 
   // A coordinator keeps its slot; anything else is slotless by construction, and reusing the
   // outgoing slot for a seat that never had one would put it in the pool.
   const outgoingKind = seatKind(outgoing);
+  // The tags come across for the same reason the kind and the persona do: a refresh must not
+  // change what a seat IS. This is the third field to need that sentence, which is the
+  // argument for identity living in ONE of them rather than being spread across three.
+  const outgoingTags = seatTags(outgoing);
   const fresh = {
     mateId: `mate_${crypto.randomUUID()}`,
     kind: outgoingKind,
+    tags: [...outgoingTags],
     slot: outgoingKind === SEAT_COORDINATOR ? targetSlot : null,
     name: pickName(takenNames, state.mates.length, namePoolForTheme(currentTheme())),
     root: root ? path.resolve(root) : null,
