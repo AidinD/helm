@@ -131,6 +131,24 @@ try {
   ok(!/"tend", "jot", "nib", "assistant"/.test(src), "so `assistant` is NOT in the list of the user's own store servers");
   ok(/"mcp__assistant"/.test(src), "but its tools are still pre-approved, or the seat would hit a prompt it cannot answer");
   ok(/launching WITHOUT these stores/.test(cfgFn), "and a store of HIS that is not configured is named out loud rather than silently absent");
+
+  // TWO ASSERTIONS, NOT ONE. Everything above says the seat RESOLVED - it exists, it is its
+  // own kind, it has a widget. None of it says the seat kept its TOOLS, and after the
+  // 2026-09-05 allowlist split those are different questions with different failure modes.
+  // Narrowing the wrong branch would leave a seat that resolves perfectly and quietly cannot
+  // do half its job, which nothing errors on: an unoffered tool is simply never called.
+  ok(
+    /const ASSISTANT_ALLOWED_TOOLS = \[\.\.\.STANDING_SEAT_TOOLS/.test(src),
+    "the seat still builds on the STANDING set, so it keeps the two tools that reach across projects"
+  );
+  ok(
+    /STANDING_SEAT_TOOLS = withServer\(helmToolsForSeat\("standing"/.test(src),
+    "and that set comes from the shared rule rather than a second hand-maintained list"
+  );
+  ok(
+    /PROJECT_SEAT_TOOLS = withServer/.test(src) && !/allowedTools = ASSISTANT_ALLOWED_TOOLS;[^]{0,400}PROJECT_SEAT_TOOLS/.test(src.slice(assistantAt, firstMateAt)),
+    "while a project seat gets its own narrower set - the two are not the same array wearing two names"
+  );
 }
 
 console.log("");

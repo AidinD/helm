@@ -101,6 +101,7 @@ import { planSweep, describeSweep, reconcileSweepReport } from "./lib/worktreeSw
 import { docsStaleness, staleProjectsAsync, docsNudgeCandidates, DOCS_NUDGE_ACTIVE_DAYS } from "./lib/docsStaleness.js";
 import { loadDomains } from "./lib/domains.js";
 import { projectsNeedingSeats } from "./lib/seatBackfill.js";
+import { helmToolsForSeat } from "./lib/seatTools.js";
 import { ensureMates, ensureAssistantSeat, assistantSeat, activeMates, findMateById, loadMates, renameMate, retireAndRespawn, bindMateSession, consumeMateHandoff, setMatePersona, rethemeMateNames, retireMateSlot, clampMateSlots, ensureSeatForProject, isProjectPick, projectSeats, MATE_SLOT_COUNT, MATE_SLOT_MAX } from "./lib/mates.js";
 
 // How many first mates the captain wants. Two by default; configurable since
@@ -2148,9 +2149,22 @@ function resolveDispatchProject(project) {
 // it has no live channel to answer a permission prompt (verified: without this,
 // a real first-mate session replies "TOOL-BLOCKED" and never dispatches - review M3).
 const FIRST_MATE_MCP_SERVER = "helm-dispatch";
-const FIRST_MATE_ALLOWED_TOOLS = ["helm_dispatch", "helm_collect_reports", "helm_list_projects", "helm_fleet_state", "helm_report_up", "helm_create_second_mate", "helm_relay_to_second_mate", "helm_resume_fleet", "helm_resume_crew"].map(
-  (t) => `mcp__${FIRST_MATE_MCP_SERVER}__${t}`
-);
+const withServer = (names) => names.map((t) => `mcp__${FIRST_MATE_MCP_SERVER}__${t}`);
+
+// ONE LIST BECAME TWO on 2026-09-05, keyed on what the seat IS rather than where it sits.
+// See seatTools.js for why the seat and not the root decides: meta-home seats are named now,
+// so two of them share a folder and have no reason to share a toolset.
+//
+// A STANDING SEAT keeps everything, including the two tools that reach into another project.
+// A PROJECT SEAT loses those two: a seat that can open and drive OTHER projects' seats is the
+// coordinator tier growing back from below, informally and with nobody having decided it.
+const STANDING_SEAT_TOOLS = withServer(helmToolsForSeat("standing"));
+const PROJECT_SEAT_TOOLS = withServer(helmToolsForSeat("project"));
+// The meta-home coordinator - the tier being removed - keeps what it had for as long as it
+// exists. Narrowing a seat the captain may have open right now would take a capability away
+// mid-migration, which is the one failure this split is most likely to cause and the hardest
+// to notice.
+const FIRST_MATE_ALLOWED_TOOLS = STANDING_SEAT_TOOLS;
 
 // Tier guard, layer one (tier-discipline, task ad17e2e6): a supervising seat must not do
 // hands-on project work - it dispatches via the helm_* tools above. Denying
@@ -2464,7 +2478,12 @@ function buildAssistantMcpConfig(metaHome, mateId) {
 }
 
 /** Pre-approved tools for the assistant seat: Helm's delegation tools plus its stores. */
-const ASSISTANT_ALLOWED_TOOLS = [...FIRST_MATE_ALLOWED_TOOLS, "mcp__assistant", ...ASSISTANT_STORE_SERVERS.map((name) => `mcp__${name}`)];
+// The stores are attached to THIS seat by name, not to its root - see ASSISTANT_STORE_SERVERS.
+// Under named meta-home seats a supervisor will share the root and must not inherit these:
+// it reads the board and clocks sessions, and explicitly does not hold conversations about
+// people. Built from the standing set plus this seat's own stores, so a second standing seat
+// gets its own line here rather than this one widening.
+const ASSISTANT_ALLOWED_TOOLS = [...STANDING_SEAT_TOOLS, "mcp__assistant", ...ASSISTANT_STORE_SERVERS.map((name) => `mcp__${name}`)];
 
 function buildFirstMateMcpConfig(metaHome, mateId) {
   // Named mates: the session is bound to one of the two fixed mate slots by the
@@ -3239,7 +3258,9 @@ ipcMain.handle(
         // (passing --mcp-config otherwise de-auto-allows them -> they stall on an
         // unanswerable permission prompt; bug 1f8b54be). NOT strict, so the
         // servers still load; this just restores their auto-allow.
-        allowedTools = [...FIRST_MATE_ALLOWED_TOOLS, ...userMcpAllowedTools()];
+        // A PROJECT SEAT. It dispatches crew and reports up; it does not open or drive other
+        // projects' seats.
+        allowedTools = [...PROJECT_SEAT_TOOLS, ...userMcpAllowedTools()];
         // Fresh launch gets the full manual; a RESUMED turn (the dominant path for
         // jump-in/direct second mates) gets the condensed delegate-vs-do reminder,
         // so the guardrail is present on EVERY turn - not just the first (9c358433).
@@ -6263,7 +6284,9 @@ function runRelayTurn(metaHome, { secondMateId: smId, projectPath, message, allo
       prompt: message,
       model: seatModel,
       mcpConfig,
-      allowedTools: FIRST_MATE_ALLOWED_TOOLS,
+      // Relay target is a project seat, so it gets the project set - same reasoning as the
+      // session:start branch above.
+      allowedTools: PROJECT_SEAT_TOOLS,
       // A fresh relay turn boots the second mate with its full manual; a resumed
       // one gets the condensed delegate-vs-do reminder so the guardrail persists
       // on every turn instead of relying on it still being in context (9c358433).
