@@ -13234,26 +13234,44 @@ function placeProjectSeatWidgets(layout, projectSeats, alreadyPlaced) {
  * widget's binding the most fragile thing about the board.
  *
  * The binding is now a PREFERENCE, resolved against who is actually on watch:
- *  - a widget whose mate is still there keeps it, so nothing you arranged moves;
- *  - a widget whose mate is gone adopts, in board order, a mate no other widget has
+ *  - a widget whose SEAT is still there keeps it, so nothing you arranged moves;
+ *  - a widget whose seat is gone adopts, in board order, a pool mate no other widget has
  *    claimed - which is exactly the replacement he was doing by hand;
  *  - a widget with nobody left to adopt keeps its slot and says so, rather than
  *    stealing a mate that another widget already shows.
+ *
+ * SEAT, not pool mate, and that word is the whole of the captain's "i 2.269 kan jag inte ha en
+ * assistent". This rule was written when a first-mate widget could only ever be bound to one
+ * of the numbered pool slots, so "not in the pool" and "gone" were the same condition. Once
+ * the add menu started writing every seat as this type - the standing seat and the project
+ * seats included - they stopped being the same, and every non-pool seat looked dead: its
+ * widget was re-pointed at a pool mate on the next render, and the render PERSISTS an
+ * adoption, so it did not even survive a repaint. Two correct rules, composed into a wrong
+ * answer, with nothing failing.
+ *
+ * `everySeat` therefore decides what is ALIVE, and `mates` only what may be adopted. It
+ * defaults to the pool so a caller that has nothing else to offer keeps the old meaning
+ * honestly rather than by accident.
  *
  * Pure, and separate from the render, so the decision can be tested without a
  * dashboard: the "which widget shows whom" bugs in this app have all been assignment
  * bugs, not drawing bugs.
  */
-function resolveFirstMateWidgetMates(layout, mates) {
+function resolveFirstMateWidgetMates(layout, mates, everySeat = mates) {
+  // What may be ADOPTED: the pool, in board order. A standing or project seat is never handed
+  // to a widget that lost its own - adopting one would retitle the card and point its actions
+  // at another checkout, which is the reason project widgets never adopted in the first place.
   const order = (mates || []).map((m) => m.mateId);
   const live = new Set(order);
+  // What counts as ALIVE: any seat that exists.
+  const known = new Set((everySeat || []).map((m) => m.mateId));
   const widgets = (layout || []).filter((w) => w.type === "firstMate");
   const claimed = new Set(widgets.map((w) => w.mateId).filter((id) => live.has(id)));
   const unclaimed = order.filter((id) => !claimed.has(id));
   const out = new Map();
   let next = 0;
   for (const w of widgets) {
-    if (live.has(w.mateId)) {
+    if (known.has(w.mateId)) {
       out.set(w.id, w.mateId);
       continue;
     }
@@ -13267,8 +13285,8 @@ function resolveFirstMateWidgetMates(layout, mates) {
  * `changed` says whether anything was adopted, so the caller can persist it once
  * instead of re-deciding on every repaint.
  */
-function rebindFirstMateWidgets(layout, mates) {
-  const resolved = resolveFirstMateWidgetMates(layout, mates);
+function rebindFirstMateWidgets(layout, mates, everySeat = mates) {
+  const resolved = resolveFirstMateWidgetMates(layout, mates, everySeat);
   let changed = false;
   const next = (layout || []).map((w) => {
     if (w.type !== "firstMate") {
@@ -13523,9 +13541,21 @@ function widgetBodyNeedsYou(data, widget) {
  * The nodes under a seat fall out rather than being special-cased: nothing names the standing
  * seat as its parent, so it gets an empty list without anyone saying so.
  */
+/**
+ * Every seat there is, standing seat first.
+ *
+ * One definition, because three lists that each meant "every seat" is what let the widget
+ * binding go wrong: the menu offered all of them, the card looked all of them up, and the
+ * rebinding knew only about the pool - so a seat the first two could see was invisible to the
+ * third and its widget was treated as bound to nobody.
+ */
+function everySeatIn(data) {
+  return [...(data?.assistant ? [data.assistant] : []), ...(data?.mates || []), ...(data?.projectSeats || [])];
+}
+
 function seatForWidget(data, widget) {
   const wanted = widget?.mateId;
-  const everySeat = [...(data.mates || []), ...(data.projectSeats || []), ...(data.assistant ? [data.assistant] : [])];
+  const everySeat = everySeatIn(data);
   if (!wanted) {
     // The standing seat's widget has never carried a mateId - it was a singleton, so there was
     // nothing to carry. Kept working rather than migrated, the same choice made for records
@@ -13545,7 +13575,17 @@ function widgetBodySeat(data, widget) {
 }
 
 function widgetBodyFirstMate(data, widget) {
-  const mate = (data.mates || []).find((m) => m.mateId === widget.mateId);
+  // WHICH SEAT, not which pool mate - the same widening the rebinding needed, in the half that
+  // draws. Since the add menu was collapsed, a widget of this type can be bound to the standing
+  // seat or to a project seat, and looking the binding up in the pool alone drew the empty-slot
+  // message over a seat that was sitting right there. That is the visible half of "i 2.269 kan
+  // jag inte ha en assistent": even with the binding kept, the card said there was nobody.
+  //
+  // A widget with NO mateId is deliberately not passed to seatForWidget here. Its no-id branch
+  // answers with the standing seat, which is correct for a legacy assistant widget and wrong
+  // for this one: an exhausted pool slot would draw the standing seat's card instead of saying
+  // it is empty, and two widgets would show the same seat.
+  const mate = widget.mateId ? everySeatIn(data).find((m) => m.mateId === widget.mateId) : null;
   if (!mate) {
     // Only reachable when there is no unclaimed mate left to adopt (see
     // resolveFirstMateWidgetMates) - so this is an empty SLOT, not a stale binding, and
@@ -14253,7 +14293,7 @@ function widgetAddTile(data) {
   tile.textContent = "+ Add widget";
   tile.addEventListener("click", (e) => {
     e.stopPropagation();
-    const layout = rebindFirstMateWidgets(widgetLayout(data.mates, data.projectSeats), data.mates).layout;
+    const layout = rebindFirstMateWidgets(widgetLayout(data.mates, data.projectSeats), data.mates, everySeatIn(data)).layout;
     const items = [];
     // Which mates a widget already shows, by BINDING rather than by widget id: after a
     // widget adopts a mate its id still carries the retired mate's, so an id check would
@@ -14273,11 +14313,7 @@ function widgetAddTile(data) {
       if (spec.perSeat) {
         // EVERY seat, in one list. Not three lists with three prefixes: what a seat IS shows
         // on its card, and repeating it as a menu category is the taxonomy he asked to lose.
-        const everySeat = [
-          ...(data.assistant ? [data.assistant] : []),
-          ...(data.mates || []),
-          ...(data.projectSeats || []),
-        ];
+        const everySeat = everySeatIn(data);
         for (const seat of everySeat) {
           const id = `w-seat-${seat.mateId}`;
           const isStanding = data.assistant && seat.mateId === data.assistant.mateId;
@@ -14439,7 +14475,7 @@ async function renderWidgetDashboard(page) {
   // A first-mate widget adopts a mate on watch when the one it was bound to is gone
   // (task acb34a24). Persisted when it actually happens, so the adoption is stable and
   // the Add-widget menu offers the same answer this render just drew.
-  const rebound = rebindFirstMateWidgets(widgetLayout(mates, data.projectSeats), mates);
+  const rebound = rebindFirstMateWidgets(widgetLayout(mates, data.projectSeats), mates, everySeatIn(data));
   const placed = placeProjectSeatWidgets(
     rebound.layout,
     data.projectSeats,
