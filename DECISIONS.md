@@ -1,5 +1,19 @@
 # Decisions
 
+## 2026-09-05 - The commit count is a version number here, so a rewrite must preserve it
+
+Helm stamps its version from `git rev-list --count HEAD`. That makes the commit count part of the build's identity rather than a statistic about it, and it is not obvious from anywhere near the code that rewrites history.
+
+A history rewrite removing one file from twelve historical versions left ten commits touching nothing else. `git filter-repo` prunes empty commits by default, so the count went from 894 to 884 - and the next build would have stamped a version that was **already installed on the captain's machine**. Two different builds carrying one number, with auto-update comparing them.
+
+Caught before it shipped, by counting before and after rather than by trusting that removing a file only removes a file. The re-run used `--prune-empty never`; the ten survive as empty commits and the count holds.
+
+**The rule for every future history operation on this repository: preserve the commit count, and verify it by counting rather than by reasoning about what was changed.** A rewrite that only touches file contents does not move it; one that can drop a commit does, and whether a commit becomes empty depends on the filter rather than on the intent.
+
+**And a second thing that operation surfaced, which is the more general one.** After the first rewrite only `main` was moved onto the new history. Three local branches still pointed at pre-rewrite commits and kept the unscrubbed objects alive; the remote was clean both times, so every check against the remote agreed and every check against the local repository would have disagreed. It was found because a later `--all` scan reported the removed terms present again, which read as the scrub having failed. It had not - the thing being measured was a repository still containing what was thought removed.
+
+**A verification that only checks the branch you fixed is not a verification.** Scan `--all`, and account for worktrees, before believing a scrub.
+
 ## 2026-09-05 - One seat kind, and identity is a property rather than a widget
 
 There is one seat and one widget for it. A seat's identity - assistant, project, and later supervisor - is a property of the seat, on its own axis, and never a separate kind with a surface of its own.
