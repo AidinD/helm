@@ -541,10 +541,9 @@ export function assistantSeat() {
 /**
  * Guarantees the one assistant seat exists, rooted at `root`. Idempotent.
  *
- * No slot and no random name. A coordinator's name is disposable - the pool exists so two
- * anonymous slots are distinguishable - while this seat's name is how he refers to it and how
- * another session addresses it, so it is fixed. Renaming stays possible through renameMate;
- * nothing here overwrites a name he has changed.
+ * No slot, and since 2026-09-05 no fixed name either: it draws from the pool like every other
+ * seat. Renaming stays possible through renameMate, and nothing here overwrites a name he has
+ * chosen - an existing seat is returned untouched.
  */
 export function ensureAssistantSeat(root) {
   if (!root) {
@@ -561,7 +560,20 @@ export function ensureAssistantSeat(root) {
     // the slot-ordered readers all use `?? 0`, so absent and 0 are indistinguishable there.
     slot: null,
     tags: [SEAT_TAG_ASSISTANT],
-    name: "Assistent",
+    // A NAME FROM THE POOL, like every other seat. It was fixed and Swedish - "Assistent" -
+    // because it was the only one of its kind and the name was how he and other sessions
+    // referred to it. Both halves of that stopped being true: identity is a tag now, so
+    // nothing has to find this seat by name, and a fixed name in an otherwise English app was
+    // the second thing he objected to.
+    //
+    // A name is not an identifier here and must not become one again. retireAndRespawn draws a
+    // fresh one on every refresh by design, so anything holding a name is holding something
+    // that expires - resolve through the tag and pass the name around for display only.
+    name: pickName(
+      state.mates.filter((m) => m.status === "active").map((m) => m.name),
+      state.mates.length,
+      namePoolForTheme(currentTheme())
+    ),
     root: path.resolve(root),
     status: "active",
     // Personas are a coordinator's temperament overlay. This seat has a manual of its own.

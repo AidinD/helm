@@ -38,7 +38,17 @@ try {
   const listed = await app.eval(`window.helm.listMates()`);
   ok(listed?.ok === true, "mates:list answers");
   ok(!!listed?.assistant, "and it carries an assistant seat, created on first ask rather than needing a setup step");
-  ok(listed?.assistant?.name === "Assistent", `the seat has its fixed name rather than a random one (${listed?.assistant?.name})`);
+  // REVERSED 2026-09-05, and the reversal is the change rather than a relaxation. The name was
+  // fixed because the seat was the only one of its kind and the name was how he and other
+  // sessions referred to it. Both halves stopped being true: identity is a tag now, so nothing
+  // finds this seat by name, and a Swedish name in an otherwise English app was the second
+  // thing he objected to.
+  //
+  // What the old assertion protected is asserted instead: it has a real name, drawn from the
+  // same pool as every other seat. A name that expires on every respawn is not an identifier,
+  // so a fixed-name lookup must not come back as a convenience.
+  ok(!!listed?.assistant?.name, `the seat has a name (${JSON.stringify(listed?.assistant?.name)})`);
+  ok(listed?.assistant?.name !== "Assistent", "and it is not the old fixed Swedish one");
   // A TAG since 2026-09-05, not a kind. The seat is no longer a category of its own - there is
   // one kind of seat, and what this one IS it carries.
   ok(
