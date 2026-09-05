@@ -2786,21 +2786,20 @@ ipcMain.handle("mates:list", () => {
 // pool; without lowering the count here ensureMates would read its slot as empty and mint a
 // stranger to fill it on the very next list call. He would have clicked "make this the
 // assistant" and watched a new first mate appear.
+//
+// The count is READ from the pool after the write, never predicted from which way a tag
+// moved - a swap (the tag moving to a different seat) returns the previous holder to the
+// pool in the same call, so the pool's size does not move even though a transition happened.
+// activeMates() already answers "how many untagged active seats exist"; nothing here needs
+// its own arithmetic for that.
 ipcMain.handle("mates:setAssistant", (_event, { mateId, on = true } = {}) => {
   try {
-    const before = configuredMateSlots();
     const res = setSeatAssistant(mateId, on);
     if (!res.ok) {
       return { ...res, active: activeMates(), assistant: assistantSeat(), projects: projectSeats() };
     }
-    // Re-read rather than reusing `before`: setSeatAssistant wrote the store between them.
-    // A redundant call (res.changed === false) moved no tag, so the slot count must not move
-    // either - otherwise a stale duplicate widget's "demote" click drifts firstMateSlots away
-    // from the real coordinator-pool size with nothing left to explain it.
-    const next = res.changed ? clampMateSlots(on ? before - 1 : before + 1) : before;
-    if (res.changed) {
-      writeConfig({ ...loadConfig(), firstMateSlots: next });
-    }
+    const next = clampMateSlots(activeMates().length);
+    writeConfig({ ...loadConfig(), firstMateSlots: next });
     return {
       ok: true,
       seat: res.seat,

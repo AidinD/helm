@@ -567,10 +567,12 @@ export function assistantSeat() {
  * home's, so the two would disagree about where the seat is - and a seat that is both is a
  * kind again, which is what the tags replaced.
  *
- * `changed` says whether a tag actually moved. The caller adjusts firstMateSlots by one per
- * real promotion/demotion; a redundant call (already the assistant and asked to stay, or
- * already not and asked to leave) must report `changed: false` or that count drifts from the
- * actual pool size with nothing to explain it later.
+ * A NO-OP LEAVES THE STORE ALONE, on both branches. Asked to turn it off when the seat is
+ * already untagged, or on when it is already the assistant, there is no other holder to move
+ * the tag from and no slot to reclaim - proceeding anyway would still be idempotent, but the
+ * caller (main.js) derives the configured seat count from activeMates().length AFTER this
+ * call, not from predicting which way it moved, so what matters here is only that a no-op
+ * really writes nothing: the pool it reads back must be the one that was already there.
  */
 export function setSeatAssistant(mateId, on = true) {
   const state = readState();
@@ -586,16 +588,16 @@ export function setSeatAssistant(mateId, on = true) {
   }
   if (!on) {
     if (!seatHasTag(seat, SEAT_TAG_ASSISTANT)) {
-      return { ok: true, seat, changed: false };
+      return { ok: true, seat };
     }
     seat.tags = [];
     seat.slot = firstFreeSlot(state.mates);
     compactCoordinatorSlots(state);
     writeState(state);
-    return { ok: true, seat, changed: true };
+    return { ok: true, seat };
   }
   if (seatHasTag(seat, SEAT_TAG_ASSISTANT)) {
-    return { ok: true, seat, changed: false };
+    return { ok: true, seat };
   }
   for (const other of state.mates) {
     if (other.mateId !== seat.mateId && other.status === "active" && seatHasTag(other, SEAT_TAG_ASSISTANT)) {
@@ -617,7 +619,7 @@ export function setSeatAssistant(mateId, on = true) {
   // reason spelled out on retireMateSlot.
   compactCoordinatorSlots(state);
   writeState(state);
-  return { ok: true, seat, changed: true };
+  return { ok: true, seat };
 }
 
 /** The active seat opened against this checkout, or null. Never creates one. */
