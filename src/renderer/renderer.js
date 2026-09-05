@@ -14129,7 +14129,7 @@ async function widgetEl(widget, data) {
   title.className = `wd-title ${spec?.accent || ""}`;
   let label = spec?.label || widget.type;
   if (widget.type === "firstMate") {
-    const mate = (data.mates || []).find((m) => m.mateId === widget.mateId);
+    const mate = everySeatIn(data).find((m) => m.mateId === widget.mateId);
     label = mate ? `First mate · ${mate.name}` : "First mate";
   }
   title.textContent = label;
@@ -14197,7 +14197,7 @@ async function widgetEl(widget, data) {
     // Removing the WIDGET leaves the mate on watch; this removes the mate itself.
     // Worded so the difference is unmistakable, and confirmed, because it retires
     // a real coordinator and tears down its second mates.
-    if (widget.type === "firstMate" && widget.mateId) {
+    if (widget.type === "firstMate" && widget.mateId && (data.mates || []).some((m) => m.mateId === widget.mateId)) {
       const mate = (data.mates || []).find((m) => m.mateId === widget.mateId);
       items.push({
         label: `Dismiss ${mate?.name || "this first mate"} from the fleet`,
