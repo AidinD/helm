@@ -260,6 +260,9 @@ contextBridge.exposeInMainWorld("helm", {
   rethemeMates: (fromTheme, toTheme) => ipcRenderer.invoke("mates:retheme", { fromTheme, toTheme }),
   retireMate: (mateId, handoff, persona, keepPersona) => ipcRenderer.invoke("mates:retire", { mateId, handoff, persona, keepPersona }),
   setMatePersona: (mateId, persona) => ipcRenderer.invoke("mates:setPersona", { mateId, persona }),
+  // Says that a first mate IS the assistant, or that it is not. There is exactly one, so
+  // setting it on a seat takes it off whichever seat held it.
+  setSeatAssistant: (mateId, on) => ipcRenderer.invoke("mates:setAssistant", { mateId, on }),
   ensureSeatForProject: (cwd) => ipcRenderer.invoke("mates:ensureForProject", { cwd }),
   listPersonas: () => ipcRenderer.invoke("personas:list"),
   consumeMateHandoff: (mateId) => ipcRenderer.invoke("mates:consumeHandoff", { mateId }),

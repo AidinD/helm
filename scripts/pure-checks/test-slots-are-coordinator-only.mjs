@@ -42,9 +42,16 @@ try {
   const root = path.join(tmp, "meta-home");
   fs.mkdirSync(root, { recursive: true });
 
-  mates.ensureMates(root, 2);
-  const seat = mates.ensureAssistantSeat(root);
-  ok(seat.slot === null, `the assistant seat starts slotless (${JSON.stringify(seat.slot)})`);
+  // Three made, one promoted - there is no ensureAssistantSeat to mint one any more. The
+  // promotion is also where slotlessness now COMES FROM rather than being how the seat was
+  // born, so asserting it here is asserting the setter did the thing this whole file is about.
+  mates.ensureMates(root, 3);
+  const promoted = mates.activeMates()[2];
+  ok(promoted.slot === 2, `the seat about to be promoted held a slot (${JSON.stringify(promoted.slot)})`);
+  const set = mates.setSeatAssistant(promoted.mateId, true);
+  ok(set.ok, `and it can be made the assistant (${set.error || "ok"})`);
+  const seat = mates.assistantSeat();
+  ok(seat.slot === null, `the assistant seat is slotless (${JSON.stringify(seat.slot)})`);
   ok(mates.activeMates().length === 2, "and two coordinators hold the two slots");
 
   const retired = mates.retireMateSlot(0);

@@ -539,51 +539,77 @@ export function assistantSeat() {
 }
 
 /**
- * Guarantees the one assistant seat exists, rooted at `root`. Idempotent.
+ * Says whether a seat is the assistant, and moves the tag when it is.
  *
- * No slot, and since 2026-09-05 no fixed name either: it draws from the pool like every other
- * seat. Renaming stays possible through renameMate, and nothing here overwrites a name he has
- * chosen - an existing seat is returned untouched.
+ * WHY THIS EXISTS, in his words, looking at an add-widget menu listing nine seats he never
+ * asked for: "det bör inte First mate - [namn] finnas ... sen ska en first mate skapas ... där
+ * bör man kunna sätta en tagg, en toggle eller vad som helst som säger åt den att den är en
+ * assistent. Varför går inte det?"
+ *
+ * It did not go, because a tag was set once when a seat was created and never again, and the
+ * only seat that ever carried this one was minted automatically by a list call. So the model
+ * we agreed - the tag decides what a seat is - was true in the store and unreachable from the
+ * app. There is no ensureAssistantSeat any more: nothing mints this seat, he makes a first mate
+ * and says what it is.
+ *
+ * ONE AT A TIME, enforced by moving rather than by refusing. theSeatTagged throws when two
+ * seats share a tag, so a setter that only added would be one click away from breaking every
+ * reader. Taking it off the previous holder in the same write is the only version of this that
+ * cannot leave the store in a state nothing can read.
+ *
+ * THE SLOT MOVES WITH IT. A slot is a coordinator concept and activeMatesFrom counts only
+ * untagged seats, so a tagged seat has left the pool - keeping its slot would leave a hole
+ * that ensureMates fills with a stranger. Clearing it here means the pool is exactly the
+ * untagged seats, which is the same rule read from both ends. The caller lowers the configured
+ * count to match, so promoting a seat does not quietly spawn a replacement for it.
+ *
+ * A PROJECT SEAT IS REFUSED. Its root is a checkout and the assistant's store is the meta
+ * home's, so the two would disagree about where the seat is - and a seat that is both is a
+ * kind again, which is what the tags replaced.
  */
-export function ensureAssistantSeat(root) {
-  if (!root) {
-    throw new Error("ensureAssistantSeat requires a root path");
-  }
-  const existing = assistantSeat();
-  if (existing) {
-    return existing;
-  }
+export function setSeatAssistant(mateId, on = true) {
   const state = readState();
-  const seat = {
-    mateId: `mate_${crypto.randomUUID()}`,
-    // Explicitly null rather than absent: a slot of 0 would collide with a coordinator's, and
-    // the slot-ordered readers all use `?? 0`, so absent and 0 are indistinguishable there.
-    slot: null,
-    tags: [SEAT_TAG_ASSISTANT],
-    // A NAME FROM THE POOL, like every other seat. It was fixed and Swedish - "Assistent" -
-    // because it was the only one of its kind and the name was how he and other sessions
-    // referred to it. Both halves of that stopped being true: identity is a tag now, so
-    // nothing has to find this seat by name, and a fixed name in an otherwise English app was
-    // the second thing he objected to.
-    //
-    // A name is not an identifier here and must not become one again. retireAndRespawn draws a
-    // fresh one on every refresh by design, so anything holding a name is holding something
-    // that expires - resolve through the tag and pass the name around for display only.
-    name: pickName(
-      state.mates.filter((m) => m.status === "active").map((m) => m.name),
-      state.mates.length,
-      namePoolForTheme(currentTheme())
-    ),
-    root: path.resolve(root),
-    status: "active",
-    // Personas are a coordinator's temperament overlay. This seat has a manual of its own.
-    persona: null,
-    createdAt: Date.now(),
-    retiredAt: null,
-  };
-  state.mates.push(seat);
+  const seat = state.mates.find((m) => m.mateId === mateId && m.status === "active");
+  if (!seat) {
+    return { ok: false, error: "That seat isn't on watch." };
+  }
+  if (seatHasTag(seat, SEAT_TAG_PROJECT)) {
+    return {
+      ok: false,
+      error: "That seat belongs to a project. The assistant writes the meta-home's own store, so it cannot also be a checkout's seat.",
+    };
+  }
+  if (!on) {
+    if (!seatHasTag(seat, SEAT_TAG_ASSISTANT)) {
+      return { ok: true, seat };
+    }
+    seat.tags = [];
+    seat.slot = firstFreeSlot(state.mates);
+    compactCoordinatorSlots(state);
+    writeState(state);
+    return { ok: true, seat };
+  }
+  for (const other of state.mates) {
+    if (other.mateId !== seat.mateId && other.status === "active" && seatHasTag(other, SEAT_TAG_ASSISTANT)) {
+      other.tags = [];
+      other.slot = firstFreeSlot(state.mates.filter((m) => m !== other));
+    }
+  }
+  seat.tags = [SEAT_TAG_ASSISTANT];
+  // Explicitly null rather than absent: a slot of 0 would collide with a coordinator's, and the
+  // slot-ordered readers all use `?? 0`, so absent and 0 are indistinguishable there.
+  seat.slot = null;
+  // Personas are a coordinator's temperament overlay; this seat has a manual of its own.
+  seat.persona = null;
+  // AND THE POOL CLOSES UP BEHIND IT, the same way retireMateSlot does. Clearing the slot alone
+  // leaves a HOLE: ensureMates fills slots 0..n-1 and never removes, so a vacated slot 0 is
+  // refilled on the very next list call however low the configured count goes. Measured, not
+  // reasoned about - the check saw the pool come back to two with a stranger in it, one line
+  // after asserting the promoted seat had left. Only coordinators are renumbered, for the
+  // reason spelled out on retireMateSlot.
+  compactCoordinatorSlots(state);
   writeState(state);
-  return seat;
+  return { ok: true, seat };
 }
 
 /** The active seat opened against this checkout, or null. Never creates one. */
@@ -956,6 +982,22 @@ function firstFreeSlot(mates) {
  * ensureMates refill it, which is precisely the opposite of what was asked.
  * Returns the retired mate, or null when there was nothing there.
  */
+/**
+ * Renumbers the coordinator pool to 0..n-1, in place, on a state about to be written.
+ *
+ * ONLY COORDINATORS, which is the same trap retireMateSlot documents: including every active
+ * seat sweeps a tagged one into the sequence, because its `slot: null` sorts as 0 under the
+ * `?? 0` every reader uses. It then holds slot 0, ensureMates sees that slot as taken, and the
+ * pool silently loses a place.
+ */
+function compactCoordinatorSlots(state) {
+  activeMatesFrom(state.mates)
+    .sort((a, b) => (a.slot ?? 0) - (b.slot ?? 0))
+    .forEach((m, i) => {
+      m.slot = i;
+    });
+}
+
 export function retireMateSlot(slot) {
   const state = readState();
   const mate = activeMatesFrom(state.mates).find((m) => m.slot === slot);
