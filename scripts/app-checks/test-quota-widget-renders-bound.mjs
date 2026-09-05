@@ -32,7 +32,7 @@ try {
   const res = await app.eval(`(() => {
     const HOUR = 3600000;
     const now = Date.now();
-    // the captain's real windows, as read from C:\\Users\\aidin\\.helm\\config.json:
+    // The captain's real windows, read out of his Helm config rather than invented -
     // the weekly one 39.34h old at 36%, the five-hour one 4 minutes old with no
     // utilization field at all.
     state.quotaWindows = [

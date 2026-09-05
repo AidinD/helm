@@ -19,8 +19,8 @@
  *
  * A person, after looking. A model may PROPOSE a binding (see commitMatch.js) and its
  * proposal is stored alongside for provenance, but `by` is what makes the binding, and the
- * only caller that writes "aidin" is the one behind a confirm in the UI. An inferred
- * binding written silently would send somebody to review the wrong diff while telling them
+ * only caller that writes a person's name into it is the one behind a confirm in
+ * the UI. An inferred binding written silently would send somebody to review the wrong diff while telling them
  * it was the right one, which is worse than showing them nothing.
  */
 import fs from "node:fs";
