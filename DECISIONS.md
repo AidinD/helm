@@ -29,15 +29,23 @@ There is one seat and one widget for it. A seat's identity - assistant, project,
 **And the two ways that could fail are not symmetrical, so the direction is decided in advance.** A standing seat wrongly given a project seat's permissions can write code into somebody's repository - silent, durable, and discovered later by whoever reads the diff. A project seat wrongly given a standing seat's cannot write its own log, which is annoying, immediate and visible to the person it inconveniences. One of those is a defect you find; the other is a defect that finds you. **If the permission sets are ever collapsed by accident, they must collapse toward the narrower one**, which means the default for a seat whose identity cannot be established is the project set and never the standing one.
 
 
-## 2026-09-05 - Two correct reads composed into a wrong answer
+## 2026-09-05 - Two correct things composed into a wrong answer, twice
 
 A measurement script read the installed app's run history by an explicit path and its bindings by the default one. Both reads succeeded, both stores were real, and the default resolved to the DEV checkout: 2 bindings against the installed store's 13. The numbers that came out described a machine that does not exist.
 
 They were wrong in every direction and plausible in every direction - 9 nodes and 4 seats is exactly what a smaller install looks like. They survived a night, reached the captain twice through another session, and were corrected only because the app was actually started and the result disagreed. The truth was 12 nodes and 8 seats.
 
-**The rule, and it is narrower than "be careful": when a script reads more than one store, every read names its path explicitly. A default is a bug in a measurement script.**
+**The rule, and it is narrower than "be careful": a measurement script has no independent expectation to check itself against, so its INPUTS are the only part that can be verified. Name every one of them explicitly.**
 
-Not in production code, where a default is how a store finds itself. In a script whose whole output is a number about a specific machine, a default silently answers a question about a different one.
+Two kinds have now bitten, on the same day.
+
+*A store read by default.* The case above: one path named, one defaulted, and the default resolved to a different machine's data. Not a bug in production code, where a default is how a store finds itself - a bug in a script whose whole output is a number about one specific machine.
+
+*An argument of the wrong shape.* Later the same day, a script checking whether review records had gone stale after a history rewrite handed `gauntletStatus` the object `currentHead()` returns where it wants a sha string. Nothing threw. The comparison took another path and reported every run as passing - which was precisely the thing the script existed to doubt. Both real callers pass a string, so the defect existed only in the checking.
+
+**Why this cannot be caught the way other mistakes are.** There is no assertion to write about the answer: the number being measured is the one nobody knows yet, which is why it is being measured. A review does not catch it either, because every individual line is correct. Only the inputs are checkable, and only by naming them.
+
+**What follows for the code being measured**, and it is cheap: a function that takes a sha and silently does something else when handed an object is a defect in that function, not only in its caller. `gauntletStatus` now refuses a non-string and says what to pass. One line converts a future silent wrong answer into an immediate loud one.
 
 **Why no check catches this.** Nothing failed. Neither read was wrong. The composition was wrong, and there is no assertion to write about a value that has no independent expectation - the number being measured is the number nobody knows yet, which is why it is being measured. A review does not catch it either: both lines look correct, and they are.
 

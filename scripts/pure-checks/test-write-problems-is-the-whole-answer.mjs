@@ -22,6 +22,7 @@ import {
   reviewRecordWriteProblems,
   writeReviewRecord,
   readReviewRecord,
+  gauntletStatus,
 } from "../../src/lib/reviewRecords.js";
 
 let failures = 0;
@@ -111,6 +112,36 @@ try {
   );
 } finally {
   fs.rmSync(metaHome, { recursive: true, force: true });
+}
+
+// A HEAD IS A SHA STRING, and handing this the object currentHead() returns is the mistake that
+// produced a wrong answer in a measurement script on 2026-09-05: nothing threw, the comparison
+// took another path, and every run reported as passing - which was exactly what the script
+// existed to doubt.
+//
+// A measurement has no independent expectation to check itself against, because the number it
+// produces is the one nobody knows yet. Its INPUTS are the only verifiable part, and a wrong
+// shape is an input like a wrong path is. Refusing turns a future silent wrong answer into an
+// immediate loud one; both real callers pass a string, so neither of them is the risk.
+{
+  const rec = base();
+  rec.checks = [{ label: "a check", cmd: "node scripts/pure-checks/test-intent.mjs" }];
+  let threw = null;
+  try {
+    gauntletStatus(rec, null, { head: { sha: "abc", dirty: false } });
+  } catch (err) {
+    threw = err;
+  }
+  ok(threw !== null, "gauntletStatus refuses the {sha, dirty} object rather than reporting something plausible");
+  ok(threw !== null && /\.sha/.test(threw.message), "and the message says what to pass instead");
+  ok(
+    gauntletStatus(rec, null, { head: "abc" }).state !== undefined,
+    "while a sha string still answers, which is what both real callers pass"
+  );
+  ok(
+    gauntletStatus(rec, null, {}).state !== undefined,
+    "and omitting it entirely is still allowed - the guard is about a wrong shape, not a missing one"
+  );
 }
 
 console.log("");

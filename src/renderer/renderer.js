@@ -2909,7 +2909,12 @@ function reviewActionsEl(row) {
       `Send "${row.title}" back to in-progress. What needs changing?`,
       (note) => {
         window.helm
-          .sendReviewBack(row.taskId, `[the captain ${new Date().toISOString().slice(0, 10)}] ${note}`, imgZone.images)
+          // WHY "captain" and not a name. The prefix exists to say a PERSON wrote this rather
+          // than an agent, and it is written onto his own board. It said his name until a
+          // public-history scrub replaced that with a description, which read as a redaction
+          // on a private card. "captain" is the app's own word for him - the same token the
+          // intent source uses - so it reads as a role, which is what the prefix is for.
+          .sendReviewBack(row.taskId, `[captain ${new Date().toISOString().slice(0, 10)}] ${note}`, imgZone.images)
           .then((res) => {
             const n = imgZone.images.length;
             showToast(res?.ok ? `Sent back with your note${n ? ` and ${n} image${n === 1 ? "" : "s"}` : ""}.` : res?.error || "Couldn't update the board.");

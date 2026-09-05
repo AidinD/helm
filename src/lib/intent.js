@@ -176,7 +176,7 @@ export function normalizeIntent(value) {
 export function intentSourceNote(source) {
   switch (source) {
     case "captain":
-      return "the captain's own words.";
+      return "The captain's own words.";
     case "goal":
       return "The goal the autopilot was given, written before the run.";
     default:

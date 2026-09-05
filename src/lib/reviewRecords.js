@@ -1106,6 +1106,21 @@ export function recordCheckRun(metaHome, taskId, run, { now = Date.now(), pinned
  * code that has since changed.
  */
 export function gauntletStatus(rec, metaHome = null, { head = undefined, codeChanged = () => true } = {}) {
+  // `head` IS A SHA STRING. currentHead() returns {sha, dirty}, and handing that object here
+  // is an easy mistake to make - it was made on 2026-09-05, in a script written to check
+  // whether records had gone stale after a history rewrite. The comparison below then took a
+  // path that reported every run as passing, which is the answer the script existed to doubt.
+  //
+  // Nothing threw. A measurement script has no independent expectation to check itself
+  // against - the number it produces is the one nobody knows yet - so its inputs are the only
+  // thing that can be verified, and a wrong SHAPE is an input like any other. Refusing here
+  // converts a future silent wrong answer into an immediate loud one, which is the whole
+  // trade: both real callers pass a string today, and neither of them is the risk.
+  if (head !== undefined && head !== null && typeof head !== "string") {
+    throw new Error(
+      `gauntletStatus takes a head SHA string, got ${typeof head} - currentHead() returns {sha, dirty}, so pass its .sha`
+    );
+  }
   const checks = Array.isArray(rec?.checks) ? rec.checks : [];
   if (checks.length === 0) {
     return { declared: 0, passed: 0, failed: 0, stale: 0, unrun: 0, unverified: 0, unusable: 0, state: "none", perCheck: [] };

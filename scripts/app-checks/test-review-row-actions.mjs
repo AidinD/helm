@@ -183,7 +183,9 @@ try {
   // moves the card back to in-progress AND carries any attached images; the IPC
   // hardcodes the "in-progress" target, so the note+images are what the handler passes.
   ok(/sendReviewBack\(\s*row\.taskId,/.test(handler), "source: it moves the card back one step, to in-progress (via sendReviewBack)");
-  ok(/\[the captain \$\{new Date\(\)\.toISOString\(\)\.slice\(0, 10\)\}\] \$\{note\}/.test(handler), "source: with a dated, attributed note for the Jot card");
+  // "captain" rather than a name: the prefix says a person wrote this, and a role reads
+  // better on his own board than a description left behind by a public-history scrub.
+  ok(/\[captain \$\{new Date\(\)\.toISOString\(\)\.slice\(0, 10\)\}\] \$\{note\}/.test(handler), "source: with a dated, attributed note for the Jot card");
 
   // --- the dead API must not come back anywhere ---------------------------
   const rSrc = fs.readFileSync(new URL("../../src/renderer/renderer.js", import.meta.url), "utf8");
