@@ -1422,6 +1422,42 @@ function onlyCheckRunsChanged(existing, next) {
  * feature exists to prevent is a review item that looks reviewed and is not.
  * Atomic temp+rename.
  */
+/**
+ * Everything writeReviewRecord would refuse this record for - the question an author actually
+ * has, which until 2026-09-05 no function answered.
+ *
+ * THE DEFECT THIS CLOSES is not that two components disagreed about the same shape. They never
+ * did: `reviewRecordProblems` answers ADMISSIBILITY and the other two answer PRESENTATION, and
+ * the writer applies them in tiers on purpose - a pure check stamp must get past presentation
+ * or a real passing check is dropped for how the record is WRITTEN, which is measured in the
+ * comment below at 89 of 96 records.
+ *
+ * The defect is that `reviewRecordProblems` is named as though it were the whole answer. Call
+ * it, get `[]`, then be refused at the write - twice in one evening, by the author of both
+ * calls. A validator that answers a narrower question than its name implies is the same family
+ * as everything else found that night: green to a question it is not asking.
+ *
+ * So the tiers stay exactly as they are, and this composes them for the one caller who wants
+ * all of it. The writer is implemented in terms of it, so the two cannot drift - a limit in
+ * two places is two places to drift, and these are the two that did.
+ *
+ * @returns {{problems: string[], admissibility: string[], readability: string[], intent: string[]}}
+ *          `problems` is every refusal in write order; the named lists say which gate.
+ */
+export function reviewRecordWriteProblems(rec, { stampOnly = false } = {}) {
+  const admissibility = reviewRecordProblems(rec);
+  // Presentation is skipped for a pure evidence stamp, and only for that - the same condition
+  // the writer uses, expressed once.
+  const readability = stampOnly ? [] : reviewRecordReadability(rec);
+  const intent = stampOnly ? [] : reviewRecordIntentProblems(rec);
+  return {
+    problems: [...admissibility, ...readability, ...intent],
+    admissibility,
+    readability,
+    intent,
+  };
+}
+
 export function writeReviewRecord(metaHome, rec, { now = Date.now(), isRunStamp = false } = {}) {
   const file = reviewRecordPath(metaHome, rec.taskId);
   const existing = readReviewRecord(metaHome, rec.taskId);
@@ -1465,22 +1501,29 @@ export function writeReviewRecord(metaHome, rec, { now = Date.now(), isRunStamp 
   // because it is an app-lane test and the fast lane never runs it. 7 of 99 records fail
   // admissibility against 89 that fail readability, so this costs almost nothing and buys
   // back the one property the gauntlet is for.
-  const problems = reviewRecordProblems(rec);
-  if (problems.length > 0) {
-    return { ok: false, error: `Incomplete review record: ${problems.join("; ")}`, problems };
+  // Asked ONCE, through the function an author can ask too. The messages below still say
+  // which gate refused, because "too long" and "not allowed to claim anything" are different
+  // problems with different fixes - but the SET of refusals is computed in one place now.
+  const gates = reviewRecordWriteProblems(rec, { stampOnly });
+  if (gates.admissibility.length > 0) {
+    return {
+      ok: false,
+      error: `Incomplete review record: ${gates.admissibility.join("; ")}`,
+      problems: gates.admissibility,
+    };
   }
   if (!stampOnly) {
     // Readability is enforced at the WRITE, not at the render - the limits would otherwise
     // mark ninety existing records incomplete at once, and noise is what they exist to
     // fix. Refusing here is the point: left as a convention, this was followed for exactly
     // one record before the habit came back.
-    const unreadable = reviewRecordReadability(rec);
+    const unreadable = gates.readability;
     if (unreadable.length > 0) {
       return { ok: false, error: `Review record is too long to be read: ${unreadable.join("; ")}`, problems: unreadable };
     }
     // The ask behind the work, required before it can be handed over. Enforced here for
     // the same reason as readability: it must not mark ninety existing records invalid.
-    const intentGaps = reviewRecordIntentProblems(rec);
+    const intentGaps = gates.intent;
     if (intentGaps.length > 0) {
       return { ok: false, error: `Review record does not say what was asked for: ${intentGaps.join("; ")}`, problems: intentGaps };
     }
