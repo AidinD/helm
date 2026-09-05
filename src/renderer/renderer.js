@@ -14197,6 +14197,11 @@ async function widgetEl(widget, data) {
     // Removing the WIDGET leaves the mate on watch; this removes the mate itself.
     // Worded so the difference is unmistakable, and confirmed, because it retires
     // a real coordinator and tears down its second mates.
+    //
+    // Gated to the POOL, not everySeatIn(data): the standing seat and project seats keep
+    // slot: null, so removeMate tears down their second mates but never retires the seat
+    // itself - a "left the fleet" toast with the seat unchanged underneath it. Only a pool
+    // mate's slot is retired by removeMate, so only a pool mate may be offered Dismiss.
     if (widget.type === "firstMate" && widget.mateId && (data.mates || []).some((m) => m.mateId === widget.mateId)) {
       const mate = (data.mates || []).find((m) => m.mateId === widget.mateId);
       items.push({
