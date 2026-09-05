@@ -11542,7 +11542,7 @@ function personaLabel(key) {
 // carry a blurb, and it is also the one he sees most - the default every fresh mate starts
 // on and every respawn resets to. Describing it here rather than in personas.js keeps that
 // module's list to real personas, which is what its overlay lookups iterate.
-const COORDINATOR_BLURB = "No overlay - the plain first-mate manual: plans, dispatches to second mates, and hands off. The default, and what a respawn resets to.";
+const COORDINATOR_BLURB = "No overlay - the plain first-mate manual: plans, hands work out, and reports back. The default, and what a respawn resets to.";
 function personaBlurb(key) {
   if (!key) {
     return COORDINATOR_BLURB;
@@ -11890,7 +11890,11 @@ function fleetMateCardEl(mate, sms, boardSummary = {}) {
     badge.textContent = btext;
     role.append(badge);
   }
-  role.append(kind, document.createTextNode(sms.length ? ` ${sms.length} second mate${sms.length === 1 ? "" : "s"}` : " idle"));
+  // "work" does not pluralise, so the count cannot sit in front of it the way it sat in front
+  // of "second mates". Rather than reach for a countable stand-in - "items", "pieces" - which
+  // would be a fourth word for the same thing, the number moves behind a label: "work: 3"
+  // beside "idle". Terse, but it says the same thing and stays true at any count.
+  role.append(kind, document.createTextNode(sms.length ? ` work: ${sms.length}` : " idle"));
   idBox.append(name, role);
   // Amber accent for exactly the mate that showed the "needs you" chip above: a
   // mate genuinely awaiting your reply with no crew to explain the wait. A
@@ -12020,13 +12024,16 @@ function fleetMateCardEl(mate, sms, boardSummary = {}) {
     card.append(fleetNudgeEl(mate, "done", { boardsClear }));
   }
 
-  // Second mates.
+  // The work under this seat.
   const list = document.createElement("div");
   list.className = "fleet-branches";
   if (sms.length === 0) {
     const empty = document.createElement("div");
     empty.className = "fleet-empty";
-    empty.textContent = "No second mates yet - hand a project some work and it shows up here.";
+    // The word was already here, in his own copy, while the rows were labelled something else -
+    // which is the argument that decided it. Saying it twice in one sentence is the cost of
+    // making the label match, so the second half says the same thing without repeating it.
+    empty.textContent = "No work yet - hand a project something to do and it shows up here.";
     list.append(empty);
   } else {
     for (const sm of sms) {
@@ -12211,7 +12218,7 @@ function fleetSecondMateEl(sm) {
   proj.textContent = sm.name;
   const mk = document.createElement("span");
   mk.className = "fleet-mini-kind";
-  mk.textContent = "💬 2nd mate";
+  mk.textContent = "💬 work";
   topRow.append(badge, proj, mk);
   const now = document.createElement("div");
   now.className = "fleet-branch-now";
@@ -12819,7 +12826,7 @@ function pendingSecondMateReviewNudge(sm) {
   const more = runs.length - shown.length;
   const tail = more > 0 ? ` (${more} older one${more === 1 ? "" : "s"} not listed - use the Autopilot page for the full set)` : "";
   return (
-    `You are the second mate for this project - the judgment tier. Since your last turn, ${runs.length} crew run${runs.length === 1 ? "" : "s"} reported back, each on its OWN branch + worktree${tail}. ` +
+    `You are the first mate for this project - the judgment tier. Since your last turn, ${runs.length} crew run${runs.length === 1 ? "" : "s"} reported back, each on its OWN branch + worktree${tail}. ` +
     `For each: check whether its branch is already merged (skip it if so), inspect its commits, verify the fix actually holds - don't trust the run's own claim - then merge the ones that hold and say clearly which you merged. ` +
     `For any that failed or look wrong, say what you'd re-dispatch or fix instead - do not merge those. Crew work waiting:\n${lines.join("\n")}`
   );
@@ -14148,7 +14155,7 @@ async function widgetEl(widget, data) {
         danger: true,
         onClick: () => {
           customConfirm(
-            `Dismiss ${mate?.name || "this first mate"}? Its second mates are torn down and it does not respawn. The widget goes too.`,
+            `Dismiss ${mate?.name || "this first mate"}? The work under it is torn down and it does not respawn. The widget goes too.`,
             "Dismiss",
             async () => {
               const res = await window.helm.removeMate(widget.mateId);
@@ -14873,7 +14880,7 @@ function dashSessionRowEl(session) {
   } else if (secondMate) {
     const tag = document.createElement("span");
     tag.className = "dash-goal-tag";
-    tag.textContent = "2nd mate";
+    tag.textContent = "work";
     top.append(tag);
   } else if (session.jot?.category) {
     const tag = document.createElement("span");
