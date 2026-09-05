@@ -102,7 +102,7 @@ import { docsStaleness, staleProjectsAsync, docsNudgeCandidates, DOCS_NUDGE_ACTI
 import { loadDomains } from "./lib/domains.js";
 import { projectsNeedingSeats } from "./lib/seatBackfill.js";
 import { helmToolsForSeat } from "./lib/seatTools.js";
-import { ensureMates, ensureAssistantSeat, assistantSeat, activeMates, findMateById, loadMates, renameMate, retireAndRespawn, bindMateSession, consumeMateHandoff, setMatePersona, rethemeMateNames, retireMateSlot, clampMateSlots, ensureSeatForProject, isProjectPick, projectSeats, MATE_SLOT_COUNT, MATE_SLOT_MAX } from "./lib/mates.js";
+import { ensureMates, setSeatAssistant, assistantSeat, activeMates, findMateById, loadMates, renameMate, retireAndRespawn, bindMateSession, consumeMateHandoff, setMatePersona, rethemeMateNames, retireMateSlot, clampMateSlots, ensureSeatForProject, isProjectPick, projectSeats, MATE_SLOT_COUNT, MATE_SLOT_MAX } from "./lib/mates.js";
 
 // How many first mates the captain wants. Two by default; configurable since
 // 2026-08-02 (task 4bf2421c) because the fleet was hard-capped at two.
@@ -2761,7 +2761,12 @@ ipcMain.handle("mates:list", () => {
     return {
       ok: true,
       active: ensureMates(metaHome, configuredMateSlots()),
-      assistant: ensureAssistantSeat(metaHome),
+      // NOT ensured. Until 2026-09-05 this call minted the seat, so one always existed and
+      // nothing could ever be made into it - which is why the tag was unreachable from the app
+      // (the captain: "där bör man kunna sätta en tagg ... varför går inte det?"). It is null
+      // until he says a first mate is the assistant, and every reader of this field already
+      // coped with null because a store written before the seat existed returned exactly that.
+      assistant: assistantSeat(),
       // Project seats, separate again for the same reason the assistant is separate: every
       // existing reader of `active` means coordinators by it, and widening a field that is
       // read from in forty places is the shape of bug this repo keeps finding. Unlike the
@@ -2774,6 +2779,35 @@ ipcMain.handle("mates:list", () => {
     return { ok: false, error: err?.message || String(err), active: [], assistant: null, projects: [], all: [] };
   }
 });
+// Say that a first mate IS the assistant, or that it is not.
+//
+// The configured count moves with the tag, and that is the difference between promoting a seat
+// and gaining one. activeMatesFrom counts untagged seats only, so a tagged seat has left the
+// pool; without lowering the count here ensureMates would read its slot as empty and mint a
+// stranger to fill it on the very next list call. He would have clicked "make this the
+// assistant" and watched a new first mate appear.
+ipcMain.handle("mates:setAssistant", (_event, { mateId, on = true } = {}) => {
+  try {
+    const before = configuredMateSlots();
+    const res = setSeatAssistant(mateId, on);
+    if (!res.ok) {
+      return { ...res, active: activeMates(), assistant: assistantSeat(), projects: projectSeats() };
+    }
+    // Re-read rather than reusing `before`: setSeatAssistant wrote the store between them.
+    const next = clampMateSlots(on ? before - 1 : before + 1);
+    writeConfig({ ...loadConfig(), firstMateSlots: next });
+    return {
+      ok: true,
+      seat: res.seat,
+      active: ensureMates(resolveMetaHome(), next),
+      assistant: assistantSeat(),
+      projects: projectSeats(),
+    };
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err), active: [], assistant: null, projects: [] };
+  }
+});
+
 // Add a first mate. The fleet was fixed at two slots; this raises the configured
 // count by one and lets ensureMates fill it, so the new mate is a real coordinator
 // with its own name, root and session - not a widget with nothing behind it.

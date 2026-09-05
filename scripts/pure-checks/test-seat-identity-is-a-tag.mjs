@@ -37,15 +37,23 @@ for (const d of [root, projectA]) {
 }
 
 // --- the tag is written, and it is what the accessors read -----------------------------------
-mates.ensureMates(root, 2);
-const seat = mates.ensureAssistantSeat(root);
+// A SEAT IS MADE, THEN SAID TO BE THE ASSISTANT. Nothing mints it any more: ensureAssistantSeat
+// is gone, because a seat that always existed could never be made into one, which is exactly
+// what left the tag unreachable from the app (the captain, 2026-09-05: "där bör man kunna sätta
+// en tagg ... varför går inte det?").
+mates.ensureMates(root, 3);
+const promoted = mates.activeMates()[2];
+const set = mates.setSeatAssistant(promoted.mateId, true);
+ok(set.ok, `a first mate can be made the assistant (${set.error || "ok"})`);
+const seat = mates.assistantSeat();
 ok(Array.isArray(seat.tags) && seat.tags.includes("assistant"), `the standing seat carries its tag (${JSON.stringify(seat.tags)})`);
+ok(seat.slot === null, `and left the coordinator pool's slots behind (${JSON.stringify(seat.slot)})`);
 const proj = mates.ensureSeatForProject(projectA);
 ok(Array.isArray(proj.tags) && proj.tags.includes("project"), `and a project seat carries its own (${JSON.stringify(proj.tags)})`);
 
 ok(mates.assistantSeat()?.mateId === seat.mateId, "the standing seat is found by what it IS");
 ok(mates.projectSeats().length === 1, "and so are the project seats");
-ok(mates.activeMates().length === 2, "while the pool is the seats that carry NO identity tag");
+ok(mates.activeMates().length === 2, "while the pool is the seats that carry NO identity tag - the promoted one left it");
 ok(
   !mates.activeMates().some((m) => (m.tags || []).length > 0),
   "so a tagged seat is never in it, whatever its kind field says"

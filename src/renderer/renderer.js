@@ -11550,6 +11550,65 @@ function personaBlurb(key) {
   return (personaCatalog || []).find((x) => x.key === key)?.blurb || "";
 }
 
+/**
+ * What this seat IS, and the control that says so.
+ *
+ * THE MISSING HALF OF THE TAG MODEL. Identity became a tag rather than a kind, and the store
+ * has said so since 2026-09-05 - but nothing on screen showed which tag a seat carried, and
+ * nothing could set one. So the answer to "how do I add an assistant" was "you cannot, one was
+ * made for you", which is not a model anybody can hold. His words, on the card he was looking
+ * at: "där bör man kunna sätta en tagg, en toggle eller vad som helst som säger åt den att den
+ * är en assistent".
+ *
+ * A PROJECT SEAT SHOWS ITS TAG AND CANNOT CHANGE IT. Its root is a checkout and the assistant
+ * writes the meta-home's store, so a seat that was both would disagree with itself about where
+ * it is. Shown rather than hidden: the point of the row is that a seat says what it is, and a
+ * project seat that displayed nothing would leave the same gap in a smaller place.
+ */
+function seatIdentityEl(mate, data) {
+  const isProject = (data?.projectSeats || []).some((m) => m.mateId === mate.mateId);
+  const isAssistant = !!data?.assistant && data.assistant.mateId === mate.mateId;
+
+  const row = document.createElement("div");
+  row.className = "fleet-persona";
+
+  const tag = document.createElement("span");
+  tag.className = "fleet-persona-tag";
+  tag.textContent = "seat";
+
+  if (isProject) {
+    const what = document.createElement("span");
+    what.className = "fleet-persona-btn is-set";
+    what.textContent = "Project";
+    what.title = "This seat belongs to a checkout. It cannot also be the assistant - the assistant writes the meta-home's own store.";
+    row.append(tag, what);
+    return row;
+  }
+
+  const btn = document.createElement("button");
+  btn.className = "fleet-persona-btn" + (isAssistant ? " is-set" : "");
+  btn.textContent = isAssistant ? "Assistant" : "First mate";
+  btn.title = isAssistant
+    ? "This is the assistant. Click to make it a plain first mate again."
+    : "A plain first mate. Click to make it the assistant - there is only one, so this takes the tag off whichever seat holds it.";
+  btn.addEventListener("click", async (e) => {
+    // The card jumps into the session on a click, and this button is inside it.
+    e.stopPropagation();
+    btn.disabled = true;
+    const res = await window.helm.setSeatAssistant(mate.mateId, !isAssistant);
+    if (!res?.ok) {
+      btn.disabled = false;
+      showToast(res?.error || "Couldn't change what that seat is.");
+      return;
+    }
+    showToast(isAssistant ? `${mate.name} is a first mate again.` : `${mate.name} is the assistant now.`);
+    await renderDashboardPage();
+  });
+
+  row.append(tag, btn);
+  return row;
+}
+
 // Persona control on a first-mate card. Fresh mate (no session) -> set the
 // persona directly. Running mate -> switching means the overlay is already in
 // its context, so it routes through retire-with-handoff + respawn into the new
@@ -11811,7 +11870,7 @@ function continueOnMobileBtn(session, { title } = {}) {
   return btn;
 }
 
-function fleetMateCardEl(mate, sms, boardSummary = {}) {
+function fleetMateCardEl(mate, sms, boardSummary = {}, seatData = {}) {
   const card = document.createElement("div");
   card.className = "fleet-mate-card";
   card.addEventListener("click", () => jumpIntoFirstMate(mate));
@@ -11961,6 +12020,9 @@ function fleetMateCardEl(mate, sms, boardSummary = {}) {
   top.append(anchor, idBox, actions);
   card.append(top);
 
+  // WHAT it is, then HOW it behaves - in that order, because the first decides whether the
+  // second even applies: the assistant has a manual of its own and carries no persona.
+  card.append(seatIdentityEl(mate, seatData));
   // Persona control: the temperament this mate brings to coordination.
   card.append(fleetPersonaEl(mate));
 
@@ -13187,27 +13249,40 @@ function widgetLayout(mates, projectSeats = []) {
  * had never carried a Captain widget got nothing, and his had not carried one for weeks: eight
  * seats existed, the "+" menu offered all eight, and the board showed none.
  *
- * So the condition is neither. It is a one-time marker: the seats are placed on the first
- * render that has any, and never again. Removing one afterwards is permanent, which is what
- * makes the board's crowding a governor he can actually operate.
+ * So the condition is neither. It is PER SEAT: a seat is placed the first time it exists and
+ * never again, so removing its widget afterwards is permanent - which is what makes the
+ * board's crowding a governor he can actually operate.
  *
- * Returns the layout and whether anything changed, so the caller persists deliberately rather
- * than relying on some other change happening to trigger a save - which is how the previous
- * version could have inserted widgets that were never written down.
+ * IT USED TO BE ONE MARKER FOR ALL OF THEM, and that stopped being survivable on 2026-09-05,
+ * when the add-widget menu stopped offering existing seats. A single marker means "the seats
+ * were placed once" - so every project opened after that first render minted a seat with no
+ * widget, and with the menu no longer listing them there was nothing anywhere that could put
+ * one on the board. Work would exist and be invisible. A remembered SET keeps both halves: a
+ * new seat arrives, and one he removed stays removed.
+ *
+ * Returns the layout, whether anything changed, and the set to remember, so the caller persists
+ * deliberately rather than relying on some other change happening to trigger a save.
  */
-function placeProjectSeatWidgets(layout, projectSeats, alreadyPlaced) {
+function placeProjectSeatWidgets(layout, projectSeats, placedIds) {
   const seats = projectSeats || [];
-  if (alreadyPlaced || seats.length === 0) {
-    return { layout, changed: false };
-  }
-  const onBoard = new Set((layout || []).filter((w) => w.type === "projectSeat").map((w) => w.mateId));
+  const placed = new Set(placedIds || []);
+  // Any seat-shaped widget bound to it counts as on the board, not just the legacy type: a
+  // seat placed today is a `firstMate` widget, and matching only the old type would place a
+  // second one beside it.
+  const onBoard = new Set(
+    (layout || [])
+      .filter((w) => w.type === "projectSeat" || w.type === "firstMate" || w.type === "assistant")
+      .map((w) => w.mateId)
+      .filter(Boolean)
+  );
   const fresh = seats
-    .filter((seat) => !onBoard.has(seat.mateId))
-    .map((seat) => ({ id: `w-project-${seat.mateId}`, type: "projectSeat", span: 4, mateId: seat.mateId }));
+    .filter((seat) => !placed.has(seat.mateId) && !onBoard.has(seat.mateId))
+    .map((seat) => ({ id: `w-seat-${seat.mateId}`, type: "firstMate", span: 4, mateId: seat.mateId }));
+  const remembered = [...new Set([...placed, ...seats.map((seat) => seat.mateId)])];
   if (fresh.length === 0) {
-    // Already all there. Still counts as placed, so the marker gets written and this stops
-    // asking - otherwise a board he later empties would refill on the next render.
-    return { layout, changed: true };
+    // Nothing to add, but the set may still have grown - a seat already on the board has had
+    // its placement, and remembering that is what stops it coming back after he removes it.
+    return { layout, changed: remembered.length !== placed.size, placed: remembered };
   }
   // WHERE they go: with the other seats rather than at the end. Appending them put them below
   // Docs drift while the space they were replacing closed up, so the rows moved twice. After
@@ -13221,7 +13296,7 @@ function placeProjectSeatWidgets(layout, projectSeats, alreadyPlaced) {
   });
   const next = [...(layout || [])];
   next.splice(at < 0 ? next.length : at + 1, 0, ...fresh);
-  return { layout: next, changed: true };
+  return { layout: next, changed: true, placed: remembered };
 }
 
 /**
@@ -13571,7 +13646,7 @@ function widgetBodySeat(data, widget) {
     return widgetEmpty("Reading the seat…");
   }
   const sms = (data.secondMates || []).filter((s) => s.firstMateId === seat.mateId);
-  return fleetMateCardEl(seat, sms, data.boardSummary || {});
+  return fleetMateCardEl(seat, sms, data.boardSummary || {}, data);
 }
 
 function widgetBodyFirstMate(data, widget) {
@@ -14300,42 +14375,20 @@ function widgetAddTile(data) {
     e.stopPropagation();
     const layout = rebindFirstMateWidgets(widgetLayout(data.mates, data.projectSeats), data.mates, everySeatIn(data)).layout;
     const items = [];
-    // Which mates a widget already shows, by BINDING rather than by widget id: after a
-    // widget adopts a mate its id still carries the retired mate's, so an id check would
-    // offer the adopted mate again and put a second widget on the board for it.
-    // By BINDING rather than by widget id, and across every seat-shaped widget type: after a
-    // widget adopts a mate its id still carries the retired mate's, so an id check would offer
-    // the adopted seat again and put a second widget on the board for it.
-    const seatTypes = new Set(["firstMate", "assistant", "projectSeat"]);
-    const shown = new Set(layout.filter((w) => seatTypes.has(w.type)).map((w) => w.mateId).filter(Boolean));
-    // The standing seat's widget has never carried a mateId - it was a singleton and had
-    // nothing to carry - so it is recognised by type as well, or it would be offered twice.
-    const standingShown = layout.some((w) => w.type === "assistant" && !w.mateId);
+    // NOTHING THAT ALREADY EXISTS IS OFFERED HERE, and the bookkeeping that used to decide
+    // which seats were missing from the board went with it. His words, looking at nine of them:
+    // "det bör inte First mate - [namn] finnas - ingen av dem bör finnas, bara new first mate".
+    //
+    // They were not seats he had made. They were seats Helm minted for him - one per project he
+    // opened, plus an assistant seat a list call created - and then offered back. That also
+    // turned the board's crowding from a governor into a suggestion: he would remove a widget to
+    // calm the board and this menu handed it straight back. Making a seat is the action now, and
+    // the board is his to clear.
     for (const [type, spec] of Object.entries(WIDGET_CATALOG)) {
       if (spec.legacy) {
         continue;
       }
       if (spec.perSeat) {
-        // EVERY seat, in one list. Not three lists with three prefixes: what a seat IS shows
-        // on its card, and repeating it as a menu category is the taxonomy he asked to lose.
-        const everySeat = everySeatIn(data);
-        for (const seat of everySeat) {
-          const id = `w-seat-${seat.mateId}`;
-          const isStanding = data.assistant && seat.mateId === data.assistant.mateId;
-          if (shown.has(seat.mateId) || layout.some((w) => w.id === id) || (isStanding && standingShown)) {
-            continue;
-          }
-          items.push({
-            label: `${spec.label} · ${seat.name}`,
-            // The root is what tells two seats apart once they all read "First mate", and it
-            // is the thing that decides what the seat is.
-            hint: truncatePathForMenu(seat.root || ""),
-            onClick: async () => {
-              await saveWidgetLayout([...layout, { id, type: "firstMate", span: spec.span, mateId: seat.mateId }]);
-              await renderDashboardPage();
-            },
-          });
-        }
         // The fleet used to be hard-capped at two first mates, so this menu could
         // only ever offer the two that already existed - which read as "the widget
         // dashboard limits me to two" (the captain, 2026-07-28). A first mate is a real
@@ -14481,15 +14534,27 @@ async function renderWidgetDashboard(page) {
   // (task acb34a24). Persisted when it actually happens, so the adoption is stable and
   // the Add-widget menu offers the same answer this render just drew.
   const rebound = rebindFirstMateWidgets(widgetLayout(mates, data.projectSeats), mates, everySeatIn(data));
-  const placed = placeProjectSeatWidgets(
-    rebound.layout,
-    data.projectSeats,
-    !!state.config?.dashboardWidgets?.projectSeatsPlacedAt
-  );
+  // MIGRATION, read-time and one-way: a board that carries the old single marker has already
+  // had its placement round, so every project seat that exists right now counts as placed. Not
+  // doing this would hand back the eight widgets he removed the moment the set replaced the
+  // marker - the board refilling itself, which is the thing the marker existed to stop.
+  const dw = state.config?.dashboardWidgets;
+  const migrating = !Array.isArray(dw?.projectSeatsPlaced) && !!dw?.projectSeatsPlacedAt;
+  const alreadyPlaced = Array.isArray(dw?.projectSeatsPlaced)
+    ? dw.projectSeatsPlaced
+    : migrating
+      ? (data.projectSeats || []).map((seat) => seat.mateId)
+      : [];
+  const placed = placeProjectSeatWidgets(rebound.layout, data.projectSeats, alreadyPlaced);
   const layout = placed.layout;
-  if (placed.changed) {
+  // THE MIGRATION HAS TO BE WRITTEN DOWN THE FIRST TIME, even when it changes no widget, and
+  // this is the second thing the check caught. Read-time migration usually costs nothing to
+  // repeat; this one is not idempotent, because it snapshots "every project seat that exists
+  // NOW". Left unwritten it ran again on the next render with a longer list, so a project
+  // opened in between was born already marked as placed and never got a widget at all.
+  if (placed.changed || migrating) {
     try {
-      await saveWidgetLayout(layout, { projectSeatsPlacedAt: Date.now() });
+      await saveWidgetLayout(layout, { projectSeatsPlaced: placed.placed });
     } catch {
       // A failed write must not stop the board drawing. The widgets are placed for THIS
       // render either way; the marker simply stays unset and it is tried again next time.
