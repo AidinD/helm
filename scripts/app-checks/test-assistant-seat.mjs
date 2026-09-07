@@ -72,12 +72,39 @@ try {
   ok(assistants.length === 1, `exactly one active assistant exists in the store (${assistants.length})`);
 
   // --- the dashboard -----------------------------------------------------------------------
+  //
+  // FOUND BY ID, NOT BY NAME, and that is the whole repair. This searched the board for the
+  // text "Assistent" - the fixed Swedish name the seat carried until 2026-09-05, when it
+  // started drawing from the pool like every other seat. So it hunted for a string nothing
+  // renders any more and reported "the seat has a widget on the dashboard without being added
+  // by hand" as a failure, about a widget that was on the board the whole time. The scheduled
+  // app lane said so for two nights.
+  //
+  // mates.js says this out loud, two lines above the name it draws: "A name is not an
+  // identifier here and must not become one again ... anything holding a name is holding
+  // something that expires." This check was holding one. The widget's binding is the mateId,
+  // so that is what to look for; the name is then asserted as DISPLAY, which is the only thing
+  // a name is for here.
+  const seatId = listed?.assistant?.mateId || null;
+  const seatName = listed?.assistant?.name || null;
+  ok(!!seatId, `there is a seat to look for (${seatName})`);
   const seen = await app.eval(
     `(async () => {
       navigateToPage("dashboard");
+      const wanted = ${JSON.stringify(seatId)};
       const deadline = Date.now() + 20000;
+      // FROM THE DOM, because a fresh board's layout is never written down: widgetLayout()
+      // returns the default when nothing is saved and does not persist it, so reading
+      // state.config for the ids finds an empty list while the widgets are on screen.
+      // The ids cover both spellings - w-assistant is the legacy singleton, w-seat-<id> is
+      // what a seat's widget is called since the three kinds became one.
+      const bound = () =>
+        [...document.querySelectorAll(".wd")].find((el) => {
+          const id = el.dataset.widgetId || "";
+          return id === "w-assistant" || id === "w-seat-" + wanted || id === "w-mate-" + wanted;
+        }) || null;
       while (Date.now() < deadline) {
-        const w = [...document.querySelectorAll(".wd")].find((el) => (el.textContent || "").includes("Assistent"));
+        const w = bound();
         if (w) {
           return { present: true, text: (w.textContent || "").slice(0, 400) };
         }
@@ -87,6 +114,13 @@ try {
     })()`
   );
   ok(seen.present, `the seat has a widget on the dashboard without being added by hand (${seen.present ? "" : seen.text})`);
+  // And the card says WHICH seat it is. Separate from the assertion above on purpose: a widget
+  // that renders while naming nobody is the state that made the old check's failure look like
+  // an absence, and it is worth telling those two apart by name.
+  ok(
+    seen.present && !!seatName && seen.text.includes(seatName),
+    `and it names the seat rather than rendering a nameless card (${JSON.stringify(seen.text.slice(0, 120))})`
+  );
 
   // It renders the seat, not the stores. The seat's own account of what would be wrong to
   // build put a dashboard first: "a widget that renders store state is a worse version of the

@@ -14227,9 +14227,16 @@ async function widgetEl(widget, data) {
   const title = document.createElement("span");
   title.className = `wd-title ${spec?.accent || ""}`;
   let label = spec?.label || widget.type;
-  if (widget.type === "firstMate") {
-    const mate = everySeatIn(data).find((m) => m.mateId === widget.mateId);
-    label = mate ? `First mate · ${mate.name}` : "First mate";
+  // EVERY SEAT-SHAPED WIDGET, and through the one resolver, which is what the legacy types
+  // were missing. A saved layout's `assistant` widget carries no mateId - it was a singleton
+  // and had nothing to carry - so it fell past a check for type "firstMate" and drew the bare
+  // catalog label. On a board that has the standing seat as that legacy widget, which is every
+  // board seeded before the types collapsed, the assistant's card sat there titled "First
+  // mate" and named nobody. It read as an empty slot, and an app check looking for the seat on
+  // the dashboard reported it as ABSENT for two scheduled nights.
+  if (widget.type === "firstMate" || widget.type === "assistant" || widget.type === "projectSeat") {
+    const seat = seatForWidget(data, widget);
+    label = seat ? `First mate · ${seat.name}` : "First mate";
   }
   title.textContent = label;
   head.append(title);
