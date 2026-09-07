@@ -58,10 +58,14 @@ process.env.HELM_E2E_PORT = process.env.HELM_E2E_PORT || "9375";
 process.env.HELM_CLAUDE_BIN = path.join(here, "..", "checks-lib", "fixtures", "fake-claude.cmd");
 process.env.FAKE_CLAUDE_HOLD_MS = "6000";
 
-const { secondMateId } = await import("../../src/lib/secondMates.js");
+const { secondMateId, PROJECT_LANE } = await import("../../src/lib/secondMates.js");
 const { launch } = await import("../checks-lib/harness.mjs");
 
-const SM_ID = secondMateId(MATE_ID, project);
+// KEYED BY LANE, not by who dispatched. The relay still comes FROM this first mate - that is
+// what the check is about, and dispatchedBy below still carries it - but the node it lands on
+// belongs to the project, not to the dispatcher. Passing MATE_ID here stopped being a stale
+// argument and became a refusal on 2026-09-04, so this check threw before asserting anything.
+const SM_ID = secondMateId(PROJECT_LANE, project);
 
 fs.writeFileSync(process.env.HELM_CONFIG_PATH, JSON.stringify({}), "utf8");
 // A first mate to be the relay's parent - a relay only makes sense mate -> second mate.
@@ -73,7 +77,7 @@ fs.writeFileSync(
 // The second mate, already bound to a session - so relay and jump-in have the same target.
 fs.writeFileSync(
   process.env.HELM_SECOND_MATES_PATH,
-  JSON.stringify({ [SM_ID]: { firstMateId: MATE_ID, projectPath: project, name: "proj", status: "created", sessionId: SESSION_ID } }),
+  JSON.stringify({ [SM_ID]: { firstMateId: PROJECT_LANE, projectPath: project, name: "proj", status: "created", sessionId: SESSION_ID } }),
   "utf8"
 );
 fs.writeFileSync(process.env.HELM_GOAL_RUN_HISTORY_PATH, "[]", "utf8");
