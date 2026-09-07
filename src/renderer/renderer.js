@@ -13206,7 +13206,7 @@ function nextWidgetInstanceId(layout, type) {
 }
 
 /** The saved layout, or a seeded default (one first-mate widget per active mate). */
-function widgetLayout(mates, projectSeats = []) {
+function widgetLayout(mates, projectSeats = [], hasAssistant = false) {
   const saved = state.config?.dashboardWidgets?.layout;
   if (Array.isArray(saved) && saved.length > 0) {
     // A saved layout outlives the catalog. Anyone who has used this board has "captain" in
@@ -13230,10 +13230,14 @@ function widgetLayout(mates, projectSeats = []) {
   for (const seat of projectSeats || []) {
     layout.push({ id: `w-project-${seat.mateId}`, type: "projectSeat", span: 4, mateId: seat.mateId });
   }
-  layout.push(
+  if (hasAssistant) {
     // Standing, and placed with the seats rather than among the readouts: it is somewhere to
-    // go, not something to look at.
-    { id: "w-assistant", type: "assistant", span: 4 },
+    // go, not something to look at. Only seeded when a standing seat actually exists - a fresh
+    // store mints nobody into the assistant tag until the captain promotes one, and seeding this
+    // widget anyway would leave a permanent "Reading the seat…" tile nothing ever fills.
+    layout.push({ id: "w-assistant", type: "assistant", span: 4 });
+  }
+  layout.push(
     { id: "w-auto", type: "auto", span: 4 },
     { id: "w-docsDrift", type: "docsDrift", span: 4 },
   );
@@ -14239,7 +14243,7 @@ async function widgetEl(widget, data) {
   opts.title = "Widget options";
   opts.addEventListener("click", async (e) => {
     e.stopPropagation();
-    const layout = widgetLayout(data.mates);
+    const layout = widgetLayout(data.mates, data.projectSeats, !!data.assistant);
     // A row break is always full width - offering it a width picker would be a
     // control that visibly does nothing, which is the bug this task started with.
     const items = widget.type === "break"
@@ -14367,7 +14371,7 @@ async function widgetEl(widget, data) {
     if (!widgetDragId || widgetDragId === widget.id) {
       return;
     }
-    const layout = widgetLayout(data.mates);
+    const layout = widgetLayout(data.mates, data.projectSeats, !!data.assistant);
     const from = layout.findIndex((w) => w.id === widgetDragId);
     if (from === -1) {
       return;
@@ -14393,7 +14397,7 @@ function widgetAddTile(data) {
   tile.textContent = "+ Add widget";
   tile.addEventListener("click", (e) => {
     e.stopPropagation();
-    const layout = rebindFirstMateWidgets(widgetLayout(data.mates, data.projectSeats), data.mates, everySeatIn(data)).layout;
+    const layout = rebindFirstMateWidgets(widgetLayout(data.mates, data.projectSeats, !!data.assistant), data.mates, everySeatIn(data)).layout;
     const items = [];
     // NOTHING THAT ALREADY EXISTS IS OFFERED HERE, and the bookkeeping that used to decide
     // which seats were missing from the board went with it. His words, looking at nine of them:
@@ -14553,7 +14557,7 @@ async function renderWidgetDashboard(page) {
   // A first-mate widget adopts a mate on watch when the one it was bound to is gone
   // (task acb34a24). Persisted when it actually happens, so the adoption is stable and
   // the Add-widget menu offers the same answer this render just drew.
-  const rebound = rebindFirstMateWidgets(widgetLayout(mates, data.projectSeats), mates, everySeatIn(data));
+  const rebound = rebindFirstMateWidgets(widgetLayout(mates, data.projectSeats, !!data.assistant), mates, everySeatIn(data));
   // MIGRATION, read-time and one-way: a board that carries the old single marker has already
   // had its placement round, so every project seat that exists right now counts as placed. Not
   // doing this would hand back the eight widgets he removed the moment the set replaced the
