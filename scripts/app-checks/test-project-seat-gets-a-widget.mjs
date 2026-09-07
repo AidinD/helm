@@ -136,23 +136,39 @@ try {
   //
   // It is now a one-time marker, so the seats arrive on a board that never had a Captain
   // widget, and a seat he removes afterwards stays removed.
+  // A PLACED SEAT IS A SEAT WIDGET, and remembered BY ID. Both halves changed on 2026-09-06:
+  // there is one widget type for every seat now, so a placement writes `firstMate` with a
+  // w-seat- id rather than the old `projectSeat`/w-project- pair; and the placement is
+  // remembered per seat instead of by one marker for all of them. The single marker had to go
+  // the moment the add menu stopped listing existing seats - it meant "the seats were placed
+  // once", so a project opened after that first render would have minted a seat with no widget
+  // and nothing anywhere able to put one on the board.
+  //
+  // Counted through the seats, not by matching a widget-id prefix on its own: an id is a name
+  // and a name can be right while the binding is wrong, which is the bug this file's sibling
+  // check exists for.
   const placement = await app.eval(`(async () => {
     state.config = { ...state.config, dashboardWidgets: { layout: [{ id: "w-auto", type: "auto", span: 4 }] } };
     await renderDashboardPage();
-    const projects = () => [...document.querySelectorAll(".wd")].filter((c) => (c.dataset.widgetId || "").startsWith("w-project-")).length;
-    const placed = projects();
-    const marker = !!state.config?.dashboardWidgets?.projectSeatsPlacedAt;
+    const seatIds = new Set((await window.helm.listMates()).projects.map((s) => s.mateId));
+    const onBoard = () =>
+      (state.config?.dashboardWidgets?.layout || []).filter((w) => seatIds.has(w.mateId)).length;
+    const placed = onBoard();
+    const remembered = state.config?.dashboardWidgets?.projectSeatsPlaced || null;
     // Now tidy the board and render again: they must not come back.
     await saveWidgetLayout([{ id: "w-auto", type: "auto", span: 4 }]);
     await renderDashboardPage();
-    return { placed, marker, afterTidy: projects() };
+    return { placed, remembered, afterTidy: onBoard() };
   })()`);
   log(JSON.stringify(placement));
   assert(
     placement.placed === 2,
     "a board that never carried a Captain widget still gets one widget per project seat (" + placement.placed + ")"
   );
-  assert(placement.marker, "and the one-time marker is written");
+  assert(
+    Array.isArray(placement.remembered) && placement.remembered.length === 2,
+    `and each of them is remembered as placed, by id (${JSON.stringify(placement.remembered)}) - one marker for all of them would make the next project invisible`
+  );
   assert(
     placement.afterTidy === 0,
     "so removing them afterwards is permanent - the board can be tidied (" + placement.afterTidy + ")"
