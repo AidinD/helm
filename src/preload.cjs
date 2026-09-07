@@ -263,6 +263,13 @@ contextBridge.exposeInMainWorld("helm", {
   // Says that a first mate IS the assistant, or that it is not. There is exactly one, so
   // setting it on a seat takes it off whichever seat held it.
   setSeatAssistant: (mateId, on) => ipcRenderer.invoke("mates:setAssistant", { mateId, on }),
+  // What the machines that vouch for your repos are saying. Three-valued on purpose: a red
+  // lane, an all-clear, and "could not ask" are different answers and the third must never
+  // render as either of the first two. Served stale-while-revalidate; pass force to wait.
+  ciHealth: (opts) => ipcRenderer.invoke("ci:health", opts || {}),
+  // Hand a link to the OS. https only, refused with a message otherwise - see
+  // src/lib/externalLink.js for why the answer is not "any string".
+  openExternal: (url) => ipcRenderer.invoke("link:open", { url }),
   ensureSeatForProject: (cwd) => ipcRenderer.invoke("mates:ensureForProject", { cwd }),
   listPersonas: () => ipcRenderer.invoke("personas:list"),
   consumeMateHandoff: (mateId) => ipcRenderer.invoke("mates:consumeHandoff", { mateId }),

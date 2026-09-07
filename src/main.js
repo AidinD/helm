@@ -99,6 +99,8 @@ import {
 } from "./lib/worktree.js";
 import { planSweep, describeSweep, reconcileSweepReport } from "./lib/worktreeSweep.js";
 import { docsStaleness, staleProjectsAsync, docsNudgeCandidates, DOCS_NUDGE_ACTIVE_DAYS } from "./lib/docsStaleness.js";
+import { projectCiHealth, ciHealthSummary } from "./lib/ciHealth.js";
+import { externalLinkProblem } from "./lib/externalLink.js";
 import { loadDomains } from "./lib/domains.js";
 import { projectsNeedingSeats } from "./lib/seatBackfill.js";
 import { helmToolsForSeat } from "./lib/seatTools.js";
@@ -5879,6 +5881,257 @@ function driftPayload(c) {
     dormantDays: c.dormantDays || 0,
   };
 }
+
+// --- What the machines that vouch for a repo are saying, brought to where he looks ---------
+//
+// WHY THIS EXISTS. The app lane runs on a schedule on GitHub's runners. It went red the night
+// after the tier merge and again the night after, naming seven checks, and nobody read it for
+// two days (2026-09-07). The lane was doing its job perfectly: something was wrong and it said
+// so, out loud, to nobody. A signal nobody reads is worse than no signal, because it also
+// supplies the feeling of being covered.
+//
+// SO IT IS BUILT LIKE THE DOCS NUDGE, deliberately, down to the failure modes:
+//
+// (1) NEVER BLOCKING. This spawns git and gh per project, which is hundreds of milliseconds
+//     each. Done synchronously on the Electron main thread it would stall every window's IPC
+//     and session polling for that whole time, once a minute - the exact bug the docs sweep
+//     was rewritten to remove. A request past the TTL kicks off a refresh and returns the
+//     last-known answer.
+//
+// (2) NEVER SILENTLY REASSURING. "asked and everything is green" and "could not ask" are
+//     different answers, and ciHealth.js keeps them apart by a field rather than by an empty
+//     list. Whatever this handler cannot determine arrives at the widget as unknown, with the
+//     reason in words.
+//
+// (3) A PROJECT WITH NO GITHUB REMOTE IS OUT OF SCOPE, not unknown. It has no lanes to be red,
+//     so reporting it as unmeasured would fill the readout with permanent question marks and
+//     the all-clear would never be earnable - which is how a truthful widget becomes one
+//     nobody reads.
+//
+// THE TTL IS FIVE MINUTES rather than the drift sweep's one. CI moves on the scale of a push
+// and a nightly cron; asking every minute would spend a process per project per minute to
+// re-learn the same answer.
+let ciHealthCache = { at: 0, projects: [], error: null };
+let ciHealthRefreshing = null;
+const CI_HEALTH_TTL_MS = 5 * 60_000;
+const CI_HEALTH_SPAWN_TIMEOUT_MS = 20_000;
+
+/**
+ * One child process, promised, never throwing.
+ *
+ * A rejection here would become an unhandled rejection inside a fire-and-forget refresh, and
+ * the interesting cases (gh missing, not authenticated, offline, a repo that is not a repo) all
+ * arrive as a non-zero exit with something readable on stderr. So the exit code and the streams
+ * are the return value, and the caller decides what they mean.
+ */
+function ciRun(bin, args, cwd) {
+  return new Promise((resolve) => {
+    execFile(
+      bin,
+      args,
+      { cwd, windowsHide: true, timeout: CI_HEALTH_SPAWN_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024, shell: false },
+      (err, stdout, stderr) => {
+        resolve({
+          ok: !err,
+          out: String(stdout || ""),
+          err: String(stderr || "").trim() || (err ? err.message : ""),
+        });
+      }
+    );
+  });
+}
+
+/**
+ * The default branch. Asked locally first, then of GitHub, and null only when neither knows.
+ *
+ * WHY THERE ARE TWO SOURCES. `origin/HEAD` is a local ref that a clone sets and that plenty of
+ * checkouts simply do not have - it is absent after `git init` plus `git remote add`, and after
+ * some fetch configurations. Pointing this at the real machine found four projects out of
+ * fourteen in exactly that state, and with only the local source they were reported as "not
+ * known" forever. Four permanent question marks is how a widget written to be trustworthy
+ * becomes one nobody reads, which is the failure this whole feature exists to fix.
+ *
+ * So the second question is asked of the place that definitely knows. It costs one extra
+ * process, only for the repos whose local ref is missing, once per five-minute cache.
+ */
+async function ciDefaultBranch(cwd) {
+  const local = await ciRun("git", ["-C", cwd, "rev-parse", "--abbrev-ref", "origin/HEAD"], cwd);
+  if (local.ok) {
+    const name = local.out.trim().replace(/^origin\//, "");
+    if (name && name !== "origin") {
+      return name;
+    }
+  }
+  const remote = await ciRun("gh", ["repo", "view", "--json", "defaultBranchRef", "-q", ".defaultBranchRef.name"], cwd);
+  if (!remote.ok) {
+    return null;
+  }
+  const name = remote.out.trim();
+  return name || null;
+}
+
+/**
+ * One project's standing, or null when the project is not in scope at all.
+ *
+ * The order of the three early exits is the honest part. "Not a GitHub repo" is decided FIRST
+ * and returns null, so a local-only project never appears as unknown. Only after we know there
+ * is something to ask about does a failure to ask become unknown.
+ */
+async function readProjectCi(projectPath) {
+  const name = path.basename(projectPath);
+  const remote = await ciRun("git", ["-C", projectPath, "remote", "get-url", "origin"], projectPath);
+  if (!remote.ok || !/github\.com/i.test(remote.out)) {
+    // No GitHub remote: nothing here has lanes. Out of scope, not unmeasured.
+    return null;
+  }
+  const branch = await ciDefaultBranch(projectPath);
+  if (!branch) {
+    // Asked and could not tell which branch is the default. Reported rather than guessed:
+    // defaulting to "main" would make a feature branch's failure read as the repo's verdict.
+    return projectCiHealth({
+      name,
+      path: projectPath,
+      reachable: false,
+      error: "could not tell which branch is the default - no local origin/HEAD, and gh could not say either",
+    });
+  }
+  const listed = await ciRun(
+    "gh",
+    ["run", "list", "--limit", "40", "--json", "workflowName,headBranch,status,conclusion,createdAt,url,displayTitle"],
+    projectPath
+  );
+  if (!listed.ok) {
+    return projectCiHealth({
+      name,
+      path: projectPath,
+      reachable: false,
+      // The first line only: gh's auth errors run to several lines of advice, and a widget row
+      // needs the sentence, not the manual.
+      error: (listed.err.split(/\r?\n/)[0] || "gh could not be asked").slice(0, 200),
+    });
+  }
+  let rows;
+  try {
+    rows = JSON.parse(listed.out || "[]");
+  } catch (err) {
+    return projectCiHealth({ name, path: projectPath, reachable: false, error: `gh returned something unreadable: ${err?.message || err}` });
+  }
+  return projectCiHealth({ name, path: projectPath, rows, branch });
+}
+
+async function refreshCiHealth() {
+  // The SAME candidate rule as the docs nudge, on purpose: a project he parked or has not
+  // touched in weeks should be out of both readouts or neither. Two lists that both mean
+  // "projects worth nudging about" is how they drift apart.
+  const all = readAllSessions();
+  const cfg = loadConfig();
+  const hidden = new Set(cfg.hiddenSessions || []);
+  const parked = new Set((cfg.parkedDocsProjects || []).map((x) => String(x).toLowerCase()));
+  const newestByPath = new Map();
+  for (const sess of all.sessions || []) {
+    if (!sess.cwd) {
+      continue;
+    }
+    let key;
+    try {
+      key = path.resolve(sess.cwd).toLowerCase();
+    } catch {
+      continue;
+    }
+    const prev = newestByPath.get(key);
+    const touchedAt = sess.lastActivityAt || 0;
+    if (!prev) {
+      newestByPath.set(key, { cwd: sess.cwd, touchedAt, hiddenOnly: hidden.has(sess.sessionId) });
+    } else {
+      prev.touchedAt = Math.max(prev.touchedAt, touchedAt);
+    }
+  }
+  const { candidates } = docsNudgeCandidates(
+    [...newestByPath.entries()].map(([key, v]) => ({ key, cwd: v.cwd, touchedAt: v.touchedAt })),
+    { parked: [...parked] }
+  );
+  // docsNudgeCandidates returns PATHS, not entries. The first version of this read `c.cwd` off
+  // each one, which is undefined on a string, so path.basename threw and the whole readout came
+  // back as one error - and every unit of this feature was green at the time, because they were
+  // all fed payloads by hand. Found by pointing it at the real machine, which is the only step
+  // that could have found it.
+  const read = await Promise.all(
+    (candidates || []).map(async (cwd) => {
+      try {
+        return await readProjectCi(cwd);
+      } catch (err) {
+        // A throw here is a bug in the reader, not a verdict about the repo - so it lands as
+        // unknown with the reason, never as green.
+        return projectCiHealth({ name: path.basename(String(cwd)), path: cwd, reachable: false, error: err?.message || String(err) });
+      }
+    })
+  );
+  ciHealthCache = { at: Date.now(), projects: read.filter(Boolean), error: null };
+  return ciHealthCache;
+}
+
+/** One shape for the readout, so the cached and forced paths cannot diverge. */
+function ciHealthPayload(cache) {
+  const summary = ciHealthSummary(cache.projects);
+  return {
+    ok: !cache.error,
+    error: cache.error,
+    ...summary,
+    measuredAt: cache.at,
+  };
+}
+
+// Hand a link to the operating system - the only place in Helm that does.
+//
+// GUARDED BY SCHEME, and the guard lives in a pure module so it has a test. shell.openExternal
+// lets the OS choose the handler, so an arbitrary string is an arbitrary program with
+// arguments; the first caller passes a run URL that came over the network from gh, which means
+// Helm did not author it. Refusals come back as a message rather than as silence, because a
+// button that does nothing is the bug this codebase keeps writing guards against.
+ipcMain.handle("link:open", async (_event, { url } = {}) => {
+  const problem = externalLinkProblem(url);
+  if (problem) {
+    return { ok: false, error: problem };
+  }
+  try {
+    await shell.openExternal(String(url).trim());
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err) };
+  }
+});
+
+ipcMain.handle("ci:health", async (_event, { force = false } = {}) => {
+  try {
+    const fresh = Date.now() - ciHealthCache.at < CI_HEALTH_TTL_MS;
+    if (force) {
+      const c = await (ciHealthRefreshing ||
+        (ciHealthRefreshing = refreshCiHealth().finally(() => {
+          ciHealthRefreshing = null;
+        })));
+      return { ...ciHealthPayload(c), cached: false, pending: false };
+    }
+    if (!fresh && !ciHealthRefreshing) {
+      ciHealthRefreshing = refreshCiHealth()
+        .catch((err) => {
+          ciHealthCache = { ...ciHealthCache, at: Date.now(), error: err?.message || String(err) };
+          return ciHealthCache;
+        })
+        .finally(() => {
+          ciHealthRefreshing = null;
+        });
+    }
+    return {
+      ...ciHealthPayload(ciHealthCache),
+      cached: fresh,
+      // Nothing has been measured yet, so an empty list means "not known", not "all green".
+      // The widget renders this as "checking", which is the truth.
+      pending: ciHealthCache.at === 0,
+    };
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err), considered: 0, failing: [], unknown: [], unreachable: [], green: [], allClear: false, failingWorkflows: 0, pending: false };
+  }
+});
 
 // Park (or un-park) a project so its docs drift stops being nudged about. The captain's
 // case: tidepool is a work repo he cannot reconcile while on leave, and a row

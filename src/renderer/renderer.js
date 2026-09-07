@@ -13181,6 +13181,9 @@ const WIDGET_CATALOG = {
   // pool, a project seat exists because a project was opened. Both render the same card.
   projectSeat: { label: "First mate", span: 4, accent: "mate", legacy: true },
   docsDrift: { label: "Docs drift", span: 4, accent: "acc", singleton: true },
+  // What the machines that vouch for your repos are saying. A sibling of Docs drift by
+  // design: same shape, same three-state discipline, same job of being quiet until it is not.
+  ciHealth: { label: "CI", span: 4, accent: "acc", singleton: true },
   review: { label: "Review", span: 4, accent: "acc", singleton: true },
   // Layout-only entries, so a row can be left deliberately short instead of the
   // grid packing every widget against the previous one (the captain: "jag kan inte
@@ -13240,6 +13243,7 @@ function widgetLayout(mates, projectSeats = [], hasAssistant = false) {
   layout.push(
     { id: "w-auto", type: "auto", span: 4 },
     { id: "w-docsDrift", type: "docsDrift", span: 4 },
+    { id: "w-ciHealth", type: "ciHealth", span: 4 },
   );
   return layout;
 }
@@ -13400,8 +13404,13 @@ async function seedNewWidgets(save = (patch) => window.helm.setConfig(patch)) {
     return; // no saved layout: the default already includes everything.
   }
   const seeded = dw?.seeded || {};
-  const toSeed = ["docsDrift"].filter((type) => !seeded[type] && !saved.some((w) => w.type === type));
-  const alreadyPresent = ["docsDrift"].filter((type) => !seeded[type] && saved.some((w) => w.type === type));
+  // ciHealth joins docsDrift here for the reason this whole mechanism exists: an attention
+  // signal you have to go and find in the Add-widget menu is not much of a nudge, and this one
+  // was added BECAUSE a signal went unread for two days. Seeding it and then leaving it alone
+  // is the deal - remove it and it stays removed.
+  const SEEDABLE = ["docsDrift", "ciHealth"];
+  const toSeed = SEEDABLE.filter((type) => !seeded[type] && !saved.some((w) => w.type === type));
+  const alreadyPresent = SEEDABLE.filter((type) => !seeded[type] && saved.some((w) => w.type === type));
   if (toSeed.length === 0 && alreadyPresent.length === 0) {
     return;
   }
@@ -13978,6 +13987,113 @@ function docsReconcilePrompt(row) {
   ].join("\n");
 }
 
+/**
+ * One row: a project, and what its lanes are saying.
+ *
+ * The failing rows carry a WORKFLOW NAME and a link to the run, because "helm is red" is not
+ * something he can act on and "app-lane failed, here is the run" is. The unknown rows carry the
+ * reason in the same place, in the same shape, so a row he cannot act on still tells him what
+ * to do about the fact that nobody knows.
+ */
+function ciLineEl(project, kind) {
+  const line = document.createElement("div");
+  line.className = "wd-drift-line";
+  const name = document.createElement("span");
+  name.className = "wd-drift-name";
+  name.textContent = project.name || project.path;
+  name.title = project.path;
+
+  const tag = document.createElement("span");
+  if (kind === "failing") {
+    const lanes = project.failing;
+    tag.className = "wd-drift-count crit";
+    tag.textContent = lanes.length === 1 ? lanes[0].workflow : `${lanes.length} lanes`;
+    tag.title = lanes.map((w) => `${w.workflow}: ${w.why}`).join("\n");
+  } else {
+    // NOT "crit", and that is the whole point of having two kinds of row. An unknown is not
+    // bad news, it is missing news, and colouring it like a failure is how a widget teaches
+    // somebody to stop reading it.
+    tag.className = "wd-drift-count";
+    const reasons = project.reachable ? project.unknown.map((w) => `${w.workflow} ${w.why}`) : [project.error];
+    tag.textContent = "not known";
+    tag.title = reasons.filter(Boolean).join("\n") || "no reason given";
+  }
+  line.append(name, tag);
+
+  // The run itself, one click away. A failing row whose evidence takes six clicks to reach is
+  // how a red lane goes unread for two days.
+  const target = (project.failing || [])[0]?.run?.url || null;
+  if (kind === "failing" && target) {
+    const open = document.createElement("button");
+    open.className = "wd-drift-park";
+    open.textContent = "Open run";
+    open.title = target;
+    open.addEventListener("click", (e) => {
+      e.stopPropagation();
+      window.helm.openExternal(target);
+    });
+    line.append(open);
+  }
+  return line;
+}
+
+/**
+ * CI, and the difference between quiet and unasked.
+ *
+ * WHY IT IS HERE AT ALL. The app lane runs nightly on GitHub's runners. It went red the night
+ * after the tier merge and again the night after, naming seven checks, and nobody read it for
+ * two days (2026-09-07). Every one of those seven was a check describing a mechanism that had
+ * moved. The lane worked; the reading of it did not exist. A signal nobody reads is worse than
+ * no signal, because it also supplies the feeling of being covered.
+ *
+ * THREE STATES, AND THE THIRD IS THE ONE THAT MATTERS. A pending readout before anything has
+ * been measured, an all-clear only when every project was reachable AND nothing is unknown,
+ * and otherwise rows. The all-clear is computed in ciHealth.js rather than inferred here from
+ * an empty list, because "asked and everything is green" and "could not ask" both produce no
+ * failing rows - and rendering the second as the first is the docs-drift bug this repo already
+ * paid for once.
+ */
+async function widgetBodyCiHealth(_data, _widget, fetchHealth = () => window.helm.ciHealth()) {
+  const frag = document.createDocumentFragment();
+  let res;
+  try {
+    res = await fetchHealth();
+  } catch {
+    frag.append(widgetEmpty("Couldn't read CI."));
+    return frag;
+  }
+  if (!res?.ok) {
+    frag.append(widgetEmpty(res?.error ? `Couldn't read CI: ${res.error}` : "Couldn't read CI."));
+    return frag;
+  }
+  if (res.pending) {
+    // Nothing measured yet - the read runs in the background so it cannot block the main
+    // process. "Checking" is the truth; an empty all-clear would not be.
+    frag.append(widgetEmpty("Checking CI…"));
+    return frag;
+  }
+  for (const project of res.failing || []) {
+    frag.append(ciLineEl(project, "failing"));
+  }
+  // Every project we could not fully read, named. Never folded into the all-clear, and never
+  // dressed up as a failure either.
+  for (const project of [...(res.unreachable || []), ...(res.unknown || [])]) {
+    frag.append(ciLineEl(project, "unknown"));
+  }
+  if (res.allClear && (res.withLanes || 0) > 0) {
+    // Said as reassurance rather than as an empty state, and it is only reachable when the look
+    // succeeded everywhere. Counting the projects that HAVE lanes rather than the ones
+    // considered: on the real machine 11 of 14 have no workflows, and "every lane green across
+    // 14 projects" would be claiming eleven projects' worth of evidence that does not exist.
+    frag.append(widgetEmpty(`Every lane green in ${res.withLanes} project${res.withLanes === 1 ? "" : "s"} with CI.`));
+  } else if (!(res.failing || []).length && !(res.unreachable || []).length && !(res.unknown || []).length) {
+    // Nothing failing, nothing unknown, and still not an all-clear: there was nothing with
+    // lanes to ask about. Said out loud, because an empty widget reads as good news.
+    frag.append(widgetEmpty("No project here has CI to report on."));
+  }
+  return frag;
+}
+
 function driftLineEl(row) {
   const line = document.createElement("div");
   line.className = "wd-drift-line";
@@ -14183,6 +14299,7 @@ const WIDGET_BODIES = {
   firstMate: widgetBodyFirstMate,
   projectSeat: widgetBodyProjectSeat,
   docsDrift: widgetBodyDocsDrift,
+  ciHealth: widgetBodyCiHealth,
   review: widgetBodyReview,
 };
 
