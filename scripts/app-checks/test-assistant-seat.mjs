@@ -35,9 +35,21 @@ try {
   await app.waitForSelector("#pageToggle", 30000, { visible: true });
 
   // --- the store ---------------------------------------------------------------------------
+  // MADE, not found. Nothing mints the assistant seat any more (removed 2026-09-05, "You say
+  // what a seat is, and nothing is minted behind your back") - so the check adds a coordinator
+  // to the pool and promotes it itself, the same way test-you-say-what-a-seat-is.mjs does. The
+  // extra coordinator is not decoration: promoting one takes it OUT of the pool, and this file
+  // still asserts the pool is there and that the seat is excluded from `active` - without it
+  // those assertions would be measuring a pool of one.
+  await app.eval(`window.helm.addMate()`);
+  const beforePromote = await app.eval(`window.helm.listMates()`);
+  const toPromote = (beforePromote?.active || [])[(beforePromote?.active || []).length - 1];
+  const promoted = await app.eval(`window.helm.setSeatAssistant(${JSON.stringify(toPromote?.mateId)}, true)`);
+  ok(promoted?.ok === true, `a coordinator can be promoted to the assistant seat (${promoted?.error || "ok"})`);
+
   const listed = await app.eval(`window.helm.listMates()`);
   ok(listed?.ok === true, "mates:list answers");
-  ok(!!listed?.assistant, "and it carries an assistant seat, created on first ask rather than needing a setup step");
+  ok(!!listed?.assistant, "and it carries an assistant seat, made by promoting a coordinator");
   // REVERSED 2026-09-05, and the reversal is the change rather than a relaxation. The name was
   // fixed because the seat was the only one of its kind and the name was how he and other
   // sessions referred to it. Both halves stopped being true: identity is a tag now, so nothing
