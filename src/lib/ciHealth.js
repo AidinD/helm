@@ -20,7 +20,7 @@
 // in - so every branch below is reachable from a test instead of from a weather condition.
 
 /** A conclusion that really means the machines are unhappy about the CODE. */
-const FAILING_CONCLUSIONS = Object.freeze(["failure", "timed_out", "startup_failure", "action_required"]);
+const FAILING_CONCLUSIONS = Object.freeze(["failure", "timed_out", "startup_failure"]);
 
 /**
  * A conclusion that says nothing either way, and must never be read as either.
@@ -33,8 +33,13 @@ const FAILING_CONCLUSIONS = Object.freeze(["failure", "timed_out", "startup_fail
  *
  * `skipped` is a workflow that decided this commit was not for it, which is neither news nor a
  * verdict.
+ *
+ * `action_required` is here for the same shape of reason: GitHub emits it when a run is paused
+ * pending a maintainer's manual approval (e.g. a first-time contributor's fork PR), which is
+ * waiting for a person, not a verdict about the code. Calling that red would light the widget up
+ * for an approval gate nobody has gotten to yet.
  */
-const UNKNOWN_CONCLUSIONS = Object.freeze(["cancelled", "skipped", "neutral", "stale"]);
+const UNKNOWN_CONCLUSIONS = Object.freeze(["cancelled", "skipped", "neutral", "stale", "action_required"]);
 
 /** The states a workflow can be in, as this module reports them. */
 export const CI_STATES = Object.freeze({
@@ -119,12 +124,13 @@ export function classifyWorkflow(entry) {
     };
   }
   if (UNKNOWN_CONCLUSIONS.includes(conclusion)) {
-    return {
-      workflow: entry.workflow,
-      state: CI_STATES.unknown,
-      why: conclusion === "cancelled" ? "was cancelled, and a cancellation does not say by whom" : `reported "${conclusion}"`,
-      run,
-    };
+    let why = `reported "${conclusion}"`;
+    if (conclusion === "cancelled") {
+      why = "was cancelled, and a cancellation does not say by whom";
+    } else if (conclusion === "action_required") {
+      why = "is waiting on a maintainer's approval, which says nothing about the code";
+    }
+    return { workflow: entry.workflow, state: CI_STATES.unknown, why, run };
   }
   if (FAILING_CONCLUSIONS.includes(conclusion)) {
     return { workflow: entry.workflow, state: CI_STATES.failing, why: conclusion, run };
@@ -143,7 +149,7 @@ export function classifyWorkflow(entry) {
  * and fine, and a repo we could not ask is unmeasured. The first version of the docs nudge made
  * exactly that conflation and rendered "docs are current" for projects it had failed to read.
  */
-export function projectCiHealth({ name, path, rows, branch, reachable = true, error = null } = {}) {
+export function projectCiHealth({ name, path, rows, branch, knownWorkflows = null, reachable = true, error = null } = {}) {
   if (!reachable) {
     return {
       name: name || "",
@@ -155,7 +161,30 @@ export function projectCiHealth({ name, path, rows, branch, reachable = true, er
       unknown: [],
     };
   }
-  const workflows = newestFinishedPerWorkflow(rows, { branch }).map(classifyWorkflow);
+  const fetched = newestFinishedPerWorkflow(rows, { branch });
+  const byName = new Map(fetched.map((entry) => [entry.workflow, entry]));
+  // The WORKFLOW SET comes from the repo itself when the caller has asked it (via
+  // `gh workflow list`), not from whichever names happen to appear in the fetched run rows.
+  // Deriving the set from the rows is the truncation bug this shape exists to close: a workflow
+  // that runs rarely on the default branch can fall off a page of runs and simply be absent from
+  // `rows`, and a reader that only knows about names it was handed reports that as nothing to
+  // say - green by omission - instead of as a lane it could not find a verdict for.
+  const names = Array.isArray(knownWorkflows) && knownWorkflows.length > 0 ? knownWorkflows : [...byName.keys()];
+  const workflows = names.map((wf) => {
+    const entry = byName.get(wf);
+    if (entry) {
+      return classifyWorkflow(entry);
+    }
+    // Known to the repo, but no row for it came back even though rows were already scoped to
+    // this branch - a real absence, not a page-size accident, so it is reported as unknown
+    // rather than silently dropped from the list.
+    return {
+      workflow: wf,
+      state: CI_STATES.unknown,
+      why: `no run of this workflow was found on ${branch || "the default branch"}`,
+      run: null,
+    };
+  });
   // Sorted by name so the rendered order does not wobble between refreshes for no reason - a
   // list that reshuffles reads as new information when nothing has changed.
   workflows.sort((a, b) => a.workflow.localeCompare(b.workflow));
