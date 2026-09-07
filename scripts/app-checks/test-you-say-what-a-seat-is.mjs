@@ -94,6 +94,21 @@ try {
   );
   assert(menu.rows.some((r) => r.includes("New first mate")), "while making one is still right there");
 
+  // INHERITED from test-add-widget-offers-one-kind.mjs, which this check replaced on
+  // 2026-09-06. That one existed because a taxonomy was removed from the code and left in the
+  // interface - the menu still had "Assistant" and "Project · <name>" categories after the
+  // three widget bodies had already become one, and the one surface he actually opens was the
+  // last place still describing seats as three kinds. The categories must stay gone whatever
+  // else the menu does, so the assertions come along rather than dying with their file.
+  assert(
+    !menu.rows.some((r) => r.startsWith("Assistant")),
+    `there is no separate Assistant entry (${JSON.stringify(menu.rows.filter((r) => r.startsWith("Assistant")))})`
+  );
+  assert(
+    !menu.rows.some((r) => r.startsWith("Project ·")),
+    `and no Project category (${JSON.stringify(menu.rows.filter((r) => r.startsWith("Project ·")))})`
+  );
+
   // --- and a first mate can be told what it is ---------------------------------------------
   const promoted = await app.eval(`(async () => {
     const before = await window.helm.listMates();

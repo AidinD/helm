@@ -53,6 +53,14 @@ try {
 
   const seats = await app.eval(`(async () => {
     await window.helm.ensureSeatForProject(${JSON.stringify(projectA)});
+    // A THIRD COORDINATOR FIRST, then promote it. Promoting takes a seat out of the pool, and
+    // the assertions below need a pool left to be wrongly adopted from - with only the two
+    // default seats, promoting one would leave a single candidate and an adoption bug could
+    // pass by luck.
+    await window.helm.addMate();
+    const before = await window.helm.listMates();
+    const target = (before.active || [])[before.active.length - 1];
+    await window.helm.setSeatAssistant(target.mateId, true);
     const listed = await window.helm.listMates();
     return {
       standing: listed?.assistant?.name || null,
@@ -73,29 +81,24 @@ try {
   await app.eval(`navigateToPage("dashboard")`);
   await app.waitForSelector(".wd-grid", 30000, { visible: true });
 
-  // THROUGH THE MENU, not by writing a layout: what is being tested is what happens to what
-  // the menu writes, and a hand-written layout could differ from it without anyone noticing.
+  // WRITTEN, not picked from the menu. The menu deliberately offers no existing seat since
+  // 2026-09-06 ("ingen av dem bör finnas, bara new first mate"), and what this check is about
+  // was never how the widget arrived - it is whether the binding survives a render. The shape
+  // written here is the shape the app writes: type "firstMate", id w-seat-<mateId>.
   const added = await app.eval(`(async () => {
-    await saveWidgetLayout([{ id: "w-quota", type: "quota", span: 4 }]);
+    await saveWidgetLayout([
+      { id: "w-quota", type: "quota", span: 4 },
+      { id: "w-seat-" + ${JSON.stringify(seats.standingId)}, type: "firstMate", span: 4, mateId: ${JSON.stringify(seats.standingId)} },
+    ]);
     await renderDashboardPage();
-    document.querySelector(".wd-add").click();
-    await new Promise((r) => setTimeout(r, 250));
-    const rows = [...document.querySelectorAll("#contextMenu .item")];
-    const row = rows.find((e) => (e.textContent || "").includes(${JSON.stringify(seats.standing)}));
-    if (!row) {
-      return { offered: false, rows: rows.map((e) => (e.textContent || "").trim()) };
-    }
-    row.click();
-    await new Promise((r) => setTimeout(r, 400));
     const layout = (state.config?.dashboardWidgets?.layout || []).map((w) => ({ id: w.id, type: w.type, mateId: w.mateId }));
-    return { offered: true, layout };
+    return { layout };
   })()`);
   log(JSON.stringify(added));
 
-  assert(added.offered, `the standing seat is offered in the add menu (${JSON.stringify(added.rows || [])})`);
   assert(
     (added.layout || []).some((w) => w.mateId === seats.standingId),
-    "and picking it writes a widget bound to that seat"
+    "a widget bound to the standing seat can be put on the board"
   );
 
   // THE RENDER IS THE TEST. The adoption happens here, and it is persisted, so one repaint is

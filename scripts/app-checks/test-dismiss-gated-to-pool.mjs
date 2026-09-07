@@ -52,6 +52,14 @@ try {
 
   const seats = await app.eval(`(async () => {
     await window.helm.ensureSeatForProject(${JSON.stringify(projectA)});
+    // THE STANDING SEAT IS MADE, not found. Since 2026-09-06 nothing mints one - a first mate
+    // is promoted - so a fixture that read the assistant field straight after a list call got
+    // null and every assertion below it collapsed into a wrong reason. One extra coordinator
+    // first, because promoting removes one from the pool and the pool is what the assertions
+    // about Dismiss are ABOUT.
+    await window.helm.addMate();
+    const pool = (await window.helm.listMates()).active || [];
+    await window.helm.setSeatAssistant(pool[pool.length - 1].mateId, true);
     const listed = await window.helm.listMates();
     return {
       standingId: listed?.assistant?.mateId || null,
