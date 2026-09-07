@@ -83,17 +83,24 @@ try {
     // The DASHBOARD, because there is no longer a "fleet" page to navigate to. The classic
     // section stack was retired once the widget grid had been in daily use (task 337895ce),
     // and navigateToPage has had no "fleet" branch since - so this called it, nothing
-    // happened, and the card it then looked for was never on screen. The card itself is
-    // alive and unchanged: the Captain widget renders it through fleetDirectCardEl, same
-    // element, same "+ Session" button (2026-08-12, first full sweep since 08-02).
+    // happened, and the card it then looked for was never on screen (2026-08-12).
+    //
+    // AND THE CARD ITSELF IS GONE NOW. The Captain widget was removed on 2026-09-04 and the
+    // "+ Session" button moved to the dashboard's own topbar, where picking a project is what
+    // opens that project's seat. This check went on looking for .fleet-mate-card.direct, found
+    // nothing, and reported "the + Session button is on the captain's card" as a failure - for
+    // a card that was deliberately deleted. The scheduled app lane said so for two nights.
+    //
+    // Found by ROLE, not by which card it sits in: the button's job is to open the picker, and
+    // it has now moved twice. A query rooted in whatever container is fashionable will break
+    // again the next time; searching the page for the control keeps working.
     navigateToPage("dashboard");
     await renderDashboardPage();
-    // Poll for the captain's card to render rather than a fixed wait - the widget draws from
-    // an async refresh, and a fixed delay raced it under the full serial suite's load (green
-    // in isolation, flaky in the sweep).
+    // Polled rather than waited: the topbar draws from an async refresh, and a fixed delay
+    // raced it under the full serial suite's load (green in isolation, flaky in the sweep).
     let btn = null;
     for (let i = 0; i < 60; i++) {
-      btn = [...document.querySelectorAll(".fleet-mate-card.direct .fleet-btn")].find((b) => b.textContent.includes("+ Session"));
+      btn = [...document.querySelectorAll("button")].find((b) => (b.textContent || "").includes("+ Session"));
       if (btn) {
         break;
       }
@@ -122,7 +129,7 @@ try {
     };
   })()`);
 
-  ok(opened.found, "the + Session button is on the captain's card");
+  ok(opened.found, "the + Session button is on the dashboard");
   ok(opened.visible, "clicking it opens the picker rather than a folder dialog");
   ok(opened.items >= 2, `with real choices in it (${opened.items} items, first "${opened.first}")`);
   ok(opened.onScreen, "and the menu is fully on screen where the button is");

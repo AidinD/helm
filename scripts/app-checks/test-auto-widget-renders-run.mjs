@@ -42,7 +42,7 @@ process.env.HELM_E2E_PORT = process.env.HELM_E2E_PORT || "9391";
 // Dynamic imports AFTER the env vars: these modules resolve their paths at import
 // time, and a static import here would read the ambient values and write into the
 // real dev data files.
-const { secondMateId, AUTO_CAPTAIN } = await import("../../src/lib/secondMates.js");
+const { secondMateId, AUTO_CAPTAIN, PROJECT_LANE } = await import("../../src/lib/secondMates.js");
 const { launch } = await import("../checks-lib/harness.mjs");
 
 // Under the AUTO-CAPTAIN's own identity, not "direct". The auto lane used to dispatch
@@ -110,8 +110,6 @@ try {
     const data = { mates: matesRes.active || [], secondMates: model.secondMates };
     const host = document.createElement("div");
     host.append(widgetBodyAuto(data));
-    const captainHost = document.createElement("div");
-    captainHost.append(widgetBodyCaptain(data));
     const node = model.secondMates.find((s) => s.secondMateId === ${JSON.stringify(SM_ID)});
     return {
       nodeFound: !!node,
@@ -121,7 +119,11 @@ try {
       autoRows: host.querySelectorAll(".fleet-branch").length,
       autoText: host.textContent,
       archiveBtns: host.querySelectorAll(".fleet-archive-btn").length,
-      captainText: captainHost.textContent,
+      // Every node this project has, so the double-count assertion can name what it found
+      // rather than only what it expected to be absent.
+      nodesForProject: model.secondMates
+        .filter((s) => (s.projectPath || "").toLowerCase() === ${JSON.stringify(PROJECT.toLowerCase())})
+        .map((s) => ({ id: s.secondMateId, startedBy: s.startedBy ?? null, crew: (s.crew || []).length })),
     };
   })()`);
 
@@ -143,10 +145,25 @@ try {
   // do I archive this?" - measured on the RENDERED row, not on the branch that builds it.
   ok(res.archiveBtns >= 1, `and the row can be archived from here (${res.archiveBtns} Archive control)`);
 
-  // --- and it is not double-counted as the captain's own work ---------------
+  // --- and it is not double-counted under the lane he works in himself ------
+  //
+  // THIS USED TO ASK THE CAPTAIN WIDGET, which was removed on 2026-09-04 - so the check called
+  // widgetBodyCaptain, threw a ReferenceError before asserting anything, and the scheduled app
+  // lane reported it for two nights while nobody read it.
+  //
+  // The property outlived the widget, because a project still has TWO nodes: the auto lane and
+  // the project lane. Asked of the derived model instead of a rendered card, which is also the
+  // stronger question - a text assertion passes whenever the string happens to be absent, for
+  // any reason, including the card not rendering at all.
+  const projectLaneId = secondMateId(PROJECT_LANE, PROJECT);
+  const laneIds = res.nodesForProject.map((n) => n.id);
   ok(
-    !res.captainText.includes("some-project"),
-    "the same run does not also appear in the captain's own column"
+    laneIds.includes(SM_ID),
+    `the run's node is the project's AUTO lane (${JSON.stringify(laneIds)})`
+  );
+  ok(
+    !laneIds.includes(projectLaneId),
+    `and the same run did not also mint a node in the lane he works in himself (${projectLaneId})`
   );
 
   // --- WHY IT WAS EMPTY FOR A WHOLE DAY ------------------------------------
@@ -248,7 +265,7 @@ try {
 
 console.log(
   exit === 0
-    ? "VERIFY OK: an auto run in the shape the app produces today renders as a row in the Auto widget, named after its project, and is not duplicated into the captain's column."
+    ? "VERIFY OK: an auto run in the shape the app produces today renders as a row in the Auto widget, named after its project, and is not duplicated into the lane he works in himself."
     : "VERIFY FAILED."
 );
 process.exit(exit);

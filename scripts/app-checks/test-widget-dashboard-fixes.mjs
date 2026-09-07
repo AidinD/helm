@@ -71,7 +71,7 @@ process.env.HELM_E2E_PORT = process.env.HELM_E2E_PORT || "9382";
 
 // Dynamic import AFTER the env vars: secondMates.js resolves its path at import time, and a
 // static import here would read the ambient value and touch the real dev data file.
-const { secondMateId, AUTO_CAPTAIN } = await import("../../src/lib/secondMates.js");
+const { secondMateId, AUTO_CAPTAIN, PROJECT_LANE } = await import("../../src/lib/secondMates.js");
 
 // The auto fixture, in the shape the app produces TODAY.
 //
@@ -211,18 +211,38 @@ try {
     !(removed.active || []).some((m) => m.mateId === added.active[3].mateId),
     "the dismissed one does not respawn into its old slot"
   );
-  const floor = await app.eval(`(async () => {
+  // THE FLOOR IS GONE, DELIBERATELY, and this assertion used to guard it. "Keep at least one"
+  // was right while a coordinator was the only seat you could work in - an app with none had
+  // no way in. Work happens in project seats now, and those come from opening a project, so
+  // zero coordinators is a legitimate state and "+ Session" is always there to leave it.
+  //
+  // Inverted rather than deleted: an empty pool is a claim worth checking, because the failure
+  // it would produce is an app with no way in, and nothing else asserts that emptying the pool
+  // is ALLOWED. What must not happen is a refusal, or a silent respawn that puts the pool back
+  // and makes the dismissals look like they did nothing.
+  const emptied = await app.eval(`(async () => {
     const list = await window.helm.listMates();
     let last = null;
     for (const m of list.active) { last = await window.helm.removeMate(m.mateId); }
-    return last;
+    const relisted = await window.helm.listMates();
+    return { last, remaining: (relisted.active || []).length, error: last?.error || null };
   })()`);
-  ok(floor?.ok === false && /at least one/i.test(floor.error || ""), `it refuses to leave the fleet empty (${J(floor?.error)})`);
+  ok(emptied.last?.ok === true, `the last coordinator can be dismissed too (${J(emptied.error)})`);
+  ok(emptied.remaining === 0, `and the pool stays empty rather than respawning (${emptied.remaining})`);
 
-  // ---- 3. THE CAPTAIN WIDGET ----------------------------------------------
-  // The captain's own sessions are DERIVED from state.sessions; they are not
-  // second-mate bindings. The widget dashboard passed the raw bindings straight
-  // through, so its Captain widget had nothing to show.
+  // ---- 3. THE DERIVATION THE CAPTAIN WIDGET USED TO EXPOSE -----------------
+  // His own sessions are DERIVED from state.sessions; they are not second-mate bindings. The
+  // widget dashboard passed the raw bindings straight through, so the Captain widget had
+  // nothing to show - that was the bug, and the derivation is what fixed it.
+  //
+  // THE WIDGET WENT ON 2026-09-04 and this check kept calling widgetBodyCaptain, so it threw
+  // a ReferenceError before asserting anything at all. Meanwhile a pure check guards that the
+  // renderer must NOT contain that function: one check enforcing the removal while this one
+  // depended on it, both green-or-red in different directions, for two nights of scheduled
+  // runs nobody read.
+  //
+  // What survives the widget is the property underneath it: the derived model has session
+  // nodes the raw bindings do not. Asserted on the model, which is where it was always true.
   const captain = await app.eval(`(async () => {
     const matesRes = await window.helm.listMates();
     const smRes = await window.helm.listSecondMates();
@@ -230,22 +250,19 @@ try {
     const rawDirect = raw.filter(s => s.firstMateId === "direct" && s.isSessionNode).length;
     const model = await buildFleetModel(matesRes.active || [], raw);
     const derivedDirect = model.secondMates.filter(s => s.firstMateId === "direct" && s.isSessionNode);
-    const host = document.createElement("div");
-    host.append(widgetBodyCaptain({ mates: matesRes.active || [], secondMates: model.secondMates }));
-    return { rawDirect, derived: derivedDirect.length, sessions: state.sessions.length, rendered: host.textContent.trim().length };
+    return { rawDirect, derived: derivedDirect.length, sessions: state.sessions.length };
   })()`);
   if (captain.sessions === 0) {
-    console.log("SKIP - no sessions on this machine to populate the captain column");
+    console.log("SKIP - no sessions on this machine to populate the derived session nodes");
   } else {
     ok(
       captain.derived > 0,
-      `the captain's own sessions exist in the DERIVED model (${captain.derived} from ${captain.rawDirect} raw bindings)`
+      `his own sessions exist in the DERIVED model (${captain.derived} from ${captain.rawDirect} raw bindings)`
     );
     ok(
       captain.derived > captain.rawDirect,
-      "which is exactly why passing the raw bindings left the widget empty"
+      "which is exactly why passing the raw bindings through left the widget empty"
     );
-    ok(captain.rendered > 0, `and the Captain widget renders something (${captain.rendered} chars)`);
   }
 
   // The dashboard derives the fleet through the shared builder - not its own
@@ -347,7 +364,14 @@ try {
       names: autoNodes.map(s => s.name),
       text: host.textContent,
       rows: host.querySelectorAll(".fleet-branch").length,
-      inDirect: widgetBodyCaptain(data).textContent.includes("${"e2e-auto-run"}"),
+      // Every node this project has. The double-count used to be asked of the Captain
+      // widget's rendered text; a project has two LANES now, and the question is whether the
+      // auto run also minted one in the lane he works in himself. Asked of the model, which
+      // is also stronger: a text assertion passes whenever the string is absent for ANY
+      // reason, including the card having failed to render.
+      laneIds: model.secondMates
+        .filter((s) => (s.projectPath || "").toLowerCase() === (${JSON.stringify(AUTO_PROJECT)}).toLowerCase())
+        .map((s) => s.secondMateId),
     };
   })()`);
   ok(autoWidget.autoNodes === 1, `the seeded auto run is in the fleet model (${J(autoWidget.names)})`);
@@ -356,7 +380,14 @@ try {
   ok(!/Nothing started yet/.test(autoWidget.text), "so the widget is not showing its empty state while a run exists");
   ok(/Auto-captain/.test(autoWidget.text), "the card is labelled Auto-captain, not Captain");
   ok(!/work you drive yourself/.test(autoWidget.text), "and does not call work nobody started your own");
-  ok(!autoWidget.inDirect, "the same run is not double-listed in the Captain widget");
+  ok(
+    autoWidget.laneIds.includes(AUTO_SM_ID),
+    `the run's node is the project's AUTO lane (${J(autoWidget.laneIds)})`
+  );
+  ok(
+    !autoWidget.laneIds.includes(secondMateId(PROJECT_LANE, AUTO_PROJECT)),
+    "and the same run did not also mint a node in the lane he works in himself"
+  );
 
   const errs = app.getConsoleErrors();
   ok(errs.length === 0, `no console errors${errs.length ? ": " + errs[0].text.slice(0, 200) : ""}`);
@@ -373,7 +404,7 @@ try {
 }
 console.log(
   fails === 0
-    ? "\nVERIFY OK: widths apply, rows can be left short, the fleet is not capped at two, and Captain is populated."
+    ? "\nVERIFY OK: widths apply, rows can be left short, the fleet is not capped at two and can be emptied, and the derived session nodes are there."
     : `\nVERIFY FAILED (${fails})`
 );
 process.exit(fails === 0 ? 0 : 1);
