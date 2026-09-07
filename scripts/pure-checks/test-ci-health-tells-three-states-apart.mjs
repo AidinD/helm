@@ -85,12 +85,20 @@ const run = (over = {}) => ({
 // the widget up every time he pushes twice in a minute, and a widget that cries wolf gets
 // ignored - which is the exact failure being fixed here.
 {
-  for (const conclusion of ["cancelled", "skipped", "neutral", "stale"]) {
+  for (const conclusion of ["cancelled", "skipped", "neutral", "stale", "action_required"]) {
     const verdict = classifyWorkflow({ workflow: "app-lane", run: run({ conclusion }) });
     ok(verdict.state === CI_STATES.unknown, `"${conclusion}" is unknown, neither pass nor fail (${verdict.state})`);
   }
   const cancelled = classifyWorkflow({ workflow: "app-lane", run: run({ conclusion: "cancelled" }) });
   ok(/does not say by whom/.test(cancelled.why), `and a cancellation says why it is not a verdict (${cancelled.why})`);
+
+  // action_required means a run is paused on a maintainer's approval (e.g. a first-time
+  // contributor's fork PR) - it says nothing about the code, so it must not read as red.
+  const pending = classifyWorkflow({ workflow: "app-lane", run: run({ conclusion: "action_required" }) });
+  ok(
+    /approval/.test(pending.why),
+    `and a pending approval says why it is not a code verdict (${pending.why})`
+  );
 }
 
 // --- AN UNRECOGNISED CONCLUSION CANNOT FALL THROUGH TO GREEN --------------------------------
@@ -106,7 +114,7 @@ const run = (over = {}) => ({
 
 // --- what IS red, and what IS green ---------------------------------------------------------
 {
-  for (const conclusion of ["failure", "timed_out", "startup_failure", "action_required"]) {
+  for (const conclusion of ["failure", "timed_out", "startup_failure"]) {
     const verdict = classifyWorkflow({ workflow: "app-lane", run: run({ conclusion }) });
     ok(verdict.state === CI_STATES.failing, `"${conclusion}" is a failure (${verdict.state})`);
   }
@@ -128,6 +136,33 @@ const run = (over = {}) => ({
     quiet.reachable !== unasked.reachable,
     "so the two are distinguishable by a field, not by the emptiness of a list"
   );
+}
+
+// --- A WORKFLOW THE REPO HAS, BUT WHOSE RUN FELL OFF THE FETCHED PAGE, IS UNKNOWN - NOT ABSENT
+// The workflow SET has to come from the repo itself (`gh workflow list`), not from whichever
+// names happen to appear in the rows this reader was handed - otherwise a workflow that runs
+// rarely on the default branch can have its one relevant run pushed off a fixed-size page by
+// unrelated churn, and simply vanish from the readout instead of being reported as unmeasured.
+{
+  const knownWorkflows = ["app-lane", "nightly-app-lane"];
+  const health = projectCiHealth({
+    name: "helm",
+    rows: [run({ workflowName: "app-lane", conclusion: "success" })],
+    branch: "main",
+    knownWorkflows,
+  });
+  ok(health.workflows.length === 2, `both known workflows are reported, not just the one with a fetched row (${health.workflows.length})`);
+  const missing = health.workflows.find((w) => w.workflow === "nightly-app-lane");
+  ok(!!missing, "the workflow with no fetched row is present, not dropped");
+  ok(missing?.state === CI_STATES.unknown, `and it is unknown rather than silently absent (${missing?.state})`);
+  ok(
+    /no run of this workflow was found on main/.test(missing?.why || ""),
+    `and says why in words naming the branch it looked on (${missing?.why})`
+  );
+  ok(health.failing.length === 0, "the fetched row's own verdict is unaffected");
+
+  const summary = ciHealthSummary([health]);
+  ok(summary.allClear === false, "a workflow this reader could not find a run for withholds the all-clear");
 }
 
 // --- THE ALL-CLEAR IS A CLAIM ABOUT HAVING LOOKED -------------------------------------------

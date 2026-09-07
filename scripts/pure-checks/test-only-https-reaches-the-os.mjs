@@ -78,9 +78,33 @@ for (const url of ["https:/\\evil.example.com", "https:evil", "https:\\\\evil", 
 // --- and nothing else in the app calls openExternal directly --------------------------------
 // The guard is only a guard if it is the only door. A second call site that reaches for
 // shell.openExternal itself would be a hole with a test sitting next to it.
+//
+// COMMENTS ARE STRIPPED FIRST, so a commented-out call site cannot be counted as the one real
+// door, and a comment mentioning `shell.openExternal(` cannot be mistaken for a second one. A
+// plain regex over the raw source cannot tell "called here" from "mentioned in a comment here",
+// which is exactly the gap a behavior-preserving edit (adding a note) could fall into.
+function stripComments(src) {
+  // Block comments, then line comments. Not JS-string-aware - fine for this file's purpose,
+  // since the only thing this strips before counting is comment text, and the fixture below
+  // proves the one case that matters: a commented-out call disappears.
+  return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+}
+
+{
+  // Prove the stripping actually strips, before trusting it to judge the real source.
+  const fixture = [
+    "function open(url) {",
+    "  // shell.openExternal(url); // old, unguarded call - left as a note",
+    "  return externalLinkProblem(url) || realOpen(url);",
+    "}",
+  ].join("\n");
+  const strippedCalls = [...stripComments(fixture).matchAll(/shell\.openExternal\s*\(/g)];
+  ok(strippedCalls.length === 0, "a commented-out shell.openExternal call is not counted once comments are stripped");
+}
+
 {
   const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-  const main = fs.readFileSync(path.join(repo, "src", "main.js"), "utf8");
+  const main = stripComments(fs.readFileSync(path.join(repo, "src", "main.js"), "utf8"));
   const calls = [...main.matchAll(/shell\.openExternal\s*\(/g)];
   ok(calls.length === 1, `shell.openExternal is called in exactly one place in main.js (${calls.length})`);
   const handlerBody = main.slice(main.indexOf('ipcMain.handle("link:open"'), main.indexOf('ipcMain.handle("ci:health"'));

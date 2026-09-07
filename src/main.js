@@ -5995,9 +5995,36 @@ async function readProjectCi(projectPath) {
       error: "could not tell which branch is the default - no local origin/HEAD, and gh could not say either",
     });
   }
+  // The WORKFLOW SET comes from the repo itself, asked directly, rather than from whichever
+  // names happen to appear in the run rows below. A workflow that runs rarely on the default
+  // branch (a nightly cron, say) can have its one relevant run pushed out of a fixed-size page
+  // of runs by unrelated PR churn on other branches - and a reader that only knows the names it
+  // was handed reports that as nothing to say, which renders as green. Asking `gh workflow list`
+  // means a workflow the repo has is never simply absent from the readout.
+  const workflowsListed = await ciRun("gh", ["workflow", "list", "--json", "name,state"], projectPath);
+  if (!workflowsListed.ok) {
+    return projectCiHealth({
+      name,
+      path: projectPath,
+      reachable: false,
+      error: (workflowsListed.err.split(/\r?\n/)[0] || "gh could not be asked").slice(0, 200),
+    });
+  }
+  let workflowRows;
+  try {
+    workflowRows = JSON.parse(workflowsListed.out || "[]");
+  } catch (err) {
+    return projectCiHealth({ name, path: projectPath, reachable: false, error: `gh returned something unreadable: ${err?.message || err}` });
+  }
+  // A disabled workflow is not a lane anyone is watching - it should not appear at all, not as
+  // unknown, so it is dropped here rather than carried into the readout.
+  const knownWorkflows = workflowRows
+    .filter((w) => String(w?.state || "").toLowerCase() === "active")
+    .map((w) => String(w?.name || "").trim())
+    .filter(Boolean);
   const listed = await ciRun(
     "gh",
-    ["run", "list", "--limit", "40", "--json", "workflowName,headBranch,status,conclusion,createdAt,url,displayTitle"],
+    ["run", "list", "--branch", branch, "--limit", "40", "--json", "workflowName,headBranch,status,conclusion,createdAt,url,displayTitle"],
     projectPath
   );
   if (!listed.ok) {
@@ -6016,7 +6043,7 @@ async function readProjectCi(projectPath) {
   } catch (err) {
     return projectCiHealth({ name, path: projectPath, reachable: false, error: `gh returned something unreadable: ${err?.message || err}` });
   }
-  return projectCiHealth({ name, path: projectPath, rows, branch });
+  return projectCiHealth({ name, path: projectPath, rows, branch, knownWorkflows });
 }
 
 async function refreshCiHealth() {
@@ -6025,7 +6052,6 @@ async function refreshCiHealth() {
   // "projects worth nudging about" is how they drift apart.
   const all = readAllSessions();
   const cfg = loadConfig();
-  const hidden = new Set(cfg.hiddenSessions || []);
   const parked = new Set((cfg.parkedDocsProjects || []).map((x) => String(x).toLowerCase()));
   const newestByPath = new Map();
   for (const sess of all.sessions || []) {
@@ -6041,7 +6067,7 @@ async function refreshCiHealth() {
     const prev = newestByPath.get(key);
     const touchedAt = sess.lastActivityAt || 0;
     if (!prev) {
-      newestByPath.set(key, { cwd: sess.cwd, touchedAt, hiddenOnly: hidden.has(sess.sessionId) });
+      newestByPath.set(key, { cwd: sess.cwd, touchedAt });
     } else {
       prev.touchedAt = Math.max(prev.touchedAt, touchedAt);
     }
