@@ -25,8 +25,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { probeTierGuard } from "../../src/lib/tierGuardProbe.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, "..", "..");
@@ -121,14 +121,16 @@ try {
     "and so does the policy it imports, at the relative path the hook's own import expects - shipping only the entry point would move the failure one import deeper"
   );
   if (fs.existsSync(unpacked)) {
-    const probe = spawnSync(process.execPath, [unpacked], {
-      input: JSON.stringify({ tool_name: "Bash", tool_input: { command: "cat > x.md << 'EOF'\nhi\nEOF" } }),
-      encoding: "utf8",
-      env: { ...process.env, HELM_TIER: "first-mate" },
-    });
+    // Through probeTierGuard, NOT a second hand-rolled copy of it. This used to spawn the
+    // hook with its own payload and its own idea of what a pass looks like, and since
+    // 2026-09-08 the app asks the same question at every tiered launch - two definitions
+    // of "the guard starts" that can drift, with the packaged layout (the one place the
+    // REAL shipped arrangement is exercised) on the wrong side of the drift. So the
+    // packaged build is now the probe's most important customer rather than a lookalike.
+    const probe = probeTierGuard({ bin: process.execPath, script: unpacked });
     ok(
-      probe.status === 0 && /"permissionDecision":"deny"/.test(probe.stdout || ""),
-      `and PLAIN NODE runs it from there and gets a deny back (exit ${probe.status}, stdout ${JSON.stringify((probe.stdout || "").slice(0, 80))}) - this is the actual thing the CLI does, not a stand-in for it`
+      probe.startable,
+      `and PLAIN NODE runs it from there and gets a deny back (${probe.detail}) - this is the actual thing the CLI does, not a stand-in for it`
     );
   }
   // --- 5. the transcription engine, which is the whole reason it needs asking here ---
