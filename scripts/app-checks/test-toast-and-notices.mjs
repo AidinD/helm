@@ -193,15 +193,32 @@ try {
   // branch above passes just as happily when somebody deletes the animation altogether - "it is
   // absent" would be satisfied by absence for the wrong reason, which is the failure this whole
   // suite keeps finding.
-  {
-    const css = fs.readFileSync(new URL("../../src/renderer/style.css", import.meta.url), "utf8");
-    const guarded = css.slice(css.indexOf("@media (prefers-reduced-motion: no-preference)"));
-    ok(
-      /\.notice\s*\{[^}]*animation:\s*notice-in/.test(guarded),
-      "the slide-in is defined for .notice, behind the reduced-motion guard"
-    );
-    ok(/@keyframes notice-in/.test(css), "and the keyframes it names exist");
-  }
+  const noticeRule = await app.eval(`(() => {
+    const result = { found: false, animationName: null };
+    for (const sheet of document.styleSheets) {
+      let rules;
+      try {
+        rules = sheet.cssRules;
+      } catch {
+        continue;
+      }
+      for (const rule of rules) {
+        if (!(rule instanceof CSSMediaRule)) continue;
+        if (!/prefers-reduced-motion/.test(rule.conditionText) || !/no-preference/.test(rule.conditionText)) continue;
+        for (const inner of rule.cssRules) {
+          if (inner.selectorText === ".notice") {
+            result.found = true;
+            result.animationName = inner.style.animationName;
+          }
+        }
+      }
+    }
+    return result;
+  })()`);
+  ok(
+    noticeRule.found && noticeRule.animationName === "notice-in",
+    `the .notice rule behind the reduced-motion guard names the notice-in animation (found=${noticeRule.found}, animation-name=${JSON.stringify(noticeRule.animationName)})`
+  );
   ok(arriving.goodTone, "a good-tone notice carries the success stripe class");
   ok(arriving.leaving, "dismissing flies the card out before removing it");
 
