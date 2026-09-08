@@ -43,8 +43,6 @@ scripts/checks-lib/screenshots/flow-review/
 # notes are recoverable from the run's own transcript.
 .helm-goal/
 
-scripts/checks-lib/screenshots/frameless-header.png
-
 # Screenshot and capture output. Never committed - a screenshot of your own app
 # shows whatever was on screen. Helm had seven of these in a public repo before
 # anyone noticed; see keel/hooks/no-leaky-assets.mjs.

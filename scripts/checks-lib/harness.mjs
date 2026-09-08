@@ -34,7 +34,7 @@ import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// scripts/e2e/ -> repo root is two levels up.
+// scripts/checks-lib/ -> repo root is two levels up.
 const REPO_ROOT = path.resolve(__dirname, "..", "..");
 
 /**

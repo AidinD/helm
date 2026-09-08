@@ -9,8 +9,8 @@
 //   6. read any console errors
 //   7. clean shutdown (only the launched instance is killed)
 //
-// Run:  node scripts/e2e/demo.mjs
-// Screenshots land in scripts/e2e/screenshots/.
+// Run:  node scripts/checks-lib/demo.mjs
+// Screenshots land in scripts/checks-lib/screenshots/ (gitignored).
 
 import path from "node:path";
 import { fileURLToPath } from "node:url";
