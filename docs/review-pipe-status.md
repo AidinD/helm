@@ -86,10 +86,21 @@ read-only and it writes nothing.
   green would let a pass be minted out of a string, which is worse than the honour
   system it replaces. `covers` is required on every citation for the same reason - a
   citation with no stated scope reads as "CI passed", and CI covers one lane.
-- **Nobody is watching the workflow.** It is not a required check, it opens no issue
-  and sends no message. A red run is visible in the Actions tab and in a pull request's
-  checks, and nowhere else. That is deliberate (a failed run must not block work) and
-  it is also a gap: a run can go red and stay red unnoticed.
+- **Something displays it now; nothing notifies.** It is still not a required check, which is
+  deliberate - a failed run must not block work. What changed on 2026-09-08 is where a red run
+  can be SEEN. The Dashboard's CI widget (`src/lib/ciHealth.js`, the `ci:health` handler in
+  `src/main.js`, `widgetBodyCiHealth` in the renderer) asks `gh workflow list` for a project's
+  ACTIVE workflows and names every failing lane, so it covers both lanes here rather than a
+  subset; and the app lane now runs on every push to `main`, not only overnight. A break on
+  `main` therefore reaches a surface the captain already looks at, minutes after it happens.
+  **It is pulled, not pushed, and that is the remaining gap.** `refreshCiHealth` runs only when
+  the widget asks, and the widget repaints only while the Dashboard is on screen - so nothing
+  reads CI at all while he is in Chat, and nothing opens an issue, sends a message, or raises
+  the OS notification Helm already raises for a session that stopped moving. It reads each
+  project's DEFAULT branch only, so a pull request's red run is still visible in that pull
+  request's checks and nowhere else. And it asks only about projects with a Helm session in the
+  last 60 days that are not parked for docs drift. A red run can still stay red until somebody
+  opens the right page.
 
 ## What IS hardened (each verified through the running app, not just unit tests)
 
