@@ -77,6 +77,10 @@
         "to": "tier-guard/lib/tierGuard.js"
       },
       {
+        "from": "src/lib/personas.js",
+        "to": "tier-guard/lib/personas.js"
+      },
+      {
         "from": "../jot/out/renderer",
         "to": "jot/out/renderer",
         "filter": [
