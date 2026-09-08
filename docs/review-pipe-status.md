@@ -72,7 +72,12 @@ read-only and it writes nothing.
 - **The checks that drive a real model self-skip.** CI never passes `--live`, so they
   are reported as skipped and counted as neither pass nor fail.
 - **`checkRuns` are still signed by this process with a key on local disk.** CI does
-  not stamp check runs, and nothing about the gauntlet's provenance changed.
+  not stamp check runs, and nothing about the gauntlet's provenance changed. That key is
+  `<metaHome>/.helm/run-key`, inside the synced meta-home, and it stays there ON PURPOSE:
+  the records are synced too, so a per-machine key would make every stamp verify only on
+  the machine that made it. Moving it was built in full and reverted for that reason - see
+  DECISIONS.md, 2026-09-08, before improving it. It is no longer tracked in that folder's
+  git repository, which was the half worth acting on.
 - **A cited CI run scores nothing.** `externalRuns` on a record is a CITATION - a url
   and a run id a reader can open. The JSON is still written by an agent, so the field
   could be invented; what makes it worth anything is that a fabricated run does not

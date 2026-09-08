@@ -1,5 +1,23 @@
 # Decisions
 
+## 2026-09-08 - The signing key stays with the records it signs, and the reason is not inertia
+
+The key that signs check runs lives at `<metaHome>/.helm/run-key`, and the meta-home is inside Dropbox. So the one thing separating "the app ran this command and stamped the exit code" from "somebody wrote down an outcome they believed" is copied to every machine and kept in Dropbox's own version history. It was also tracked in that folder's git repository until today. **It was moved out of git and it stays in the synced folder** - and the second half is the decision, taken after building the alternative and having it rejected in review.
+
+**Why it looked obviously right to move.** A secret in a sync client's version history is a set of copies no rotation reaches. Rotating the key would leave every old copy valid for as long as anyone kept an old record. That reasoning is sound and it is not what decides this.
+
+**What it missed: the records are synced for the same reason the key was.** `<metaHome>/.helm/reviews/*.json` is in that same folder, deliberately, so the review queue is the same on every machine. A signature is verified against the current key, so a per-machine key means a stamp verifies only on the machine that produced it. On a second machine all 129 stamped check runs would render `unverified` - which the gauntlet correctly treats as "cannot confirm", and which reads on screen as the review pipe having gotten worse. The key was in the synced folder *because the records are*, and moving one without the other breaks the pair.
+
+**Found by the review gate, not by the author, and the author had written a test suite that passed.** The check asserted that an existing key is CARRIED ACROSS rather than regenerated - the mechanism - and never asked whether a stamp still verifies where it is read - the property. Twenty assertions, all green, all inside one machine's fixture. This is the same failure shape as the rest of the week: conditioning on the mechanism instead of the property.
+
+**What the signature is actually worth, which reframes the exposure.** It defends against an author - an agent, usually - writing `{ok: true}` by hand. That author is running as the user and can read the key wherever it is put. So secrecy from a local process was never the property this key had; what it has is that fabricating a pass takes deliberate effort rather than a JSON edit. Judged against that, a copy in Dropbox's history costs little, and losing cross-machine verification costs a working feature.
+
+**What did change, and it is the sharper half.** The key is no longer tracked in the meta-home's git repository (`git rm --cached` plus a `.gitignore` line, 2026-09-08). A file in a git history is served by every clone and survives deletion; a file in a personal sync folder is on machines the person already controls. Those are different exposures and only one of them was worth acting on.
+
+**What would make the move correct, if it is ever revisited.** Asymmetric signatures: each machine holds a private key that never syncs and publishes its public key into the synced folder, so a stamp from one machine verifies on another with no shared secret. That is the only shape that gives both properties. It needs a new signature format and a path that keeps verifying the existing HMAC stamps, so it is a piece of work rather than a path change - which is precisely why the path change alone was the wrong size of fix.
+
+**A note for whoever reads `runKey` next and sees the obvious improvement.** It has been made, in full, and reverted on purpose. Move the records first, or change the primitive; do not move the key alone.
+
 ## 2026-09-05 - The commit count is a version number here, so a rewrite must preserve it
 
 Helm stamps its version from `git rev-list --count HEAD`. That makes the commit count part of the build's identity rather than a statistic about it, and it is not obvious from anywhere near the code that rewrites history.
