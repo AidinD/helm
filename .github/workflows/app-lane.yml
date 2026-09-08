@@ -18,27 +18,59 @@
 # An excluded check is reported as excluded and subtracted from the total. It is never
 # counted as passed, which is the only rule here that matters.
 #
-# NIGHTLY since 2026-09-03, and by hand whenever you want it. The trigger block below carries
-# the reasoning for the cadence and the caveats that come with a scheduled workflow.
+# ON EVERY PUSH TO MAIN since 2026-09-08, nightly as well, and by hand whenever you want it.
+# The trigger block below carries the reasoning for the cadence and the caveats that come with
+# a scheduled workflow.
 #
 # NOT A GATE. Read-only, writes nothing, must not be a required check.
 name: app-lane
 
 on:
-  # NIGHTLY, on GitHub's machines. Nothing about this runs on a developer workstation, so it
-  # does not matter whether one is switched on - the runner is started, used and destroyed by
-  # GitHub.
+  # ON PUSH TO MAIN, AND NIGHTLY. Nothing about this runs on a developer workstation, so it does
+  # not matter whether one is switched on - the runner is started, used and destroyed by GitHub.
   #
-  # WHY NIGHTLY RATHER THAN ON EVERY PUSH. Eleven minutes is only a cost when somebody waits
-  # for it, and nobody does: the pure lane answers in well under two minutes on every push and
-  # is the signal you work against. This lane is the before-you-ship check, and its whole
-  # purpose is to run unattended - which is also why it is not worth making faster by sharing
-  # one Electron instance between checks. That would trade isolation, and an ordering-dependent
-  # suite is worse than a slow one for an app whose problem is being trusted.
+  # THE TRADE WAS WRITTEN HERE TO BE REVISITED, AND ON 2026-09-08 IT WAS. What this file said
+  # was: "nightly finds a break the morning after, on-push finds it before later work is stacked
+  # on top of it. Both cost the same, which is nothing." Then it happened. A change adding a
+  # widget to the seedable list broke an assertion in the DOCS-STALENESS check - a coupling
+  # nobody would have predicted, which is the whole argument against choosing a cheap subset by
+  # judgement. It merged at nine in the evening, the schedule found it at six the next morning,
+  # and it reached the captain only because he opened GitHub himself. Nine hours, and the last
+  # hop was luck.
   #
-  # The trade against on-push, stated so it can be revisited: nightly finds a break the
-  # morning after, on-push finds it before later work is stacked on top of it. Both cost the
-  # same, which is nothing - the repository is public, so hosted minutes are free.
+  # Eleven minutes is only a cost when somebody waits for it, and nobody waits for this one: the
+  # pure lane still answers in under two minutes on every push and is the signal you work
+  # against. This lane now also runs the moment something becomes true on main, which is the
+  # moment worth catching - the difference between a break found before the next change is
+  # stacked on it and a break found after.
+  #
+  # WHY THE WHOLE LANE AND NOT A CHEAP SUBSET. A subset has to be chosen, and choosing it means
+  # predicting which checks a change can break. The break that prompted this was a widget list
+  # reaching a docs test; the seven before it were checks describing mechanisms that had moved.
+  # Neither set was predictable, and a subset curated from yesterday's surprises is the same
+  # mistake with more maintenance. Minutes are free here - the repository is public - so the
+  # honest option is the one that needs no judgement.
+  #
+  # WHAT THIS IS STILL NOT: a gate. It is read-only, it is not a required check, and nothing
+  # waits on it. It reports.
+  #
+  # A NOTE ON CANCELLATION, because it changes what the CI widget shows. The concurrency block
+  # below cancels a run when a newer one starts on the same ref, so a burst of merges leaves
+  # only the last one's verdict - correct, since the last main is the one that matters. Helm's
+  # own CI widget reads a cancelled run as UNKNOWN rather than as pass or fail, so during a
+  # burst it says "not known" for a few minutes instead of showing a stale green. That is the
+  # honest answer to "what is the state of this head", and it resolves itself when the final
+  # run lands.
+  push:
+    branches: [main]
+    # No paths-ignore. Filtering by path means predicting which files can break which checks,
+    # which is the same judgement a subset needs and the same one that has now been wrong
+    # twice - a widget list broke a docs test, and a renderer change broke a session-steal test.
+  #
+  # THE SCHEDULE STAYS, as a backstop rather than as the primary signal. It catches the things a
+  # push cannot: a flake that only shows under a different runner's load, and a break that comes
+  # from the outside world rather than from a commit - an action version moving, a runner image
+  # changing, a dependency's published tag being retagged underneath us.
   #
   # THE TIME IS UTC and GitHub does not do time zones. 01:17 UTC is the small hours in
   # Stockholm year-round (02:17 or 03:17 depending on daylight saving), which is what matters:
