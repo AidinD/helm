@@ -1,0 +1,58 @@
+# What this repository asks its reviewer to look for, on top of the gate's own rubric.
+#
+# These are not style preferences. Every line below is a real miss from this repository's own
+# history - a change that shipped, or nearly shipped, while every check was green - collected in
+# the ship-review skill's failure list. The gate's rubric is good at finding bugs in the code in
+# front of it; this list is about the ways THIS codebase has been wrong while looking right.
+#
+# Read from the DEFAULT branch only, never from a pushed branch, so a contributor cannot switch
+# these off in the change being reviewed.
+#
+# The glob is everything on purpose. These questions are not scoped to a directory: the last
+# three times they would have fired, the answer was in a test fixture, a widget list and a
+# workflow trigger.
+review:
+  path_instructions:
+    - path: "**"
+      instructions: |
+        Beyond your own rubric, check these. Each is a real miss from this repository, where a
+        change shipped or nearly shipped while every check was green. Report a finding only when
+        you can point at the line; do not report the absence of a problem.
+
+        ASSERTIONS THAT DO NOT TEST WHAT THEY CLAIM
+        - A guard asserted by NAME rather than by ARGUMENT: a grep for `removeWorktree(` passes
+          when its options flip from safe to forceful. Assert the literal argument.
+        - A source scan that matches a COMMENT. Comments must be stripped before counting, or
+          commenting the guarded line out leaves the check green.
+        - An assertion that cannot fail: a ternary yielding true, `.some()` over an empty array,
+          an expectation on a value the test itself just wrote.
+        - A fixed-size window into source (`slice(start, start + 4000)`). It stops covering what
+          it claims the day the code grows, silently.
+
+        THE MECHANISM CHANGED, THE PROPERTY WAS NOT RE-CHECKED
+        - A condition on the MECHANISM instead of the PROPERTY: filtering dependencies by
+          `file:` rather than by "must resolve"; deciding a widget's binding is dead because the
+          seat is not in one particular pool; counting stderr as "ran without a lock".
+        - Persisting a value is not restoring it. State the finding as the user-visible symptom
+          and check THAT.
+        - A predicate whose input nothing can produce any more. For every filter on a field,
+          ask who still WRITES that field.
+        - A justification that stopped being true while the rule stayed load-bearing. A comment
+          explaining why something is safe is part of the diff.
+
+        SILENCE AND FALSE REASSURANCE
+        - A failed look rendered as an all-clear. "Asked and found nothing" and "could not ask"
+          must be distinguishable by a field, never by an empty list.
+        - A message that reads reassuring while the thing it describes is absent, or a verdict
+          line that still announces the old behaviour after its assertions were inverted.
+        - A null result with no control group: a broken matcher and a real absence are the same
+          silent zero.
+        - A command that reports success while doing nothing - a `sed` that matched no line, an
+          exit code read from the wrong process in a pipeline.
+
+        BLAST RADIUS
+        - One instance fixed, the class left open. The same wrong assumption is usually in two
+          or three places; after a fix, ask how many the author found.
+        - A repo-global command used for a scoped decision.
+        - A fix that removes an independent second opinion, replacing another system's refusal
+          with our own check.
