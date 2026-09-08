@@ -321,8 +321,7 @@ try {
         afterSecond: second.layout.filter(w => w.type === "docsDrift").length,
         cameBack: afterRemoval.layout.some(w => w.type === "docsDrift"),
         writes: writes.length,
-        seedableCount: SEEDABLE_WIDGETS.length,
-        derivedFromList: Object.keys(allSeeded).length === SEEDABLE_WIDGETS.length
+        seedableCount: SEEDABLE_WIDGETS.length
       };
     } finally { state.config = realCfg; }
   })()`);
@@ -330,12 +329,18 @@ try {
   assert(seed.afterSecond === 1, "running the seed again does not duplicate it");
   assert(seed.cameBack === false, "once you remove it, it stays removed - the seed does not override your decision");
   assert(seed.writes === 1, `only the seeding run writes config (${seed.writes} write(s))`);
-  // The fixture above is derived from SEEDABLE_WIDGETS rather than naming types, so adding a
-  // seedable widget cannot break this check again. Asserted, because a comment saying so would
-  // survive somebody helpfully inlining the list back.
+  // The fixture is derived from SEEDABLE_WIDGETS rather than naming types, so adding a seedable
+  // widget cannot break this check the way ciHealth did. That derivation is only OBSERVABLE
+  // while more than one type is seedable: with a single entry, a derived map and a hand-written
+  // one are the same object and this check would silently stop testing what it claims to.
+  //
+  // So the assertion is about the precondition, not about the derivation. A first version
+  // compared the map's size to the list's size, which cannot fail - the map was built from the
+  // list three lines earlier. That is "an assertion that cannot fail", a named entry on this
+  // repo's own failure list, arriving in the commit about test quality; the review caught it.
   assert(
-    seed.seedableCount >= 2 && seed.derivedFromList === true,
-    `and the "already seeded" fixture is built from the list itself (${seed.seedableCount} seedable types)`
+    seed.seedableCount >= 2,
+    `and more than one widget is seedable (${seed.seedableCount}), which is what makes the derived fixture observable at all`
   );
   assert(seed.defaultUntouched === true, "a board with no saved layout is left alone - the default already has every widget");
 
