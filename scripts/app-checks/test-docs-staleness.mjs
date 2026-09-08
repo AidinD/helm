@@ -297,8 +297,16 @@ try {
       // second run on the now-seeded config
       await seedNewWidgets(save);
       const second = state.config.dashboardWidgets;
-      // and after the user removes it
-      state.config = { dashboardWidgets: { layout: [{ id: "w-quota", type: "quota", span: 4 }], seeded: { docsDrift: true } } };
+      // and after the user removes it.
+      //
+      // "EVERYTHING SEEDABLE HAS BEEN SEEDED" is built from the list itself, not written out.
+      // Naming one type here meant this fixture silently stopped meaning that the day a second
+      // seedable widget was added: the call below then had something new to seed, wrote config
+      // a second time, and the writes assertion failed - a check going red because the
+      // mechanism it guards did its job. The check was right; the fixture had duplicated a
+      // literal that lives in renderer.js.
+      const allSeeded = Object.fromEntries(SEEDABLE_WIDGETS.map((type) => [type, true]));
+      state.config = { dashboardWidgets: { layout: [{ id: "w-quota", type: "quota", span: 4 }], seeded: allSeeded } };
       await seedNewWidgets(save);
       const afterRemoval = state.config.dashboardWidgets;
       // a board with NO saved layout must not be touched at all - the default
@@ -312,7 +320,9 @@ try {
         flagged: first.seeded?.docsDrift === true,
         afterSecond: second.layout.filter(w => w.type === "docsDrift").length,
         cameBack: afterRemoval.layout.some(w => w.type === "docsDrift"),
-        writes: writes.length
+        writes: writes.length,
+        seedableCount: SEEDABLE_WIDGETS.length,
+        derivedFromList: Object.keys(allSeeded).length === SEEDABLE_WIDGETS.length
       };
     } finally { state.config = realCfg; }
   })()`);
@@ -320,6 +330,13 @@ try {
   assert(seed.afterSecond === 1, "running the seed again does not duplicate it");
   assert(seed.cameBack === false, "once you remove it, it stays removed - the seed does not override your decision");
   assert(seed.writes === 1, `only the seeding run writes config (${seed.writes} write(s))`);
+  // The fixture above is derived from SEEDABLE_WIDGETS rather than naming types, so adding a
+  // seedable widget cannot break this check again. Asserted, because a comment saying so would
+  // survive somebody helpfully inlining the list back.
+  assert(
+    seed.seedableCount >= 2 && seed.derivedFromList === true,
+    `and the "already seeded" fixture is built from the list itself (${seed.seedableCount} seedable types)`
+  );
   assert(seed.defaultUntouched === true, "a board with no saved layout is left alone - the default already has every widget");
 
   const errors = app.getConsoleErrors();

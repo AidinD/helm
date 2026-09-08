@@ -13192,6 +13192,19 @@ const WIDGET_CATALOG = {
   blank: { label: "Blank space", span: 4, layoutOnly: true },
   break: { label: "Row break", span: 12, layoutOnly: true },
 };
+/**
+ * Widgets that reach an already-arranged board once, then never again.
+ *
+ * NAMED HERE rather than inside seedNewWidgets, because a check has to be able to ask what the
+ * list IS. test-docs-staleness.mjs used to build its "everything has been seeded" fixture by
+ * writing `{ docsDrift: true }` by hand - true while docsDrift was the only entry, and a
+ * failing check the day ciHealth joined it. The check was right and the fixture was stale, and
+ * the fixture was stale because it duplicated a literal that lives here. Now it reads this.
+ *
+ * A type belongs here when its whole job is to tell you something you did not go looking for.
+ */
+const SEEDABLE_WIDGETS = ["docsDrift", "ciHealth"];
+
 // Every width the 12-column grid can express. The old list stopped at 8 and the
 // CSS only implemented up to 7, so half the menu was inert.
 const WIDGET_SPANS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 12];
@@ -13404,13 +13417,12 @@ async function seedNewWidgets(save = (patch) => window.helm.setConfig(patch)) {
     return; // no saved layout: the default already includes everything.
   }
   const seeded = dw?.seeded || {};
-  // ciHealth joins docsDrift here for the reason this whole mechanism exists: an attention
-  // signal you have to go and find in the Add-widget menu is not much of a nudge, and this one
-  // was added BECAUSE a signal went unread for two days. Seeding it and then leaving it alone
-  // is the deal - remove it and it stays removed.
-  const SEEDABLE = ["docsDrift", "ciHealth"];
-  const toSeed = SEEDABLE.filter((type) => !seeded[type] && !saved.some((w) => w.type === type));
-  const alreadyPresent = SEEDABLE.filter((type) => !seeded[type] && saved.some((w) => w.type === type));
+  // ciHealth is on that list for the reason this whole mechanism exists: an attention signal you
+  // have to go and find in the Add-widget menu is not much of a nudge, and that one was added
+  // BECAUSE a signal went unread for two days. Seeding it and then leaving it alone is the deal
+  // - remove it and it stays removed.
+  const toSeed = SEEDABLE_WIDGETS.filter((type) => !seeded[type] && !saved.some((w) => w.type === type));
+  const alreadyPresent = SEEDABLE_WIDGETS.filter((type) => !seeded[type] && saved.some((w) => w.type === type));
   if (toSeed.length === 0 && alreadyPresent.length === 0) {
     return;
   }
