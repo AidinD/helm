@@ -99,7 +99,7 @@ import {
 } from "./lib/worktree.js";
 import { planSweep, describeSweep, reconcileSweepReport } from "./lib/worktreeSweep.js";
 import { docsStaleness, staleProjectsAsync, docsNudgeCandidates, DOCS_NUDGE_ACTIVE_DAYS } from "./lib/docsStaleness.js";
-import { projectCiHealth, ciHealthSummary } from "./lib/ciHealth.js";
+import { projectCiHealth, ciHealthSummary, resolveMissingLanes } from "./lib/ciHealth.js";
 import { externalLinkProblem } from "./lib/externalLink.js";
 import { loadDomains } from "./lib/domains.js";
 import { projectsNeedingSeats } from "./lib/seatBackfill.js";
@@ -6064,9 +6064,9 @@ async function readProjectCi(projectPath) {
   // if the targeted ask itself FAILS, the workflow stays in the known set and the module reports
   // it as unknown - a failure to ask must not be rounded to "not applicable", which would be
   // this feature's own sin with the sign flipped.
-  const seen = new Set(rows.map((r) => String(r?.workflowName || "").trim()).filter(Boolean));
-  const missing = knownWorkflows.filter((wf) => !seen.has(wf));
-  const neverOnThisBranch = new Set();
+  const seenNames = new Set(rows.map((r) => String(r?.workflowName || "").trim()).filter(Boolean));
+  const missing = knownWorkflows.filter((wf) => !seenNames.has(wf));
+  const asked = {};
   await Promise.all(
     missing.map(async (wf) => {
       const one = await ciRun(
@@ -6075,8 +6075,9 @@ async function readProjectCi(projectPath) {
         projectPath
       );
       if (!one.ok) {
-        // Could not ask about this lane specifically. Left in the known set, so it reads as
-        // unknown with a reason rather than quietly vanishing.
+        // Could not ask about this lane specifically. Left out of `asked`, so the pure decision
+        // below leaves it in the known set and it reads as unknown with a reason rather than
+        // quietly vanishing.
         return;
       }
       let parsed;
@@ -6085,19 +6086,16 @@ async function readProjectCi(projectPath) {
       } catch {
         return;
       }
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        rows.push(...parsed);
-        return;
-      }
-      neverOnThisBranch.add(wf);
+      asked[wf] = { ok: true, rows: Array.isArray(parsed) ? parsed : [] };
     })
   );
+  const resolved = resolveMissingLanes({ knownWorkflows, rows, asked });
   return projectCiHealth({
     name,
     path: projectPath,
-    rows,
+    rows: resolved.rows,
     branch,
-    knownWorkflows: knownWorkflows.filter((wf) => !neverOnThisBranch.has(wf)),
+    knownWorkflows: resolved.knownWorkflows,
   });
 }
 
