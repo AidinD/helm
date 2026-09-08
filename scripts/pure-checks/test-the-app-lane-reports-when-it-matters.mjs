@@ -12,7 +12,7 @@
 // and a lane that reports a day late says it a day late.
 //
 // WHAT THIS DOES NOT CLAIM. That the lane passes, or that it covers everything. It covers 161
-// of 163 app checks and names the excluded ones (see scripts/ci-app-lane-plan.mjs, and the
+// of 164 app checks and names the excluded ones (see scripts/ci-app-lane-plan.mjs, and the
 // check next to it that keeps that list honest). This file is only about WHEN it speaks.
 //
 // Run: node scripts/pure-checks/test-the-app-lane-reports-when-it-matters.mjs
