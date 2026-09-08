@@ -142,6 +142,53 @@ export function classifyWorkflow(entry) {
 }
 
 /**
+ * DECIDE what to do about workflow lanes missing from a fetched page of runs, given the answer
+ * (if any) a targeted, per-workflow ask returned for each one.
+ *
+ * Pure on the same terms as the rest of this module: `asked` is the RESULT of the targeted
+ * lookups (one entry per lane missing from `rows`), not a live call this function makes itself -
+ * the caller does the spawning, this decides what it means. Three shapes for a missing lane:
+ *
+ *   `asked[wf]` absent, or `{ ok: false }` - the targeted ask itself failed (or was never made).
+ *   Left in `knownWorkflows` untouched, so it still reads as unknown rather than being rounded
+ *   to "not applicable" - a failure to ask must never look like an answer.
+ *
+ *   `{ ok: true, rows: [...] }` with at least one row - the lane HAS runs on this branch; the
+ *   page of `rows` just did not reach back far enough. Its run is folded into `rows` so it gets
+ *   a real verdict, same as any lane that was on the page already.
+ *
+ *   `{ ok: true, rows: [] }` - asked directly and confirmed the lane has never run on this
+ *   branch. Dropped from `knownWorkflows` rather than displayed as a permanent gap.
+ *
+ * A lane already present in `rows` is untouched regardless of what `asked` says about it.
+ */
+export function resolveMissingLanes({ knownWorkflows, rows, asked } = {}) {
+  const knownList = Array.isArray(knownWorkflows) ? knownWorkflows : [];
+  const baseRows = Array.isArray(rows) ? rows : [];
+  const askedMap = asked && typeof asked === "object" ? asked : {};
+  const seen = new Set(baseRows.map((r) => String(r?.workflowName || "").trim()).filter(Boolean));
+  const missing = knownList.filter((wf) => !seen.has(wf));
+  const outRows = [...baseRows];
+  const neverOnThisBranch = new Set();
+  for (const wf of missing) {
+    const result = askedMap[wf];
+    if (!result || !result.ok) {
+      continue;
+    }
+    const found = Array.isArray(result.rows) ? result.rows : [];
+    if (found.length > 0) {
+      outRows.push(...found);
+    } else {
+      neverOnThisBranch.add(wf);
+    }
+  }
+  return {
+    rows: outRows,
+    knownWorkflows: knownList.filter((wf) => !neverOnThisBranch.has(wf)),
+  };
+}
+
+/**
  * One project's CI standing, ready to render.
  *
  * `reachable: false` is its own field rather than an empty `workflows` array, because those two
