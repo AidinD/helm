@@ -35,10 +35,23 @@ const raw = fs.readFileSync(file, "utf8");
 // PARSED, not grepped. A workflow file that does not parse is a workflow that silently never
 // runs - which is this same failure with the volume turned all the way down - so the first
 // thing to establish is that GitHub can read it at all.
+let load = null;
+let loadError = null;
+try {
+  ({ load } = await import("js-yaml"));
+} catch (err) {
+  loadError = err?.message || String(err);
+}
+ok(!!load, `the YAML parser is installed (${loadError ? `${loadError} - run npm install` : "ok"})`);
+if (!load) {
+  console.log("");
+  console.log("VERIFY FAILED: nothing below can be trusted without the parser - run npm install");
+  process.exit(1);
+}
+
 let doc = null;
 let parseError = null;
 try {
-  const { load } = await import("js-yaml");
   doc = load(raw);
 } catch (err) {
   parseError = err?.message || String(err);
