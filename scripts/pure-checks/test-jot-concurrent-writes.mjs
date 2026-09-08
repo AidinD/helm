@@ -319,8 +319,55 @@ ok(
 // mean nothing was written, or a caller cannot safely re-run its mutation.
 ok(all.phantom.length === 0, `no refused write landed anyway (${all.refused.length} refused, ${all.phantom.length} phantom)`);
 
-// No worker may have quietly run without a lock. See the stderr note in runRound.
-ok(all.warnings.length === 0, `no worker fell back to a weaker guarantee (${all.warnings.length}${all.warnings.length ? `: ${all.warnings[0]}` : ""})`);
+// WHAT A WORKER SAID, SORTED BY WHAT IT MEANS.
+//
+// This was one assertion over every line of stderr, worded as "no worker fell back to a weaker
+// guarantee". The catch-all half is right and stays: keel writes to stderr exactly when
+// something about the lock did not go to plan, and a worker running with no lock at all was
+// invisible in a green run until that was added.
+//
+// The WORDING was wrong for two of the three things it catches, and that cost a real
+// investigation. On 2026-09-07 this failed once under full suite load with a takeover warning,
+// and the message said a worker had fallen back to a weaker guarantee - which it had not. The
+// data assertions above passed in the same run. It took reading keel's release path to find
+// that the warning did not even mean what it said: a hold whose claim write had failed reported
+// itself as taken over, because acquireLock returned a nonce no claim could match. Fixed in
+// keel 0.1.20; the three states are distinguishable now, so this stops flattening them.
+//
+// Each is still a failure. They are separated so that a failing run says WHICH happened rather
+// than sending the next person to read three files to find out.
+const DEGRADED = /no usable write lock/i;
+const TAKEOVER = /carries another writer's claim/i;
+const CLAIMLESS = /has no claim in it any more/i;
+
+const degraded = all.warnings.filter((w) => DEGRADED.test(w));
+const takeovers = all.warnings.filter((w) => TAKEOVER.test(w));
+const claimless = all.warnings.filter((w) => CLAIMLESS.test(w));
+const unrecognised = all.warnings.filter((w) => !DEGRADED.test(w) && !TAKEOVER.test(w) && !CLAIMLESS.test(w));
+
+ok(
+  degraded.length === 0,
+  `no worker ran without a lock (${degraded.length}${degraded.length ? `: ${degraded[0]}` : ""})`
+);
+// The one that can actually cost a write: another writer judged this lock abandoned while its
+// holder was alive and took it, so two writers believed they held it. keel decides abandonment
+// by whether the holder's pid still exists, so this should be unreachable - which is exactly
+// why it is worth an assertion of its own rather than a shared one.
+ok(
+  takeovers.length === 0,
+  `no live holder's lock was taken over (${takeovers.length}${takeovers.length ? `: ${takeovers[0]}` : ""})`
+);
+ok(
+  claimless.length === 0,
+  `no holder found its own claim gone (${claimless.length}${claimless.length ? `: ${claimless[0]}` : ""})`
+);
+// AND THE CATCH-ALL STAYS, for anything keel learns to say that this file has not been taught
+// to name. Dropping it would mean a new warning type is silently ignored, which is the same
+// defect the classification above is fixing, one version later.
+ok(
+  unrecognised.length === 0,
+  `and no worker printed anything else (${unrecognised.length}${unrecognised.length ? `: ${unrecognised[0]}` : ""})`
+);
 
 // The retry has to be doing something, or it is not being tested. More mutate()
 // calls than writes means collisions happened and were re-applied against a fresh
