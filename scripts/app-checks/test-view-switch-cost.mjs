@@ -48,17 +48,66 @@ try {
     `a first Review visit on a cold cache costs exactly ONE full queue build (${builds}) - two means the expensive first render is paying twice for the same answer, which is what it did before this fix`
   );
 
-  // Warm every page once: the first visit to each pays one-off work (fetching the review
-  // queue, the skills list) that is not what "switching views" costs in daily use.
+  // THE FIRST VISIT IS THE EXPENSIVE ONE, and this loop was throwing that number away.
+  //
+  // Pages are not torn down when you leave them - navigateToPage toggles a `hidden` class, so
+  // a page's subtree stays in the document. Its content is also built while it is still hidden,
+  // and a hidden subtree is not laid out. So the whole layout cost of a page falls on the FIRST
+  // time it is revealed, and every switch after that is a class toggle: measured at 0.1ms for
+  // the Dashboard, against 77.6ms for its first reveal (2026-09-08, 14 consecutive switches).
+  //
+  // That is why the steady-state number below used to swing between 0.2ms and 61ms on identical
+  // code: it was never measuring a switch, it was measuring whether an asynchronous re-render
+  // happened to land inside its window. Two numbers now, because they answer different
+  // questions - "what does the first visit cost" and "what does switching cost afterwards" -
+  // and one number pretending to be both is how a 200x difference reads as noise.
+  const firstVisit = {};
   for (const page of PAGES) {
-    await app.eval(`navigateToPage(${JSON.stringify(page)})`);
+    firstVisit[page] = await app.eval(`(async () => {
+      const t0 = performance.now();
+      await navigateToPage(${JSON.stringify(page)});
+      const t1 = performance.now();
+      void document.body.offsetHeight;
+      const t2 = performance.now();
+      return { nav: t1 - t0, layout: t2 - t1, total: t2 - t0 };
+    })()`);
     await new Promise((r) => setTimeout(r, 400));
   }
 
+  // A page whose content is still arriving lays out again when it does, and that re-layout
+  // lands wherever it lands. So each page is left to settle - its node count read twice, 300ms
+  // apart, until it stops changing - before its switch is timed. Without this the Dashboard
+  // reported 40.1 / 0.2 / 60.8 ms on three consecutive runs of unchanged code.
+  const settle = async (page, timeoutMs = 15000) => {
+    const count = () => app.eval(`document.querySelectorAll('#' + ${JSON.stringify(page)} + 'Page *').length`);
+    await app.eval(`navigateToPage(${JSON.stringify(page)})`);
+    const started = Date.now();
+    let last = -1;
+    while (Date.now() - started < timeoutMs) {
+      const n = await count();
+      if (n === last) {
+        return n;
+      }
+      last = n;
+      await new Promise((r) => setTimeout(r, 300));
+    }
+    return last;
+  };
+
+  // The page each measurement starts FROM. It must not be the page being measured - the old
+  // code went "away" to dashboard before every measurement, including the dashboard's own, so
+  // that row timed a navigation to the page it was already on. That turned out NOT to be the
+  // cause of the swing above (probed: a real switch into a settled dashboard costs the same
+  // 0.1ms), but a measurement whose origin is its own destination is not one to keep.
+  // Analysis is the cheapest page to leave, at 0.3ms; leaving Chat costs 7ms and would be
+  // charged to whatever came next.
+  const originFor = (page) => (page === "analysis" ? "routines" : "analysis");
+
   const results = {};
+  const nodesWhenTimed = {};
   for (const page of PAGES) {
-    // Away and back, so each measurement is a real switch INTO the page.
-    await app.eval(`navigateToPage('dashboard')`);
+    nodesWhenTimed[page] = await settle(page);
+    await app.eval(`navigateToPage(${JSON.stringify(originFor(page))})`);
     await new Promise((r) => setTimeout(r, 150));
     // SPLIT, because the total on its own cannot be acted on. Measured 2026-09-02: this
     // window is normally 0.2-0.4 ms for Dashboard and 8-19 ms for Archive, and it stayed
@@ -89,9 +138,45 @@ try {
   }
 
   const rows = Object.entries(results).sort((a, b) => b[1].total - a[1].total);
+  // "first visit" is where a page's layout is normally paid. It is informational, not a
+  // metric: for a page whose content arrives late it can land in the other column instead.
+  console.log("      page          first visit   then      nodes   (js + layout, steady state)");
   for (const [page, r] of rows) {
-    console.log(`      ${page.padEnd(12)} ${r.total.toFixed(1)} ms   (js ${r.nav.toFixed(1)} + layout ${r.layout.toFixed(1)})`);
+    const fv = firstVisit[page];
+    console.log(
+      `      ${page.padEnd(12)} ${fv.total.toFixed(1).padStart(8)} ms ${r.total.toFixed(1).padStart(7)} ms ${String(nodesWhenTimed[page]).padStart(7)}   (js ${r.nav.toFixed(1)} + layout ${r.layout.toFixed(1)})`
+    );
   }
+
+  // A PAGE WITH NOTHING ON IT LAYS OUT IN NO TIME, and reads as the fastest page rather than as
+  // a failed measurement. A probe written this same day fell straight into it: both arms of a
+  // comparison came back at 0.2ms because the Dashboard had not filled yet, and only a node
+  // count printed alongside said so. Every page here renders something, so an empty one means
+  // the measurement never happened.
+  const empty = Object.entries(nodesWhenTimed).filter(([, n]) => n <= 0);
+  ok(
+    empty.length === 0,
+    empty.length === 0
+      ? `every page had content when it was timed (${Object.values(nodesWhenTimed).reduce((a, b) => a + b, 0)} nodes across ${PAGES.length} pages)`
+      : `these pages were empty when timed, so their numbers are about nothing: ${empty.map(([p]) => p).join(", ")}`
+  );
+
+  // NO ASSERTION ON THE DASHBOARD'S NUMBER, and that is the finding rather than a gap.
+  //
+  // Its layout is paid ONCE per app lifetime - a hidden subtree is not laid out until it is
+  // revealed - and its content arrives asynchronously, so which measurement happens to contain
+  // that one-off payment is a matter of timing. Three runs of this file, unchanged code:
+  // first-visit 3.1 / 0.4 / 75.9 ms, steady-state 43.6 / 0.5 / 0.4 ms. The cost moves between
+  // the columns, and sometimes lands in neither because it fell in a sleep between them.
+  //
+  // An assertion over that is a coin flip, and this file already says why that is worse than no
+  // assertion: it teaches you to re-run until it passes. So the columns are printed for a human
+  // and the ceiling below is the only thing asserted.
+  //
+  // The instrument for the one-off cost is scripts/profile-dashboard-layout.mjs, which traces a
+  // single reveal and reads 58.5 / 57.0 / 63.0 ms over three runs - stable, because it measures
+  // the event instead of sampling for it. Use THAT for a before-and-after on the Dashboard;
+  // this file cannot do it and no longer pretends to.
 
   const worst = rows[0];
   // A loose ceiling on purpose. These numbers are genuinely noisy - the same page measured
