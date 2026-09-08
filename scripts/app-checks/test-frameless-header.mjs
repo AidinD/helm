@@ -97,8 +97,11 @@ try {
     });
   }
 
-  await app.screenshot("scripts/e2e/screenshots/frameless-header.png");
-  console.log("  --   screenshot: scripts/e2e/screenshots/frameless-header.png");
+  // scripts/e2e was renamed to app-checks/ and pure-checks/; this line was left pointing at the
+  // old folder, so every run recreated scripts/e2e and test-lane-folders-tell-the-truth.mjs went
+  // red on a directory nothing had put back deliberately.
+  await app.screenshot("scripts/app-checks/screenshots/frameless-header.png");
+  console.log("  --   screenshot: scripts/app-checks/screenshots/frameless-header.png");
 } finally {
   await app.close();
 }
