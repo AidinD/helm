@@ -1,6 +1,6 @@
 # Review pipe - current status
 
-Last updated 2026-09-02. **Read this first**; the chronological reasoning is in
+Last updated 2026-09-08. **Read this first**; the chronological reasoning is in
 `DECISIONS.md` (search "review pipe" - six entries from 2026-07-27 alone).
 This file answers one question: how far can the pipe be trusted right now?
 
