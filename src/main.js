@@ -18,6 +18,7 @@ import { loadConfig, writeConfig } from "./lib/config.js";
 import { startSession, resolveClaudeBinary } from "./lib/launcher.js";
 import {
   turnCounterPath,
+  decideToolCall,
   TIER_FIRST_MATE,
   TIER_SECOND_MATE,
   TIER_CREW,
@@ -25,6 +26,7 @@ import {
   FIRST_MATE_DISALLOWED_TOOLS,
   ASSISTANT_DISALLOWED_TOOLS,
 } from "./lib/tierGuard.js";
+import { probeTierGuard, hookCommand, headline, TierGuardUnavailableError } from "./lib/tierGuardProbe.js";
 import { createLiveSessionRegistry } from "./lib/liveSessions.js";
 import { sessionLifecycleState, applyStatusOverrides, sessionStateSource } from "./lib/sessionState.js";
 import { createJotHostStore, jotCoreAvailable, jotMountDecision } from "./lib/jotHostStore.js";
@@ -2216,32 +2218,171 @@ function userMcpAllowedTools() {
 //
 // So the env-var route is the fallback, not the default, and it is recorded here in
 // one place rather than at the launch site.
+//
+// AND IT MUST BE DIRECTLY EXECUTABLE, which is a newer constraint than the paragraph
+// above. Since 2026-09-08 Helm probes the hook by running it, and that probe execs the
+// runtime rather than shelling it, because a synchronous spawn through a shell cannot be
+// bounded by a timeout (see hookCommand). On Windows a `.cmd`/`.bat` node shim - nvm,
+// volta, an npm-global wrapper, all ordinary - cannot be exec'd at all: EINVAL. The CLI
+// would have run it perfectly well through its own shell, so a shim here is not a broken
+// guard; it is a runtime the probe cannot ask about. And with a ban tier now REFUSING to
+// launch on a failed probe, "cannot ask" would have read as "dead" and taken every first
+// mate on such a machine with it (independent review, 2026-09-08).
+//
+// So a shim is skipped rather than reported. The Electron fallback below is always a real
+// executable, so there is always somewhere to land.
+const DIRECTLY_EXECUTABLE = process.platform === "win32" ? /\.(exe|com)$/i : /.*/;
 let _tierGuardRunner;
 function tierGuardRunner() {
   if (_tierGuardRunner !== undefined) {
     return _tierGuardRunner;
   }
   _tierGuardRunner = null;
+  const usable = (bin) => !!bin && fs.existsSync(bin) && DIRECTLY_EXECUTABLE.test(bin);
   const explicit = process.env.HELM_NODE_BIN;
   if (explicit && fs.existsSync(explicit)) {
-    _tierGuardRunner = { bin: explicit, env: {} };
-    return _tierGuardRunner;
+    if (usable(explicit)) {
+      _tierGuardRunner = { bin: explicit, env: {} };
+      return _tierGuardRunner;
+    }
+    // Loudly, because it is an explicit setting being passed over. Falling through gets a
+    // working guard; honouring it gets a probe that cannot run and a first mate that
+    // cannot launch, which is the worse way to respect an intention.
+    console.warn(`[helm] tier guard: HELM_NODE_BIN (${explicit}) is not a directly executable binary, so it cannot be probed. Looking for another runtime.`);
   }
   try {
-    const probe = spawnSync(process.platform === "win32" ? "where" : "which", ["node"], { encoding: "utf8" });
-    const found = (probe.stdout || "").split(/\r?\n/).map((l) => l.trim()).find(Boolean);
-    if (found && fs.existsSync(found)) {
-      _tierGuardRunner = { bin: found, env: {} };
+    // EVERY candidate `where` prints, not just the first. On Windows the first hit is
+    // often the shim and a real node.exe sits behind it.
+    const found = spawnSync(process.platform === "win32" ? "where" : "which", ["node"], { encoding: "utf8" });
+    const candidate = (found.stdout || "")
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .find((l) => usable(l));
+    if (candidate) {
+      _tierGuardRunner = { bin: candidate, env: {} };
       return _tierGuardRunner;
     }
   } catch {
     // fall through to the Electron fallback
   }
   if (process.execPath) {
-    console.warn("[helm] tier guard: no node on PATH, falling back to this app's runtime (ELECTRON_RUN_AS_NODE is set for the session)");
+    console.warn("[helm] tier guard: no directly executable node on PATH, falling back to this app's runtime (ELECTRON_RUN_AS_NODE is set for the session)");
     _tierGuardRunner = { bin: process.execPath, env: { ELECTRON_RUN_AS_NODE: "1" } };
   }
   return _tierGuardRunner;
+}
+
+// --- Can the guard actually START? -----------------------------------------------
+//
+// It used to be enough that the hook's own filename existed. It was not: on 2026-09-08
+// the entry point was exactly where this said it should be, and behind it tierGuard.js
+// imported a personas.js that build.extraResources never shipped, so plain node died
+// with ERR_MODULE_NOT_FOUND before a line of policy ran. Six days of installed builds,
+// every first mate unguarded, and the existsSync check green throughout - because the
+// file it named was there. The lesson is not "check more files". Any list of files can
+// be short by one; that is the shape of the bug. The only question that cannot be wrong
+// by omission is whether the thing runs, so lib/tierGuardProbe.js runs it.
+//
+// A SUCCESS IS REMEMBERED FOR THE APP RUN; a failure only briefly. The hook's path and
+// its import graph are fixed for the life of the process - packaged they live in
+// resources/, in dev you restart to pick up an edit anyway - and the runner above is
+// memoised on exactly that reasoning. So the happy path costs one spawn for the whole
+// session of the app, not one per turn.
+//
+// A FAILURE IS NOT THE SAME KIND OF FACT. "This hook cannot load its imports" never
+// heals, but "the spawn returned EPERM" does: antivirus, a moment of resource
+// exhaustion, a shell that was briefly unavailable. Remembering that for the life of the
+// process would leave a ban tier - which now REFUSES to launch - dead until Helm is
+// restarted, on the strength of one bad tick (independent review, 2026-09-08).
+//
+// So a failure expires. No attempt is made to sort transient causes from permanent ones:
+// a classifier would be a guess, and the expiry gets both right. What it costs when the
+// guard really is broken is one extra spawn per minute of launch attempts - and for the
+// tiers that are refused, there is no launch it is competing with anyway.
+//
+// SYNCHRONOUS, and that is not laziness. session:start is sync from its turn-lock check
+// all the way to the spawn, which is what makes that check-and-acquire atomic ("this
+// handler is sync up to spawn, so two calls can't interleave here"). An awaited probe
+// would open a window in the middle of it for a second turn on the same session to slip
+// through - a much worse bug than one blocked tick per app run.
+const FAILED_PROBE_TTL_MS = 60_000;
+const _tierGuardStartable = new Map();
+function tierGuardStartable(script, runner) {
+  const key = JSON.stringify([runner.bin, script]);
+  const cached = _tierGuardStartable.get(key);
+  if (cached && (cached.result.startable || Date.now() - cached.at < FAILED_PROBE_TTL_MS)) {
+    return cached.result;
+  }
+  const started = Date.now();
+  const result = probeTierGuard({ bin: runner.bin, script, env: runner.env });
+  console.log(`[helm] tier guard probe (${Date.now() - started}ms): ${result.startable ? "STARTS" : "DOES NOT START"} - ${result.detail}`);
+  _tierGuardStartable.set(key, { result, at: Date.now() });
+  return result;
+}
+
+/*
+ * What happens when it does NOT start, per tier - and why this is not a list.
+ *
+ * The hook already answers a version of this question one layer down: when the classifier
+ * throws it DENIES for the tiers with no write budget and ALLOWS for the ones that have
+ * one, because for the first the guard is the only thing standing between the seat and
+ * the file system, while for the second it is a limiter over a session that may write
+ * anyway - so a missing limiter costs an uncounted edit, and a missing ban costs the
+ * whole property. Attach time deserves the same doctrine, or Helm has two rules for one
+ * question.
+ *
+ * It is asked of the policy rather than written out here. A hand-kept list of "the strict
+ * tiers" is the same failure mode as a hand-kept list of shipped files: a tier added to
+ * tierGuard.js later lands on the open side because nobody remembered this line.
+ *
+ * AND IT IS ASKED AS A POSITIVE. The first version tested for a deny, and that was the
+ * same bug in a new costume (independent review, 2026-09-08): decideToolCall's own
+ * fall-through returns ALLOW for a tier it does not recognise, so a tier constant wired
+ * into a launch before its policy branch was written would have been let through
+ * unguarded - exactly the omission the paragraph above claims to have closed.
+ *
+ * So this asks the policy to SAY YES: launch without a guard only when the policy
+ * positively reports that this tier writes (`isWrite`), which only a tier it actually
+ * recognises does. First mate and assistant are refused a write; an unknown tier gets
+ * the fall-through, which allows but reports no write; second mate and crew get a real
+ * `isWrite: true`. Naming what may proceed puts everything present and future on the
+ * refused side without anyone having to notice it appeared - the same inversion the
+ * assistant's advisory-seat allow list is built on.
+ */
+function tierMayLaunchUnguarded(tier) {
+  const verdict = decideToolCall({ tier, tool: "Write", input: { file_path: "not-an-artifact.txt" }, writesThisTurn: 0 });
+  return verdict.decision === "allow" && verdict.isWrite === true;
+}
+
+// One sticky notice per tier per app run. console.error was the only alarm this had, and
+// in a packaged Electron app nobody ever sees it - which is how six days went by. The
+// blocked case also comes back through session:start's own error return, so the captain
+// gets told at the moment they try, not only in a corner of the UI.
+const _tierGuardProblemAnnounced = new Set();
+function announceTierGuardProblem(tier, blocked, detail) {
+  const line = blocked
+    ? `[helm] TIER GUARD DID NOT START: refusing to launch a ${tier}, which does not write files. ${detail}`
+    : `[helm] TIER GUARD DID NOT START: launching this ${tier} without it. It can write files unmetered. ${detail}`;
+  console.error(line);
+  if (_tierGuardProblemAnnounced.has(tier)) {
+    return;
+  }
+  // Marked as announced only once there was a window to send to. A tiered launch can
+  // happen before there is one - the auto-captain fires on a timer - and marking it
+  // first would spend the one notice on nobody, which is the failure this channel exists
+  // to end rather than a new place to repeat it.
+  //
+  // Be honest about what this does NOT establish: a live window is not a renderer that
+  // has registered its listener yet, and it is not a notice that stayed on screen across
+  // a reload. The console line above is unconditional and is the durable record; this is
+  // the one that gets looked at.
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    // The notice gets the one line that names the problem; the full diagnosis is in the
+    // console entry above. A twenty-line stack in the corner of the UI is its own way of
+    // not being read, and being read is the entire point of this channel.
+    mainWindow.webContents.send("tierGuard:problem", { tier, blocked, detail: headline(detail) });
+    _tierGuardProblemAnnounced.add(tier);
+  }
 }
 
 function tierGuardLaunchConfig(tier, { sessionId, metaHome }) {
@@ -2266,19 +2407,35 @@ function tierGuardLaunchConfig(tier, { sessionId, metaHome }) {
     (app.isPackaged
       ? path.join(process.resourcesPath, "tier-guard", "hooks", "tierGuardHook.mjs")
       : path.join(__dirname, "hooks", "tierGuardHook.mjs"));
-  if (!fs.existsSync(hookScript)) {
-    console.error(`[helm] TIER GUARD NOT ATTACHED: hook script missing at ${hookScript}. This session can write files.`);
-    return {};
-  }
   const runner = tierGuardRunner();
-  if (!runner) {
-    // No runtime to run the hook with. Say so loudly rather than launching a tiered
-    // session with a guard that silently is not there - a fence you believe in and
-    // do not have is worse than no fence.
-    console.error("[helm] TIER GUARD NOT ATTACHED: no node runtime could be resolved. This session can write files.");
+  // No runtime to run the hook with, or a hook that cannot start under it. One path for
+  // both, because they are one fact: there is no working guard to attach. The old code
+  // asked two narrower questions - is the file there, is there a runtime - and both could
+  // be answered yes while the guard was still dead. They were, for six days.
+  const probe = runner ? tierGuardStartable(hookScript, runner) : { startable: false, detail: `no node runtime could be resolved to run ${hookScript} with.` };
+  if (!probe.startable) {
+    const blocked = !tierMayLaunchUnguarded(tier);
+    // The path is in the message unconditionally. When the hook is simply absent the
+    // probe's diagnosis is a node stack, and "which file did it look for" is the first
+    // thing anyone reading this needs.
+    announceTierGuardProblem(tier, blocked, `Ran ${hookScript}: ${probe.detail}`);
+    if (blocked) {
+      // FAIL CLOSED. Nothing else supervises this seat's shell, and Bash is the exact hole
+      // the guard was built to close - the CLI's own --disallowedTools still refuses
+      // Edit/Write/NotebookEdit, but `cat > file` is not a tool name. Launching anyway
+      // would produce the state this whole exercise exists to make impossible: a session
+      // everything downstream reads as supervised, which is not.
+      throw new TierGuardUnavailableError(tier, probe.detail);
+    }
+    // FAIL OPEN for the tiers that may write regardless - a second mate has a budget, crew
+    // has a worktree. Refusing those would cost the captain the day's work to enforce a
+    // limit whose absence costs an uncounted edit, which is the trade the hook itself
+    // already makes when its classifier throws. Loud, though: see announceTierGuardProblem.
     return {};
   }
-  const command = `"${runner.bin}" "${hookScript}"`;
+  // The same string the probe just ran, from the same function - a probe that certified a
+  // different command would certify nothing. See hookCommand.
+  const command = hookCommand(runner.bin, hookScript);
   return {
     settings: {
       hooks: {
@@ -3482,6 +3639,14 @@ ipcMain.handle(
       }
       markSessionDone(liveTurnId);
       liveSessions.clearLaunching(launchId);
+      // A tier whose policy is a flat ban, with no guard that starts, is REFUSED here
+      // rather than launched unsupervised - see tierGuardLaunchConfig. It comes back as a
+      // normal {ok:false} so the pane says why, the way it does for a busy session;
+      // rethrowing would reject the invoke and the captain would get nothing but a
+      // console entry, which is precisely the failure mode this change exists to end.
+      if (err?.tierGuardUnavailable) {
+        return { ok: false, error: err.message, tierGuardUnavailable: true };
+      }
       throw err;
     }
     liveChildren.set(launchId, child);

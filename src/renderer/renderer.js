@@ -20427,3 +20427,15 @@ window.helm.onConfigWriteFailed(({ message } = {}) => {
   // while the eye is on the control that just moved.
   showNotice(`That setting didn't save: ${message || "unknown reason"}. It will be back to its old value after a restart.`);
 });
+
+// The tier guard could not start. Sticky, and worded as the two different facts it is:
+// a blocked tier did not launch at all, an unblocked one launched with nothing metering
+// what it writes. Until now this only ever reached console.error, and a fence that is
+// absent without saying so is the state everything downstream misreads as supervised.
+window.helm.onTierGuardProblem(({ tier, blocked, detail } = {}) => {
+  showNotice(
+    blocked
+      ? `The tier guard didn't start, so ${tier} sessions won't launch: that tier isn't allowed to write files and there is nothing to enforce it. Restart Helm once it's fixed. (${detail || "no detail"})`
+      : `The tier guard didn't start. ${tier} sessions are running WITHOUT it, so nothing is limiting what they write. (${detail || "no detail"})`
+  );
+});

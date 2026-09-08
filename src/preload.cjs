@@ -209,6 +209,15 @@ contextBridge.exposeInMainWorld("helm", {
     ipcRenderer.on("config:writeFailed", listener);
     return () => ipcRenderer.removeListener("config:writeFailed", listener);
   },
+  // The tier guard could not START. This has a channel of its own because the only alarm
+  // it had was console.error, and in a packaged app nobody reads that - which is how a
+  // guard stayed dead in every installed build for six days (2026-09-08) while the app
+  // went on describing those sessions as supervised.
+  onTierGuardProblem: (handler) => {
+    const listener = (_event, payload) => handler(payload);
+    ipcRenderer.on("tierGuard:problem", listener);
+    return () => ipcRenderer.removeListener("tierGuard:problem", listener);
+  },
   // Auto-captain (ea0546d1): OFF by default. runAutoCaptainNow({force:true}) runs a
   // single pass even while the toggle is off - the deliberate "watch the first live
   // run" path, rather than flipping it on and waiting for a timer.
