@@ -9,7 +9,7 @@
 // the running app, rather than assuming the renderer still needs restructuring.
 //
 // It launches the app, so it runs in the SLOW lane.
-// Run:  node scripts/e2e/test-view-switch-cost.mjs
+// Run:  node scripts/app-checks/test-view-switch-cost.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 let exit = 0;
