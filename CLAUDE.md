@@ -20,7 +20,7 @@ first-mate capability gap) - read it before any orchestration/dispatch work.
 ## Helm depends on keel
 
 **keel** (github.com/AidinD/keel) is the suite's shared layer. Since 2026-09-05 it is a
-**git dependency pinned to a tag** (`github:AidinD/keel#v0.1.18`), not a `file:../keel`
+**git dependency pinned to a tag** (`github:AidinD/keel#v0.1.20`), not a `file:../keel`
 sibling. It is a real `dependency`, not a devDependency: Helm ships its source unbuilt,
 so the import is live at runtime and electron-builder has to pack it.
 
