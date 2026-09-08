@@ -78,6 +78,15 @@ try {
   // lands wherever it lands. So each page is left to settle - its node count read twice, 300ms
   // apart, until it stops changing - before its switch is timed. Without this the Dashboard
   // reported 40.1 / 0.2 / 60.8 ms on three consecutive runs of unchanged code.
+  // ZERO IS NOT A STABLE VALUE HERE, IT IS "HAS NOT STARTED". The first version of this took two
+  // equal reads as proof the page had finished, and a page whose first IPC round-trip takes
+  // longer than 300ms reads 0 twice and settles instantly at nothing. That does not produce a
+  // wrong number - the empty-page assertion below catches it - it produces a FLAKY RED on a
+  // slow machine, on correct code, which this file argues at length is worse than no check at
+  // all. Found in review, and it is the same mistake the commit that added it was fixing.
+  //
+  // So a count of zero can never end the wait; only the timeout can, and then the emptiness is
+  // real and worth failing over. Every page here renders something.
   const settle = async (page, timeoutMs = 15000) => {
     const count = () => app.eval(`document.querySelectorAll('#' + ${JSON.stringify(page)} + 'Page *').length`);
     await app.eval(`navigateToPage(${JSON.stringify(page)})`);
@@ -85,13 +94,15 @@ try {
     let last = -1;
     while (Date.now() - started < timeoutMs) {
       const n = await count();
-      if (n === last) {
+      if (n > 0 && n === last) {
         return n;
       }
       last = n;
       await new Promise((r) => setTimeout(r, 300));
     }
-    return last;
+    // Out of time. Report what is actually there, whatever it is - a page that never filled is
+    // exactly what the assertion downstream exists to say out loud.
+    return await count();
   };
 
   // The page each measurement starts FROM. It must not be the page being measured - the old
