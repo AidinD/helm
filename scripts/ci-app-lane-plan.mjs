@@ -51,11 +51,6 @@ const EXCLUDED = {
     why: "dies on spawnSync of cmd.exe with ENOENT before asserting anything",
     removeWhen: "somebody works out why a shell spawn fails there; it is not understood yet",
   },
-  "test-toast-and-notices.mjs": {
-    kind: "runner",
-    why: "asserts CSS animations run (animation-name), and they do not appear to on a hosted runner - possibly because a hidden window has no compositor driving them",
-    removeWhen: "either animations run there, or the check asserts the class rather than the animation",
-  },
 };
 
 // The lane IS the folder now (see run-tests.mjs). This used to re-derive it by reading every

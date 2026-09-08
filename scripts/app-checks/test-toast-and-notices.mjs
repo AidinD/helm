@@ -148,6 +148,19 @@ try {
   // A notice slides in from the side and carries a "good" success tone - the point of
   // the task was to SEE a save (e.g. a handoff) arrive, not have it fade like an ordinary
   // toast. Assert the enter animation is wired and the good tone paints its own stripe.
+  // THE ANIMATION IS CONDITIONAL, AND SO IS THIS ASSERTION.
+  //
+  // This check was excluded from the CI app lane on the grounds that "animations do not appear
+  // to run on a hosted runner - possibly because a hidden window has no compositor". That
+  // diagnosis was wrong in a way that mattered: the rule lives inside
+  // @media (prefers-reduced-motion: no-preference), so on a machine that asks for reduced
+  // motion the app SUPPRESSES it on purpose and animation-name computes to none. The check was
+  // asserting that a deliberate accessibility behaviour had not happened.
+  //
+  // So it asks the environment first and then asserts the matching half of the contract. Both
+  // halves are real: where motion is allowed the animation must run, and where it is not it
+  // must be absent. Neither is a skip, which is the point - a check that opts out on the
+  // runner is a check that does not cover the runner.
   const arriving = await app.eval(`(async () => {
     document.getElementById("noticeHost")?.remove();
     noticeQueue.length = 0;
@@ -156,7 +169,8 @@ try {
     const el = document.querySelector("#noticeHost .notice");
     const style = getComputedStyle(el);
     const result = {
-      animates: style.animationName && style.animationName !== "none",
+      motionAllowed: matchMedia("(prefers-reduced-motion: no-preference)").matches,
+      animationName: style.animationName || "none",
       goodTone: el.classList.contains("notice-good"),
     };
     // Dismissing adds .notice-leaving and defers removal until the exit animation ends.
@@ -164,18 +178,53 @@ try {
     result.leaving = !!document.querySelector("#noticeHost .notice.notice-leaving");
     return result;
   })()`);
-  ok(arriving.animates, `a fresh notice slides in (animation-name ${JSON.stringify(arriving.animates)})`);
+  if (arriving.motionAllowed) {
+    ok(
+      arriving.animationName !== "none",
+      `motion is allowed here, so a fresh notice really slides in (animation-name ${JSON.stringify(arriving.animationName)})`
+    );
+  } else {
+    ok(
+      arriving.animationName === "none",
+      `motion is not allowed here, so the slide-in is correctly suppressed (animation-name ${JSON.stringify(arriving.animationName)})`
+    );
+  }
+  // AND THE RULE ITSELF EXISTS, asserted in both environments. Without this, the reduced-motion
+  // branch above passes just as happily when somebody deletes the animation altogether - "it is
+  // absent" would be satisfied by absence for the wrong reason, which is the failure this whole
+  // suite keeps finding.
+  {
+    const css = fs.readFileSync(new URL("../../src/renderer/style.css", import.meta.url), "utf8");
+    const guarded = css.slice(css.indexOf("@media (prefers-reduced-motion: no-preference)"));
+    ok(
+      /\.notice\s*\{[^}]*animation:\s*notice-in/.test(guarded),
+      "the slide-in is defined for .notice, behind the reduced-motion guard"
+    );
+    ok(/@keyframes notice-in/.test(css), "and the keyframes it names exist");
+  }
   ok(arriving.goodTone, "a good-tone notice carries the success stripe class");
   ok(arriving.leaving, "dismissing flies the card out before removing it");
 
   // The handoff-saved SUCCESS path must land in the notice column with the good tone, not
   // the fading bottom toast - that is the actual behaviour the task asked for. Reproducing
   // a real archive-with-handoff needs a live run, so check the wiring at the source.
+  // SLICED TO THE FUNCTION'S END, not to a magic number.
+  //
+  // This read the first 4000 characters after the declaration. The function grew, and by
+  // 2026-09-08 the token this assertion matches - tone: "good" - began at 3993 and ran past the
+  // boundary, so the window contained `tone: "g` and the regex failed. Five characters. The
+  // check reported that the success path no longer routes to showNotice, about code that does,
+  // and it had been doing so unnoticed because the whole file was excluded from the CI lane for
+  // an unrelated reason.
+  //
+  // A fixed window into source is a claim about a size nobody maintains. The end of a top-level
+  // function is a thing the file actually contains, so that is what it reads to.
   const rendererSrc = fs.readFileSync(new URL("../../src/renderer/renderer.js", import.meta.url), "utf8");
-  const archiveFn = rendererSrc.slice(
-    rendererSrc.indexOf("async function archiveWithHandoff"),
-    rendererSrc.indexOf("async function archiveWithHandoff") + 4000
-  );
+  const archiveStart = rendererSrc.indexOf("async function archiveWithHandoff");
+  ok(archiveStart >= 0, "archiveWithHandoff is still in the renderer, under that name");
+  const archiveEnd = rendererSrc.indexOf("\n}\n", archiveStart);
+  ok(archiveEnd > archiveStart, "and its end can be found, so the slice below covers the whole function");
+  const archiveFn = rendererSrc.slice(archiveStart, archiveEnd);
   const savedBlock = archiveFn.slice(archiveFn.indexOf("if (saved) {"));
   ok(
     /showNotice\(/.test(savedBlock) && /tone:\s*"good"/.test(savedBlock),
