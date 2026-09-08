@@ -6043,7 +6043,62 @@ async function readProjectCi(projectPath) {
   } catch (err) {
     return projectCiHealth({ name, path: projectPath, reachable: false, error: `gh returned something unreadable: ${err?.message || err}` });
   }
-  return projectCiHealth({ name, path: projectPath, rows, branch, knownWorkflows });
+  // A LANE MISSING FROM THE PAGE GETS ASKED ABOUT DIRECTLY, rather than reported as unknown.
+  //
+  // Pointing the first version at the real machine left four permanent "not known" rows: three
+  // workflows in one repo and one in another, all reported as lanes with no verdict, forever.
+  // Permanent question marks are exactly how a widget written to be trustworthy becomes one
+  // nobody reads - the failure this whole feature exists to fix, reappearing one layer down.
+  //
+  // The two cases hiding behind that one row are opposite, and both are answerable:
+  //
+  //   the lane HAS runs on this branch, and the page of 40 simply did not reach back far
+  //   enough. Asking for that one workflow returns the verdict, so there is nothing to be
+  //   unknown about.
+  //
+  //   the lane has NEVER run on this branch - a tag-triggered release, a workflow_dispatch-only
+  //   job, something that only runs on pull requests. It has nothing to say about the default
+  //   branch and never will, so it is dropped rather than displayed as a gap.
+  //
+  // One extra process per missing lane, only for the ones missing, once per cache window. And
+  // if the targeted ask itself FAILS, the workflow stays in the known set and the module reports
+  // it as unknown - a failure to ask must not be rounded to "not applicable", which would be
+  // this feature's own sin with the sign flipped.
+  const seen = new Set(rows.map((r) => String(r?.workflowName || "").trim()).filter(Boolean));
+  const missing = knownWorkflows.filter((wf) => !seen.has(wf));
+  const neverOnThisBranch = new Set();
+  await Promise.all(
+    missing.map(async (wf) => {
+      const one = await ciRun(
+        "gh",
+        ["run", "list", "--workflow", wf, "--branch", branch, "--limit", "1", "--json", "workflowName,headBranch,status,conclusion,createdAt,url,displayTitle"],
+        projectPath
+      );
+      if (!one.ok) {
+        // Could not ask about this lane specifically. Left in the known set, so it reads as
+        // unknown with a reason rather than quietly vanishing.
+        return;
+      }
+      let parsed;
+      try {
+        parsed = JSON.parse(one.out || "[]");
+      } catch {
+        return;
+      }
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        rows.push(...parsed);
+        return;
+      }
+      neverOnThisBranch.add(wf);
+    })
+  );
+  return projectCiHealth({
+    name,
+    path: projectPath,
+    rows,
+    branch,
+    knownWorkflows: knownWorkflows.filter((wf) => !neverOnThisBranch.has(wf)),
+  });
 }
 
 async function refreshCiHealth() {
