@@ -38,7 +38,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { isResumableQuotaError, lastFailureOf } from "../../src/lib/goalOrchestrator.js";
+import {
+  isResumableQuotaError,
+  lastFailureOf,
+  envelopeIterationError,
+  unparsableIterationError,
+} from "../../src/lib/goalOrchestrator.js";
 
 let exit = 0;
 const ok = (c, m) => {
@@ -80,31 +85,45 @@ const mainSrc = fs.readFileSync(path.join(here, "..", "..", "src", "main.js"), "
 
 // --- the envelope reader hands it the text at all ---------------------------------------------
 {
-  // The exact shape that fell through: no structured output, no error flag, the sentence
-  // sitting in `result`.
-  ok(
-    /const envelopeText = String\(parsed\.error \|\| parsed\.result \|\| subtype \|\| ""\);/.test(src),
-    "the envelope's text is read unconditionally, not only when it already looks like an error"
-  );
-  ok(
-    !/parsed\.is_error === true \|\|[\s\S]{0,200}\? String\(parsed\.error/.test(src),
-    "and the old looks-like-an-error gate in front of it is gone"
-  );
-  // Simulating the reader over the real shapes, because a source assertion alone says
-  // nothing about what the expression produces.
-  const envelopeTextOf = (parsed) => {
-    const subtype = parsed.subtype === "success" ? "" : parsed.subtype;
-    return String(parsed.error || parsed.result || subtype || "");
-  };
+  // THE REAL READER, CALLED. This block used to assert the fix by grepping goalOrchestrator.js
+  // for the exact line, and then simulate the expression with a hand-written copy - its own
+  // comment admitted the grep said nothing about behaviour. Both halves were weaker than they
+  // looked: a source pattern breaks on a rename that changes nothing (it did, on `parsed?.error`),
+  // and a copy of an expression keeps passing after the original changes, which is two paths for
+  // one concept. The reader is an exported function now, so the check runs it.
   const quietLimit = { type: "result", subtype: "success", is_error: false, result: "Claude usage limit reached. Your limit will reset at 3pm." };
-  ok(isResumableQuotaError(envelopeTextOf(quietLimit)), "a usage limit reported under subtype \"success\" still reaches the classifier");
+  ok(
+    isResumableQuotaError(envelopeIterationError(quietLimit)),
+    "a usage limit reported under subtype \"success\" still reaches the classifier"
+  );
   const loudLimit = { type: "result", subtype: "error_during_execution", is_error: true, error: "429 Too Many Requests" };
-  ok(isResumableQuotaError(envelopeTextOf(loudLimit)), "and so does one reported as an outright error");
+  ok(isResumableQuotaError(envelopeIterationError(loudLimit)), "and so does one reported as an outright error");
   const genuineMismatch = { type: "result", subtype: "success", is_error: false, structured_output: null };
-  // Reading the subtype unconditionally turned this into the error text "Iteration
-  // errored: success", which is worse than the generic message it replaced.
-  ok(envelopeTextOf(genuineMismatch) === "", "while an envelope that really says nothing produces no text to misread");
-  ok(/parsed\.subtype === "success" \? "" : parsed\.subtype/.test(src), "because a subtype of \"success\" is not an error message");
+  // Reading the subtype unconditionally turned this into the error text "Iteration errored:
+  // success", which is worse than the generic message it replaced.
+  ok(
+    envelopeIterationError(genuineMismatch) === "Iteration response did not match the expected schema.",
+    "while an envelope that really says nothing stays generic instead of reporting its own subtype"
+  );
+  ok(
+    !isResumableQuotaError(envelopeIterationError(genuineMismatch)),
+    "and is not mistaken for a quota stop - the reader must not manufacture resumability"
+  );
+
+  // THE OTHER DOOR the banner comes through: the CLI prints it to stdout and exits, so stdout
+  // is not JSON at all. Nothing ran this path before; the strings it produces were pinned by
+  // hand in a sibling check, which is a copy of the format rather than a test of it.
+  const banner = "Claude AI usage limit reached |resets 3pm";
+  ok(
+    isResumableQuotaError(unparsableIterationError({ code: 1, stdout: banner, stderr: "" })),
+    "a usage-limit banner on unparseable stdout survives into the error text"
+  );
+  // The TAIL, not the head. The banner is printed after whatever the turn already produced, so
+  // slicing from the front is the false negative this surfacing exists to prevent.
+  ok(
+    isResumableQuotaError(unparsableIterationError({ code: 1, stdout: `${"x".repeat(600)}\n${banner}`, stderr: "" })),
+    "and so does one printed after 600 characters of ordinary output"
+  );
 }
 
 // --- a failed run records what failed -----------------------------------------------------------
