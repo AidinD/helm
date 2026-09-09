@@ -103,7 +103,7 @@
     "@huggingface/transformers": "^4.2.0",
     "@jot/core": "file:../jot/dist-core",
     "electron-updater": "^6.3.9",
-    "keel": "github:AidinD/keel#v0.1.20"
+    "keel": "github:AidinD/keel#v0.1.22"
   },
   "versionedBy": "git"
 }

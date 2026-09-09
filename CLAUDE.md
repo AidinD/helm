@@ -20,7 +20,7 @@ first-mate capability gap) - read it before any orchestration/dispatch work.
 ## Helm depends on keel
 
 **keel** (github.com/AidinD/keel) is the suite's shared layer. Since 2026-09-05 it is a
-**git dependency pinned to a tag** (`github:AidinD/keel#v0.1.20`), not a `file:../keel`
+**git dependency pinned to a tag** (`github:AidinD/keel#v0.1.22`), not a `file:../keel`
 sibling. It is a real `dependency`, not a devDependency: Helm ships its source unbuilt,
 so the import is live at runtime and electron-builder has to pack it.
 
@@ -39,6 +39,15 @@ tagging.
 point Helm's `package.json` at the new tag. **Do not move an existing tag** -
 `package-lock.json` pins the commit sha, so a moved tag installs the old code and reports
 the old version, which looks exactly like the bump not having happened. Found by doing it.
+
+**And editing `package.json` is not enough on its own, even for a brand new tag.** A plain
+`npm install` after changing the spec left `package-lock.json` pinned to the OLD commit and
+node_modules on the old version - the same "looks exactly like the bump never happened"
+symptom, from a different cause, so the rule above does not cover it. Run
+`npm install github:AidinD/keel#vX.Y.Z` explicitly, then CHECK: the installed version
+(`require('./node_modules/keel/package.json').version`) and the lockfile's `resolved` sha
+should both be the new ones. Found on 2026-09-09 while shipping the lock fix, by not
+believing the install.
 
 **And keel's own `prepare` must survive an install that is not a git checkout.** It points
 git at `.githooks`, which is right for a clone and fatal for a consumer: the package lands
