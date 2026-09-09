@@ -244,6 +244,37 @@ ok(split.app > 0, "there ARE checks that launch the app, so the coverage stateme
   );
   ok(skipped.selfSkipped.includes(victim), "a check that skipped itself is reported as skipped");
   ok(!skipped.passed || skipped.passed < split.fastFiles.length, "and is not inside the passed tally");
+
+  // A check reproducing a still-open bug is neither a pass nor a failure - run-tests.mjs
+  // prints "open" for it, and this job must read that the same way rather than seeing an
+  // unrecognised line and refusing the whole report.
+  const openVictim = split.fastFiles.find((f) => f !== victim && f !== excludedName);
+  const withOpen = interpretRunnerOutput(
+    report({
+      lines: split.fastFiles.map((f) => (f === openVictim ? `open  ${f}` : `ok    ${f}`)),
+      ran: split.fastFiles.length - 1,
+      passed: split.fastFiles.length - 1,
+    }),
+    { split, exitCode: 0 }
+  );
+  ok(withOpen.knownOpen.includes(openVictim), "a check that reproduces a still-open bug is read as OPEN, not lost to an unrecognised line");
+  ok(!withOpen.realFailures.includes(openVictim), "and does not count as a real failure");
+  ok(withOpen.ok, "so an open reproduction does not fail this job on its own");
+
+  // The good-news case has to be loud. If a known-open check starts PASSING, run-tests.mjs
+  // prints "FIXED" for it, and that must refuse the job rather than read as an ordinary
+  // pass - the bug is fixed, and known-open.mjs still claims otherwise until someone deletes
+  // the entry.
+  const fixedVictim = openVictim;
+  const withFixed = interpretRunnerOutput(
+    report({ lines: split.fastFiles.map((f) => (f === fixedVictim ? `FIXED  ${f}` : `ok    ${f}`)) }),
+    { split, exitCode: 1 }
+  );
+  ok(!withFixed.ok, "a known-open check that now PASSES refuses the job rather than reading as green");
+  ok(
+    withFixed.problems.some((p) => p.includes(fixedVictim) && /known-open\.mjs/.test(p)),
+    `and names the check and points at known-open.mjs so the entry gets removed (${withFixed.problems.join("; ")})`
+  );
 }
 
 // --- 5. the workflow itself ------------------------------------------------------
