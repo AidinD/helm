@@ -266,10 +266,29 @@ async function runPooled(items, width, fn) {
 // "SKIPPED -" is reported as skipped and named at the end, so an opt-in check
 // cannot quietly become a check nobody runs.
 const selfSkipped = [];
+
+// A check can also be expected to fail, because it reproduces a bug nobody has fixed yet. Such a
+// check is reported as OPEN and turns the suite neither red nor green - and if it ever PASSES,
+// that IS a failure, because the bug is fixed and the entry has to go. See known-open.mjs for
+// why the good news has to fail the run.
+const { isKnownOpen, knownOpenReason } = await import(
+  pathToFileURL(path.join(LIB_DIR, "known-open.mjs")).href
+);
+const knownOpen = [];
+const fixedButStillListed = [];
+
 const mark = (t, r) => {
   if (r.code === 0 && /^SKIPPED - /m.test(r.out || "")) {
     selfSkipped.push({ file: t.file, why: (r.out.match(/^SKIPPED - (.*)$/m) || [])[1] || "" });
     return "skip";
+  }
+  if (isKnownOpen(t.file)) {
+    if (r.code === 0) {
+      fixedButStillListed.push({ file: t.file, ...knownOpenReason(t.file) });
+      return "FIXED";
+    }
+    knownOpen.push({ file: t.file, ...knownOpenReason(t.file) });
+    return "open";
   }
   return r.code === 0 ? "ok  " : "FAIL";
 };
@@ -284,8 +303,9 @@ const fastResults = await runPooled(fast, FAST_LANE_WIDTH, async (t) => ({
   r: await run(process.execPath, [path.join(t.dir, t.file), ...(live ? ["--live"] : [])], t.costsTokens ? 300000 : 120000),
 }));
 for (const { t, r } of fastResults) {
-  console.log(`${mark(t, r)}  ${t.file}`);
-  if (r.code !== 0) {
+  const state = mark(t, r);
+  console.log(`${state}  ${t.file}`);
+  if (r.code !== 0 && state !== "open") {
     failures.push({ file: t.file, out: r.out });
   }
 }
@@ -296,8 +316,9 @@ if (slow.length) {
   for (const t of slow) {
     i += 1;
     const r = await run(process.execPath, [path.join(t.dir, t.file), ...(live ? ["--live"] : [])], 300000);
-    console.log(`${mark(t, r)}  [${i}/${slow.length}] ${t.file}`);
-    if (r.code !== 0) {
+    const state = mark(t, r);
+    console.log(`${state}  [${i}/${slow.length}] ${t.file}`);
+    if (r.code !== 0 && state !== "open") {
       failures.push({ file: t.file, out: r.out });
     }
   }
@@ -349,7 +370,7 @@ if (slow.length) {
 
 // Count what RAN, not what exists - in --fast mode the app tests were never
 // started, and reporting them as passed is the kind of green that means nothing.
-const ran = fast.length + slow.length - selfSkipped.length;
+const ran = fast.length + slow.length - selfSkipped.length - knownOpen.length;
 const skipped = all.length - (fast.length + slow.length);
 console.log(
   `\n=== ${ran - failures.length}/${ran} passed in ${secs().toFixed(0)}s` +
@@ -362,6 +383,20 @@ if (selfSkipped.length) {
     console.log(`  ${s.file}${s.why ? ` - ${s.why}` : ""}`);
   }
 }
+if (knownOpen.length) {
+  console.log(`\n${knownOpen.length} check(s) reproduce a bug that is still OPEN, and are counted as neither:`);
+  for (const k of knownOpen) {
+    console.log(`  ${k.file} (card ${k.card})\n    ${k.why}`);
+  }
+}
+// The good news, which has to be loud enough to act on. A reproduction that stops reproducing
+// means the bug is gone and the entry in known-open.mjs is now a lie of omission.
+if (fixedButStillListed.length) {
+  console.log(`\n${fixedButStillListed.length} check(s) listed as open now PASS - the bug is fixed, so remove the entry from scripts/checks-lib/known-open.mjs:`);
+  for (const k of fixedButStillListed) {
+    console.log(`  ${k.file} (card ${k.card})`);
+  }
+}
 if (failures.length) {
   console.log("\nFailures:");
   for (const f of failures) {
@@ -370,4 +405,4 @@ if (failures.length) {
     console.log(f.out.split("\n").slice(-25).join("\n"));
   }
 }
-process.exit(failures.length ? 1 : 0);
+process.exit(failures.length || fixedButStillListed.length ? 1 : 0);
