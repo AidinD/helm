@@ -837,13 +837,7 @@ function runIteration({ worktreePath, goal, notesContent, planContent, repoMapCo
       try {
         parsed = JSON.parse(out);
       } catch {
-        // Include a STDOUT tail, not just stderr: when `claude -p` can't run the
-        // turn (usage/rate limit, overload), it prints that banner to stdout and
-        // exits, leaving stdout unparseable as JSON. Without the stdout tail here
-        // the downstream quota classifier never sees the "usage limit" text, so a
-        // token-exhaustion is miscounted as a plain iteration failure - which then
-        // marks the run non-resumable AND deletes its worktree (it cost the user
-        // two auto runs on 2026-08-11). See isResumableQuotaError + runGoal.
+        // See unparsableIterationError's doc comment for why the tail matters.
         finish({ ok: false, error: unparsableIterationError({ code, stdout: out, stderr: stderrText }) });
         return;
       }
@@ -855,29 +849,7 @@ function runIteration({ worktreePath, goal, notesContent, planContent, repoMapCo
         !Array.isArray(result.keyChanges) ||
         !Array.isArray(result.keyLearnings)
       ) {
-        // A well-formed SDK envelope that ISN'T our structured output is most often
-        // the SDK reporting its OWN error - usage limit hit, overloaded, execution
-        // error. Surface that text verbatim instead of a generic "schema mismatch",
-        // so isResumableQuotaError can recognise a resumable stop; otherwise every
-        // such stop reads as an opaque failure and is auto-cleaned (2026-08-11).
-        //
-        // Whatever it said, verbatim, WITHOUT first deciding it looks like an error.
-        // The old version only reached for the text when is_error/subtype/error marked
-        // the envelope as a failure - so an envelope that reports subtype "success" with
-        // a usage-limit sentence in `result` and no structured output produced the
-        // generic "did not match the expected schema", and the quota phrasing that
-        // isResumableQuotaError exists to recognise was thrown away right here.
-        //
-        // That is not a hypothetical shape. Measured 2026-09-01 in the installed run
-        // history: 16 runs stopped at two_consecutive_failures and NOT ONE carries any
-        // error text, and zero runs in the whole file have ever been classified
-        // quota_exhausted - while the captain's own scheduled prompt records two autopilots
-        // dying because he ran out of tokens. A classifier is only as good as the text
-        // it is given, and this is where the text was being dropped.
-        // The subtype is a fallback only when it is not "success": reading it
-        // unconditionally turned an envelope that genuinely said nothing into the error
-        // text "Iteration errored: success", which is worse than the generic message it
-        // replaced.
+        // See envelopeIterationError's doc comment for why the text is read unconditionally.
         finish({ ok: false, error: envelopeIterationError(parsed) });
         return;
       }
