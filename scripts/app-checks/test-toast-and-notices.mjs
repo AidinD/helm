@@ -173,9 +173,14 @@ try {
       animationName: style.animationName || "none",
       goodTone: el.classList.contains("notice-good"),
     };
-    // Dismissing adds .notice-leaving and defers removal until the exit animation ends.
+    // DISMISSAL BRANCHES THE SAME WAY THE ARRIVAL DOES, and the app is the one that branches:
+    // under reduced motion it calls el.remove() straight away, otherwise it adds
+    // .notice-leaving and waits for animationend. So both facts are collected and the matching
+    // half is asserted below - "it flew out" is the wrong question on a machine that asked for
+    // no motion, and it was the question that kept the CI app lane red.
     dismiss();
     result.leaving = !!document.querySelector("#noticeHost .notice.notice-leaving");
+    result.stillThere = !!document.querySelector("#noticeHost .notice");
     return result;
   })()`);
   if (arriving.motionAllowed) {
@@ -194,7 +199,7 @@ try {
   // absent" would be satisfied by absence for the wrong reason, which is the failure this whole
   // suite keeps finding.
   const noticeRule = await app.eval(`(() => {
-    const result = { found: false, animationName: null };
+    const result = { found: false, animationName: null, leavingFound: false, leavingAnimationName: null };
     for (const sheet of document.styleSheets) {
       let rules;
       try {
@@ -210,6 +215,10 @@ try {
             result.found = true;
             result.animationName = inner.style.animationName;
           }
+          if (inner.selectorText === ".notice-leaving") {
+            result.leavingFound = true;
+            result.leavingAnimationName = inner.style.animationName;
+          }
         }
       }
     }
@@ -219,8 +228,73 @@ try {
     noticeRule.found && noticeRule.animationName === "notice-in",
     `the .notice rule behind the reduced-motion guard names the notice-in animation (found=${noticeRule.found}, animation-name=${JSON.stringify(noticeRule.animationName)})`
   );
+  ok(
+    noticeRule.leavingFound && noticeRule.leavingAnimationName === "notice-out",
+    `and the .notice-leaving rule names the notice-out animation (found=${noticeRule.leavingFound}, animation-name=${JSON.stringify(noticeRule.leavingAnimationName)})`
+  );
   ok(arriving.goodTone, "a good-tone notice carries the success stripe class");
-  ok(arriving.leaving, "dismissing flies the card out before removing it");
+  if (arriving.motionAllowed) {
+    ok(arriving.leaving, "motion is allowed here, so dismissing flies the card out before removing it");
+  } else {
+    // The reduced-motion half is not "nothing happens" - the card must be GONE. Asserting only
+    // the absence of the animation would pass just as well if dismiss stopped working, which is
+    // the same absence-for-the-wrong-reason trap the rule check below exists for.
+    ok(
+      !arriving.leaving && !arriving.stillThere,
+      `motion is not allowed here, so dismissing removes the card at once instead of flying it out (leaving=${arriving.leaving}, still on screen=${arriving.stillThere})`
+    );
+  }
+
+  // AND THE OTHER HALF, ON PURPOSE, WHICHEVER HALF THIS MACHINE IS.
+  //
+  // Branching on the ambient setting means each environment only ever exercises its own side,
+  // and the side nobody runs is the side that breaks. That is not hypothetical: this check sat
+  // red in the CI app lane on every run for two days because a hosted runner reports reduced
+  // motion and the assertion above was written for the other case - green on every workstation,
+  // red on the only machine that reports to anyone.
+  //
+  // So the opposite setting is emulated and the matching contract asserted. Both halves are now
+  // covered everywhere, and the ambient branch above stays because it is the one that runs
+  // against the machine's real setting.
+  const opposite = arriving.motionAllowed ? "reduce" : "no-preference";
+  await app.cdp.send("Emulation.setEmulatedMedia", {
+    features: [{ name: "prefers-reduced-motion", value: opposite }],
+  });
+  try {
+    const emulated = await app.eval(`(async () => {
+      document.getElementById("noticeHost")?.remove();
+      noticeQueue.length = 0;
+      const { dismiss } = showNotice("Handoff saved to HANDOFF.md", { tone: "good" });
+      await new Promise((r) => setTimeout(r, 20));
+      const el = document.querySelector("#noticeHost .notice");
+      const result = {
+        motionAllowed: matchMedia("(prefers-reduced-motion: no-preference)").matches,
+        animationName: getComputedStyle(el).animationName || "none",
+      };
+      dismiss();
+      result.leaving = !!document.querySelector("#noticeHost .notice.notice-leaving");
+      result.stillThere = !!document.querySelector("#noticeHost .notice");
+      return result;
+    })()`);
+
+    ok(
+      emulated.motionAllowed === (opposite === "no-preference"),
+      `the emulation took (asked for ${opposite}, page reports motionAllowed=${emulated.motionAllowed}) - without this the assertions below would just be the ambient case again`
+    );
+    if (emulated.motionAllowed) {
+      ok(emulated.animationName !== "none", `emulating no-preference, the notice slides in (animation-name ${JSON.stringify(emulated.animationName)})`);
+      ok(emulated.leaving, "emulating no-preference, dismissing flies the card out");
+    } else {
+      ok(emulated.animationName === "none", `emulating reduced motion, the slide-in is suppressed (animation-name ${JSON.stringify(emulated.animationName)})`);
+      ok(
+        !emulated.leaving && !emulated.stillThere,
+        `emulating reduced motion, dismissing removes the card at once (leaving=${emulated.leaving}, still on screen=${emulated.stillThere})`
+      );
+    }
+  } finally {
+    // Put it back, or every assertion after this one runs under a setting it did not ask for.
+    await app.cdp.send("Emulation.setEmulatedMedia", { features: [] });
+  }
 
   // The handoff-saved SUCCESS path must land in the notice column with the good tone, not
   // the fading bottom toast - that is the actual behaviour the task asked for. Reproducing
