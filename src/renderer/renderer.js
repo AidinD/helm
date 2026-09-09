@@ -3167,6 +3167,34 @@ function reviewFilterBarEl(allRows, nonRepoCount, noCommitsCount) {
   const spacer = document.createElement("span");
   spacer.className = "rev-filters-spacer";
   bar.append(spacer);
+  // A ROW WITH COMMITS WHOSE BOARD DECLARES NO REPO IS A FINDING, not a row to file under
+  // "held back". The Code-only filter is allowed to hide work with no code in it; a card that
+  // has commits against it demonstrably HAS code, so its board is missing its repoPath and
+  // saying so is the only way that gets fixed. Left unsaid it lands one of two ways, both
+  // quiet: the fuzzy category-name guess resolves and the row looks ordinary while its board
+  // stays unbound, or the guess fails and the row disappears into a count that reads as
+  // "nothing to review here".
+  //
+  // Zero of these today, measured on the real board. That is exactly when to build it - the
+  // trap is closed while nobody is in it.
+  const unboundBoards = new Map();
+  for (const r of allRows) {
+    if (r.hasCommits && !r.categoryRepoPath) {
+      const key = r.category || "(no project)";
+      unboundBoards.set(key, (unboundBoards.get(key) || 0) + 1);
+    }
+  }
+  if (unboundBoards.size > 0) {
+    const total = [...unboundBoards.values()].reduce((a, b) => a + b, 0);
+    const names = [...unboundBoards.keys()].join(", ");
+    const warn = document.createElement("span");
+    warn.className = "rev-filter-warn";
+    warn.textContent = `⚠ ${total} row(s) have commits but no repo on their board (${names})`;
+    warn.title =
+      "These cards have commits against them, so there is code to review - but their Jot category declares no repoPath, " +
+      "so the queue cannot root them. Set repoPath on the category; this is a gap in the board, not in the work.";
+    bar.append(warn);
+  }
   bar.append(
     chip(
       reviewOnlyRepoRooted
