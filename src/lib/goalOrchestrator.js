@@ -844,14 +844,7 @@ function runIteration({ worktreePath, goal, notesContent, planContent, repoMapCo
         // token-exhaustion is miscounted as a plain iteration failure - which then
         // marks the run non-resumable AND deletes its worktree (it cost the user
         // two auto runs on 2026-08-11). See isResumableQuotaError + runGoal.
-        finish({
-          ok: false,
-          // TAIL of stdout, not head: a usage-limit banner is printed AFTER any
-          // partial output the turn already produced, so slicing the first 500
-          // chars could miss it (independent review, 2026-08-12) - the very
-          // false-negative this surfacing exists to prevent.
-          error: `Could not parse iteration output as JSON (exit code ${code}). stdout(tail): ${out.length > 500 ? "…" + out.slice(-500) : out} | stderr: ${truncate(stderrText, 500)}`,
-        });
+        finish({ ok: false, error: unparsableIterationError({ code, stdout: out, stderr: stderrText }) });
         return;
       }
       const result = parsed.structured_output;
@@ -885,19 +878,67 @@ function runIteration({ worktreePath, goal, notesContent, planContent, repoMapCo
         // unconditionally turned an envelope that genuinely said nothing into the error
         // text "Iteration errored: success", which is worse than the generic message it
         // replaced.
-        const subtype = parsed.subtype === "success" ? "" : parsed.subtype;
-        const envelopeText = String(parsed.error || parsed.result || subtype || "");
-        finish({
-          ok: false,
-          error: envelopeText
-            ? `Iteration errored: ${truncate(envelopeText, 500)}`
-            : "Iteration response did not match the expected schema.",
-        });
+        finish({ ok: false, error: envelopeIterationError(parsed) });
         return;
       }
       finish({ ok: true, result, costUsd: parsed.total_cost_usd || 0, usage: extractUsage(parsed, { requestedModel: model }) });
     });
   });
+}
+
+/**
+ * What an iteration failed WITH, when `claude -p` could not produce parseable output at all.
+ *
+ * A usage-limit banner is printed to stdout and the process exits, leaving stdout that is not
+ * JSON - so the text the quota classifier needs is in stdout, not stderr, and the run reads as
+ * an ordinary iteration failure without it. It cost two auto runs on 2026-08-11: non-resumable,
+ * worktrees deleted, work gone.
+ *
+ * The TAIL of stdout, not the head: the banner is printed AFTER whatever the turn had already
+ * produced, so slicing the first 500 characters could miss it (independent review, 2026-08-12) -
+ * the very false negative this exists to prevent.
+ *
+ * Extracted from runIteration's close handler so it can be RUN. It was a comment describing
+ * behaviour nothing exercised, and the check that pins these strings had to hand-write them,
+ * which is a copy of the format rather than a test of it.
+ *
+ * @param {{code: number|null, stdout: string, stderr: string}} io
+ * @returns {string}
+ */
+export function unparsableIterationError({ code, stdout, stderr }) {
+  const out = String(stdout || "");
+  return `Could not parse iteration output as JSON (exit code ${code}). stdout(tail): ${out.length > 500 ? "…" + out.slice(-500) : out} | stderr: ${truncate(String(stderr || ""), 500)}`;
+}
+
+/**
+ * What an iteration failed WITH, when the SDK returned a well-formed envelope that is not our
+ * structured output.
+ *
+ * READ THE TEXT UNCONDITIONALLY. The old version reached for it only once is_error, a failing
+ * subtype or a string `error` had already marked the envelope as a failure - so an envelope
+ * reporting subtype "success", carrying a usage-limit sentence in `result` and no structured
+ * output, fell past all three and became the generic "did not match the expected schema". The
+ * quota phrasing was thrown away one line before the classifier whose whole job is to recognise
+ * it. The classifier looked right because it WAS right; it was never given anything.
+ *
+ * Measured 2026-09-01 in the installed run history: 16 runs stopped at
+ * two_consecutive_failures and not one carries any error text, while zero runs have ever been
+ * classified quota_exhausted - against the captain's own note about two autopilots dying when
+ * he ran out of tokens.
+ *
+ * The subtype is a fallback only when it is not "success". Reading it unconditionally turned an
+ * envelope that genuinely said nothing into the error text "Iteration errored: success", which
+ * is worse than the generic message it replaced.
+ *
+ * @param {any} parsed the parsed SDK envelope
+ * @returns {string}
+ */
+export function envelopeIterationError(parsed) {
+  const subtype = parsed?.subtype === "success" ? "" : parsed?.subtype;
+  const envelopeText = String(parsed?.error || parsed?.result || subtype || "");
+  return envelopeText
+    ? `Iteration errored: ${truncate(envelopeText, 500)}`
+    : "Iteration response did not match the expected schema.";
 }
 
 /**
