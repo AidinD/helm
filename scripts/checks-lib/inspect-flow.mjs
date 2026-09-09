@@ -1,7 +1,7 @@
 // One-off UX inspection: boot Helm, capture the main daily-loop surfaces both
 // empty and with a representative seeded fleet, and dump their rendered text so
 // a reviewer can judge flow + copy. NOT a pass/fail test - it screenshots and
-// prints. Run: node scripts/e2e/inspect-flow.mjs
+// prints. Run: node scripts/checks-lib/inspect-flow.mjs
 import { launch } from "./harness.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

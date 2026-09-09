@@ -14,7 +14,7 @@
 // make a live session look transcript-less, and the newest copy must still win when the
 // same id exists in two folders (which happens for real after a root-folder switch).
 //
-// Run:  node scripts/e2e/test-transcript-index.mjs
+// Run:  node scripts/pure-checks/test-transcript-index.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

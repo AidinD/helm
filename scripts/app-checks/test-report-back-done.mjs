@@ -8,7 +8,7 @@
 // real config. The worktree/branch git logic is covered by
 // test-worktree-branch.mjs; this drives acknowledge + the "keep" menu path.
 //
-// Run:  node scripts/e2e/test-report-back-done.mjs
+// Run:  node scripts/app-checks/test-report-back-done.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

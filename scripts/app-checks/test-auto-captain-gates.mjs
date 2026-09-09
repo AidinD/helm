@@ -17,7 +17,7 @@
 // are deliberately NOT covered - they are staged to run under the captain's eyes with
 // "Run one pass", which is what the design doc asks for.
 //
-// Run: node scripts/e2e/test-auto-captain-gates.mjs
+// Run: node scripts/app-checks/test-auto-captain-gates.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

@@ -11,7 +11,7 @@ requireLive("starts a real session so a clean retire has something to retire");
 // One cheap claude turn (no summarize turn - clean retire skips it), so this is
 // faster than the carry-over test.
 //
-// Run:  node scripts/e2e/test-retire-clean.mjs
+// Run:  node scripts/app-checks/test-retire-clean.mjs
 import { launch } from "../checks-lib/harness.mjs";
 import fs from "node:fs";
 import os from "node:os";

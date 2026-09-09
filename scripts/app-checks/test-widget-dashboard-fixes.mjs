@@ -16,7 +16,7 @@
 // Everything here is measured on the rendered page (computed styles, real DOM),
 // because every one of these was invisible from the layer below.
 //
-// Run: node scripts/e2e/test-widget-dashboard-fixes.mjs
+// Run: node scripts/app-checks/test-widget-dashboard-fixes.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

@@ -3,7 +3,7 @@
 // a fresh one" nudge appears. Hidden mid-task, and never shown for a normal
 // (non-first-mate) session. Real launched Helm.
 //
-// Run:  node scripts/e2e/test-first-mate-refresh.mjs
+// Run:  node scripts/app-checks/test-first-mate-refresh.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 function log(...a) {

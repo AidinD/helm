@@ -8,7 +8,7 @@
 //
 // deriveSecondMates is pure, so this needs no app.
 //
-// Run:  node scripts/e2e/test-second-mate-auto-vs-manual.mjs
+// Run:  node scripts/pure-checks/test-second-mate-auto-vs-manual.mjs
 import { deriveSecondMates, secondMateId, AUTO_CAPTAIN, DIRECT_FIRST_MATE } from "../../src/lib/secondMates.js";
 
 let exit = 0;

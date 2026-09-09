@@ -19,7 +19,7 @@
 // assertion is that there is no longer one per keystroke.
 //
 // It launches the app, so it runs in the SLOW lane.
-// Run:  node scripts/e2e/test-composer-input-cost.mjs
+// Run:  node scripts/app-checks/test-composer-input-cost.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 let exit = 0;

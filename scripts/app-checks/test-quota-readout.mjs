@@ -6,7 +6,7 @@
 // otherwise the limit status + reset countdown. Exercised in the real loaded
 // renderer via CDP eval, with nowMs injected so the countdown is deterministic.
 //
-// Run:  node scripts/e2e/test-quota-readout.mjs
+// Run:  node scripts/app-checks/test-quota-readout.mjs
 import { launch } from "../checks-lib/harness.mjs";
 import fs from "node:fs";
 import os from "node:os";

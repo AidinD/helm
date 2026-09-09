@@ -2,7 +2,7 @@
 // history) + sessionId/name binding. Uses HELM_SECOND_MATES_PATH so it never
 // touches the real store.
 //
-// Run:  node scripts/e2e/test-second-mates.mjs
+// Run:  node scripts/pure-checks/test-second-mates.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

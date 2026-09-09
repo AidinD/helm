@@ -15,7 +15,7 @@
 //     the REAL archiveWithHandoff (stubbing summarizeSession so no model call)
 //     and assert the card lights via its own refresh, then clears.
 //
-// Run:  node scripts/e2e/test-archive-spinner-focus-real.mjs
+// Run:  node scripts/app-checks/test-archive-spinner-focus-real.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 function log(...a) {

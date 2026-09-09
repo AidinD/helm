@@ -11,7 +11,7 @@
 // the page. Nor does it assert which CSS mechanism makes the columns (it was grid,
 // it is flex now): the alignment + ordering assertions already prove the layout.
 //
-// Run:  node scripts/e2e/test-settings-columns.mjs
+// Run:  node scripts/app-checks/test-settings-columns.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 function log(...a) {

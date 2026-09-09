@@ -15,7 +15,7 @@ requireLive("starts a real first-mate session to check its tool gating");
 //
 // Two cheap claude turns.
 //
-// Run:  node scripts/e2e/test-first-mate-gating.mjs
+// Run:  node scripts/app-checks/test-first-mate-gating.mjs
 import { launch } from "../checks-lib/harness.mjs";
 import fs from "node:fs";
 import os from "node:os";

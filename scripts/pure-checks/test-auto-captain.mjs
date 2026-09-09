@@ -3,7 +3,7 @@
 // watch loop, and dispatch sit on top and are gated OFF by default; this covers
 // the decision logic that must be right before anything fires.
 //
-// Run:  node scripts/e2e/test-auto-captain.mjs
+// Run:  node scripts/pure-checks/test-auto-captain.mjs
 import {
   selectAutoQueuedTasks,
   resolveTaskProject,

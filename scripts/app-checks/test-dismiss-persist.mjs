@@ -4,7 +4,7 @@
 // Everything runs in ONE eval so the app's periodic session refresh can't
 // overwrite the injected state.sessions between steps.
 //
-// Run:  node scripts/e2e/test-dismiss-persist.mjs
+// Run:  node scripts/app-checks/test-dismiss-persist.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 function log(...a) {

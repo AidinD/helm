@@ -20,7 +20,7 @@
  * it at the writer also means an old record normalises as it is touched, so the count can
  * only shrink.
  *
- * Run: node scripts/e2e/test-display-keys-never-persist.mjs
+ * Run: node scripts/pure-checks/test-display-keys-never-persist.mjs
  */
 import fs from "node:fs";
 import os from "node:os";

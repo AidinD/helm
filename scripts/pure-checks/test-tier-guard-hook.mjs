@@ -7,7 +7,7 @@
 // lifetime allowance.
 //
 // It spawns the real hook file with real stdin. No model, no app, no tokens.
-// Run:  node scripts/e2e/test-tier-guard-hook.mjs
+// Run:  node scripts/pure-checks/test-tier-guard-hook.mjs
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";

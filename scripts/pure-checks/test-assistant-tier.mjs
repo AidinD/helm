@@ -36,7 +36,7 @@
  * duty green, with no error anywhere. So the guard must keep refusing Write and Edit even for
  * a path inside the assistant's own folder, and the checks below say so with that exact path.
  *
- * Run: node scripts/e2e/test-assistant-tier.mjs
+ * Run: node scripts/pure-checks/test-assistant-tier.mjs
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -71,7 +71,7 @@ const fm = (tool, input = {}) => decideToolCall({ tier: TIER_FIRST_MATE, tool, i
   // for reading a conversation before answering it.
   //
   // The full boundary - what the guard does with a call made from INSIDE a seat, and with
-  // the CLI's own built-in agent types - is scripts/e2e/test-assistant-subagent-boundary.mjs.
+  // the CLI's own built-in agent types - is scripts/pure-checks/test-assistant-subagent-boundary.mjs.
   ok(asst("Agent", { subagent_type: "architect" }).decision === "allow", "it can consult a published advisory seat");
   ok(asst("Task", { subagent_type: "red-team" }).decision === "allow", "under the tool's old name too, since the CLI has used both");
   ok(asst("Agent", { subagent_type: "general-purpose" }).decision === "deny", "but NOT a general-purpose worker - that one comes with the tools of doing the job");

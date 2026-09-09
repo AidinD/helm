@@ -9,7 +9,7 @@
 // races for this test's request. The dispatch target is a throwaway git repo;
 // the run uses haiku + a trivial goal to stay cheap.
 //
-// Run:  node scripts/e2e/test-dispatch-loop.mjs
+// Run:  node scripts/app-checks/test-dispatch-loop.mjs
 import { launch } from "../checks-lib/harness.mjs";
 import { spawn, execSync } from "node:child_process";
 import fs from "node:fs";

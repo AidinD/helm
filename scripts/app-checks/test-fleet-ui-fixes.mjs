@@ -8,7 +8,7 @@
 //              (contextTokensBySession) when the mate's session isn't open.
 // Also asserts the new getContextTokens IPC is exposed + returns a number map.
 //
-// Run:  node scripts/e2e/test-fleet-ui-fixes.mjs
+// Run:  node scripts/app-checks/test-fleet-ui-fixes.mjs
 import { launch } from "../checks-lib/harness.mjs";
 import fs from "node:fs";
 import os from "node:os";

@@ -33,7 +33,7 @@
  * what the CLI actually emits, and that needs a spent quota. What it does is make the
  * question answerable next time instead of leaving it a matter of opinion.
  *
- * Run: node scripts/e2e/test-quota-reaches-the-classifier.mjs
+ * Run: node scripts/pure-checks/test-quota-reaches-the-classifier.mjs
  */
 import fs from "node:fs";
 import path from "node:path";

@@ -3,7 +3,7 @@
 // main.js. Plain-node - the predicates are pure over a live-run snapshot
 // `[{ dispatchedBy }]`, so no Electron is needed.
 //
-// Run:  node scripts/e2e/test-dispatch-caps.mjs
+// Run:  node scripts/pure-checks/test-dispatch-caps.mjs
 import { widthCapExceeded, depthCapExceeded, countLiveDispatchesForMate } from "../../src/lib/dispatchCaps.js";
 
 function log(...a) {

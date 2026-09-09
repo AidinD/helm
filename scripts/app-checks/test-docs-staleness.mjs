@@ -4,7 +4,7 @@
 // behind gets a "docs N behind" pill; a freshly-reconciled one gets none;
 // uncommitted doc edits count as not-stale.
 //
-// Run:  node scripts/e2e/test-docs-staleness.mjs
+// Run:  node scripts/app-checks/test-docs-staleness.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

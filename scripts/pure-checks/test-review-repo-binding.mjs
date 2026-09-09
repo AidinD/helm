@@ -12,7 +12,7 @@
 // checks that the authoritative binding now reaches the review row, so a non-helm board
 // with a bound folder is repo-rooted without depending on the guess.
 //
-// Run:  node scripts/e2e/test-review-repo-binding.mjs
+// Run:  node scripts/pure-checks/test-review-repo-binding.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

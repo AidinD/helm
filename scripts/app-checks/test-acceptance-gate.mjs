@@ -8,7 +8,7 @@
 // REVIEW PAGE says: an item whose evidence doesn't answer the agreed question, or a
 // critical item with nothing independent behind it, must not read as verified.
 //
-// Run: node scripts/e2e/test-acceptance-gate.mjs
+// Run: node scripts/app-checks/test-acceptance-gate.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

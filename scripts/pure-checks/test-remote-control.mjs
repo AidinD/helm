@@ -4,7 +4,7 @@
 // It names claude.exe only as a fabricated path handed to an injected fake spawn, so no
 // CLI is started and nothing is spent (test-live-checks-declared.mjs sees that too).
 //
-// Run:  node scripts/e2e/test-remote-control.mjs
+// Run:  node scripts/pure-checks/test-remote-control.mjs
 import os from "node:os";
 import fs from "node:fs";
 import path from "node:path";

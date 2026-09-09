@@ -6,7 +6,7 @@
 // this builds an actual repo with a mix of related and unrelated commits and checks the
 // attribution - including that a search of the log is reported AS a search.
 //
-// Run:  node scripts/e2e/test-review-diff.mjs
+// Run:  node scripts/pure-checks/test-review-diff.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

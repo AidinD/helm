@@ -11,7 +11,7 @@
 // NOT run `claude auth login` - that opens a browser and would disturb the real
 // session; the login PLUMBING is exercised only up to the point of spawning.
 //
-// Run:  node scripts/e2e/test-model-menu-and-auth.mjs
+// Run:  node scripts/app-checks/test-model-menu-and-auth.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

@@ -7,7 +7,7 @@
 // mate-bound session IS an orchestrator while an unbound one at the same root is
 // NOT, and that the older manual "Mark as Helm chat" tag is gone. Real launched Helm.
 //
-// Run:  node scripts/e2e/test-orchestrator-detection.mjs
+// Run:  node scripts/app-checks/test-orchestrator-detection.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 function log(...a) {

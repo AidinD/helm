@@ -20,7 +20,7 @@
 // The fixture below is his real data, byte for byte, because the previous two
 // passes on this card were verified against fixtures I invented.
 //
-// Run:  node scripts/e2e/test-quota-lower-bound.mjs
+// Run:  node scripts/pure-checks/test-quota-lower-bound.mjs
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

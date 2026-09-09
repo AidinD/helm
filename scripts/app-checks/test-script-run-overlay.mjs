@@ -11,7 +11,7 @@
 //
 // So every assertion here reads what is ON SCREEN.
 //
-// Run: node scripts/e2e/test-script-run-overlay.mjs
+// Run: node scripts/app-checks/test-script-run-overlay.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

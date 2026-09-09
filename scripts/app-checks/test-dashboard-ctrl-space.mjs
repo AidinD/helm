@@ -2,7 +2,7 @@
 // first "needs you" chat (task 93975f46). First press elsewhere goes to the
 // dashboard; a second press while already there opens the top needs-you session.
 //
-// Run:  node scripts/e2e/test-dashboard-ctrl-space.mjs
+// Run:  node scripts/app-checks/test-dashboard-ctrl-space.mjs
 import { launch } from "../checks-lib/harness.mjs";
 import fs from "node:fs";
 import os from "node:os";

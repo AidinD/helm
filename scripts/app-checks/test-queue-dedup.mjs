@@ -3,7 +3,7 @@
 // captain-launched Direct running runs stay in the queue. (2) The "Done" button
 // tooltip sets expectations about the worktree (kept by default).
 //
-// Run:  node scripts/e2e/test-queue-dedup.mjs
+// Run:  node scripts/app-checks/test-queue-dedup.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 function log(...a) {

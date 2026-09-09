@@ -19,7 +19,7 @@
  * worse failure than the one being fixed - so most of what follows is about the locks this
  * must refuse to touch, and about failing safe when it cannot tell.
  *
- * Run: node scripts/e2e/test-stale-git-locks.mjs
+ * Run: node scripts/pure-checks/test-stale-git-locks.mjs
  */
 import fs from "node:fs";
 import os from "node:os";

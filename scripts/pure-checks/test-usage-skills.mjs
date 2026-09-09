@@ -2,7 +2,7 @@
 // leading-"/skill-name" prompt guess (skillInvoked) AND skills the model invoked
 // itself via the Skill tool (skillsUsed), counted once per run each with the two
 // sources deduped (task aa9f5238). Uses the HELM_USAGE_LOG_PATH seam.
-// Run:  node scripts/e2e/test-usage-skills.mjs
+// Run:  node scripts/pure-checks/test-usage-skills.mjs
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";

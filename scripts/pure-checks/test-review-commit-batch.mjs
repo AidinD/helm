@@ -9,7 +9,7 @@
 // against this repo's real history and asserts they agree, sha for sha.
 //
 // Pure (no app/harness) - runs in the fast lane.
-// Run:  node scripts/e2e/test-review-commit-batch.mjs
+// Run:  node scripts/pure-checks/test-review-commit-batch.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

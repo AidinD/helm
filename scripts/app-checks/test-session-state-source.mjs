@@ -9,7 +9,7 @@
 // legitimately foreign - so a test that just looks at the live board can never
 // observe the tracked half at all, and would pass while ownership was broken. So
 // this writes its own config with one known session marked as Helm-launched.
-// Run: node scripts/e2e/test-session-state-source.mjs
+// Run: node scripts/app-checks/test-session-state-source.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

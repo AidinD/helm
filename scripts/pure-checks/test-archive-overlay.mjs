@@ -6,7 +6,7 @@
 // touches real config, and picks a live session that is currently NOT archived
 // as the sharp red->green case (without overlay it shows; with overlay it's
 // archived).
-// Run:  node scripts/e2e/test-archive-overlay.mjs
+// Run:  node scripts/pure-checks/test-archive-overlay.mjs
 const { readAllSessions } = await import("../../src/lib/sessions.js");
 
 let exit = 0;

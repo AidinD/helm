@@ -8,7 +8,7 @@
 // paths exclude their commits, the row renders, and acknowledging advances the watermark so
 // it drops off.
 //
-// Run:  node scripts/e2e/test-review-unbound-commits.mjs
+// Run:  node scripts/app-checks/test-review-unbound-commits.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

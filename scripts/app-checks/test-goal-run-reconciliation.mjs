@@ -23,7 +23,7 @@
 // Isolation: HELM_GOAL_RUN_HISTORY_PATH points the launched app at a
 // throwaway history file we seed and read back directly.
 //
-// Run:  node scripts/e2e/test-goal-run-reconciliation.mjs
+// Run:  node scripts/app-checks/test-goal-run-reconciliation.mjs
 import { launch } from "../checks-lib/harness.mjs";
 import fs from "node:fs";
 import os from "node:os";

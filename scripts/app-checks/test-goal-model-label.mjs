@@ -7,7 +7,7 @@
 //
 // Drives the real renderer function in a launched app (no model tokens).
 //
-// Run:  node scripts/e2e/test-goal-model-label.mjs
+// Run:  node scripts/app-checks/test-goal-model-label.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 let exit = 0;

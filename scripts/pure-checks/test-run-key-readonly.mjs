@@ -17,7 +17,7 @@
 // mutated it straight back to create:true and the fast lane stayed 85/85 green.
 //
 // Pure (no app/harness) - runs in the fast lane.
-// Run:  node scripts/e2e/test-run-key-readonly.mjs
+// Run:  node scripts/pure-checks/test-run-key-readonly.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

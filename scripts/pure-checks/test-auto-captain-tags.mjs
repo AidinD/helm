@@ -10,7 +10,7 @@
 // colour and no description, next to six hand-made tags that have both. The
 // descriptions are also the only place in Jot that says what tagging a card does.
 //
-// Run: node scripts/e2e/test-auto-captain-tags.mjs
+// Run: node scripts/pure-checks/test-auto-captain-tags.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

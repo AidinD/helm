@@ -23,7 +23,7 @@
  *
  * Offline: real git repos, no app.
  *
- * Run: node scripts/e2e/test-review-baseline.mjs
+ * Run: node scripts/pure-checks/test-review-baseline.mjs
  */
 import fs from "node:fs";
 import os from "node:os";

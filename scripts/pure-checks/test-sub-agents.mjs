@@ -3,7 +3,7 @@
 // the current CLI name; "Task" was the old one and stayed unmatched in the
 // wild for a while after the rename, which is exactly the bug this guards.
 //
-// Run:  node scripts/e2e/test-sub-agents.mjs
+// Run:  node scripts/pure-checks/test-sub-agents.mjs
 import { parseLiveSubAgents } from "../../src/lib/subAgents.js";
 
 function log(...a) {

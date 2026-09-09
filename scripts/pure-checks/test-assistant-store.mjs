@@ -22,7 +22,7 @@
 //
 // Pure node, no Electron, so it runs in the fast lane.
 //
-// Run: node scripts/e2e/test-assistant-store.mjs
+// Run: node scripts/pure-checks/test-assistant-store.mjs
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";

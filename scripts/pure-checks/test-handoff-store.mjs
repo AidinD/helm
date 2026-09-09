@@ -3,7 +3,7 @@
 // handoff is filed per TOPIC under <meta-home>/.helm/handoffs/<slug>.md.
 // Covers slugging (incl. Swedish letters), match-first category resolution,
 // and the atomic write/read round-trip.
-// Run:  node scripts/e2e/test-handoff-store.mjs
+// Run:  node scripts/pure-checks/test-handoff-store.mjs
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";

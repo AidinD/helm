@@ -11,7 +11,7 @@
 // to replace the slot, and prove (a) the pressed node survives, (b) a click on
 // it still registers, and (c) the deferred refresh flushes after release.
 //
-// Run:  node scripts/e2e/test-dashboard-refresh-race.mjs
+// Run:  node scripts/app-checks/test-dashboard-refresh-race.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 // Its OWN debug port. This file passes on its own and failed in the full sweep - the class

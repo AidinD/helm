@@ -18,7 +18,7 @@
 // halves of this test still apply; `isTransientLock` is imported from keel because
 // that is where the predicate lives now.
 //
-// Run: node scripts/e2e/test-atomic-write.mjs
+// Run: node scripts/pure-checks/test-atomic-write.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

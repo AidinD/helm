@@ -18,7 +18,7 @@
 // source and evaluated. That is deliberate: the assertion then runs against the
 // SHIPPED text, not a copy that could drift.
 //
-// Run: node scripts/e2e/test-archive-handoff-menus.mjs
+// Run: node scripts/pure-checks/test-archive-handoff-menus.mjs
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

@@ -22,7 +22,7 @@
  * to its behaviour, which the mechanism's own check owns. What this catches is the sentence
  * outliving the code, which is the failure that has actually happened.
  *
- * Run: node scripts/e2e/test-instructions-tell-the-truth.mjs
+ * Run: node scripts/pure-checks/test-instructions-tell-the-truth.mjs
  */
 import fs from "node:fs";
 import path from "node:path";

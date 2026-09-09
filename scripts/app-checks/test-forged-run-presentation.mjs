@@ -11,7 +11,7 @@
 // visible command, summary breakdown, section heading, and header count all have to
 // agree that nothing here has been verified.
 //
-// Run: node scripts/e2e/test-forged-run-presentation.mjs
+// Run: node scripts/app-checks/test-forged-run-presentation.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

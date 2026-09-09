@@ -24,7 +24,7 @@
 // touches only sandbox files. It DOES archive the fake session id in the real
 // config (applySessionArchive has no seam) - cleaned up in finally.
 //
-// Run:  node scripts/e2e/test-retire-teardown.mjs
+// Run:  node scripts/app-checks/test-retire-reparents-through-the-app.mjs
 import { launch } from "../checks-lib/harness.mjs";
 import fs from "node:fs";
 import os from "node:os";

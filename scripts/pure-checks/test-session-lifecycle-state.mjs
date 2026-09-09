@@ -1,7 +1,7 @@
 // Unit test (no app): the session lifecycle-state projection (Epic f3d096fa,
 // increment 1). A pure map from status + orchestratorTag to one FSM state, and the
 // three surface-decision helpers - so the later reader migration is behaviour-
-// preserving. Run: node scripts/e2e/test-session-lifecycle-state.mjs
+// preserving. Run: node scripts/pure-checks/test-session-lifecycle-state.mjs
 import { sessionLifecycleState, isNeedsYouState, isWorkingState, isArchiveSuggestState, sessionStateSource } from "../../src/lib/sessionState.js";
 import { createLiveSessionRegistry } from "../../src/lib/liveSessions.js";
 

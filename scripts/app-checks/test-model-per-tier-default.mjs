@@ -2,7 +2,7 @@
 // model pill to Sonnet (delegate/summarize tier), while a normal session stays
 // "auto". Still user-overridable. Real launched Helm.
 //
-// Run:  node scripts/e2e/test-model-per-tier-default.mjs
+// Run:  node scripts/app-checks/test-model-per-tier-default.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 function log(...a) {

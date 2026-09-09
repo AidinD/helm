@@ -18,7 +18,7 @@
 // nothing else in the suite reads it.
 //
 // Pure (no app/harness) - runs in the fast lane.
-// Run:  node scripts/e2e/test-first-mate-manual-write-rule.mjs
+// Run:  node scripts/pure-checks/test-first-mate-manual-write-rule.mjs
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

@@ -5,7 +5,7 @@
 // genuinely newer ids, so the two halves (noise filtering, "is it actually
 // newer") are each provably correct rather than "looked fine on my machine".
 //
-// Run: node scripts/e2e/test-model-freshness.mjs
+// Run: node scripts/pure-checks/test-model-freshness.mjs
 import { extractModelIds, findNewerModelIds } from "../../src/lib/modelFreshness.js";
 
 let code = 0;

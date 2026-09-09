@@ -3,7 +3,7 @@
 // logo to their glyph. Verifies the CSS block, THEMES registry entry, and icon
 // are all wired for each.
 //
-// Run:  node scripts/e2e/test-themes-new.mjs
+// Run:  node scripts/app-checks/test-themes-new.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 function log(...a) {

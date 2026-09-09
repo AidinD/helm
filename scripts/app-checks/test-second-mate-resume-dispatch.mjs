@@ -10,7 +10,7 @@
 // session, jump into it as a second mate, and assert the resumed pane carries the second-mate
 // id - the exact thing that makes session:start attach the crew-dispatch tools.
 //
-// Run:  node scripts/e2e/test-second-mate-resume-dispatch.mjs
+// Run:  node scripts/app-checks/test-second-mate-resume-dispatch.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

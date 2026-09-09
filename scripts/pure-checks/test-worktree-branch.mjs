@@ -4,7 +4,7 @@
 // for a branch already contained in the primary branch, so cleanup never
 // deletes a branch that still holds unmerged commits.
 //
-// Run:  node scripts/e2e/test-worktree-branch.mjs
+// Run:  node scripts/pure-checks/test-worktree-branch.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

@@ -4,7 +4,7 @@
 // form; (2) refcounting - overlapping turns keep it live until BOTH end; (3) an
 // unrelated / finished session is left untouched.
 //
-// Run:  node scripts/e2e/test-live-session-status.mjs
+// Run:  node scripts/pure-checks/test-live-session-status.mjs
 import { createLiveSessionRegistry } from "../../src/lib/liveSessions.js";
 
 let exitCode = 0;

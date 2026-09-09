@@ -15,7 +15,7 @@
 // The rule this asserts: if a file is gitignored because it is local state, it is
 // also excluded from the package. One list cannot drift from the other.
 //
-// Run: node scripts/e2e/test-no-personal-data-in-package.mjs
+// Run: node scripts/pure-checks/test-no-personal-data-in-package.mjs
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

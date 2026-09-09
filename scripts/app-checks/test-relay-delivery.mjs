@@ -6,7 +6,7 @@
 // This spends a real (small) Opus turn and can take a minute or two. The message
 // is deliberately directive so the turn reliably calls helm_report_up.
 //
-// Run:  node scripts/e2e/test-relay-delivery.mjs
+// Run:  node scripts/app-checks/test-relay-delivery.mjs
 import { requireLive } from "../checks-lib/live-gate.mjs";
 import { launch } from "../checks-lib/harness.mjs";
 import { spawn, execSync } from "node:child_process";

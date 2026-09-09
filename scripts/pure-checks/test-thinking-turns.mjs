@@ -13,7 +13,7 @@
 // the last check here is that a thinking turn produces no bubble at all.
 //
 // Pure (no app/harness) - runs in the fast lane.
-// Run:  node scripts/e2e/test-thinking-turns.mjs
+// Run:  node scripts/pure-checks/test-thinking-turns.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

@@ -15,7 +15,7 @@
 // TEXT `pruneWorktrees(projectPath, {` and `onlyIfAllMatch:` - both of which passed
 // while the behaviour was absent. Hence this file: behaviour, not spelling.
 //
-// Run:  node scripts/e2e/test-prune-veto-live.mjs
+// Run:  node scripts/pure-checks/test-prune-veto-live.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

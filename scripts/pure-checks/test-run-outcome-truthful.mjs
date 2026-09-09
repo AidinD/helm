@@ -11,7 +11,7 @@
 // runs out, fails, or stops changing things - so "the loop ended" can never be read as
 // "the goal was met". That is the invariant here.
 //
-// Run:  node scripts/e2e/test-run-outcome-truthful.mjs
+// Run:  node scripts/pure-checks/test-run-outcome-truthful.mjs
 import { classifyRunOutcome, buildOutcomeSummary, isUnfinished, OUTCOME_DONE } from "../../src/lib/runOutcome.js";
 import { buildReportFromRecord } from "../../src/lib/dispatchReconcile.js";
 

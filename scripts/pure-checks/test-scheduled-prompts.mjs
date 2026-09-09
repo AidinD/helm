@@ -3,7 +3,7 @@
 // the quota-reset fireAt resolution, and the rule that matters most: a
 // wait-for-quota entry that comes due while the quota is STILL spent must NOT
 // fire, it must be pushed.
-// Run:  node scripts/e2e/test-scheduled-prompts.mjs
+// Run:  node scripts/pure-checks/test-scheduled-prompts.mjs
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";

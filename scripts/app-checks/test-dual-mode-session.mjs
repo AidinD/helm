@@ -4,7 +4,7 @@
 // both modes key off secondMateId(firstMate, project), so a session the relay
 // bound is exactly the one a later jump-in resumes.
 //
-// Run:  node scripts/e2e/test-dual-mode-session.mjs
+// Run:  node scripts/app-checks/test-dual-mode-session.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 function log(...a) {

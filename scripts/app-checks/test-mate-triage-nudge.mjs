@@ -8,7 +8,7 @@
 // instructions) already existed; this is the last-mile surfacing that gets the
 // mate to consume + act on it the moment you engage it.
 //
-// Run:  node scripts/e2e/test-mate-triage-nudge.mjs
+// Run:  node scripts/app-checks/test-mate-triage-nudge.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 function log(...a) {

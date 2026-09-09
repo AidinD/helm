@@ -17,7 +17,7 @@
 // drives the real triage call over real cards from his board plus the cases that must still be
 // held back, and checks the verdicts. It spends a few cheap Haiku calls, so it is opt-in:
 //
-//   node scripts/e2e/test-auto-triage-bar.mjs --live
+//   node scripts/pure-checks/test-auto-triage-bar.mjs --live
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { TRIAGE_SYSTEM_PROMPT, buildTriageInput } from "../../src/lib/autoCaptain.js";

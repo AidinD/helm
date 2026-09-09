@@ -4,7 +4,7 @@
 // injects fake run entries into the renderer's goalRuns map and re-renders -
 // exercising the concurrent-rendering path (goalRunDetailEl) directly.
 //
-// Run:  node scripts/e2e/test-goal-concurrent-runs.mjs
+// Run:  node scripts/app-checks/test-goal-concurrent-runs.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 function log(...a) {

@@ -9,7 +9,7 @@
 // its OWN temp mockup and cleans it up - it used to default to a hardcoded path
 // inside one session's scratchpad, which vanished with that session, so the
 // "Open in Plan" click opened a missing file and the iframe never rendered.
-// Run:  node scripts/e2e/test-mockup-banner.mjs [path-to-mock.html]
+// Run:  node scripts/app-checks/test-mockup-banner.mjs [path-to-mock.html]
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

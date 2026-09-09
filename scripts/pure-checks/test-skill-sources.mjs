@@ -8,7 +8,7 @@
 // The plugin half matters just as much: his machine has an enabled plugin shipping 61
 // skills that Analysis listed none of, while claiming to show what is in the room.
 //
-// Run:  node scripts/e2e/test-skill-sources.mjs
+// Run:  node scripts/pure-checks/test-skill-sources.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

@@ -5,7 +5,7 @@
 // same flash + a "New session started" toast, not silence. Real launched
 // Helm via CDP.
 //
-// Run:  node scripts/e2e/test-draft-flash-cue.mjs
+// Run:  node scripts/app-checks/test-draft-flash-cue.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 function log(...a) {

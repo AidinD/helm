@@ -19,7 +19,7 @@ requireLive("drives a real second mate into an advisory seat");
 //
 // One cheap claude turn (haiku) plus the seat's own.
 //
-// Run:  node scripts/e2e/test-second-mate-consults-seat.mjs
+// Run:  node scripts/app-checks/test-second-mate-consults-seat.mjs
 import { launch } from "../checks-lib/harness.mjs";
 import fs from "node:fs";
 import os from "node:os";

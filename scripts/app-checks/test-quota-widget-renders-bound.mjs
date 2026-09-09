@@ -5,7 +5,7 @@
 // body is built in the real app from his real accumulator, and its words are read
 // back.
 //
-// Run:  node scripts/e2e/test-quota-widget-renders-bound.mjs
+// Run:  node scripts/app-checks/test-quota-widget-renders-bound.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

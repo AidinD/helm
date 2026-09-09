@@ -8,7 +8,7 @@
 // found the tool reference but gave up with TOOL-BLOCKED); Sonnet does it
 // cleanly (ToolSearch loads the schema, then it calls the tool). This is a
 // correctness test of the real first-mate capability, so it uses the real
-// first-mate model, not the cheapest one. Run:  node scripts/e2e/test-first-mate-fleet-state.mjs
+// first-mate model, not the cheapest one. Run:  node scripts/pure-checks/test-first-mate-fleet-state.mjs
 //
 // WHY A PERSISTENT stream-json SESSION, NOT A ONE-SHOT `-p`:
 // A bare `claude -p "<prompt>"` snapshots its tool list at init, and a stdio

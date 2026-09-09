@@ -11,7 +11,7 @@
 // Every one of those was plain text before, which is why the assertions are about the
 // elements produced rather than about the source being present.
 //
-// Run:  node scripts/e2e/test-chat-markdown.mjs
+// Run:  node scripts/app-checks/test-chat-markdown.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

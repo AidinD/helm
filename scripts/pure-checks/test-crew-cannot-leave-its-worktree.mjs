@@ -25,7 +25,7 @@
  * guard that made it ask before writing or committing would break the tier and get switched
  * off, which is how a real fence becomes no fence.
  *
- * Run: node scripts/e2e/test-crew-cannot-leave-its-worktree.mjs
+ * Run: node scripts/pure-checks/test-crew-cannot-leave-its-worktree.mjs
  */
 import fs from "node:fs";
 import { decideToolCall, shellLeavesWorktree, TIER_CREW, TIER_SECOND_MATE } from "../../src/lib/tierGuard.js";

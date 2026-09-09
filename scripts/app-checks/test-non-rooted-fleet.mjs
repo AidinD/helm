@@ -16,7 +16,7 @@
 //    they do. The behaviour was right and the label was wrong, which is worse than a
 //    plain bug: he concluded the feature was missing.
 //
-// Run: node scripts/e2e/test-non-rooted-fleet.mjs
+// Run: node scripts/app-checks/test-non-rooted-fleet.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

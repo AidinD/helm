@@ -39,7 +39,7 @@
  * because a failure is when the next iteration most needs to be told what was tried. The
  * mkdir stays as a belt: the cost of being wrong is a whole run.
  *
- * Run: node scripts/e2e/test-discard-keeps-the-notes.mjs
+ * Run: node scripts/pure-checks/test-discard-keeps-the-notes.mjs
  */
 import fs from "node:fs";
 import os from "node:os";

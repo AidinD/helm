@@ -3,7 +3,7 @@
 // badge), and each run states it runs fresh-context per iteration. So a green
 // result is backed by visible proof, not a bare badge. Real launched Helm/CDP.
 //
-// Run:  node scripts/e2e/test-contract-evidence.mjs
+// Run:  node scripts/app-checks/test-contract-evidence.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 function log(...a) {

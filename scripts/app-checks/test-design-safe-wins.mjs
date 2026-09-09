@@ -3,7 +3,7 @@
 // Helm via CDP; asserts the specific text/label changes + zero console
 // errors after visiting each affected view.
 //
-// Run:  node scripts/e2e/test-design-safe-wins.mjs
+// Run:  node scripts/app-checks/test-design-safe-wins.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 function log(...a) {

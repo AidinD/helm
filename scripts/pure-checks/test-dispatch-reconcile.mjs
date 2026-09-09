@@ -1,6 +1,6 @@
 // Unit test: report-back reconciliation (M2). Pure functions, no Electron.
 //
-// Run:  node scripts/e2e/test-dispatch-reconcile.mjs
+// Run:  node scripts/pure-checks/test-dispatch-reconcile.mjs
 import { recordsNeedingReport, buildReportFromRecord } from "../../src/lib/dispatchReconcile.js";
 
 function log(...a) {

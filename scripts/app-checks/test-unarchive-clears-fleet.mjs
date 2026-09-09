@@ -12,7 +12,7 @@
 // ("archive keeps coming back"), which is why this test asserts the ROUND TRIP rather
 // than just the un-archive call.
 //
-// Run: node scripts/e2e/test-unarchive-clears-fleet.mjs
+// Run: node scripts/app-checks/test-unarchive-clears-fleet.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

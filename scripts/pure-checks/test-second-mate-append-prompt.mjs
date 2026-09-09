@@ -8,7 +8,7 @@
 // --append-system-prompt - is mechanical and covered by node --check; it can't be
 // asserted via transcript because the CLI never logs the appended system prompt.)
 //
-// Run:  node scripts/e2e/test-second-mate-append-prompt.mjs
+// Run:  node scripts/pure-checks/test-second-mate-append-prompt.mjs
 import { secondMateAppendPrompt, SECOND_MATE_RESUME_REMINDER } from "../../src/lib/secondMatePrompt.js";
 
 let exitCode = 0;

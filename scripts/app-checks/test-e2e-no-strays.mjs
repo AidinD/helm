@@ -19,7 +19,7 @@
 // the presence of the code that is supposed to produce it. Every one of these
 // failed before the fix.
 //
-// Run:  node scripts/e2e/test-e2e-no-strays.mjs
+// Run:  node scripts/app-checks/test-e2e-no-strays.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

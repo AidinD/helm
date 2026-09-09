@@ -13,7 +13,7 @@
 // which runs appear where, never what each row says. So they are repointed at dashReportRowEl - the
 // surviving unit that builds a report row wherever it is shown - which is what they were about.
 //
-// Run:  node scripts/e2e/test-report-back.mjs
+// Run:  node scripts/app-checks/test-report-back.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 function log(...a) {

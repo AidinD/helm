@@ -29,7 +29,7 @@
 // launching nothing. The DOM side (a Skill call leaving the collapsed "Used N tools" group and
 // becoming a clickable chip) is proved separately in test-skill-chip-renders.mjs.
 //
-// Run:  node scripts/e2e/test-skill-chips.mjs
+// Run:  node scripts/pure-checks/test-skill-chips.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

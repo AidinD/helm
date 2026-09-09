@@ -14,7 +14,7 @@
 // full rebuild of the same turns, element for element. A faster renderer that
 // draws a slightly different transcript is not a fix.
 //
-// Run:  node scripts/e2e/test-transcript-incremental-render.mjs
+// Run:  node scripts/app-checks/test-transcript-incremental-render.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

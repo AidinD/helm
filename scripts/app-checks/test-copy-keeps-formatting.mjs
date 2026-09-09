@@ -17,7 +17,7 @@
  * contains after a reply is rendered - a hand-written HTML fixture would be testing my idea
  * of the markup rather than the markup.
  *
- * Run: node scripts/e2e/test-copy-keeps-formatting.mjs
+ * Run: node scripts/app-checks/test-copy-keeps-formatting.mjs
  */
 import { launch } from "../checks-lib/harness.mjs";
 

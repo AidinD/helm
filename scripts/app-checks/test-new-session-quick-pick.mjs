@@ -8,7 +8,7 @@
 // Driven in the real app: the interesting part is what the button opens, and what
 // the menu offers for the state the app is actually in.
 //
-// Run:  node scripts/e2e/test-new-session-quick-pick.mjs
+// Run:  node scripts/app-checks/test-new-session-quick-pick.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

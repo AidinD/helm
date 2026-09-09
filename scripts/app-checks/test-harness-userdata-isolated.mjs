@@ -13,7 +13,7 @@
 // Passing --user-data-dir and having it ignored would look identical in a source
 // scan, which is the failure mode that shipped twice today.
 //
-// Run:  node scripts/e2e/test-harness-userdata-isolated.mjs
+// Run:  node scripts/app-checks/test-harness-userdata-isolated.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

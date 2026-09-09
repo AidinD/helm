@@ -12,7 +12,7 @@ requireLive("starts a real first-mate session to check its tool guards");
 // One live Sonnet turn. Sandboxed meta-home; the only file it's asked to write is
 // inside that temp dir, so nothing real is touched even if the guard failed.
 //
-// Run:  node scripts/e2e/test-first-mate-guards.mjs
+// Run:  node scripts/app-checks/test-first-mate-guards.mjs
 import { launch } from "../checks-lib/harness.mjs";
 import fs from "node:fs";
 import os from "node:os";

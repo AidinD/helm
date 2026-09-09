@@ -22,7 +22,7 @@
  * must never look like a review that found nothing - those are opposite facts, and rendering
  * them the same is how an absent check reads as a passed one.
  *
- * Run: node scripts/e2e/test-crew-review.mjs
+ * Run: node scripts/pure-checks/test-crew-review.mjs
  */
 import fs from "node:fs";
 import os from "node:os";

@@ -2,7 +2,7 @@
 // state (open/in-progress counts + lowest active priority for urgency), used by
 // the Fleet retire nudge (trigger layer 3). Writes a temp todos.json.
 //
-// Run:  node scripts/e2e/test-jot-board-summary.mjs
+// Run:  node scripts/pure-checks/test-jot-board-summary.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

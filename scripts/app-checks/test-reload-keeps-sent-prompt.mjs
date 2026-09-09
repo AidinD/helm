@@ -15,7 +15,7 @@
 // the merge a file that is missing the tail and see whether the tail survives. So this
 // drives the real function with the exact shapes the file can come back in.
 //
-// Run:  node scripts/e2e/test-reload-keeps-sent-prompt.mjs
+// Run:  node scripts/app-checks/test-reload-keeps-sent-prompt.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

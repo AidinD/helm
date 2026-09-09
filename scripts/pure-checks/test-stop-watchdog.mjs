@@ -22,7 +22,7 @@
 // same technique as test-reload-keeps-sent-prompt.mjs for the same class of
 // event-handler-closure code - this asserts the mechanism directly against source.
 //
-// Run:  node scripts/e2e/test-stop-watchdog.mjs
+// Run:  node scripts/pure-checks/test-stop-watchdog.mjs
 import fs from "node:fs";
 
 let exit = 0;

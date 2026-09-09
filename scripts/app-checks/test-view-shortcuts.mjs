@@ -8,7 +8,7 @@
 // That choice is only safe if the shifted combination was genuinely free and if adding it
 // does not disturb the unshifted ones, so both are asserted here rather than assumed.
 //
-// Run:  node scripts/e2e/test-view-shortcuts.mjs
+// Run:  node scripts/app-checks/test-view-shortcuts.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

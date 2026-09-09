@@ -14,7 +14,7 @@
 //   - the chip renders and the group stops forming for the ordinary calls beside it.
 // Both are asserted, in one render, from the turn shapes the real transcript produces.
 //
-// Run:  HELM_E2E_HIDDEN=1 node scripts/e2e/test-skill-chip-renders.mjs
+// Run:  HELM_E2E_HIDDEN=1 node scripts/app-checks/test-skill-chip-renders.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

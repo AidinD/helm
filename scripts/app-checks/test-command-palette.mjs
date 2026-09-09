@@ -2,7 +2,7 @@
 // Helm, fuzzy-filters commands, is keyboard-navigable, runs a command
 // (navigation), and closes cleanly. Real launched Helm/CDP.
 //
-// Run:  node scripts/e2e/test-command-palette.mjs
+// Run:  node scripts/app-checks/test-command-palette.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 function log(...a) {

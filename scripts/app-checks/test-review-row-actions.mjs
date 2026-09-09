@@ -14,7 +14,7 @@
 // his screenshot: fixing only the unrecorded case would close the instance and leave
 // the class open, which is the mistake that recurred all day.
 //
-// Run:  node scripts/e2e/test-review-row-actions.mjs
+// Run:  node scripts/app-checks/test-review-row-actions.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

@@ -20,7 +20,7 @@
 // name only read tools, and no shell in any spelling. The live re-check against
 // the CLI is test-persona-agent-containment.mjs.
 //
-// Run:  node scripts/e2e/test-persona-advisory-seats.mjs
+// Run:  node scripts/pure-checks/test-persona-advisory-seats.mjs
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

@@ -5,7 +5,7 @@
 // runs (the interrupted one with its explanatory status, neither with a Cancel
 // button). Cleans up the history file afterwards.
 //
-// Run:  node scripts/e2e/test-goal-run-persistence.mjs
+// Run:  node scripts/app-checks/test-goal-run-persistence.mjs
 import { launch } from "../checks-lib/harness.mjs";
 import fs from "node:fs";
 import path from "node:path";

@@ -4,7 +4,7 @@
 // kept - a remote "claude.ai X" server (space/dot) is dropped (it breaks the
 // argv + doesn't load headless anyway).
 //
-// Run:  node scripts/e2e/test-user-mcp-allow.mjs
+// Run:  node scripts/pure-checks/test-user-mcp-allow.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

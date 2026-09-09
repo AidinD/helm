@@ -2,7 +2,7 @@
 // mate, and consumeMateHandoff returns-then-clears it - the seam behind
 // "retire runs a last-effort carry-over into the fresh mate". Uses the
 // HELM_MATES_PATH test seam so it never touches the real store.
-// Run:  node scripts/e2e/test-mate-handoff.mjs
+// Run:  node scripts/pure-checks/test-mate-handoff.mjs
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";

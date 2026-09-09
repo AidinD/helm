@@ -15,7 +15,7 @@
 // sub-nav gained Review. Repairing four files would have left four descriptions of one thing; the
 // claims worth keeping are folded in here instead, and each is marked with where it came from.
 //
-// Run:  node scripts/e2e/test-nav-shape.mjs
+// Run:  node scripts/app-checks/test-nav-shape.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 function log(...a) {

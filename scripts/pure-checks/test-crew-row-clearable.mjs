@@ -13,7 +13,7 @@
 // open - which is the failure mode this repo keeps hitting, so the invariant is
 // asserted here directly rather than the two call sites being spot-checked.
 //
-// Run:  node scripts/e2e/test-crew-row-clearable.mjs
+// Run:  node scripts/pure-checks/test-crew-row-clearable.mjs
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

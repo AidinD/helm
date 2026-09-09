@@ -12,7 +12,7 @@
 //
 // Pure (no app, no model, no shell execution - the classifier never runs a byte of what
 // it reads). Fast lane.
-// Run:  node scripts/e2e/test-tier-guard.mjs
+// Run:  node scripts/pure-checks/test-tier-guard.mjs
 import {
   decideToolCall,
   shellNotReadOnlyReason,

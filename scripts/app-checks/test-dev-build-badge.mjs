@@ -6,7 +6,7 @@
 // negative: isDevBuild() -> !app.isPackaged -> false -> the `if (dev)` block is
 // skipped, so the badge stays hidden.
 //
-// Run:  node scripts/e2e/test-dev-build-badge.mjs
+// Run:  node scripts/app-checks/test-dev-build-badge.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 function log(...a) {

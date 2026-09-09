@@ -14,7 +14,7 @@
 // So the check is not "does a chip exist": it is that clicking EVERY chip in the section
 // returns that file's real content. A chip that cannot open what it names is the whole bug.
 //
-// Run:  node scripts/e2e/test-context-chip-kinds.mjs
+// Run:  node scripts/app-checks/test-context-chip-kinds.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

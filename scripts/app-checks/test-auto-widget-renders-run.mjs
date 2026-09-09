@@ -14,7 +14,7 @@
 // plus that second mate as a PROPOSED binding with sessionId null - launches the real
 // app, and reads the rendered DOM. No model call, no board, no money.
 //
-// Run:  node scripts/e2e/test-auto-widget-renders-run.mjs
+// Run:  node scripts/app-checks/test-auto-widget-renders-run.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

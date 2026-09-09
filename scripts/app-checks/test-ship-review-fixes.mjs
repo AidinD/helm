@@ -15,7 +15,7 @@
 //    footnote it dropped along with it is the sole host of "show parked". Park them
 //    all and the state was recoverable only by hand-editing config.json.
 //
-// Run: node scripts/e2e/test-ship-review-fixes.mjs
+// Run: node scripts/app-checks/test-ship-review-fixes.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

@@ -3,7 +3,7 @@
 // 2026-07-14 - Skiff's DECISIONS.md had bloated with transient handoff
 // narrative). Drives the real context:saveHandoff IPC via a launched Helm.
 //
-// Run:  node scripts/e2e/test-handoff-file.mjs
+// Run:  node scripts/app-checks/test-handoff-file.mjs
 import { launch } from "../checks-lib/harness.mjs";
 import fs from "node:fs";
 import os from "node:os";

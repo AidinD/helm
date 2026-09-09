@@ -15,7 +15,7 @@
 // on a bad guess is worse than the failure this prevents, which at least produces commits.
 //
 // Pure (no app/harness) - runs in the fast lane.
-// Run:  node scripts/e2e/test-plan-fits-budget.mjs
+// Run:  node scripts/pure-checks/test-plan-fits-budget.mjs
 import fs from "node:fs";
 import { countPlanSteps, planFitsBudget } from "../../src/lib/goalOrchestrator.js";
 

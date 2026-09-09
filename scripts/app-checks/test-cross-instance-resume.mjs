@@ -9,7 +9,7 @@
 // guard's decision (the foreign-live one is refused for THAT reason; the stale
 // one gets past it and fails later on the missing worktree instead).
 //
-// Run:  node scripts/e2e/test-cross-instance-resume.mjs
+// Run:  node scripts/app-checks/test-cross-instance-resume.mjs
 import { launch } from "../checks-lib/harness.mjs";
 import fs from "node:fs";
 import os from "node:os";

@@ -11,7 +11,7 @@
 // Driven in the REAL app with a synthetic DataTransfer, because the interesting part is
 // what the browser does with the event, not what our function does with a fake one.
 //
-// Run:  node scripts/e2e/test-composer-image-drop.mjs
+// Run:  node scripts/app-checks/test-composer-image-drop.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

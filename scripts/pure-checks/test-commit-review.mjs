@@ -3,7 +3,7 @@
 // in the subject), the unbound listing (range, filtering, limit), and the initial-watermark
 // ladder (mainline baseline, else HEAD~cap).
 //
-// Run:  node scripts/e2e/test-commit-review.mjs
+// Run:  node scripts/pure-checks/test-commit-review.mjs
 import os from "node:os";
 import { listUnboundCommits, initialWatermark, makeIsBound } from "../../src/lib/commitReview.js";
 

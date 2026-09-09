@@ -17,7 +17,7 @@
 //      `pending` user turn (the actual fix for the reported symptom - the button
 //      simply isn't there to click on a message that can't be rewound to yet).
 //
-// Run:  node scripts/e2e/test-rewind-unflushed-message.mjs
+// Run:  node scripts/pure-checks/test-rewind-unflushed-message.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

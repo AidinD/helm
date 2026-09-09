@@ -6,7 +6,7 @@
 // blank filler cell on the shorter side (not silently dropped rows), and a
 // context line identical on both sides.
 //
-// Run:  node scripts/e2e/test-diff-side-by-side.mjs
+// Run:  node scripts/app-checks/test-diff-side-by-side.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

@@ -15,7 +15,7 @@
 // the result. A check that really passed, reading as never run.
 //
 // Pure (no app/harness) - runs in the fast lane.
-// Run:  node scripts/e2e/test-intent.mjs
+// Run:  node scripts/pure-checks/test-intent.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

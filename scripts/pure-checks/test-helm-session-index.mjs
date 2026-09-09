@@ -3,7 +3,7 @@
 // sessions Helm creates via the headless `claude -p` launcher - which never
 // writes a Desktop metadata file - still surface in Direct/Fleet. Also checks
 // the Desktop-file-wins dedup and that an archived Helm entry derives "archived".
-// Run:  node scripts/e2e/test-helm-session-index.mjs
+// Run:  node scripts/pure-checks/test-helm-session-index.mjs
 import { readAllSessions } from "../../src/lib/sessions.js";
 
 let exit = 0;

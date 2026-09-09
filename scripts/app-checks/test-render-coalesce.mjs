@@ -5,7 +5,7 @@
 // rebuild and defers it (yielding the main thread to input between frames).
 // Exercised in the real loaded renderer via CDP eval by spying on renderPane.
 //
-// Run:  node scripts/e2e/test-render-coalesce.mjs
+// Run:  node scripts/app-checks/test-render-coalesce.mjs
 import { launch } from "../checks-lib/harness.mjs";
 import fs from "node:fs";
 import os from "node:os";

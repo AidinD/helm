@@ -13,7 +13,7 @@
 // the rows rendered at all. Deleting an unused thing is right; concluding that its
 // reason is gone is not.
 //
-// Run:  node scripts/e2e/test-crew-row-headline.mjs
+// Run:  node scripts/pure-checks/test-crew-row-headline.mjs
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

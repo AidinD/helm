@@ -14,7 +14,7 @@
 //  3. Nothing in the UI said a card had been set aside. The only output of a pass
 //     that examined a card and decided against it was an empty widget.
 //
-// Run:  node scripts/e2e/test-auto-setaside-visible.mjs
+// Run:  node scripts/pure-checks/test-auto-setaside-visible.mjs
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

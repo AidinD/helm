@@ -1,5 +1,5 @@
 // Unit test: the Phase-2 orchestration budget + kill switch (Slice 0).
-// Run: node scripts/e2e/test-orchestration-budget.mjs
+// Run: node scripts/pure-checks/test-orchestration-budget.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

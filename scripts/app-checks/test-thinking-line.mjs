@@ -17,7 +17,7 @@
 // therefore have been the COMMON case, so an empty block must produce nothing at all rather
 // than an empty italic row. That is the assertion this check cares most about.
 //
-// Run: node scripts/e2e/test-thinking-line.mjs
+// Run: node scripts/app-checks/test-thinking-line.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

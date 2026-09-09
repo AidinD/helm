@@ -6,7 +6,7 @@
 // REASON has to name the signal - a recommendation you cannot argue with is just a
 // decision someone else made.
 //
-// Run:  node scripts/e2e/test-reviewer-recommendation.mjs
+// Run:  node scripts/pure-checks/test-reviewer-recommendation.mjs
 import { recommendReviewer, diffStats, REVIEWER_MODELS, reviewerModelLabel } from "../../src/lib/reviewerModel.js";
 
 let exit = 0;

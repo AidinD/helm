@@ -29,7 +29,7 @@
  * it, and would pass on any checkout where nobody happens to have a worktree
  * open. This fails the moment the pattern goes back to being root-anchored.
  *
- * Run: node scripts/e2e/test-packer-excludes-agent-worktrees.mjs
+ * Run: node scripts/pure-checks/test-packer-excludes-agent-worktrees.mjs
  */
 import fs from "node:fs";
 import path from "node:path";

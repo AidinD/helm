@@ -9,7 +9,7 @@
 // assertions that matter are about the leftovers: a prompt whose session is not on screen
 // must still appear somewhere.
 //
-// Run:  node scripts/e2e/test-scheduled-queue-in-pane.mjs
+// Run:  node scripts/app-checks/test-scheduled-queue-in-pane.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

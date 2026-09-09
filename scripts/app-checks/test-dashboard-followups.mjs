@@ -17,7 +17,7 @@
 // happens, and it only looked at data. View state and quota change the rendered
 // output too.
 //
-// Run: node scripts/e2e/test-dashboard-followups.mjs
+// Run: node scripts/app-checks/test-dashboard-followups.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

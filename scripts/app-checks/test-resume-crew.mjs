@@ -11,7 +11,7 @@
 // is SELECTED (counted in `total`) but not relaunched (`resumed` stays 0) - which
 // is exactly what proves the selection logic (mirrors test-fortsatt-cascade).
 //
-// Run:  node scripts/e2e/test-resume-crew.mjs
+// Run:  node scripts/app-checks/test-resume-crew.mjs
 import { launch } from "../checks-lib/harness.mjs";
 import { spawn } from "node:child_process";
 import fs from "node:fs";

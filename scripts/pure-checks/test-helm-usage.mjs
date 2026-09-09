@@ -2,7 +2,7 @@
 // Verifies view counts, A->B transitions within a sitting, the session-gap
 // reset (a long gap does NOT create a spurious transition), and action counts.
 // Uses the HELM_USAGE_PATH seam so it never touches the real log.
-// Run:  node scripts/e2e/test-helm-usage.mjs
+// Run:  node scripts/pure-checks/test-helm-usage.mjs
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";

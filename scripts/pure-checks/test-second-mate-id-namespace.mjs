@@ -23,7 +23,7 @@
 // "sess_" too, which clears the symptom and makes two namespaces permanent.
 //
 // Pure (no app, no model) - runs in the fast lane.
-// Run:  node scripts/e2e/test-second-mate-id-namespace.mjs
+// Run:  node scripts/pure-checks/test-second-mate-id-namespace.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

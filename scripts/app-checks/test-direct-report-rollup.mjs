@@ -2,7 +2,7 @@
 // OWN finished runs, so a Direct/Autopilot run you launched yourself doesn't
 // vanish from the Dashboard the moment it stops running (flow review P1).
 //
-// Run:  node scripts/e2e/test-direct-report-rollup.mjs
+// Run:  node scripts/app-checks/test-direct-report-rollup.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 function log(...a) {

@@ -4,7 +4,7 @@
 // badge value are OS/main-side and can't be asserted from CDP - those are
 // covered by code review (main.js gates on !isFocused() + config).
 //
-// Run:  node scripts/e2e/test-attention-notify.mjs
+// Run:  node scripts/app-checks/test-attention-notify.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 function log(...a) {

@@ -16,7 +16,7 @@
 // the thing under test. test-persona-advisory-seats.mjs covers the source side.
 //
 // It spawns the real `claude` binary and costs tokens, so it is OPT-IN:
-//   node scripts/e2e/test-persona-agent-containment.mjs --live
+//   node scripts/pure-checks/test-persona-agent-containment.mjs --live
 // Without the flag it SKIPS LOUDLY rather than passing quietly - a containment
 // check that silently reports OK without running is worse than no check.
 //

@@ -5,7 +5,7 @@
 // reply - the sentence of chat around the block comes with it - and selecting the block by
 // hand means dragging through a box that scrolls.
 //
-// Run:  node scripts/e2e/test-code-block-copy.mjs
+// Run:  node scripts/app-checks/test-code-block-copy.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

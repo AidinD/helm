@@ -2,7 +2,7 @@
 // click Load mockup (it used to clear on the load re-render, losing your input).
 // Real launched Helm via CDP.
 //
-// Run:  node scripts/e2e/test-lavish-input-persist.mjs
+// Run:  node scripts/app-checks/test-lavish-input-persist.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 function log(...a) {
