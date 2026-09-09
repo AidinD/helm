@@ -84,6 +84,7 @@ const RENDER = `(rows, onlyRepo, project) => {
     epics: host.querySelectorAll(".rev-epic").length,
     nestedRows: host.querySelectorAll(".rev-epic-children .rev-item").length,
     epicLabel: host.querySelector(".rev-epic-label")?.textContent || "",
+    warn: host.querySelector(".rev-filter-warn")?.textContent || "",
     chips: [...host.querySelectorAll(".rev-filter-chip")].map((c) => c.textContent),
     activeChips: [...host.querySelectorAll(".rev-filter-chip.is-active")].map((c) => c.textContent),
     titles: [...host.querySelectorAll(".rev-item .rev-title, .rev-item h4, .rev-item .rev-head")].map((t) => t.textContent).slice(0, 8),
@@ -91,10 +92,46 @@ const RENDER = `(rows, onlyRepo, project) => {
   };
 }`;
 
+// A card with commits whose BOARD declares no repo. On the real board there are zero of these
+// today - measured - so a fixture is the only way to see what happens when there is one, and
+// building it now is the point: the trap is closed while nobody is in it.
+//
+// The distinction the page has to make is between "no code here" and "code we cannot reach".
+// The first is what the Code-only filter is for and is fine to hide behind a count. The second
+// is a board missing its repoPath, and hiding it inside the same count is how it stays missing.
+const UNBOUND_ROWS = `[
+  { taskId: "dddddddd-0000-4000-8000-000000000001", title: "Real work on an unbound board", category: "unbound-board", repoPath: null, categoryRepoPath: null, hasCommits: true, parentId: null, verdict: "unrecorded", band: "unrecorded", problems: ["nothing"], caveats: [] },
+  { taskId: "cccccccc-0000-4000-8000-000000000003", title: "Buy milk", category: "no-code-board", repoPath: null, categoryRepoPath: null, hasCommits: false, parentId: null, verdict: "unrecorded", band: "unrecorded", problems: ["nothing"], caveats: [] },
+  { taskId: "aaaaaaaa-0000-4000-8000-000000000009", title: "Ordinary helm work", category: "helm", repoPath: "D:\\\\Repo\\\\Tools\\\\helm", categoryRepoPath: "D:\\\\Repo\\\\Tools\\\\helm", hasCommits: true, parentId: null, verdict: "unrecorded", band: "unrecorded", problems: ["nothing"], caveats: [] }
+]`;
+
 try {
   app = await launch();
   await app.waitForSelector("#pageToggle", 30000, { visible: true });
-  await app.eval(`(() => { window.__revProbe = ${RENDER}; window.__rows = ${ROWS}; return true; })()`);
+  await app.eval(`(() => { window.__revProbe = ${RENDER}; window.__rows = ${ROWS}; window.__unbound = ${UNBOUND_ROWS}; return true; })()`);
+
+  // --- a board with commits and no repoPath is SAID, not counted away ------
+  {
+    const unbound = await app.eval(`window.__revProbe(window.__unbound, true, null)`);
+    ok(
+      /commits but no repo on their board/.test(unbound.warn),
+      `a card with commits whose board declares no repo is reported (${JSON.stringify(unbound.warn.slice(0, 90))})`
+    );
+    ok(
+      /unbound-board/.test(unbound.warn) && !/no-code-board/.test(unbound.warn),
+      "and it NAMES the board, without dragging in a board that simply has no code (so the message points at the thing to fix)"
+    );
+    ok(
+      /\b1\b/.test(unbound.warn),
+      "and counts only those rows - the ordinary helm row and the private one are not findings"
+    );
+
+    // The other half, or the assertion above would pass just as well on a page that warns
+    // constantly. The fixture the rest of this file uses has no committed row on an unbound
+    // board, and must therefore be silent.
+    const ordinary = await app.eval(`window.__revProbe(window.__rows, true, null)`);
+    ok(ordinary.warn === "", `and a queue with no such row says nothing (${JSON.stringify(ordinary.warn)})`);
+  }
 
   // --- 3. only code work, and nothing vanishes quietly ---------------------
   const codeOnly = await app.eval(`window.__revProbe(window.__rows, true, null)`);
