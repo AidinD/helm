@@ -27,12 +27,23 @@ them rather than above them.
 
 **The first mate is the project seat.** That is the merge the layer removal performed, and it
 is three things being merged rather than two: the **name** comes from the tier above, the
-**permissions** from the tier below, and the **identity** from neither yet. The permissions half
-is the easy half - a project seat must be able to write code, so it launches on the tier that
-allows writes - and stating it first makes the merge look more settled than it is. The identity
-half is open: a mate is `mate_<uuid>` with a slot, a pooled name, a persona and a retire path,
-while a project node is `sm_<hash>` minted from dispatcher plus path and has none of those.
-DECISIONS.md sets out why picking either one naively brings the removed tier back.
+**permissions** from the tier below, and the **identity** is `mate_`.
+
+The identity fork was the hard one and it is decided, not open - see DECISIONS.md, the same
+entry, under "Six forks the decision did not cover, settled the same evening". A `mate_`
+carries a slot, a pooled name, a persona and a retire path, none of which have substitutes; the
+alternative `sm_<hash>` carries one property, being derivable, which a seat with a store record
+no longer needs. The consequence is not a special case: `secondMateId`'s dispatcher parameter
+has exactly one caller left once the tier is gone - the auto lane - so it becomes
+`autoNodeId(projectPath)`, and the collision the auto split fixed cannot recur because there is
+no second identity left to collide with.
+
+**Where a project seat escalates: the captain's queue, not the standing seat.** The standing
+seat is not in the chain of command for a project's work - it holds goals and people, not a
+work queue - and escalation is the *common* event, so routing the most frequent thing through
+the seat that re-reads its whole context every turn is the exact pattern this model exists to
+avoid. The cross-project tools are the standing seat's alone: a project seat opening another
+project's seat is the removed tier growing back from below.
 
 **The standing seat is not a relay.** Talking to a project seat directly is the default;
 routing through the standing seat is a deliberate choice for the times a view across projects
@@ -61,13 +72,23 @@ Match the model to the *judgment the tier actually exercises*, not to its height
 
 The Sonnet delegate tier that used to sit above this is gone with the layer it belonged to.
 
-## A NOTE ON VOCABULARY, because the code has not caught up
+## A NOTE ON VOCABULARY, because parts of the code have caught up and parts have not
 
-The tier CONSTANTS still carry the old names. A project seat launches on `TIER_SECOND_MATE`,
-and the MCP tools are still called `helm_create_second_mate` and
-`helm_relay_to_second_mate`. The behaviour is the new model; the words are the old one. That
-gap is real and is tracked as its own card (cc5cd531, 2189 references), not quietly fixed here -
-renaming across a live dispatch path is its own change with its own risk.
+**The tools were renamed on 2026-09-05.** They are `helm_open_project` and
+`helm_relay_to_project`. `helm_create_second_mate` and `helm_relay_to_second_mate` survive
+only as entries in `LEGACY_TOOL_ALIASES`, kept so a running seat mid-session does not break,
+recorded through `recordLegacyToolCall` and tracked for removal.
+
+**The tier CONSTANTS have not been renamed.** A project seat still launches on
+`TIER_SECOND_MATE`. The behaviour is the new model; that word is the old one, and it is card
+cc5cd531's 2189 references - renaming across a live dispatch path is its own change with its own
+risk, which is why it is named here rather than half-done.
+
+The first version of this section had the tool names wrong: it presented the legacy aliases as
+the live names, in the document being repaired for exactly that kind of staleness, and the
+review gate caught it. It is worth leaving that on the record, because the DECISIONS entry this
+page rests on ends with the same correction about itself - a claim that something had never been
+written down, eleven lines above where it was.
 
 **Everything below this line predates the layer removal.** It has not been re-verified against
 the current model, so where it says "second mate" for a coordinating layer above projects, that
