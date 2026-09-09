@@ -139,7 +139,7 @@ export function classifySuite({ appDir = APP_DIR, pureDir = PURE_DIR } = {}) {
  * describing a suite that has since doubled.
  */
 export function coverageStatement(split, observed = {}) {
-  const { ran = null, passed = null, selfSkipped = [], excludedNotRun = [] } = observed;
+  const { ran = null, passed = null, selfSkipped = [], excludedNotRun = [], knownOpen = [] } = observed;
   const lines = [];
   lines.push("WHAT THIS RUN DOES NOT COVER");
   lines.push("");
@@ -191,6 +191,19 @@ export function coverageStatement(split, observed = {}) {
       );
     }
   }
+  // A green run with an open bug under it is still a green run, and the claim has to carry
+  // that or it is reassuring in exactly the way this whole statement exists to prevent. These
+  // are outside the count above, so without this line the number simply omits them.
+  if (knownOpen.length > 0) {
+    lines.push("");
+    lines.push(
+      `  ${knownOpen.length} pure check(s) are NOT in that number because they reproduce a bug that is`
+    );
+    lines.push("    still open - they are expected to fail, and the suite says so rather than hiding it:");
+    for (const file of knownOpen) {
+      lines.push(`      - ${file}`);
+    }
+  }
   lines.push("It is evidence about the pure modules only. Nothing else.");
   return lines.join("\n");
 }
@@ -212,11 +225,17 @@ export function interpretRunnerOutput(text, { split, exitCode = null, excluded =
   const problems = [];
   const results = new Map();
   for (const line of String(text ?? "").split(/\r?\n/)) {
-    // The runner prints `${mark}  ${file}` where mark is "ok  ", "FAIL" or "skip".
+    // The runner prints `${mark}  ${file}` where mark is "ok  ", "FAIL", "skip", "open" or
+    // "FIXED". The last two are checks registered in checks-lib/known-open.mjs: they reproduce a
+    // bug nobody has fixed, so a failure is expected and a PASS is the thing to act on.
     // The syntax gate uses the same shape for src/*.js paths, which do not match here -
     // a syntax failure shows up instead as an output with no test lines at all, which
     // is refused below.
-    const m = /^(ok|FAIL|skip)\s+(test-[A-Za-z0-9._-]+\.mjs)\s*$/.exec(line);
+    //
+    // "open" has to be parsed rather than ignored. Left out of the regex it is simply missing
+    // from results, and the count assertion further down then reports "some check produced no
+    // verdict at all" - a true statement about this parser, blamed on the check.
+    const m = /^(ok|FAIL|skip|open|FIXED)\s+(test-[A-Za-z0-9._-]+\.mjs)\s*$/.exec(line);
     if (m) {
       results.set(m[2], m[1]);
     }
@@ -247,6 +266,15 @@ export function interpretRunnerOutput(text, { split, exitCode = null, excluded =
 
   const failed = [...results].filter(([, r]) => r === "FAIL").map(([f]) => f);
   const selfSkipped = [...results].filter(([, r]) => r === "skip").map(([f]) => f);
+  const knownOpen = [...results].filter(([, r]) => r === "open").map(([f]) => f);
+  // A known-open check that PASSES is the one outcome nobody should be able to walk past: the
+  // bug is fixed and its entry is now describing something that does not happen. Same shape as
+  // staleExclusions below, and the same reason - the harmless direction is still a false claim.
+  for (const file of [...results].filter(([, r]) => r === "FIXED").map(([f]) => f)) {
+    problems.push(
+      `${file} is registered as reproducing an open bug, but it PASSED - the bug is fixed, so remove its entry from scripts/checks-lib/known-open.mjs`
+    );
+  }
   const excludedNames = Object.keys(excluded);
   const excludedFailures = failed.filter((f) => excludedNames.includes(f));
   const realFailures = failed.filter((f) => !excludedNames.includes(f));
@@ -281,6 +309,10 @@ export function interpretRunnerOutput(text, { split, exitCode = null, excluded =
     ran: summary ? Number(summary[2]) : null,
     passed: summary ? Number(summary[1]) : null,
     failed,
+    // Reported so the job can SAY there is an open bug under it. Counted as neither a pass nor a
+    // failure, exactly as the runner counts it - a number that quietly absorbed it would make
+    // the coverage statement wrong in the reassuring direction.
+    knownOpen,
     realFailures,
     excludedFailures,
     excludedNotRun: [...new Set([...excludedFailures, ...phantomExclusions])],
