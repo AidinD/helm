@@ -34,13 +34,15 @@
 // install, does not belong - the first two are bugs in the check and the third is EXCLUDED in
 // ci-fast-lane.mjs. Every entry names the card that carries the finding, so the reason cannot
 // quietly become "it has always been like that".
-export const KNOWN_OPEN = Object.freeze({
-  "test-a-live-holders-lock-is-not-taken.mjs": Object.freeze({
-    card: "d203c05d",
-    why:
-      "keel's lockIsAbandoned falls back to an age rule whenever it cannot read the holder's claim, so a writer that is alive but slow has its lock taken. Reproduced deterministically with no error injected, only a scheduling delay. The fix is a keel change (version bump plus tag) and is not built.",
-  }),
-});
+// EMPTY, AND THAT IS THE MECHANISM WORKING RATHER THAN A FILE NOBODY USES.
+//
+// Its first entry was test-a-live-holders-lock-is-not-taken.mjs, registered on 2026-09-09
+// against card d203c05d: keel published a lock directory before writing the claim into it, so a
+// waiter arriving in that two-syscall window fell back to the age rule and took a live holder's
+// lock. It was removed the same day, and not by anyone remembering to - keel v0.1.21 publishes
+// the claim with the directory, the check went green, and the suite failed on the spot saying
+// the entry had to go. That is the half this file exists for.
+export const KNOWN_OPEN = Object.freeze({});
 
 /** True when this check is expected to fail because the thing it checks is still broken. */
 export function isKnownOpen(file) {

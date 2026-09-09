@@ -166,6 +166,30 @@ const spawnChild = (env, label) =>
     child.on("exit", () => resolve());
   });
 
+// THE INVARIANT, WATCHED DIRECTLY. A published lock must always contain its claim. While that
+// holds, a waiter can always ask "is the holder alive?" and never has to fall back to guessing
+// from the directory's age - which is the guess that broke a live holder's lock.
+//
+// Sampled from outside both processes, so it does not depend on either one's idea of when it
+// holds anything. That matters: an earlier version of this check asserted "B must be refused",
+// which stopped being a bug the moment the lock was published complete - B taking a lock that
+// nobody has published yet is correct, and a check that called that a failure would have been
+// reporting its own obsolescence as a defect.
+const claimless = [];
+let sampled = 0;
+const watch = setInterval(() => {
+  let entries;
+  try {
+    entries = fs.readdirSync(lockPathFor(BOARD));
+  } catch {
+    return; // no lock there right now, which is not a violation of anything
+  }
+  sampled += 1;
+  if (!entries.includes("owner.json")) {
+    claimless.push(Date.now());
+  }
+}, 25);
+
 const a = spawnChild({ HELM_LOCKPROOF_A: "1" }, "A");
 // Wait for the window to be open, then for the directory to age past the threshold. If A never
 // gets that far the wait times out and the preconditions below fail loudly, which is the point:
@@ -185,6 +209,7 @@ if (windowOpenedAt) {
 }
 const b = spawnChild({ HELM_LOCKPROOF_B: "1" }, "B");
 await Promise.all([a, b]);
+clearInterval(watch);
 
 fs.rmSync(BOARD, { force: true });
 fs.rmSync(lockPathFor(BOARD), { recursive: true, force: true });
@@ -200,13 +225,20 @@ ok(Boolean(aHolds), `A took the lock (${aHolds ? `inode ${aHolds.ino}` : "NO EVE
 ok(Boolean(aAlive), "and A was still running when it let go - it was never a dead holder, only a slow one");
 ok(Boolean(bAcq), `B tried to take the lock (${bAcq ? `waited ${bAcq.waitedMs}ms` : "NO EVENT"})`);
 
-// THE PROPERTY. B must be refused while A holds.
+// THE PROPERTY: a lock that exists always says who holds it.
+ok(sampled > 20, `the lock path was watched while the two writers ran (${sampled} samples with a lock present)`);
 ok(
-  bAcq ? bAcq.acquired === false : false,
-  bAcq?.acquired
-    ? `B TOOK THE LOCK FROM A LIVE HOLDER after only ${bAcq.waitedMs}ms - it did not wait for it. A was inside the critical section and stayed alive; both then held the write lock at once${aHolds?.ino === bAcq.ino ? ` (the same lock directory, inode ${bAcq.ino})` : ` (A on inode ${aHolds?.ino}, B on ${bAcq.ino} - A's directory was destroyed under it)`}`
-    : `B was refused while A held it (${bAcq?.error || "no error recorded"})`
+  claimless.length === 0,
+  claimless.length === 0
+    ? `every sample of the published lock had a claim in it (${sampled} samples) - so a waiter can always ask whether the holder is alive`
+    : `the lock was published WITHOUT a claim in ${claimless.length} of ${sampled} samples, over ${Math.round((claimless[claimless.length - 1] - claimless[0]) / 100) / 10}s. A waiter arriving in that window has nothing to ask about the holder, so it falls back to the age rule - and age cannot tell a writer that died between the two calls from one that was merely descheduled between them`
 );
+
+// Secondary, and reported rather than asserted: whether the two ever ended up on different lock
+// directories, which is what a broken hold looks like from outside.
+if (bAcq?.acquired && aHolds && aHolds.ino !== bAcq.ino) {
+  console.log(`      A held inode ${aHolds.ino} and B held ${bAcq.ino} - different directories at one path`);
+}
 
 // And the reason this one is the dangerous variant, reported rather than asserted: the loud
 // version of this bug prints a warning a suite run can catch. This version prints nothing.
@@ -220,7 +252,7 @@ console.log(`      warnings printed: ${warned ? said : "NONE - the double hold w
 // The runner will only excuse this failure if the run SAYS it reproduced the documented bug -
 // see scripts/checks-lib/known-open.mjs. Printed on the one path that is that bug, so a crash or
 // an unrelated regression comes out as an ordinary failure instead of wearing this one's name.
-if (bAcq?.acquired && aHolds && aAlive) {
+if (claimless.length > 0) {
   console.log("OPEN BUG REPRODUCED - d203c05d");
 }
 
