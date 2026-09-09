@@ -74,11 +74,12 @@ node scripts/run-tests.mjs docs jot   # only files whose name matches a term
 
 Tests live in two folders and the folder IS the lane: `scripts/pure-checks/` runs anywhere and starts nothing, `scripts/app-checks/` launches a real Electron window and runs one at a time because they would otherwise fight over focus. Shared machinery (the CDP harness, the live gate, the mutation helper) is in `scripts/checks-lib/`. A guard, `pure-checks/test-lane-folders-tell-the-truth.mjs`, fails the build if a file's folder disagrees with what running it actually does.
 
-Three conventions worth knowing:
+Four conventions worth knowing:
 
 - **A run leaves nothing behind, and that is checked rather than hoped.** Each launch gets its own Electron profile and `config.json` in temp, stamped with the PID of the run that owns it; a later launch reaps anything whose owning run is gone, killing the process first if one is still using it. A debug port is a preference, not an identity — the harness finds its app through the `DevToolsActivePort` file in its own profile, so a taken port costs an ephemeral one instead of silently attaching to somebody else's window. `test-e2e-no-strays.mjs` asserts all of it.
 
 - **A test may decline to run itself.** One check spawns the real `claude` CLI and spends tokens, so it is opt-in behind `HELM_LIVE_CLI_TESTS=1`. The runner reports such a test as `skip` and names it at the end rather than counting an un-run check as a pass.
+- **A test can also be expected to fail.** A check that reproduces a bug nobody has fixed yet is registered in `scripts/checks-lib/known-open.mjs`; the runner reports it as `open` and counts it as neither a pass nor a failure. If it ever passes, the runner reports it as `FIXED` and fails the run instead, because that means the bug is gone and the entry needs to be deleted.
 - **The summary counts what ran**, not what exists. `--fast` never starts the app tests and says so, because reporting them as passed would be the kind of green that means nothing.
 
 ## Building and releasing
