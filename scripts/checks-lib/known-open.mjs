@@ -16,6 +16,19 @@
 // news fail the run is what forces that visit. Without it this file becomes the place checks go
 // to stop mattering.
 //
+// AND IT HAS TO PROVE IT FAILED FOR THE DOCUMENTED REASON. Classifying on the exit code alone
+// makes every other way of failing - a crash before the reproduction starts, a broken import, an
+// unrelated regression - come out as the same reassuring sentence about a bug we already know
+// about, and never as a failure. That is this repo's own "a broken matcher and a real absence
+// are the same silent zero", one level up: the check would be reporting the bug it was told to
+// expect rather than the one it saw. So a registered check must print
+//
+//     OPEN BUG REPRODUCED - <card>
+//
+// on the path where it actually reproduces, and only then is a non-zero exit read as `open`.
+// Any other failure is an ordinary FAIL. The card in the line is the card in this file, so the
+// two cannot drift apart into a marker that matches nothing.
+//
 // A NOTE ON WHAT BELONGS HERE. Only a check that fails because the PRODUCT is wrong. A check
 // that fails because it is badly written, or flaky, or needs a dependency this runner does not
 // install, does not belong - the first two are bugs in the check and the third is EXCLUDED in
@@ -32,6 +45,21 @@ export const KNOWN_OPEN = Object.freeze({
 /** True when this check is expected to fail because the thing it checks is still broken. */
 export function isKnownOpen(file) {
   return Object.hasOwn(KNOWN_OPEN, file);
+}
+
+/**
+ * Did this run actually reproduce the documented bug, or just fail?
+ *
+ * @param {string} file
+ * @param {string} output
+ * @returns {boolean}
+ */
+export function reproducedKnownOpen(file, output) {
+  const entry = KNOWN_OPEN[file];
+  if (!entry) {
+    return false;
+  }
+  return String(output || "").includes(`OPEN BUG REPRODUCED - ${entry.card}`);
 }
 
 /** The reason and card for a known-open check, or null. */

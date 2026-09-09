@@ -271,7 +271,7 @@ const selfSkipped = [];
 // check is reported as OPEN and turns the suite neither red nor green - and if it ever PASSES,
 // that IS a failure, because the bug is fixed and the entry has to go. See known-open.mjs for
 // why the good news has to fail the run.
-const { isKnownOpen, knownOpenReason } = await import(
+const { isKnownOpen, knownOpenReason, reproducedKnownOpen } = await import(
   pathToFileURL(path.join(LIB_DIR, "known-open.mjs")).href
 );
 const knownOpen = [];
@@ -287,8 +287,14 @@ const mark = (t, r) => {
       fixedButStillListed.push({ file: t.file, ...knownOpenReason(t.file) });
       return "FIXED";
     }
-    knownOpen.push({ file: t.file, ...knownOpenReason(t.file) });
-    return "open";
+    // It failed - but a check registered here is only allowed to be excused for the ONE failure
+    // it documents. Without this it excuses every other way of breaking, under the documented
+    // bug's name.
+    if (reproducedKnownOpen(t.file, r.out)) {
+      knownOpen.push({ file: t.file, ...knownOpenReason(t.file) });
+      return "open";
+    }
+    return "FAIL";
   }
   return r.code === 0 ? "ok  " : "FAIL";
 };
