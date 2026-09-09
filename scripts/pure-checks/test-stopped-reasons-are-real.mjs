@@ -13,7 +13,7 @@
 //      SOURCE. A list maintained by hand beside the loop is just a second place to be
 //      wrong; this fails if the loop gains or loses a terminal reason and nobody
 //      updates the list.
-//   2. Every fixture in scripts/e2e is scanned against that list.
+//   2. Every fixture in this file's own directory is scanned against that list.
 //
 // Comments are stripped before scanning. A source-scan check that matches its own
 // explanatory comment is failure 2 on the same list, and this file's own header names
