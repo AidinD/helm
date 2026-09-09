@@ -10,7 +10,7 @@
 // the REAL MCP server over stdio, so it tests the contract a mate actually meets rather
 // than a function signature.
 //
-// Run:  node scripts/e2e/test-dispatch-model-required.mjs
+// Run:  node scripts/pure-checks/test-dispatch-model-required.mjs
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";

@@ -17,7 +17,7 @@
 // --model claude-opus-4-8` response (2026-08-18), not a hand-written shape - a
 // hand-written one is how the wrong assumption got in.
 //
-// Run:  node scripts/e2e/test-extract-resolved-model.mjs
+// Run:  node scripts/pure-checks/test-extract-resolved-model.mjs
 import { extractUsage } from "../../src/lib/goalOrchestrator.js";
 
 let exit = 0;

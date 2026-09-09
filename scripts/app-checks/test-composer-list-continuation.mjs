@@ -10,7 +10,7 @@
 // right object. Enter SENDS in Helm and Shift+Enter is the newline key, so the test
 // also pins that plain Enter is left completely alone.
 //
-// Run:  node scripts/e2e/test-composer-list-continuation.mjs
+// Run:  node scripts/app-checks/test-composer-list-continuation.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

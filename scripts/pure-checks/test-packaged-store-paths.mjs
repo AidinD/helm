@@ -13,7 +13,7 @@
 // with one member added later and the registry not updated - so the guard has to
 // be a sweep, not another single case.
 //
-// Run: node scripts/e2e/test-packaged-store-paths.mjs
+// Run: node scripts/pure-checks/test-packaged-store-paths.mjs
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

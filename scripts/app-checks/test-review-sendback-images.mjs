@@ -7,7 +7,7 @@
 // carries an image-attach zone (via customPrompt's extraEl) and that setTaskStatus
 // with no images behaves exactly as before.
 //
-// Run:  node scripts/e2e/test-review-sendback-images.mjs
+// Run:  node scripts/app-checks/test-review-sendback-images.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

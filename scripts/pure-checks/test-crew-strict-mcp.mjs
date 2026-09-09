@@ -8,7 +8,7 @@
 // The spawn's argv is built by the pure buildIterationArgs(), so this asserts the flag set
 // directly - no subprocess, deterministic.
 //
-// Run:  node scripts/e2e/test-crew-strict-mcp.mjs
+// Run:  node scripts/pure-checks/test-crew-strict-mcp.mjs
 import { buildIterationArgs } from "../../src/lib/goalOrchestrator.js";
 
 let exit = 0;

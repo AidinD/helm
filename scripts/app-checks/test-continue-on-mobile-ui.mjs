@@ -6,7 +6,7 @@
 // open a real terminal) - the launcher behaviour itself is covered by the pure
 // unit test test-remote-control.mjs.
 //
-// Run:  node scripts/e2e/test-continue-on-mobile-ui.mjs
+// Run:  node scripts/app-checks/test-continue-on-mobile-ui.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 function log(...a) {

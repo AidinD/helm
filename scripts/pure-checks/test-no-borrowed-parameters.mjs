@@ -32,7 +32,7 @@
  * parameters, any `const`/`let`/`var`, a nested function's parameters, a catch binding,
  * a loop variable - counts as bound, which is what keeps the honest cases quiet.
  *
- * Pure and fast. Run: node scripts/e2e/test-no-borrowed-parameters.mjs
+ * Pure and fast. Run: node scripts/pure-checks/test-no-borrowed-parameters.mjs
  */
 import fs from "node:fs";
 import path from "node:path";

@@ -23,7 +23,7 @@
 // that corrupts a transcript, and costs nothing so it actually runs.
 //
 // It launches the app, so it runs in the SLOW lane.
-// Run:  node scripts/e2e/test-relay-jumpin-one-session.mjs
+// Run:  node scripts/app-checks/test-relay-jumpin-one-session.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

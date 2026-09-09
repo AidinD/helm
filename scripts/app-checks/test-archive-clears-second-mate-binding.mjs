@@ -8,7 +8,7 @@
 // Drives the REAL session:archive IPC in a launched app and checks the on-disk
 // second-mate binding was reverted to a null-session "proposed" state.
 //
-// Run:  node scripts/e2e/test-archive-clears-second-mate-binding.mjs
+// Run:  node scripts/app-checks/test-archive-clears-second-mate-binding.mjs
 import { launch } from "../checks-lib/harness.mjs";
 import fs from "node:fs";
 import os from "node:os";

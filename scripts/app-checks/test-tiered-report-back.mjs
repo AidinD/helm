@@ -6,7 +6,7 @@
 // width. (the captain 2026-07-11: "ta bort dashboard-sektionen helt", "kolumnformat
 // för needs you", "behåll arkiveringsnudgen som horisontell".)
 //
-// Run:  node scripts/e2e/test-tiered-report-back.mjs
+// Run:  node scripts/app-checks/test-tiered-report-back.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 function log(...a) {

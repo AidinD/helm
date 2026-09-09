@@ -16,7 +16,7 @@
  *
  * Offline - no model, no app. The live behaviour has its own opt-in check.
  *
- * Run: node scripts/e2e/test-diff-attention.mjs
+ * Run: node scripts/pure-checks/test-diff-attention.mjs
  */
 import fs from "node:fs";
 import {

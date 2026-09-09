@@ -6,7 +6,7 @@
 // decision", stays out of the "N need a click" count, and shows no ⚠ / amber
 // accent. A waiting mate with NO crew is still a genuine "needs input".
 //
-// Run:  node scripts/e2e/test-first-mate-crew-wait.mjs
+// Run:  node scripts/app-checks/test-first-mate-crew-wait.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 function log(...a) {

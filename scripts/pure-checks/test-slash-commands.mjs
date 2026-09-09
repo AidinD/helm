@@ -3,7 +3,7 @@
 // nested commands, and excludes non-.md / dirs-without-SKILL.md. Uses a temp
 // cwd so it's deterministic (the global ~/.claude scope is additive and not
 // asserted on).
-// Run:  node scripts/e2e/test-slash-commands.mjs
+// Run:  node scripts/pure-checks/test-slash-commands.mjs
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";

@@ -6,7 +6,7 @@
 // through the @jot/core-backed IPC bridge. Requires jot's renderer built
 // (out/renderer); the test builds it if missing.
 //
-// Run:  node scripts/e2e/test-jot-tab.mjs
+// Run:  node scripts/app-checks/test-jot-tab.mjs
 import { launch } from "../checks-lib/harness.mjs";
 import { execSync } from "node:child_process";
 import fs from "node:fs";

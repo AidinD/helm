@@ -1,7 +1,7 @@
 // Unit test: the cron evaluator (cron.js) + the Helm-owned routines store
 // (helmRoutines.js). Correctness-critical - this is what fires scheduled runs.
 // Uses HELM_ROUTINES_PATH so it never touches the real store.
-// Run:  node scripts/e2e/test-cron-routines.mjs
+// Run:  node scripts/pure-checks/test-cron-routines.mjs
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";

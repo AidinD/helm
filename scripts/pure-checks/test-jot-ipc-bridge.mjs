@@ -3,7 +3,7 @@
 // built renderer invokes, and asserts each maps to the right store mutation. This
 // is what lets Helm's embedded Jot webview reuse Jot's renderer unchanged.
 //
-// Run:  node scripts/e2e/test-jot-ipc-bridge.mjs
+// Run:  node scripts/pure-checks/test-jot-ipc-bridge.mjs
 import { applyJotOp, JOT_STORE_CHANNELS } from "../../src/lib/jotIpcBridge.js";
 import { TodoStore, LocalJsonStorage } from "@jot/core";
 import fs from "node:fs";

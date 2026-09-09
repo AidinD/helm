@@ -13,7 +13,7 @@
 // under the project's second mate gets both: the runs are independent (each
 // autopilot run already makes its own worktree) and the fleet keeps its shape.
 //
-// Run: node scripts/e2e/test-auto-parallel-worktrees.mjs
+// Run: node scripts/pure-checks/test-auto-parallel-worktrees.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

@@ -4,7 +4,7 @@
 // launched Helm via CDP. The actual relaunch needs a live worktree, so we stub
 // window.helm.resumeGoalRun to capture the call instead of running it.
 //
-// Run:  node scripts/e2e/test-goal-resume-button.mjs
+// Run:  node scripts/app-checks/test-goal-resume-button.mjs
 import { launch } from "../checks-lib/harness.mjs";
 import fs from "node:fs";
 import os from "node:os";

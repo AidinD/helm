@@ -7,7 +7,7 @@
 // orchestrationChipContent(budget) is the pure display model; we exercise it in
 // the real loaded renderer via CDP eval (no live budget/spend needed).
 //
-// Run:  node scripts/e2e/test-fleet-spend-label.mjs
+// Run:  node scripts/app-checks/test-fleet-spend-label.mjs
 import { launch } from "../checks-lib/harness.mjs";
 import fs from "node:fs";
 import os from "node:os";

@@ -8,7 +8,7 @@
 // silently become evidence: the work still has no record, and if a record later appears
 // it must be judged on its own terms.
 //
-// Run: node scripts/e2e/test-ack-no-record.mjs
+// Run: node scripts/app-checks/test-ack-no-record.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

@@ -4,7 +4,7 @@
 // This file also used to test the Focus track's domain sorting; that track was removed, and the
 // nav button it clicked to reach Chat went with an earlier restructure. Both are handled below.
 //
-// Run:  node scripts/e2e/test-header-and-focus-sort.mjs
+// Run:  node scripts/app-checks/test-header-and-focus-sort.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 function log(...a) {

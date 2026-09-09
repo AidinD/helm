@@ -15,7 +15,7 @@
 // cannot be imported (it boots Electron), and a second copy of the arithmetic would be a
 // test of the copy.
 //
-// Run:  node scripts/e2e/test-auto-triage-backoff.mjs
+// Run:  node scripts/pure-checks/test-auto-triage-backoff.mjs
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

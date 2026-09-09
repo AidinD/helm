@@ -22,7 +22,7 @@
  * part that makes "the picker wins" true over TIME - a seat's recorded model beats the tier
  * default, or changing the model would hold only until the next relay put it back.
  *
- * Run: node scripts/e2e/test-seat-model.mjs
+ * Run: node scripts/pure-checks/test-seat-model.mjs
  */
 import fs from "node:fs";
 import path from "node:path";

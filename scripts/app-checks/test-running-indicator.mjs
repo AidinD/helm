@@ -3,7 +3,7 @@
 // in-motion queue. Before this, a run had NO presence until it errored/escalated
 // (the captain's task 2dd992c8). Real launched Helm.
 //
-// Run:  node scripts/e2e/test-running-indicator.mjs
+// Run:  node scripts/app-checks/test-running-indicator.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 function log(...a) {

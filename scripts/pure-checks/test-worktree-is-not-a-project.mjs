@@ -24,7 +24,7 @@
  * had. Closing that route without giving crew a way to continue turns a capped job from
  * expensive into a dead end - and a dead end gets routed around, not obeyed.
  *
- * Run: node scripts/e2e/test-worktree-is-not-a-project.mjs
+ * Run: node scripts/pure-checks/test-worktree-is-not-a-project.mjs
  */
 import fs from "node:fs";
 import os from "node:os";

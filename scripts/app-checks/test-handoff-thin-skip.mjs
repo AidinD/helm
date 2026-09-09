@@ -4,7 +4,7 @@
 // Fail-open: an unreadable/empty transcript falls through to summarizing.
 // (the captain caught a test session polluting DECISIONS.md via the handoff.)
 //
-// Run:  node scripts/e2e/test-handoff-thin-skip.mjs
+// Run:  node scripts/app-checks/test-handoff-thin-skip.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 function log(...a) {

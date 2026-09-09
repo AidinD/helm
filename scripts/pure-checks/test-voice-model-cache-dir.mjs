@@ -17,7 +17,7 @@
 // asserts on Windows paths, and a hand-written one would be a backslash-escaping
 // trap in a check whose whole subject is a path.
 //
-// Run:  node scripts/e2e/test-voice-model-cache-dir.mjs
+// Run:  node scripts/pure-checks/test-voice-model-cache-dir.mjs
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";

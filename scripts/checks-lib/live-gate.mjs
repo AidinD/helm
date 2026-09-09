@@ -13,7 +13,7 @@
 //   import { requireLive } from "./live-gate.mjs";
 //   requireLive("drives a real first mate through a dispatch");
 //
-// scripts/e2e/test-live-checks-declared.mjs FAILS on any check that reaches a model
+// scripts/pure-checks/test-live-checks-declared.mjs FAILS on any check that reaches a model
 // without this call, so the rule cannot be forgotten by the next test rather than
 // broken on purpose.
 export const LIVE_ENV = "HELM_LIVE_CLI_TESTS";

@@ -2,7 +2,7 @@
 // suggestion pile - it's a persistent role you retire (with a handoff), not
 // archive. A normal idle session with no open work IS still suggested.
 //
-// Run:  node scripts/e2e/test-first-mate-not-archived.mjs
+// Run:  node scripts/app-checks/test-first-mate-not-archived.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 function log(...a) {

@@ -8,7 +8,7 @@
 // state you have never seen appear is a state you have not tested.
 //
 // Costs one real (tiny) turn against your quota, so it is not part of the fast
-// suite. Run: node scripts/e2e/test-launching-observed.mjs
+// suite. Run: node scripts/app-checks/test-launching-observed.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

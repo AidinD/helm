@@ -12,7 +12,7 @@
 // reports THAT. Plus the reason is now specific - his run went green on an uncommitted tree,
 // and was being described as "ran before the last change", which is not what happened.
 //
-// Run:  node scripts/e2e/test-run-checks-toast-agrees.mjs
+// Run:  node scripts/app-checks/test-run-checks-toast-agrees.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

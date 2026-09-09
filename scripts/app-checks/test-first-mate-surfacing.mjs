@@ -6,7 +6,7 @@
 //     badge + a card accent when the session is waiting (previously the card
 //     never showed a needs-you marker at all).
 //
-// Run:  node scripts/e2e/test-first-mate-surfacing.mjs
+// Run:  node scripts/app-checks/test-first-mate-surfacing.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 function log(...a) {

@@ -9,7 +9,7 @@ requireLive("runs a real first mate end to end against the CLI");
 // session, so it proves the permission gate is actually cleared). Cheap-ish:
 // haiku mate + haiku dispatched run, trivial goal. Real launched Helm.
 //
-// Run:  node scripts/e2e/test-first-mate-real-session.mjs
+// Run:  node scripts/app-checks/test-first-mate-real-session.mjs
 import { launch } from "../checks-lib/harness.mjs";
 import { spawn, execSync } from "node:child_process";
 import fs from "node:fs";

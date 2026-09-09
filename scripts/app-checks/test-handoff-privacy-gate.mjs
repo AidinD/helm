@@ -21,7 +21,7 @@
 // without it this check reads the machine's own private subjects, which is the very defect the
 // whole change is about, committed inside its own test.
 //
-// Run:  node scripts/e2e/test-handoff-privacy-gate.mjs
+// Run:  node scripts/app-checks/test-handoff-privacy-gate.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

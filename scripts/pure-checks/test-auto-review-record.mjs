@@ -7,7 +7,7 @@
 // run verify gate.
 //
 // Pure (no app/harness) - runs in the fast lane.
-// Run:  node scripts/e2e/test-auto-review-record.mjs
+// Run:  node scripts/pure-checks/test-auto-review-record.mjs
 import { buildAutoReviewRecord, reviewRecordProblems } from "../../src/lib/reviewRecords.js";
 
 let exit = 0;

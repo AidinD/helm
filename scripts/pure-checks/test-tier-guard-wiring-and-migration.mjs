@@ -12,7 +12,7 @@
 //
 // Pure - no app, no model. The migration half runs against a temp store; the wiring half
 // reads source, and says so.
-// Run:  node scripts/e2e/test-tier-guard-wiring-and-migration.mjs
+// Run:  node scripts/pure-checks/test-tier-guard-wiring-and-migration.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

@@ -4,7 +4,7 @@
 // into goalRuns and re-renders - actual deletion needs a real git worktree, so
 // that path is only exercised in a live run, not here.
 //
-// Run:  node scripts/e2e/test-goal-worktree-actions.mjs
+// Run:  node scripts/app-checks/test-goal-worktree-actions.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 function log(...a) {

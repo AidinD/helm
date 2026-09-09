@@ -9,7 +9,7 @@
 // (An older running build has no such IPC at all, which is the real reason it wasn't
 // visible before this ships - flagged to the captain, not something a test can fix.)
 //
-// Run:  node scripts/e2e/test-review-shipped-version-live.mjs
+// Run:  node scripts/app-checks/test-review-shipped-version-live.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

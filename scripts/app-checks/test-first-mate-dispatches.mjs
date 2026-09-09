@@ -21,7 +21,7 @@ requireLive("drives a real first mate through a dispatch");
 // One stochastic turn - a single PASS is signal, not proof. Reports the actual
 // tool sequence either way.
 //
-// Run:  node scripts/e2e/test-first-mate-dispatches.mjs
+// Run:  node scripts/app-checks/test-first-mate-dispatches.mjs
 import { launch } from "../checks-lib/harness.mjs";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";

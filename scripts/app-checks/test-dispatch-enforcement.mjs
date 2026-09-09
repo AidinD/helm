@@ -9,7 +9,7 @@
 // Isolation: HELM_META_HOME_OVERRIDE points both the app watcher and the MCP
 // client at a throwaway temp meta-home, so a live dev instance never races.
 //
-// Run:  node scripts/e2e/test-dispatch-enforcement.mjs
+// Run:  node scripts/app-checks/test-dispatch-enforcement.mjs
 import { launch } from "../checks-lib/harness.mjs";
 import { spawn, execSync } from "node:child_process";
 import fs from "node:fs";

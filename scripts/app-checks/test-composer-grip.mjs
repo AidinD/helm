@@ -8,7 +8,7 @@
 //
 // Now the handle sets the height while dragging, and there is nothing to infer.
 //
-// Run:  node scripts/e2e/test-composer-grip.mjs
+// Run:  node scripts/app-checks/test-composer-grip.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

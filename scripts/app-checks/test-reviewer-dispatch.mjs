@@ -10,7 +10,7 @@
 // it. Actually SENDING is not exercised - it starts a real model and spends tokens, which is
 // the one thing a test in the default suite must not do.
 //
-// Run:  node scripts/e2e/test-reviewer-dispatch.mjs
+// Run:  node scripts/app-checks/test-reviewer-dispatch.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -42,14 +42,14 @@ fs.writeFileSync(
     evidence: ["The arithmetic is asserted against the real functions."],
     notVerified: ["Not exercised against a real failing triage."],
     testSteps: [{ step: "Turn the lane on", expect: "It backs off" }],
-    checks: [{ label: "backoff", cmd: "node scripts/e2e/test-auto-triage-backoff.mjs" }],
+    checks: [{ label: "backoff", cmd: "node scripts/pure-checks/test-auto-triage-backoff.mjs" }],
   }),
   "utf8"
 );
 // And a verdict a reviewer already wrote.
 fs.writeFileSync(
   path.join(reviewsDir, `${TASK}.independent.md`),
-  "NOT CONFIRMED - the backoff is skipped when the card is retried by hand.\n\nFinding: main.js:4120 clears the map before the guard runs.\nRan: node scripts/e2e/test-auto-triage-backoff.mjs (passes, and would pass with the bug).\n",
+  "NOT CONFIRMED - the backoff is skipped when the card is retried by hand.\n\nFinding: main.js:4120 clears the map before the guard runs.\nRan: node scripts/pure-checks/test-auto-triage-backoff.mjs (passes, and would pass with the bug).\n",
   "utf8"
 );
 

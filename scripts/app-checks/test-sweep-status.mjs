@@ -1,7 +1,7 @@
 // E2E: the Settings page shows a background-sweep liveness readout, backed by
 // the new orchestrator:sweepStatus IPC. Real launched Helm via CDP.
 //
-// Run:  node scripts/e2e/test-sweep-status.mjs
+// Run:  node scripts/app-checks/test-sweep-status.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 function log(...a) {

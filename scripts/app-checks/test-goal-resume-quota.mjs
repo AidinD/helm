@@ -12,7 +12,7 @@
 // seeded run's worktree is absent and the backend refuses on THAT (proving the id
 // arrived), rather than "No such run".
 //
-// Run:  node scripts/e2e/test-goal-resume-quota.mjs
+// Run:  node scripts/app-checks/test-goal-resume-quota.mjs
 import { launch } from "../checks-lib/harness.mjs";
 import fs from "node:fs";
 import os from "node:os";

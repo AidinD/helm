@@ -19,7 +19,7 @@
  * Everything is temporary - its own board, its own repo, its own meta-home - so it never
  * reads or writes the real ones.
  *
- * Run: node scripts/e2e/test-diff-attention-view.mjs
+ * Run: node scripts/app-checks/test-diff-attention-view.mjs
  */
 import fs from "node:fs";
 import os from "node:os";

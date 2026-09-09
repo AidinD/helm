@@ -14,7 +14,7 @@
  * spending a token: the prompt builder, the answer shaper and the binding store are all pure
  * or file-backed. The live model call is a separate, opt-in check.
  *
- * Run: node scripts/e2e/test-commit-match-and-bind.mjs
+ * Run: node scripts/pure-checks/test-commit-match-and-bind.mjs
  */
 import fs from "node:fs";
 import os from "node:os";

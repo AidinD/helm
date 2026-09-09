@@ -26,7 +26,7 @@
 // is one question with one answer. The flag is asserted here because the picker
 // filter that reads it is the follow-up, and a flag with no test is a comment.
 //
-// Run:  node scripts/e2e/test-mediator-seat.mjs
+// Run:  node scripts/pure-checks/test-mediator-seat.mjs
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

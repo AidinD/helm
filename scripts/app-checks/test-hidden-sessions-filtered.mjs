@@ -6,7 +6,7 @@
 // still surfaced as a Direct card. Drives the real renderer with controlled
 // state (state.sessions + state.config.hiddenSessions injected, then restored).
 //
-// Run:  node scripts/e2e/test-hidden-sessions-filtered.mjs
+// Run:  node scripts/app-checks/test-hidden-sessions-filtered.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 function log(...a) {

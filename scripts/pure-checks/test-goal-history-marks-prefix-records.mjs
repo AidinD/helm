@@ -27,7 +27,7 @@
 // THE DISCRIMINATOR IS STRUCTURAL, NOT A DATE. A wall-clock cutoff is a guess about when a
 // fix landed and is wrong at the boundary in both directions. See the model-trust cases below.
 //
-// Run:  node scripts/e2e/test-goal-history-marks-prefix-records.mjs
+// Run:  node scripts/pure-checks/test-goal-history-marks-prefix-records.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

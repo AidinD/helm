@@ -8,7 +8,7 @@
 //
 // Drives the real renderer function in a launched app (no model tokens).
 //
-// Run:  node scripts/e2e/test-second-mate-auto-review-nudge.mjs
+// Run:  node scripts/app-checks/test-second-mate-auto-review-nudge.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 let exit = 0;

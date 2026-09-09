@@ -3,7 +3,7 @@
 // server over stdio JSON-RPC (as the claude client would); no Electron / no
 // real claude needed - the app's write side is exercised via the shared libs.
 //
-// Run:  node scripts/e2e/test-fleet-state-tool.mjs
+// Run:  node scripts/pure-checks/test-fleet-state-tool.mjs
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";

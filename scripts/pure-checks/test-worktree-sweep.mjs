@@ -13,7 +13,7 @@
 // inconvenience, work disappearing is not recoverable. So every uncertain case
 // must land in `keep`.
 //
-// Run:  node scripts/e2e/test-worktree-sweep.mjs
+// Run:  node scripts/pure-checks/test-worktree-sweep.mjs
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

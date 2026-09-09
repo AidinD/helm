@@ -22,7 +22,7 @@
 // itself before: a record missing a field the real writer always sets passes a test the app
 // would fail.
 //
-// Run:  node scripts/e2e/test-escalation-on-by-default.mjs
+// Run:  node scripts/pure-checks/test-escalation-on-by-default.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

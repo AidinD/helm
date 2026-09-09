@@ -44,7 +44,7 @@
  * route both incidents in tierGuard.js's header actually took.
  *
  * No model, no app, no tokens: it spawns the hook with stdin, the way the harness does.
- * Run:  node scripts/e2e/test-assistant-subagent-boundary.mjs
+ * Run:  node scripts/pure-checks/test-assistant-subagent-boundary.mjs
  */
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";

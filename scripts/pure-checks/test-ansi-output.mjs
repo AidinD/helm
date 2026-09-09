@@ -7,7 +7,7 @@
 // tydlig"), just one layer further in: I had tested the panel with `node -e` and
 // `npm`, neither of which colours its output.
 //
-// Run: node scripts/e2e/test-ansi-output.mjs
+// Run: node scripts/pure-checks/test-ansi-output.mjs
 import { parseAnsi, newAnsiState, stripAnsi, collapseCarriageReturns } from "../../src/lib/ansi.js";
 
 let code = 0;

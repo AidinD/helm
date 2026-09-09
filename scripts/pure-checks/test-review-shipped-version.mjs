@@ -8,7 +8,7 @@
 //
 // The git call is injected so this is deterministic and needs no repo.
 //
-// Run:  node scripts/e2e/test-review-shipped-version.mjs
+// Run:  node scripts/pure-checks/test-review-shipped-version.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

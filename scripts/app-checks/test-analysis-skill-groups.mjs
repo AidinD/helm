@@ -11,7 +11,7 @@
 // Everything comes from a fake ~/.claude (HELM_CLAUDE_HOME), so the assertions do not
 // move when the real skills folder changes.
 //
-// Run:  node scripts/e2e/test-analysis-skill-groups.mjs
+// Run:  node scripts/app-checks/test-analysis-skill-groups.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

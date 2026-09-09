@@ -29,7 +29,7 @@ requireLive(
 // It spends real tokens on every run, so it is OPT-IN, same convention as the containment
 // check: without --live it skips loudly instead of passing quietly.
 //
-// Run:  node scripts/e2e/test-last-reply-survives.mjs --live
+// Run:  node scripts/app-checks/test-last-reply-survives.mjs --live
 import { launch } from "../checks-lib/harness.mjs";
 import fs from "node:fs";
 import os from "node:os";

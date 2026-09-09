@@ -8,7 +8,7 @@
 // its OWN temp mockup and cleans it up - it used to default to a hardcoded path
 // inside one session's scratchpad, which vanished with that session and made the
 // file-open half fail with "File not found" for everyone after.
-// Run:  node scripts/e2e/test-open-mockup-in-plan.mjs [path-to-mock.html]
+// Run:  node scripts/app-checks/test-open-mockup-in-plan.mjs [path-to-mock.html]
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

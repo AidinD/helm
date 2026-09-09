@@ -32,7 +32,7 @@
  * closed, not that the hatch is provably unreachable.
  *
  * Spawns the real binary and costs tokens, so it is OPT-IN:
- *   node scripts/e2e/test-tier-guard-not-self-disabling.mjs --live
+ *   node scripts/pure-checks/test-tier-guard-not-self-disabling.mjs --live
  * Without the flag it SKIPS LOUDLY. A containment check that quietly reports OK without
  * running is worse than no check at all.
  */

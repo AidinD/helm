@@ -6,7 +6,7 @@
 // (c) it's visible only on Chat; (d) #pageToggle left-edge is stable across
 // Dashboard <-> Chat <-> Plan.
 //
-// Run:  node scripts/e2e/test-chat-toolbar-relocation.mjs
+// Run:  node scripts/app-checks/test-chat-toolbar-relocation.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 function log(...a) {

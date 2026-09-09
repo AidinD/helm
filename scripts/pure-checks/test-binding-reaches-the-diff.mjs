@@ -15,7 +15,7 @@
  *
  * Offline: a real git repo and a real binding file, no app and no model.
  *
- * Run: node scripts/e2e/test-binding-reaches-the-diff.mjs
+ * Run: node scripts/pure-checks/test-binding-reaches-the-diff.mjs
  */
 import fs from "node:fs";
 import os from "node:os";

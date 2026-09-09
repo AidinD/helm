@@ -12,7 +12,7 @@
 // So the assertions here are deliberately of one shape: drive the REAL function with
 // the state the REAL app produces, and check what a person would see.
 //
-// Run:  node scripts/e2e/test-review-followups.mjs
+// Run:  node scripts/pure-checks/test-review-followups.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -194,7 +194,7 @@ console.log("\n-- the whole-suite caveat --");
   ok(!saysNotWhole("node scripts/run-tests.mjs --fast"), "including with a flag");
   ok(!saysNotWhole("npm test"), "npm test still counts");
   ok(saysNotWhole("npm run test:fast -- worktree"), "a FILTERED run does not count as the whole suite");
-  ok(saysNotWhole("node scripts/e2e/test-worktree-sweep.mjs"), "a single test file does not count");
+  ok(saysNotWhole("node scripts/pure-checks/test-worktree-sweep.mjs"), "a single test file does not count");
   ok(!saysNotWhole("pytest"), "and other ecosystems' runners are recognised rather than rejected outright");
   ok(!saysNotWhole("cargo test"), "cargo test too");
   ok(saysNotWhole("pytest tests/test_one.py"), "but a filtered pytest is still a subset");

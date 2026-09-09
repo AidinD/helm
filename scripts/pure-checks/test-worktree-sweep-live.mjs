@@ -9,7 +9,7 @@
 // branch really does disappear and an unmerged one really does survive, and that
 // removing a junctioned worktree leaves the junction's TARGET untouched.
 //
-// Run:  node scripts/e2e/test-worktree-sweep-live.mjs
+// Run:  node scripts/pure-checks/test-worktree-sweep-live.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

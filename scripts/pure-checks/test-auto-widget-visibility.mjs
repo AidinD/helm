@@ -21,7 +21,7 @@
 // way. This test runs the real predicates and the real augmentation against a
 // registered auto run, rather than trusting that the source reads plausibly.
 //
-// Run:  node scripts/e2e/test-auto-widget-visibility.mjs
+// Run:  node scripts/pure-checks/test-auto-widget-visibility.mjs
 import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";

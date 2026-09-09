@@ -24,7 +24,7 @@
 // its knowledge lived exactly one successor deep and then was gone.
 //
 // It launches the app, so it runs in the SLOW lane.
-// Run:  node scripts/e2e/test-retire-carry-over.mjs
+// Run:  node scripts/app-checks/test-retire-carry-over-stubbed.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

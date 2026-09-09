@@ -18,7 +18,7 @@
  * owning process died three weeks ago - which is not a hypothetical, it is the state
  * card ef0764e0 was opened about.
  *
- * Run: node scripts/e2e/test-watchdog-says-so.mjs
+ * Run: node scripts/app-checks/test-watchdog-says-so.mjs
  */
 import fs from "node:fs";
 import os from "node:os";

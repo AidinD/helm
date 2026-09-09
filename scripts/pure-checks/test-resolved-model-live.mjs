@@ -17,7 +17,7 @@ requireLive("runs a real goal iteration to see which model the CLI reports back"
 //
 // One cheap goal, two tiny iterations.
 //
-// Run:  HELM_LIVE_CLI_TESTS=1 node scripts/e2e/test-resolved-model-live.mjs
+// Run:  HELM_LIVE_CLI_TESTS=1 node scripts/pure-checks/test-resolved-model-live.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

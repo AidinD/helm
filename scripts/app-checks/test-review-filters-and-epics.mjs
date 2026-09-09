@@ -12,7 +12,7 @@
 // visible, the toggle brings them back, and choosing a project never removes the chip
 // that gets you out of it.
 //
-// Run:  node scripts/e2e/test-review-filters-and-epics.mjs
+// Run:  node scripts/app-checks/test-review-filters-and-epics.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

@@ -21,7 +21,7 @@
 //
 // It launches the app, so it runs in the SLOW lane.
 // Run:  npm run dist   (once, to produce dist/win-unpacked)
-//       node scripts/e2e/test-packaged-build.mjs
+//       node scripts/app-checks/test-packaged-build.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

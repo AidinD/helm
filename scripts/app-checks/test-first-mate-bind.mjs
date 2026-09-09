@@ -12,7 +12,7 @@ requireLive("starts a real first-mate session to see its binding land");
 //
 // One cheap claude turn.
 //
-// Run:  node scripts/e2e/test-first-mate-bind.mjs
+// Run:  node scripts/app-checks/test-first-mate-bind.mjs
 import { launch } from "../checks-lib/harness.mjs";
 import fs from "node:fs";
 import os from "node:os";

@@ -11,7 +11,7 @@
 // produces for #1, so a regression in either half is caught.
 //
 // Pure (no app/harness) - runs in the fast lane.
-// Run:  node scripts/e2e/test-quota-classifier.mjs
+// Run:  node scripts/pure-checks/test-quota-classifier.mjs
 import { isResumableQuotaError } from "../../src/lib/goalOrchestrator.js";
 
 let exit = 0;

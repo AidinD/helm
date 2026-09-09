@@ -6,7 +6,7 @@
 // The guard being tested matters: Helm and the Jot app both do whole-file
 // read-modify-write with no lock, so a naive rename silently REVERTS the other's
 // edit and a real todo vanishes.
-// Run:  node scripts/e2e/test-jot-writers.mjs
+// Run:  node scripts/pure-checks/test-jot-writers.mjs
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";

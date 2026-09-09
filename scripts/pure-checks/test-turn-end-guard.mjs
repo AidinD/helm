@@ -20,7 +20,7 @@
  * flagged and the shapes that must stay silent - because the failure mode of an attention
  * signal is not missing one, it is firing so often that the real one is skipped.
  *
- * Run: node scripts/e2e/test-turn-end-guard.mjs
+ * Run: node scripts/pure-checks/test-turn-end-guard.mjs
  */
 import fs from "node:fs";
 import path from "node:path";

@@ -7,7 +7,7 @@
 //
 // And task 06c79d8a: a Review widget with the count and one click to the page.
 //
-// Run:  node scripts/e2e/test-review-badge-and-widget.mjs
+// Run:  node scripts/pure-checks/test-review-badge-and-widget.mjs
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

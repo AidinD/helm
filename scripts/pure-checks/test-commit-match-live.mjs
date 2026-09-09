@@ -24,7 +24,7 @@
  * verification follow-up, and the model put the primary commit first.
  *
  * Spawns the real CLI and costs money (about $0.05 for twenty commits), so it is OPT-IN:
- *   node scripts/e2e/test-commit-match-live.mjs --live
+ *   node scripts/pure-checks/test-commit-match-live.mjs --live
  * Without the flag it SKIPS LOUDLY.
  */
 import { execFileSync } from "node:child_process";

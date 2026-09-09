@@ -24,7 +24,7 @@
 // test suite should do behind someone's back; `node spike/test-transformers-
 // fallback.mjs` is the deliberate way to populate it.
 //
-// Run:  node scripts/e2e/test-voice-transformers-fallback.mjs
+// Run:  node scripts/app-checks/test-voice-transformers-fallback.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

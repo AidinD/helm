@@ -3,7 +3,7 @@
 // Helm via CDP. Covers both a paste recent and a file recent (via the
 // unified pastedHtml mirror in openMockupInPlan).
 //
-// Run:  node scripts/e2e/test-lavish-recent-loads-input.mjs
+// Run:  node scripts/app-checks/test-lavish-recent-loads-input.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 function log(...a) {

@@ -25,7 +25,7 @@
  * warnings, or pointed at the wrong globals, reports clean while seeing nothing - which is
  * indistinguishable from a healthy repo and is how a guard stops guarding.
  *
- * Run: node scripts/e2e/test-lint-clean.mjs
+ * Run: node scripts/pure-checks/test-lint-clean.mjs
  */
 import fs from "node:fs";
 import path from "node:path";

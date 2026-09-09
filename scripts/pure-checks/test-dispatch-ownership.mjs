@@ -1,6 +1,6 @@
 // Unit test (pure node): ownership scoping of dispatch claiming - the fix for
 // the cross-instance orphaning bug (two Helm builds sharing one meta-home queue
-// but keeping separate mate stores). Run: node scripts/e2e/test-dispatch-ownership.mjs
+// but keeping separate mate stores). Run: node scripts/pure-checks/test-dispatch-ownership.mjs
 import { isForeignDispatch, depthCapExceeded } from "../../src/lib/dispatchCaps.js";
 
 let exit = 0;

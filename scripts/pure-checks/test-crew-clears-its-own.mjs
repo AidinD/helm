@@ -12,7 +12,7 @@
  * commitReview.js lists with `git log HEAD --not <floors>`, so if that ever stops being true
  * the safety argument changes and this check should go red rather than stay quietly green.
  *
- * Run: node scripts/e2e/test-crew-clears-its-own.mjs
+ * Run: node scripts/pure-checks/test-crew-clears-its-own.mjs
  */
 import fs from "node:fs";
 import path from "node:path";

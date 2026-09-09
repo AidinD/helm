@@ -1,6 +1,6 @@
 // Quitting Helm must take any running review-gauntlet check with it.
 //
-// A gauntlet check is typically `node scripts/e2e/test-*.mjs`, which launches a
+// A gauntlet check is typically `node scripts/app-checks/test-*.mjs`, which launches a
 // whole Electron of its own. Every other long-lived child in main.js is tracked so
 // `before-quit` can sweep it - liveChildren for sessions, liveGoalRuns for goal
 // iterations, liveVoiceStreams for whisper - but the check children were a bare
@@ -14,7 +14,7 @@
 // not a taskkill - a forced tree kill would take the child down regardless and
 // would prove nothing about before-quit.
 //
-// Run:  node scripts/e2e/test-check-children-die-with-app.mjs
+// Run:  node scripts/app-checks/test-check-children-die-with-app.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

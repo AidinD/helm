@@ -3,7 +3,7 @@
 // 5, and migrates the old string[] localStorage format. Real launched Helm
 // via CDP.
 //
-// Run:  node scripts/e2e/test-lavish-recents.mjs
+// Run:  node scripts/app-checks/test-lavish-recents.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 function log(...a) {

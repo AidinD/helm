@@ -19,7 +19,7 @@
 // recent session is OWNED by the other one starts FRESH (no steal); (2) a genuinely LOOSE
 // session (owned by nobody) is still adopted, so the reconnect isn't broken.
 //
-// Run:  node scripts/e2e/test-jump-in-no-session-steal.mjs
+// Run:  node scripts/app-checks/test-jump-in-no-session-steal.mjs
 import { launch } from "../checks-lib/harness.mjs";
 import fs from "node:fs";
 import os from "node:os";

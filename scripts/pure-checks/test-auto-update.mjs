@@ -14,7 +14,7 @@
 //      source-level check alone would have stayed green through the entire outage, since
 //      the code was correct for the world it believed it was in.
 //
-// Run:  node scripts/e2e/test-auto-update.mjs
+// Run:  node scripts/pure-checks/test-auto-update.mjs
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

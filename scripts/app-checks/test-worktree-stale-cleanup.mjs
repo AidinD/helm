@@ -3,7 +3,7 @@
 // gives feedback instead of silently doing nothing. Real launched Helm via
 // CDP. Drives the IPC handlers directly with a nonexistent path.
 //
-// Run:  node scripts/e2e/test-worktree-stale-cleanup.mjs
+// Run:  node scripts/app-checks/test-worktree-stale-cleanup.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 function log(...a) {

@@ -12,7 +12,7 @@
 // stdio and then reads the queue file the app would pick up, so it checks the contract a mate
 // actually meets and the value that actually travels, not a function signature.
 //
-// Run:  node scripts/e2e/test-dispatch-escalation-lever.mjs
+// Run:  node scripts/pure-checks/test-dispatch-escalation-lever.mjs
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";

@@ -6,7 +6,7 @@
 // mid-rename is the normal setup, not an edge case - and the existing retry loop
 // only covered the concurrent-EDIT case, so a locked file bailed on attempt one.
 //
-// Run: node scripts/e2e/test-jot-lock-retry.mjs
+// Run: node scripts/pure-checks/test-jot-lock-retry.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

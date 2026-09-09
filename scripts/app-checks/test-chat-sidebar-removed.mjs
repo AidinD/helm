@@ -14,7 +14,7 @@
 // takes the whole renderer down before it draws anything. A console-error count of zero after
 // visiting every page is what rules both out.
 //
-// Run:  node scripts/e2e/test-chat-sidebar-removed.mjs
+// Run:  node scripts/app-checks/test-chat-sidebar-removed.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

@@ -1,5 +1,5 @@
 // Unit test: acceptance criteria captured before the work (Flow task bd5d7b4b).
-// Run: node scripts/e2e/test-acceptance.mjs
+// Run: node scripts/pure-checks/test-acceptance.mjs
 import {
   parseAcceptanceCriteria,
   formatAcceptanceCriteria,

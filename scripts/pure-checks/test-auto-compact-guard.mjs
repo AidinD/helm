@@ -26,7 +26,7 @@
 //   - return 0 instead of null on an unreadable tail                         -> case 7
 //
 // Pure (no app/harness) - runs in the fast lane.
-// Run:  node scripts/e2e/test-auto-compact-guard.mjs
+// Run:  node scripts/pure-checks/test-auto-compact-guard.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

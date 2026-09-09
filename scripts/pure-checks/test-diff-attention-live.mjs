@@ -17,7 +17,7 @@
  * the one that mattered is skimmed too.
  *
  * Spawns the real CLI and costs money, so it is OPT-IN:
- *   node scripts/e2e/test-diff-attention-live.mjs --live
+ *   node scripts/pure-checks/test-diff-attention-live.mjs --live
  * Without the flag it SKIPS LOUDLY.
  */
 import { requireLive } from "../checks-lib/live-gate.mjs";

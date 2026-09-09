@@ -8,7 +8,7 @@
 //  3. task 7bd1e2df - the independent reviewer's verdict must come back in the language the
 //     TASK was written in, and in plain language.
 //
-// Run:  node scripts/e2e/test-review-presentation.mjs
+// Run:  node scripts/pure-checks/test-review-presentation.mjs
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

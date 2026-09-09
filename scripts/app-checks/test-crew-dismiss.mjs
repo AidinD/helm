@@ -9,7 +9,7 @@
 //      run is a history RECORD with worktreePath at the TOP level - so the crew
 //      "Done" never offered to remove the worktree (orphaned worktrees).
 //
-// Run:  node scripts/e2e/test-crew-dismiss.mjs
+// Run:  node scripts/app-checks/test-crew-dismiss.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 function log(...a) {

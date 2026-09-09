@@ -12,7 +12,7 @@
 // the widget's text contains it - over the real functions, rather than checking that
 // one call site was edited.
 //
-// Run:  node scripts/e2e/test-quota-widget-freshness.mjs
+// Run:  node scripts/pure-checks/test-quota-widget-freshness.mjs
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

@@ -13,7 +13,7 @@
 // cache UPDATES, not merely that it is fast.
 //
 // Pure (no app/harness) - runs in the fast lane.
-// Run:  node scripts/e2e/test-session-read-cache.mjs
+// Run:  node scripts/pure-checks/test-session-read-cache.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

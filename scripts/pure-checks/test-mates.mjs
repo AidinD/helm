@@ -2,7 +2,7 @@
 // retire/respawn, legacy migration). Uses HELM_MATES_PATH to point at a temp
 // file so it never touches the real mates.json.
 //
-// Run:  node scripts/e2e/test-mates.mjs
+// Run:  node scripts/pure-checks/test-mates.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

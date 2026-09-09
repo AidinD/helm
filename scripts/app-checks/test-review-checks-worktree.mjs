@@ -15,7 +15,7 @@
 // tree), the unrelated uncommitted file survives untouched in the main
 // tree, and no worktree litter is left behind afterward.
 //
-// Run:  node scripts/e2e/test-review-checks-worktree.mjs
+// Run:  node scripts/app-checks/test-review-checks-worktree.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

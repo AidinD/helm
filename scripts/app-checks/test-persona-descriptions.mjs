@@ -10,7 +10,7 @@
 // carried a blurb, and it is the one seen most - the default for every fresh mate and what a
 // respawn resets to.
 //
-// Run:  node scripts/e2e/test-persona-descriptions.mjs
+// Run:  node scripts/app-checks/test-persona-descriptions.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

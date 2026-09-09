@@ -16,7 +16,7 @@ requireLive("starts a real second-mate session to check its dispatch tools");
 //
 // One cheap claude turn.
 //
-// Run:  node scripts/e2e/test-second-mate-dispatch-tools.mjs
+// Run:  node scripts/app-checks/test-second-mate-dispatch-tools.mjs
 import { launch } from "../checks-lib/harness.mjs";
 import fs from "node:fs";
 import os from "node:os";

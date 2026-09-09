@@ -2,7 +2,7 @@
 // commits only on clear signals (SV + EN) and returns null when uncertain, so the
 // Haiku classifier decides the gray zone (task: smart needs-you).
 //
-// Run:  node scripts/e2e/test-expects-input-heuristic.mjs
+// Run:  node scripts/pure-checks/test-expects-input-heuristic.mjs
 import { expectsUserInputHeuristic } from "../../src/lib/orchestratorHelper.js";
 
 let exitCode = 0;

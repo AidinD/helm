@@ -2,7 +2,7 @@
 // surfaces the previously UI-less voiceEngine + voiceLanguage config. Real
 // launched Helm via CDP.
 //
-// Run:  node scripts/e2e/test-settings-groups.mjs
+// Run:  node scripts/app-checks/test-settings-groups.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 function log(...a) {

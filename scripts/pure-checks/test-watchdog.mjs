@@ -13,7 +13,7 @@
  * `now` is an argument to findStalledWork rather than a clock it reads, so a deadlock can be
  * planted at an exact age instead of waited out.
  *
- * Run: node scripts/e2e/test-watchdog.mjs
+ * Run: node scripts/pure-checks/test-watchdog.mjs
  */
 import { findStalledWork, workersFromSnapshot, summariseStalls, WORK_KINDS, UNKNOWN_KIND, rulesFor } from "../../src/lib/watchdog.js";
 

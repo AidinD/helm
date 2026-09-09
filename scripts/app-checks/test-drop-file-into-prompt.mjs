@@ -10,7 +10,7 @@
 // exactly the way the paperclip button does, and the send path already renders a non-image
 // attachment as `[Attached file: <path>]`.
 //
-// Run:  node scripts/e2e/test-drop-file-into-prompt.mjs
+// Run:  node scripts/app-checks/test-drop-file-into-prompt.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

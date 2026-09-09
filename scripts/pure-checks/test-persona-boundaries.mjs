@@ -9,7 +9,7 @@
 // so a mate set to Red team came back as a coordinator without saying so, and any reason to
 // set a persona evaporated on the next refresh.
 //
-// Run:  node scripts/e2e/test-persona-boundaries.mjs
+// Run:  node scripts/pure-checks/test-persona-boundaries.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

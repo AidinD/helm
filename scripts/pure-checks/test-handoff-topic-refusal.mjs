@@ -22,7 +22,7 @@
 // rather than re-deciding inline, which is how the fallback diverged in the
 // first place.
 //
-// Run: node scripts/e2e/test-handoff-topic-refusal.mjs
+// Run: node scripts/pure-checks/test-handoff-topic-refusal.mjs
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

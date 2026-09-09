@@ -17,7 +17,7 @@
 // reach a context menu's construction. That is a real limit and it is stated on the review
 // record rather than papered over: this proves the wiring exists, not that it renders.
 //
-// Run:  node scripts/e2e/test-crew-visibility-and-retire-split.mjs
+// Run:  node scripts/pure-checks/test-crew-visibility-and-retire-split.mjs
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

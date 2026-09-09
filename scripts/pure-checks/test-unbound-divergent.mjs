@@ -10,7 +10,7 @@
 // ancestry) and proves: the OLD single-watermark model toggles; the NEW ack-SET model clears
 // both.
 //
-// Run:  node scripts/e2e/test-unbound-divergent.mjs
+// Run:  node scripts/pure-checks/test-unbound-divergent.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

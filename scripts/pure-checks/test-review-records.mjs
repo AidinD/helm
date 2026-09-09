@@ -2,7 +2,7 @@
 // review item says which ones actually need the captain's judgment and HOW to check
 // them - so the rules worth testing are the refusals: an item with no way to
 // check it, or a judgment item with no stated ask, must not render as reviewed.
-// Run:  node scripts/e2e/test-review-records.mjs
+// Run:  node scripts/pure-checks/test-review-records.mjs
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
@@ -733,7 +733,7 @@ try {
   ok(passForcingReason("npm test ; exit 0") === "; exit 0 appended", "a ; exit 0 tail is flagged");
   ok(passForcingReason("npm test | true") === "piped to true", "a pipe to true is flagged");
   ok(passForcingReason("jest --passWithNoTests") === "--passWithNoTests", "--passWithNoTests is flagged");
-  ok(passForcingReason("node scripts/e2e/test-review-records.mjs") === null, "an ordinary command is not flagged");
+  ok(passForcingReason("node scripts/pure-checks/test-review-records.mjs") === null, "an ordinary command is not flagged");
   ok(passForcingReason("") === null && passForcingReason(null) === null, "empty input does not throw or flag");
   // It FLAGS rather than refuses - a check that refuses to run is a check that gets
   // deleted - but the flag has to reach the reader.

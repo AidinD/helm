@@ -14,7 +14,7 @@
 //   3. genuinely unreadable-> say WHICH project and why, not "2 of 14"
 //   4. dormant projects    -> age out, or the list only ever grows
 //
-// Run: node scripts/e2e/test-docs-nudge-noise.mjs
+// Run: node scripts/app-checks/test-docs-nudge-noise.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

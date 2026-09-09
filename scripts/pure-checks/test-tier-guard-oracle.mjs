@@ -21,7 +21,7 @@
 // paths under it are used. Nothing reaches the real filesystem. Commands that would touch
 // the network are excluded rather than made to fail slowly.
 //
-// Run:  node scripts/e2e/test-tier-guard-oracle.mjs
+// Run:  node scripts/pure-checks/test-tier-guard-oracle.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

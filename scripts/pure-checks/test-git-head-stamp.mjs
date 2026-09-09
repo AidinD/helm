@@ -10,7 +10,7 @@
 // repo (commit, branch switch, detach, repack) and asserts the stamp moved each time.
 //
 // Pure (no app/harness) - runs in the fast lane.
-// Run:  node scripts/e2e/test-git-head-stamp.mjs
+// Run:  node scripts/pure-checks/test-git-head-stamp.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

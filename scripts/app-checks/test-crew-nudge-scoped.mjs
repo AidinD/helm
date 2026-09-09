@@ -15,7 +15,7 @@
 // the nudge is a pure function of goalRuns + state.sessions, so this exercises the real
 // code path rather than a re-implementation of it.
 //
-// Run:  node scripts/e2e/test-crew-nudge-scoped.mjs
+// Run:  node scripts/app-checks/test-crew-nudge-scoped.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 function log(...a) {

@@ -7,7 +7,7 @@
 // So the assertions are about what a person can SEE and DO: the line exists, it
 // names what was kept and why, and there is a control to run a fresh sweep.
 //
-// Run: node scripts/e2e/test-housekeeping-line.mjs
+// Run: node scripts/app-checks/test-housekeeping-line.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

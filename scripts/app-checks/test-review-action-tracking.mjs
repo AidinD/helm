@@ -13,7 +13,7 @@
 // the "N/total" fractions and the model breakdown right through the real
 // Analysis page render, not just the raw aggregation function.
 //
-// Run:  node scripts/e2e/test-review-action-tracking.mjs
+// Run:  node scripts/app-checks/test-review-action-tracking.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

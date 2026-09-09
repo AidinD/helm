@@ -20,7 +20,7 @@
 // each condition needs its own process - hence the self-spawning child mode below.
 //
 // Pure (no app/harness) - runs in the fast lane.
-// Run:  node scripts/e2e/test-session-store-absent.mjs
+// Run:  node scripts/pure-checks/test-session-store-absent.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

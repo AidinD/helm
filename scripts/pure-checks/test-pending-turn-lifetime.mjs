@@ -16,7 +16,7 @@
 // The fix under test is a real lifetime: expirePendingTurnsFromEarlierRuns, called from
 // the single choke point every new run must pass through (sendFromPane).
 //
-// Run:  node scripts/e2e/test-pending-turn-lifetime.mjs
+// Run:  node scripts/pure-checks/test-pending-turn-lifetime.mjs
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

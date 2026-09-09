@@ -1,7 +1,7 @@
 // Unit test: assembleFleetState builds the compact cross-mate view a first mate
 // surveys (active mates + every mate's dispatched work + rollups).
 //
-// Run:  node scripts/e2e/test-fleet-state.mjs
+// Run:  node scripts/pure-checks/test-fleet-state.mjs
 import { assembleFleetState } from "../../src/lib/fleetState.js";
 
 function log(...a) {

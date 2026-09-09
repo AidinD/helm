@@ -4,7 +4,7 @@
 // this exercises the file-handshake lib directly, the way the MCP server and
 // main.js's watcher use it.
 //
-// Run:  node scripts/e2e/test-dispatch-queue.mjs
+// Run:  node scripts/pure-checks/test-dispatch-queue.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

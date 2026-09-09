@@ -8,7 +8,7 @@
 // - unchecking it calls setOrchestrationCeiling(null), persisted to disk;
 // - re-checking it and editing the $ input persists the new numeric ceiling.
 //
-// Run:  node scripts/e2e/test-settings-budget-ceiling.mjs
+// Run:  node scripts/app-checks/test-settings-budget-ceiling.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

@@ -9,7 +9,7 @@
 // logic. (Full relaunch of a real worktree is covered by resumeGoalRunById's own
 // gating tests + test-dispatch-loop's real run.)
 //
-// Run:  node scripts/e2e/test-fortsatt-cascade.mjs
+// Run:  node scripts/app-checks/test-fortsatt-cascade.mjs
 import { launch } from "../checks-lib/harness.mjs";
 import { spawn } from "node:child_process";
 import fs from "node:fs";

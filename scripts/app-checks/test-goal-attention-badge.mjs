@@ -6,7 +6,7 @@
 // updateGoalAttentionBadge + navigateToPage clearing), which is the persistent,
 // discoverable half. Also asserts showToast exists (the transient half).
 //
-// Run:  node scripts/e2e/test-goal-attention-badge.mjs
+// Run:  node scripts/app-checks/test-goal-attention-badge.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 function log(...a) {

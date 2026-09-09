@@ -23,7 +23,7 @@
 // outcome nobody can name - has to be declared below. That keeps the escape hatch
 // explicit and countable instead of being whatever slipped through.
 //
-// Run:  node scripts/e2e/test-stopped-reasons-are-real.mjs
+// Run:  node scripts/pure-checks/test-stopped-reasons-are-real.mjs
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";

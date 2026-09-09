@@ -14,7 +14,7 @@
 // Checking one example would pass on a fix that only handled the case in the
 // screenshot.
 //
-// Run:  node scripts/e2e/test-mate-needs-accent.mjs
+// Run:  node scripts/app-checks/test-mate-needs-accent.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

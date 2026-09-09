@@ -9,7 +9,7 @@
 //
 // Writes the id to the REAL config.archivedSecondMates (no seam) - removed in finally.
 //
-// Run:  node scripts/e2e/test-second-mate-archive.mjs
+// Run:  node scripts/app-checks/test-second-mate-archive.mjs
 import { launch } from "../checks-lib/harness.mjs";
 import fs from "node:fs";
 import os from "node:os";

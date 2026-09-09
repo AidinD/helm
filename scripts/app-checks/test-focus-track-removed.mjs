@@ -14,7 +14,7 @@
 // deletion that quietly took those with it would be far worse than the widget he ignored, so
 // that is what most of this file checks.
 //
-// Run:  node scripts/e2e/test-focus-track-removed.mjs
+// Run:  node scripts/app-checks/test-focus-track-removed.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

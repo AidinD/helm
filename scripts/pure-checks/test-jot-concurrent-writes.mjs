@@ -33,8 +33,8 @@
 //    lock is unnecessary.) The hash guard is present in both cases - it is right one
 //    step before the swap and loses anyway.
 //
-// Run: node scripts/e2e/test-jot-concurrent-writes.mjs
-//      HELM_JOT_WORKERS=6 HELM_JOT_ITERATIONS=40 node scripts/e2e/test-jot-concurrent-writes.mjs
+// Run: node scripts/pure-checks/test-jot-concurrent-writes.mjs
+//      HELM_JOT_WORKERS=6 HELM_JOT_ITERATIONS=40 node scripts/pure-checks/test-jot-concurrent-writes.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

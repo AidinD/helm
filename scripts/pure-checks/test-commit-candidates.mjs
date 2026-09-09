@@ -26,7 +26,7 @@
  * and a confident wrong pairing is worse than none, since it sends somebody to review the
  * wrong diff. The window narrows what a person looks at; their eyes do the matching.
  *
- * Run: node scripts/e2e/test-commit-candidates.mjs
+ * Run: node scripts/pure-checks/test-commit-candidates.mjs
  */
 import fs from "node:fs";
 import os from "node:os";

@@ -19,7 +19,7 @@
 //      have no tasks" when the truth was "Jot has never run here". Guarded by the
 //      jotMountDecision / jotUnavailableMessage checks.
 //
-// Run:  node scripts/e2e/test-jot-optional.mjs
+// Run:  node scripts/pure-checks/test-jot-optional.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

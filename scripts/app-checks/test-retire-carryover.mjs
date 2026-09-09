@@ -14,7 +14,7 @@ requireLive("starts a real session so a retire has something to carry over");
 // exercised, which is why it still earns its keep - but it only runs under --live, and in
 // practice had never run at all when the stubbed one was written (2026-08-12).
 //
-// Run:  node scripts/e2e/test-retire-carryover.mjs
+// Run:  node scripts/app-checks/test-retire-carryover.mjs
 import { launch } from "../checks-lib/harness.mjs";
 import fs from "node:fs";
 import os from "node:os";

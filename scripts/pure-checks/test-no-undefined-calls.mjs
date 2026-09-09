@@ -20,7 +20,7 @@
 //   does any file CALL a function that src/lib exports, without importing or defining it?
 //
 // Pure (no app/harness) - runs in the fast lane, in about a second.
-// Run:  node scripts/e2e/test-no-undefined-calls.mjs
+// Run:  node scripts/pure-checks/test-no-undefined-calls.mjs
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

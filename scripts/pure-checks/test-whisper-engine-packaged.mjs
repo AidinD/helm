@@ -33,7 +33,7 @@
  * because this machine's own WHISPER_DIR would otherwise make every case pass
  * and the test would assert nothing. That is the exact accident being tested for.
  *
- * Run: node scripts/e2e/test-whisper-engine-packaged.mjs
+ * Run: node scripts/pure-checks/test-whisper-engine-packaged.mjs
  */
 import fs from "node:fs";
 import os from "node:os";

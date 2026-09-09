@@ -13,7 +13,7 @@
 // The tolerant parser that used to be pointed at as the safety net for this was dead code - never
 // called by any production path - so this replaces it with a check on the thing that is real.
 //
-// Run:  node scripts/e2e/test-auto-triage-schema-parity.mjs
+// Run:  node scripts/pure-checks/test-auto-triage-schema-parity.mjs
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

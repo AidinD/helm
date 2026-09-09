@@ -11,7 +11,7 @@
 // that does not exist: it renders in the default colour and passes every other
 // check. That has slipped through three times.
 //
-// Run:  node scripts/e2e/test-rollup-needs-visible.mjs
+// Run:  node scripts/pure-checks/test-rollup-needs-visible.mjs
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

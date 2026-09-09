@@ -15,7 +15,7 @@
 //   1. Behaviour - force a real write failure and check the reply.
 //   2. CLASS - fail if any ipcMain handler calls writeConfig outside a try.
 //
-// Run: node scripts/e2e/test-config-write-failure.mjs
+// Run: node scripts/app-checks/test-config-write-failure.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

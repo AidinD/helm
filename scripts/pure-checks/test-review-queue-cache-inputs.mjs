@@ -10,7 +10,7 @@
 //   - too LOOSE: it changes when nothing did, and we are back to rebuilding every tick.
 //
 // Pure (no app/harness) - runs in the fast lane.
-// Run:  node scripts/e2e/test-review-queue-cache-inputs.mjs
+// Run:  node scripts/pure-checks/test-review-queue-cache-inputs.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

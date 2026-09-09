@@ -14,7 +14,7 @@
 // change is in reviewRowEl, and this way the assertions are about what it renders instead
 // of about Jot.
 //
-// Run:  node scripts/e2e/test-review-row-readable.mjs
+// Run:  node scripts/app-checks/test-review-row-readable.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -70,7 +70,7 @@ const ROW = {
       { step: "Turn the Auto lane on with a card whose triage cannot complete.", expect: "The card is reported as failing with a stated wait, and the wait grows each time." },
       { step: "Restart Helm while a card is waiting.", expect: "It is tried immediately - the backoff is in memory on purpose." },
     ],
-    checks: [{ label: "backoff arithmetic and ordering", cmd: "node scripts/e2e/test-auto-triage-backoff.mjs" }],
+    checks: [{ label: "backoff arithmetic and ordering", cmd: "node scripts/pure-checks/test-auto-triage-backoff.mjs" }],
     checkRuns: [],
     projectPath: "D:\\Repo\\Tools\\helm",
   },

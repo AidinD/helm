@@ -12,7 +12,7 @@
 //  - the real thing: seed two mates and two widgets, RETIRE one through the same IPC
 //    the card's own button uses, repaint, and read the widget titles off the board.
 //
-// Run:  node scripts/e2e/test-first-mate-widget-rebinds.mjs
+// Run:  node scripts/app-checks/test-first-mate-widget-rebinds.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

@@ -3,7 +3,7 @@
 // carries an attention accent. Real launched Helm via CDP. Injects runs into
 // goalRuns and re-renders (no real goal run needed).
 //
-// Run:  node scripts/e2e/test-goal-attention-queue.mjs
+// Run:  node scripts/app-checks/test-goal-attention-queue.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 function log(...a) {

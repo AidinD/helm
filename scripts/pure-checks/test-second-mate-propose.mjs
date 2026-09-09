@@ -1,5 +1,5 @@
 // Unit test: Phase-2 Slice 1 - proposed/created second mates (lazy creation).
-// Run: node scripts/e2e/test-second-mate-propose.mjs
+// Run: node scripts/pure-checks/test-second-mate-propose.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

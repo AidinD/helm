@@ -13,7 +13,7 @@
 //   - and it says so honestly, rather than claiming a worker is carrying the load.
 //
 // It launches the app, so it runs in the SLOW lane.
-// Run:  node scripts/e2e/test-heavy-worker-fallback.mjs
+// Run:  node scripts/app-checks/test-heavy-worker-fallback.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

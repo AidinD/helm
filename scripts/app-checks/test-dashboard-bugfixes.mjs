@@ -10,7 +10,7 @@
 //      cliSessionId || sessionId). This asserts the busy class lights for the
 //      cliSessionId key and NOT for the old raw sessionId key.
 //
-// Run:  node scripts/e2e/test-dashboard-bugfixes.mjs
+// Run:  node scripts/app-checks/test-dashboard-bugfixes.mjs
 import { launch } from "../checks-lib/harness.mjs";
 
 function log(...a) {

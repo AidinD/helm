@@ -9,7 +9,7 @@ requireLive("drives a real second mate so its work can be attributed");
 //
 // One live Sonnet turn. Sandboxed (temp meta-home + seams + a throwaway git repo).
 //
-// Run:  node scripts/e2e/test-second-mate-attribution.mjs
+// Run:  node scripts/app-checks/test-second-mate-attribution.mjs
 import { launch } from "../checks-lib/harness.mjs";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";

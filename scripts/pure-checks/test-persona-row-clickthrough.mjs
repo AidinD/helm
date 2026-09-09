@@ -15,7 +15,7 @@
 // the running app), so we verify the click-through path by STATIC ANALYSIS of
 // the fleetPersonaEl source instead of a live DOM dispatch.
 //
-// Run:  node scripts/e2e/test-persona-row-clickthrough.mjs
+// Run:  node scripts/pure-checks/test-persona-row-clickthrough.mjs
 import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";

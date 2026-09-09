@@ -14,7 +14,7 @@
 // finished run nobody is told about is worse than one reported in an odd place. So
 // that case is asserted first.
 //
-// Run:  node scripts/e2e/test-runs-report-under-project.mjs
+// Run:  node scripts/app-checks/test-runs-report-under-project.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

@@ -27,7 +27,7 @@
  * Those are different facts. An agent saying "I did not succeed" disowns its half-finished
  * work; a clock running out says nothing about the work at all.
  *
- * Run: node scripts/e2e/test-plan-step-sizing.mjs
+ * Run: node scripts/pure-checks/test-plan-step-sizing.mjs
  */
 import fs from "node:fs";
 import path from "node:path";

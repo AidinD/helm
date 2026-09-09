@@ -9,7 +9,7 @@
 // underneath could not be read at all. That is what the geometry assertions below are
 // for - not that a toast exists, but that a second one does not cover it.
 //
-// Run:  node scripts/e2e/test-toast-and-notices.mjs
+// Run:  node scripts/app-checks/test-toast-and-notices.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
