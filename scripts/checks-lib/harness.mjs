@@ -69,7 +69,7 @@ export async function launch(opts = {}) {
   // a different number. It is now a hint rather than the identity mechanism (see
   // resolveDebugPort / waitForOwnDebugPort): a taken port costs an ephemeral one,
   // not a wrong attach. The default stays 9333 so an interactive
-  // `node scripts/e2e/foo.mjs` is still predictable to attach to.
+  // `node scripts/app-checks/foo.mjs` is still predictable to attach to.
   const requestedPort = opts.port || Number(process.env.HELM_E2E_PORT) || 9333;
   const readyTimeoutMs = opts.readyTimeoutMs ?? 30000;
 
