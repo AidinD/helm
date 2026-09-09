@@ -39,7 +39,7 @@
 // Its first entry was test-a-live-holders-lock-is-not-taken.mjs, registered on 2026-09-09
 // against card d203c05d: keel published a lock directory before writing the claim into it, so a
 // waiter arriving in that two-syscall window fell back to the age rule and took a live holder's
-// lock. It was removed the same day, and not by anyone remembering to - keel v0.1.21 publishes
+// lock. It was removed the same day, and not by anyone remembering to - keel v0.1.22 publishes
 // the claim with the directory, the check went green, and the suite failed on the spot saying
 // the entry had to go. That is the half this file exists for.
 export const KNOWN_OPEN = Object.freeze({});
