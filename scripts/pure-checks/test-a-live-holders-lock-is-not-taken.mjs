@@ -49,10 +49,20 @@ import { fileURLToPath } from "node:url";
 
 const HERE = fileURLToPath(import.meta.url);
 const BOARD = path.join(os.tmpdir(), `helm-live-holder-${process.pid}.json`);
-// A's stall, and B's arrival, straddle keel's 5s LOCK_STALE_MS: B must find a directory that is
-// claimless AND older than the threshold, which is the state the age rule answers wrongly.
-const STALL_MS = 6500;
-const B_ARRIVES_AT = 5500;
+// B must find a directory that is claimless AND older than keel's 5s LOCK_STALE_MS - that is the
+// state the age rule answers wrongly.
+//
+// TIMED OFF AN OBSERVED EVENT, NOT THE CLOCK. The first version started B at a fixed 5500ms
+// against a 6500ms stall: 500ms of margin on a machine this same file describes stalling
+// processes for 6 to 31 seconds. Under load the setup would simply not happen, the check would
+// exit 0 - and this file is registered as a known-open reproduction, where exit 0 means THE BUG
+// IS FIXED. A flaky reproduction plus that rule is a false all-clear, which is worse than the
+// bug it watches. So A announces the moment its directory exists and its claim does not, and
+// everything downstream is measured from there.
+const STALE_MS = 5000;
+const MARGIN_MS = 2500;
+// Long enough that B has arrived, decided and acted well before A wakes.
+const STALL_MS = STALE_MS + MARGIN_MS * 2 + 3000;
 
 const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 const inode = (p) => {
@@ -72,6 +82,9 @@ if (process.env.HELM_LOCKPROOF_A) {
   fs.writeFileSync = function (file, ...rest) {
     if (!stalled && String(file).endsWith("owner.json")) {
       stalled = true;
+      // The directory exists and its claim does not - exactly the window. Announced, so the
+      // driver waits for the state instead of guessing when it will arrive.
+      process.stdout.write(`${JSON.stringify({ ev: "A-window-open", pid: process.pid })}\n`);
       sleep(STALL_MS);
     }
     return realWrite.call(this, file, ...rest);
@@ -154,7 +167,22 @@ const spawnChild = (env, label) =>
   });
 
 const a = spawnChild({ HELM_LOCKPROOF_A: "1" }, "A");
-await new Promise((r) => setTimeout(r, B_ARRIVES_AT));
+// Wait for the window to be open, then for the directory to age past the threshold. If A never
+// gets that far the wait times out and the preconditions below fail loudly, which is the point:
+// a reproduction that did not set itself up must not read as "nothing to see here".
+const windowOpenedAt = await (async () => {
+  const until = Date.now() + 30000;
+  while (Date.now() < until) {
+    if (events.A.some((e) => e.ev === "A-window-open")) {
+      return Date.now();
+    }
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  return null;
+})();
+if (windowOpenedAt) {
+  await new Promise((r) => setTimeout(r, STALE_MS + MARGIN_MS));
+}
 const b = spawnChild({ HELM_LOCKPROOF_B: "1" }, "B");
 await Promise.all([a, b]);
 
@@ -167,6 +195,7 @@ const bAcq = events.B.find((e) => e.ev === "B-acquire");
 
 // The preconditions, asserted rather than assumed - without them a green below would only mean
 // the reproduction did not set itself up, which is the "null result with no control" trap.
+ok(Boolean(windowOpenedAt), "A reached the window where its directory exists and its claim does not");
 ok(Boolean(aHolds), `A took the lock (${aHolds ? `inode ${aHolds.ino}` : "NO EVENT - the reproduction did not start"})`);
 ok(Boolean(aAlive), "and A was still running when it let go - it was never a dead holder, only a slow one");
 ok(Boolean(bAcq), `B tried to take the lock (${bAcq ? `waited ${bAcq.waitedMs}ms` : "NO EVENT"})`);
@@ -187,6 +216,13 @@ const said = stderrAll
   .filter((l) => /claim|write lock/.test(l))
   .join(" | ");
 console.log(`      warnings printed: ${warned ? said : "NONE - the double hold was completely silent"}`);
+
+// The runner will only excuse this failure if the run SAYS it reproduced the documented bug -
+// see scripts/checks-lib/known-open.mjs. Printed on the one path that is that bug, so a crash or
+// an unrelated regression comes out as an ordinary failure instead of wearing this one's name.
+if (bAcq?.acquired && aHolds && aAlive) {
+  console.log("OPEN BUG REPRODUCED - d203c05d");
+}
 
 console.log("");
 console.log(
