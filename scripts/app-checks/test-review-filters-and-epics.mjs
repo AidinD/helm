@@ -35,10 +35,10 @@ const { launch } = await import("../checks-lib/harness.mjs");
 // A queue with the shape that hurt: an epic plus two subtasks, a lone task, and two rows
 // from boards with no repo behind them (his private board).
 const ROWS = `[
-  { taskId: "aaaaaaaa-0000-4000-8000-000000000001", title: "The epic", category: "helm", repoPath: "D:\\\\Repo\\\\Tools\\\\helm", parentId: null, verdict: "unrecorded", band: "unrecorded", problems: ["nothing"], caveats: [] },
-  { taskId: "aaaaaaaa-0000-4000-8000-000000000002", title: "Subtask one", category: "helm", repoPath: "D:\\\\Repo\\\\Tools\\\\helm", parentId: "aaaaaaaa-0000-4000-8000-000000000001", parentTitle: "The epic", verdict: "unrecorded", band: "unrecorded", problems: ["nothing"], caveats: [] },
-  { taskId: "aaaaaaaa-0000-4000-8000-000000000003", title: "Subtask two", category: "helm", repoPath: "D:\\\\Repo\\\\Tools\\\\helm", parentId: "aaaaaaaa-0000-4000-8000-000000000001", parentTitle: "The epic", verdict: "unrecorded", band: "unrecorded", problems: ["nothing"], caveats: [] },
-  { taskId: "bbbbbbbb-0000-4000-8000-000000000001", title: "Lone skiff task", category: "Skiff", repoPath: "D:\\\\Repo\\\\nw-skiff", parentId: null, verdict: "unrecorded", band: "unrecorded", problems: ["nothing"], caveats: [] },
+  { taskId: "aaaaaaaa-0000-4000-8000-000000000001", title: "The epic", category: "helm", repoPath: "D:\\\\Repo\\\\Tools\\\\helm", categoryRepoPath: "D:\\\\Repo\\\\Tools\\\\helm", parentId: null, verdict: "unrecorded", band: "unrecorded", problems: ["nothing"], caveats: [] },
+  { taskId: "aaaaaaaa-0000-4000-8000-000000000002", title: "Subtask one", category: "helm", repoPath: "D:\\\\Repo\\\\Tools\\\\helm", categoryRepoPath: "D:\\\\Repo\\\\Tools\\\\helm", parentId: "aaaaaaaa-0000-4000-8000-000000000001", parentTitle: "The epic", verdict: "unrecorded", band: "unrecorded", problems: ["nothing"], caveats: [] },
+  { taskId: "aaaaaaaa-0000-4000-8000-000000000003", title: "Subtask two", category: "helm", repoPath: "D:\\\\Repo\\\\Tools\\\\helm", categoryRepoPath: "D:\\\\Repo\\\\Tools\\\\helm", parentId: "aaaaaaaa-0000-4000-8000-000000000001", parentTitle: "The epic", verdict: "unrecorded", band: "unrecorded", problems: ["nothing"], caveats: [] },
+  { taskId: "bbbbbbbb-0000-4000-8000-000000000001", title: "Lone skiff task", category: "Skiff", repoPath: "D:\\\\Repo\\\\nw-skiff", categoryRepoPath: "D:\\\\Repo\\\\nw-skiff", parentId: null, verdict: "unrecorded", band: "unrecorded", problems: ["nothing"], caveats: [] },
   { taskId: "cccccccc-0000-4000-8000-000000000001", title: "Buy milk", category: "Privat", repoPath: null, parentId: null, verdict: "unrecorded", band: "unrecorded", problems: ["nothing"], caveats: [] },
   { taskId: "cccccccc-0000-4000-8000-000000000002", title: "Book dentist", category: "Privat", repoPath: null, parentId: null, verdict: "unrecorded", band: "unrecorded", problems: ["nothing"], caveats: [] }
 ]`;
@@ -92,15 +92,26 @@ const RENDER = `(rows, onlyRepo, project) => {
   };
 }`;
 
-// A card with commits whose BOARD declares no repo. On the real board there are zero of these
-// today - measured - so a fixture is the only way to see what happens when there is one, and
-// building it now is the point: the trap is closed while nobody is in it.
+// Code work on a board that declares no repo. Zero of these on the real board today - measured
+// - so a fixture is the only way to see one, and building it now is the point: the trap is
+// closed while nobody is in it.
+//
+// THE SHAPES HERE ARE ONES THE APP CAN ACTUALLY PRODUCE, which the first version of this
+// fixture got wrong: it set hasCommits:true with repoPath:null, and reviewQueueBuild only runs
+// the commit search for a row whose repoPath already resolved, so that combination cannot come
+// out of the builder. The check passed against a shape nothing generates - the "a filter whose
+// input the app can no longer produce" trap, caught by the review gate.
+//
+// So the two rows that must warn are the two the builder really makes:
+//   - repoPath resolved by the fuzzy category guess while the category declares none;
+//   - hasCommits from a review record's commits or a manual binding, which need no repoPath.
 //
 // The distinction the page has to make is between "no code here" and "code we cannot reach".
 // The first is what the Code-only filter is for and is fine to hide behind a count. The second
 // is a board missing its repoPath, and hiding it inside the same count is how it stays missing.
 const UNBOUND_ROWS = `[
-  { taskId: "dddddddd-0000-4000-8000-000000000001", title: "Real work on an unbound board", category: "unbound-board", repoPath: null, categoryRepoPath: null, hasCommits: true, parentId: null, verdict: "unrecorded", band: "unrecorded", problems: ["nothing"], caveats: [] },
+  { taskId: "dddddddd-0000-4000-8000-000000000001", title: "Rooted by a guess, board says nothing", category: "unbound-board", repoPath: "D:\\\\Repo\\\\guessed", categoryRepoPath: null, hasCommits: false, parentId: null, verdict: "unrecorded", band: "unrecorded", problems: ["nothing"], caveats: [] },
+  { taskId: "dddddddd-0000-4000-8000-000000000002", title: "Commits from a binding, no repo resolved", category: "unbound-board", repoPath: null, categoryRepoPath: null, hasCommits: true, parentId: null, verdict: "unrecorded", band: "unrecorded", problems: ["nothing"], caveats: [] },
   { taskId: "cccccccc-0000-4000-8000-000000000003", title: "Buy milk", category: "no-code-board", repoPath: null, categoryRepoPath: null, hasCommits: false, parentId: null, verdict: "unrecorded", band: "unrecorded", problems: ["nothing"], caveats: [] },
   { taskId: "aaaaaaaa-0000-4000-8000-000000000009", title: "Ordinary helm work", category: "helm", repoPath: "D:\\\\Repo\\\\Tools\\\\helm", categoryRepoPath: "D:\\\\Repo\\\\Tools\\\\helm", hasCommits: true, parentId: null, verdict: "unrecorded", band: "unrecorded", problems: ["nothing"], caveats: [] }
 ]`;
@@ -114,16 +125,16 @@ try {
   {
     const unbound = await app.eval(`window.__revProbe(window.__unbound, true, null)`);
     ok(
-      /commits but no repo on their board/.test(unbound.warn),
-      `a card with commits whose board declares no repo is reported (${JSON.stringify(unbound.warn.slice(0, 90))})`
+      /look like code work but their board declares no repo/.test(unbound.warn),
+      `code work on a board that declares no repo is reported (${JSON.stringify(unbound.warn.slice(0, 100))})`
     );
     ok(
       /unbound-board/.test(unbound.warn) && !/no-code-board/.test(unbound.warn),
       "and it NAMES the board, without dragging in a board that simply has no code (so the message points at the thing to fix)"
     );
     ok(
-      /\b1\b/.test(unbound.warn),
-      "and counts only those rows - the ordinary helm row and the private one are not findings"
+      /\b2\b/.test(unbound.warn),
+      "and counts BOTH shapes the builder can produce - a row rooted only by the guess, and one whose commits come from a binding"
     );
 
     // The other half, or the assertion above would pass just as well on a page that warns

@@ -3167,19 +3167,34 @@ function reviewFilterBarEl(allRows, nonRepoCount, noCommitsCount) {
   const spacer = document.createElement("span");
   spacer.className = "rev-filters-spacer";
   bar.append(spacer);
-  // A ROW WITH COMMITS WHOSE BOARD DECLARES NO REPO IS A FINDING, not a row to file under
-  // "held back". The Code-only filter is allowed to hide work with no code in it; a card that
-  // has commits against it demonstrably HAS code, so its board is missing its repoPath and
-  // saying so is the only way that gets fixed. Left unsaid it lands one of two ways, both
-  // quiet: the fuzzy category-name guess resolves and the row looks ordinary while its board
-  // stays unbound, or the guess fails and the row disappears into a count that reads as
-  // "nothing to review here".
+  // A ROW THAT IS CODE WORK ON A BOARD DECLARING NO REPO IS A FINDING, not a row to file
+  // under "held back". The Code-only filter is allowed to hide work with no code in it; a card
+  // that the queue can root anyway, or that already has commits against it, demonstrably HAS
+  // code - so its board is missing its repoPath, and saying so is the only way that gets fixed.
   //
-  // Zero of these today, measured on the real board. That is exactly when to build it - the
-  // trap is closed while nobody is in it.
+  // WHAT COUNTS AS THAT EVIDENCE, and this is the correction the review caught. The first
+  // version keyed on hasCommits alone, which cannot be true for the case it claimed to cover:
+  // reviewQueueBuild only runs the git commit search for a row whose repoPath already resolved
+  // (`if (!row.repoPath) continue`), so on a board where the fuzzy category-name guess ALSO
+  // fails, hasCommits stays false and the warning never fired. The check passed because its
+  // fixture hand-wrote hasCommits:true with repoPath:null - a shape the app cannot produce, and
+  // the exact trap this repo's own notes call "a filter whose input the app can no longer
+  // produce".
+  //
+  // So it keys on either signal, and both are computable without a repo to search:
+  //   - repoPath resolved while the CATEGORY declares none, i.e. the queue guessed its way to a
+  //     repo for a board that never said which one. That is the misconfiguration itself.
+  //   - hasCommits, which a review record's commits or a manual binding can set on their own.
+  //
+  // AND THE LIMIT, stated rather than papered over: a board with no repoPath, no record, no
+  // binding and nothing the guess can resolve is invisible here. Nothing in the data says it
+  // has code, so claiming otherwise would be inventing a finding rather than reporting one.
+  //
+  // Zero of these today, measured on the real board - both signals. That is exactly when to
+  // build it: the trap is closed while nobody is in it.
   const unboundBoards = new Map();
   for (const r of allRows) {
-    if (r.hasCommits && !r.categoryRepoPath) {
+    if ((r.repoPath || r.hasCommits) && !r.categoryRepoPath) {
       const key = r.category || "(no project)";
       unboundBoards.set(key, (unboundBoards.get(key) || 0) + 1);
     }
@@ -3189,10 +3204,11 @@ function reviewFilterBarEl(allRows, nonRepoCount, noCommitsCount) {
     const names = [...unboundBoards.keys()].join(", ");
     const warn = document.createElement("span");
     warn.className = "rev-filter-warn";
-    warn.textContent = `⚠ ${total} row(s) have commits but no repo on their board (${names})`;
+    warn.textContent = `⚠ ${total} row(s) look like code work but their board declares no repo (${names})`;
     warn.title =
-      "These cards have commits against them, so there is code to review - but their Jot category declares no repoPath, " +
-      "so the queue cannot root them. Set repoPath on the category; this is a gap in the board, not in the work.";
+      "These cards are rooted to a repository, or already have commits against them, so there is code to review - " +
+      "but their Jot category declares no repoPath, so the queue is guessing. Set repoPath on the category; this is a " +
+      "gap in the board, not in the work. A board with no repoPath and nothing else to go on cannot be detected here at all.";
     bar.append(warn);
   }
   bar.append(
