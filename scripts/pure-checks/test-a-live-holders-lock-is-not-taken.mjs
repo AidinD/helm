@@ -1,44 +1,39 @@
-// Two processes must never hold the write lock at once.
+// A published write lock always says who holds it.
 //
-// THIS CHECK FAILS TODAY, ON PURPOSE. It documents an open bug in keel's lock, and it is
-// registered in scripts/checks-lib/known-open.mjs so the suite reports it as OPEN rather than
-// counting it as either a pass or an ordinary failure. The day it starts PASSING, the runner
-// fails instead - see that file for why that direction matters.
+// THE INVARIANT, AND WHY IT IS THE ONE WORTH WATCHING. A waiter that finds a lock has exactly
+// one safe question: is the holder still alive? It can only ask that if the lock carries a
+// claim. When it cannot, keel falls back to an AGE rule - and age cannot tell a writer that died
+// from one that is merely slow, which is a broken lock and a lost write.
 //
-// WHAT IS WRONG. `lockIsAbandoned` in keel falls back to an AGE rule whenever it cannot read the
-// holder's claim:
+// WHAT THIS CAUGHT. keel used to create the lock directory and then write the claim into it, two
+// syscalls apart. A lock published in between existed with nothing in it. Measured against
+// v0.1.20 by this file: published claimless in 246 of 328 samples, over 7.6 seconds, and a
+// second writer walked in and held it alongside the first. Silently - keel does print
+// "carries another writer's claim", but the second writer prints it on its way OUT, when it
+// finds at release that the claim underneath is not its own. By then both have been free to
+// write for seconds. That warning is a post-mortem, not a guard.
 //
-//     try { owner = JSON.parse(readFileSync(lockPath/owner.json)) }
-//     catch { /* No claim, or an unreadable one - fall through to the age rule. */ }
-//     if (owner && Number.isInteger(owner.pid)) return !processExists(owner.pid)   // correct
-//     try { return Date.now() - statSync(lockPath).mtimeMs > LOCK_STALE_MS }        // the hole
+// FIXED IN keel v0.1.22, which builds the directory with its claim already inside and renames it
+// into place. The rename is the publish, so the window does not exist. Against v0.1.22 this
+// reads 210 of 210 samples with a claim.
 //
-// That catch conflates "I could not read the claim just now" with "there is no claim". The
-// second is handled by the very rule the pid rule was written to REPLACE, for the very reason it
-// was replaced: age cannot tell a dead holder from a slow one.
+// IT WAS A KNOWN-OPEN REPRODUCTION FOR ONE DAY, registered in scripts/checks-lib/known-open.mjs
+// on 2026-09-09 so that the evidence could be kept while the bug was open without leaving the
+// suite permanently red. The entry is gone: the check went green and the suite failed on the
+// spot demanding its removal, which is the half of that mechanism that stops it becoming a place
+// checks go to stop mattering. This is an ordinary check now, and it must pass.
 //
-// WHY A SCHEDULING DELAY IS NOT A FANTASY. keel keeps the age rule for one case it claims to be
-// right about - a directory created by something that died between the mkdir and its claim. Age
-// cannot tell that from a process merely DESCHEDULED between the same two syscalls. Under 24 CPU
-// burners on 6 cores, measured holds ran 6.1s, 6.2s, 7.6s, 10.4s and once 31.6s, all past the 5s
-// threshold. A gap that size between two adjacent syscalls in a starved writer is the same order
-// of event.
+// HOW IT PROVOKES THE WINDOW, since a check that cannot set up its own scenario proves nothing.
+// Process A is alive and healthy throughout and is only slow to reach its own claim write - no
+// error is injected, only a delay. Everything else is keel's unmodified code. That a scheduling
+// delay of this size is realistic is not an assumption: under 24 CPU burners on 6 cores, holds
+// were measured at 6.1s, 6.2s, 7.6s, 10.4s and once 31.6s, all past the 5s staleness threshold.
 //
-// SO THIS INJECTS NO ERROR. Process A is alive and healthy throughout; it is only slow to reach
-// its own claim write. Everything else is keel's unmodified code - no failure is simulated, only
-// a delay, which is why this reproduces on demand rather than under load.
-//
-// WHAT IT OBSERVES, and this is the part worth reading before trusting the warning keel prints.
-// B is granted the lock after about 4ms - it does not wait, it takes it - and both processes are
-// then inside the critical section at once. keel DOES print
-// "carries another writer's claim" - but B prints it on its way OUT, when it discovers at
-// release that the claim under it is not its own. By then both writers have been free to write
-// for seconds. The warning is a post-mortem, not a guard, and a suite that greps for it is
-// finding out afterwards.
-//
-// (The investigation this is adapted from saw a variant where nothing was printed at all. This
-// file reports what IT sees each run rather than restating that, because the two differ and only
-// what runs here is evidence.)
+// AND IT WATCHES FROM OUTSIDE BOTH PROCESSES. An earlier version asserted "B must be refused
+// while A holds", which stopped being a bug the moment the lock was published complete: B taking
+// a lock nobody has published yet is correct, and a check calling that a failure would have been
+// reporting its own obsolescence as a defect. Sampling the lock path itself does not depend on
+// either process's idea of when it holds anything.
 //
 // Run: node scripts/pure-checks/test-a-live-holders-lock-is-not-taken.mjs
 import fs from "node:fs";
@@ -54,11 +49,12 @@ const BOARD = path.join(os.tmpdir(), `helm-live-holder-${process.pid}.json`);
 //
 // TIMED OFF AN OBSERVED EVENT, NOT THE CLOCK. The first version started B at a fixed 5500ms
 // against a 6500ms stall: 500ms of margin on a machine this same file describes stalling
-// processes for 6 to 31 seconds. Under load the setup would simply not happen, the check would
-// exit 0 - and this file is registered as a known-open reproduction, where exit 0 means THE BUG
-// IS FIXED. A flaky reproduction plus that rule is a false all-clear, which is worse than the
-// bug it watches. So A announces the moment its directory exists and its claim does not, and
-// everything downstream is measured from there.
+// processes for 6 to 31 seconds. Under load the setup would simply not happen and the check
+// would pass without having tried anything - a green that means nothing, and back when this
+// file was a registered reproduction it meant worse than nothing, because passing was the
+// signal that the bug had been fixed. So A announces the moment its directory exists and its
+// claim does not, and everything downstream is measured from there; if that moment never
+// arrives, the preconditions below fail rather than the run quietly succeeding.
 const STALE_MS = 5000;
 const MARGIN_MS = 2500;
 // Long enough that B has arrived, decided and acted well before A wakes.
@@ -234,10 +230,14 @@ ok(
     : `the lock was published WITHOUT a claim in ${claimless.length} of ${sampled} samples, over ${Math.round((claimless[claimless.length - 1] - claimless[0]) / 100) / 10}s. A waiter arriving in that window has nothing to ask about the holder, so it falls back to the age rule - and age cannot tell a writer that died between the two calls from one that was merely descheduled between them`
 );
 
-// Secondary, and reported rather than asserted: whether the two ever ended up on different lock
-// directories, which is what a broken hold looks like from outside.
-if (bAcq?.acquired && aHolds && aHolds.ino !== bAcq.ino) {
-  console.log(`      A held inode ${aHolds.ino} and B held ${bAcq.ino} - different directories at one path`);
+// Context, not a verdict. Two different directories at one path is expected here now: A is
+// still staging while B takes and releases a lock of its own, and A publishes afterwards. It
+// only meant something when they could overlap, and printing it as a bare fact on a green run
+// read like a defect report.
+if (bAcq?.acquired && aHolds) {
+  console.log(
+    `      they held it in turn: B on inode ${bAcq.ino}, then A on ${aHolds.ino}${aHolds.ino === bAcq.ino ? " (the same directory, reused after release)" : ""}`
+  );
 }
 
 // And the reason this one is the dangerous variant, reported rather than asserted: the loud
@@ -247,14 +247,17 @@ const said = stderrAll
   .split("\n")
   .filter((l) => /claim|write lock/.test(l))
   .join(" | ");
-console.log(`      warnings printed: ${warned ? said : "NONE - the double hold was completely silent"}`);
+// Worth printing either way. keel's takeover warning arrives at RELEASE, after the damage, so
+// its absence is not evidence of health and its presence is not a guard - it is just the last
+// thing that happened.
+console.log(`      keel printed: ${warned ? said : "nothing"}`);
 
-// The runner will only excuse this failure if the run SAYS it reproduced the documented bug -
-// see scripts/checks-lib/known-open.mjs. Printed on the one path that is that bug, so a crash or
-// an unrelated regression comes out as an ordinary failure instead of wearing this one's name.
-if (claimless.length > 0) {
-  console.log("OPEN BUG REPRODUCED - d203c05d");
-}
+// NO known-open MARKER HERE ANY MORE. While this file was registered as reproducing an open bug
+// it printed "OPEN BUG REPRODUCED - d203c05d" on this path, which is how the runner told a real
+// reproduction from a crash wearing its name. The entry is gone, so a marker naming it would
+// claim a relationship that no longer exists - and the failure message above already says what
+// happened, in more detail than a marker can. If this ever has to go back on that list, see
+// scripts/checks-lib/known-open.mjs: the line goes here, on this branch and no other.
 
 console.log("");
 console.log(
