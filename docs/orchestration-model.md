@@ -1,59 +1,95 @@
-# Helm's orchestration model - captain, first mate, second mates, crew
+# Helm's orchestration model - captain, first mates, crew
 
 The mental model Helm is built around, and how you actually work in it.
-Settled with the captain 2026-07-06 (see DECISIONS.md for the decision + rationale).
 
-> **Evidence check (2026-07-06), resolved.**
-> A research pass (`docs/research-orchestration-2026-07-06.md`) supports the
-> **second mate -> crew** layer strongly (2-level coordinator->workers on
-> independent parallel projects is well-founded) but warned against a first mate
-> run as a **standing relay** for routine dispatch (effective agent hierarchies
-> cap at ~2 levels; Claude Code's Agent Teams disallows nesting; a cross-project
-> coordinator only earns its coordination tax on *genuine* cross-project work).
-> Resolution (the captain): the first mate is exactly NOT a standing relay - it's
-> **bookend + on-demand** (morning "what matters today?" -> spins up second
-> mates; evening summary; invoked ad hoc for real cross-project synthesis), and
-> you talk to second mates directly during the day. That is precisely what the
-> research prescribes. Two named first mates (work, private) are cheap because a
-> dormant session bills no tokens - it only costs when it takes a turn. So the
-> model and the evidence agree; the "avoid a mandatory top-level relay" caution
-> is honored by design.
+> **THIS DOCUMENT TAUGHT THE WRONG MODEL FOR FIVE DAYS, and that is why the note is at the
+> top rather than in a changelog.** A layer was removed on 2026-09-04 - see DECISIONS.md,
+> "A tier that gets routed around is not a tier" - and this file kept describing four tiers,
+> a model-per-tier table and a daily routine built on the removed one. Two sessions read it,
+> built to it, and reported the wrong thing back. CLAUDE.md points every session here before
+> any orchestration work, so a stale page here is not a stale page: it is instructions.
+>
+> **DECISIONS.md is the authority.** Where this file and that entry disagree, that entry wins
+> and this file is the bug.
 
 ## The tiers
 
-The captain is the captain of a ship.
-He does not do most of the work himself - he delegates, and the delegation has structure.
+The captain is the captain of a ship. He does not do most of the work himself - he delegates,
+and the delegation has structure. There are three working tiers, and one standing seat beside
+them rather than above them.
 
 | Tier | Who | Rooted | Holds (thin) context of | Lifespan |
 |------|-----|--------|--------------------------|----------|
 | **Captain** | the captain | - | intent, priorities, decisions | you |
-| **First mate** | a cross-project orchestrator, one per life-domain (work, private) - named | meta-home (above all projects) | cross-project priority: what needs attention, what to dispatch, what to report back | durable named *role*; bookend + on-demand, dormant between |
-| **Second mate** | one orchestrator per active project | that project's repo | that project's deep state + its own dispatch | ephemeral per assignment |
+| **First mate** | one per active project | that project's repo | that project's deep state + its own dispatch | ephemeral per assignment |
 | **Crew** | agents / Autopilot runs | a worktree | one task | ephemeral |
+| *Standing seat* | *the assistant, one of them* | *meta-home* | *the irreplaceable half: goals, people, what was decided and why* | *durable, and occasional by design* |
+
+**The first mate is the project seat.** That is the merge the layer removal performed, and it
+is three things being merged rather than two: the **name** comes from the tier above, the
+**permissions** from the tier below, and the **identity** from neither yet. The permissions half
+is the easy half - a project seat must be able to write code, so it launches on the tier that
+allows writes - and stating it first makes the merge look more settled than it is. The identity
+half is open: a mate is `mate_<uuid>` with a slot, a pooled name, a persona and a retire path,
+while a project node is `sm_<hash>` minted from dispatcher plus path and has none of those.
+DECISIONS.md sets out why picking either one naively brings the removed tier back.
+
+**The standing seat is not a relay.** Talking to a project seat directly is the default;
+routing through the standing seat is a deliberate choice for the times a view across projects
+is worth paying for. That is measured, not felt: over 1588 turns an orchestrating seat read 731
+million cached context tokens and a single turn reached 670k, because the whole context is
+re-read every turn. The cost of an action in a standing seat is its context size, not the
+action - relaying one instruction costs the same as reading a file. It earns that cost when
+what it holds is irreplaceable, and not when what it holds is a work queue, which a board holds
+better and can be re-read for nothing.
+
+**Slots are unlimited and the board degrades as they multiply, on purpose.** Two project seats
+is the intended working number. The friction of a crowded board is the governor on concurrency:
+the real cost of another parallel session is attention, and a UI that hides that cost encourages
+the thing being guarded against. Anyone tempted to tidy this away should read this paragraph
+first.
 
 ### Model per tier - by judgment, not by hierarchy level
 
-The naive "higher tier = cheaper model" rule is wrong here; match the model to the
-*judgment the tier actually exercises* (this is the research's "model tiering by role,
-not level"):
-- **First mate → Sonnet.** Pure delegate: prioritize the day, dispatch, summarize. Not
-  Haiku - "what matters most today" is real cross-project prioritization judgment, not
-  mechanical rollup.
-- **Second mate → Opus.** This is the judgment tier: validate the crew's work, check it's
-  sensible, review, sometimes bugfix. It's where capability earns its cost. (This is why
-  a session doing hands-on build+validation - a second-mate role - wants Opus; the earlier
-  "orchestrator = Opus" call was really about this role.)
-- **Crew → by task complexity.** The per-prompt model+effort suggestion (Point 9) already
-  does this.
+Match the model to the *judgment the tier actually exercises*, not to its height:
 
-The captain talks mostly to the first mate.
-The first mate breaks the captain's intent into per-project assignments and hands them to second mates.
-Each second mate dispatches crew (agents / Autopilot runs) to do the actual work, and reports progress up.
-Small quick things skip the chain - the captain goes straight to a second mate or even an agent.
+- **First mate (the project seat) → Opus.** This is the judgment tier: validate the crew's
+  work, check it is sensible, review, sometimes fix. It is where capability earns its cost.
+  Verified in code rather than asserted here: `defaultModelForTier` returns
+  `claude-opus-4-8` for the tier a project seat launches on.
+- **Crew → by task complexity.** The per-prompt model+effort suggestion already does this.
 
-## The daily loop (AUTHORITATIVE, the captain 2026-07-12)
+The Sonnet delegate tier that used to sit above this is gone with the layer it belonged to.
 
-This is the canonical intended workflow - the target the phased build (below) is heading for.
+## A NOTE ON VOCABULARY, because the code has not caught up
+
+The tier CONSTANTS still carry the old names. A project seat launches on `TIER_SECOND_MATE`,
+and the MCP tools are still called `helm_create_second_mate` and
+`helm_relay_to_second_mate`. The behaviour is the new model; the words are the old one. That
+gap is real and is tracked as its own card (cc5cd531, 2189 references), not quietly fixed here -
+renaming across a live dispatch path is its own change with its own risk.
+
+**Everything below this line predates the layer removal.** It has not been re-verified against
+the current model, so where it says "second mate" for a coordinating layer above projects, that
+layer no longer exists. It is kept because the reasoning about durability, resume, report-back
+and the capability gap is still the reasoning Helm runs on - but read it knowing which parts
+describe a tier that is gone.
+
+## The daily loop (SUPERSEDED - written 2026-07-12, for the four-tier model)
+
+> **Read the vocabulary before the steps.** Here "first mate" means the cross-project seat that
+> was removed, and "second mate" means the project seat that is now called the first mate. Under
+> today's names the steps below invert: step 1 starts the day in a seat that no longer exists,
+> and every "second mate" is what you would now open as a first mate.
+>
+> It is kept, and kept unrewritten, for one reason: what the NEW daily loop is has not been
+> settled with the captain. The layer-removal decision records that details of the conversation
+> were lost and says explicitly that they must not be filled in by someone guessing. Rewriting
+> these five steps would be exactly that. What survives translation is the reasoning - lazy
+> creation over eager, one canonical session per topic rather than two views of it, and a seat
+> that leaves no durable trace being un-summarizable.
+
+This was the canonical intended workflow for the model as it stood.
 
 1. **Start the day in the first mate.** Prompt it: "what should I work on today? I want to work on A, B and C."
 2. **The first mate PROPOSES one assignment per topic and creates the second mate LAZILY.** It lays out A, B, C as per-project assignments; the actual project-rooted Opus session is spun up only when you first ENGAGE that topic (jump in or dispatch), not all three up front. (Refinement 2026-07-12: eager creation would leave two untouched Opus sessions burning context on a day you only work A - lazy creation is the token-honest default, same UX for you.)
