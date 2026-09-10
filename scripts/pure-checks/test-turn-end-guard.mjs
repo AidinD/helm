@@ -26,6 +26,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { judgeTurnEnd, ACTION_TOOLS, DELEGATION_TOOLS, UNDELEGATED_ACTION_LIMIT, DELEGATING_SEATS } from "../../src/lib/turnEndGuard.js";
+import { LEGACY_TOOL_ALIASES } from "../../src/lib/seatTools.js";
 
 let exit = 0;
 const ok = (c, m) => {
@@ -82,8 +83,26 @@ const times = (tool, n) => Array.from({ length: n }, () => tool);
   const verdict = judgeTurnEnd({ seat: "first-mate", toolsUsed: ["mcp__helm-dispatch__helm_create_second_mate", ...times("Bash", 30)] });
   ok(!!verdict, "creating a second mate and then doing all the work yourself is still flagged");
   ok(!DELEGATION_TOOLS.test("mcp__helm-dispatch__helm_create_second_mate"), "because making a seat is setup, not delegation");
+  ok(!DELEGATION_TOOLS.test("mcp__helm-dispatch__helm_open_project"), "and neither does its current name - the rename must not turn setup into delegation either");
   for (const tool of ["mcp__helm-dispatch__helm_dispatch", "mcp__helm-dispatch__helm_relay_to_second_mate", "mcp__helm-dispatch__helm_resume_crew"]) {
     ok(DELEGATION_TOOLS.test(tool), `${tool.split("__").pop()} does count as delegating`);
+  }
+  // THE CURRENT RELAY NAME, asserted separately because it was the one missing. The tools were
+  // renamed on 2026-09-05 and this pattern kept only the old spelling, so a seat delegating
+  // with the name the app tells it to use was judged as having delegated nothing.
+  ok(
+    DELEGATION_TOOLS.test("mcp__helm-dispatch__helm_relay_to_project"),
+    "the CURRENT relay name counts as delegating - a rename that leaves this behind flags correct behaviour"
+  );
+  // Derived from the alias map rather than typed here again, so the next rename cannot leave
+  // this check describing a tool nobody calls.
+  for (const [oldName, newName] of Object.entries(LEGACY_TOOL_ALIASES)) {
+    if (DELEGATION_TOOLS.test(`mcp__helm-dispatch__${oldName}`)) {
+      ok(
+        DELEGATION_TOOLS.test(`mcp__helm-dispatch__${newName}`),
+        `${oldName} counts as delegating, so ${newName} must too - they are the same tool`
+      );
+    }
   }
 }
 

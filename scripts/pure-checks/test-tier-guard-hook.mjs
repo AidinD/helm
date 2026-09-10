@@ -12,6 +12,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { CROSS_PROJECT_TOOLS } from "../../src/lib/seatTools.js";
 import { fileURLToPath } from "node:url";
 import { turnCounterPath, SECOND_MATE_TURN_WRITE_BUDGET } from "../../src/lib/tierGuard.js";
 
@@ -57,7 +58,14 @@ ok(envelope.hookEventName === "PreToolUse", `the envelope names the right hook e
 ok(typeof envelope.permissionDecisionReason === "string" && envelope.permissionDecisionReason.length > 50, "and carries a reason long enough to actually redirect the mate");
 ok(Object.keys(JSON.parse(denied.stdout)).join(",") === "hookSpecificOutput", "and the payload has exactly the one top-level key the contract defines");
 ok(denied.code === 0, `and the hook still exits 0 (${denied.code}) - a non-zero exit is a hook CRASH to the harness, not a policy answer`);
-ok(/helm_create_second_mate/.test(denied.reason), "the reason names the tool to reach for instead, so the refusal is a direction rather than a wall");
+// A TOOL THAT EXISTS, not a particular spelling. This asserted helm_create_second_mate, which
+// was renamed on 2026-09-05 - so it was pinning the guard to hand out a deprecated name, and
+// the guard obliged until 2026-09-10. Derived from the current tool set, so the next rename
+// moves this with it instead of freezing the old answer in place.
+ok(
+  CROSS_PROJECT_TOOLS.some((t) => denied.reason.includes(t)),
+  `the reason names a tool that exists to reach for instead, so the refusal is a direction rather than a wall (${CROSS_PROJECT_TOOLS.join(", ")})`
+);
 ok(/create: true/.test(denied.reason), "and tells it how to delegate work that has no project yet - the case that cornered Captain Haddock");
 
 const allowed = runHook(READ, { HELM_TIER: "first-mate" });

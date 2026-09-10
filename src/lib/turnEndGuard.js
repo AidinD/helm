@@ -58,11 +58,19 @@ export const ACTION_TOOLS = new Set(["Bash", "PowerShell", "Edit", "Write", "Not
 /**
  * Tools that hand work to a lower tier.
  *
- * `helm_create_second_mate` is deliberately NOT here: creating a seat is setup, not
- * delegation, and a turn that made a mate and then did all the work itself is precisely the
- * behaviour being looked for.
+ * Opening a seat is deliberately NOT here - `helm_open_project` and its legacy alias
+ * `helm_create_second_mate`. Creating a seat is setup, not delegation, and a turn that made
+ * one and then did all the work itself is precisely the behaviour being looked for.
+ *
+ * BOTH NAMES OF THE RELAY, and the current one was missing until 2026-09-10. The tools were
+ * renamed on 2026-09-05 and this pattern was not, so a seat that delegated with
+ * `helm_relay_to_project` - the name the app now tells it to use - did not count as having
+ * delegated, and its turn was judged as though it had done everything itself. A guard that
+ * flags correct behaviour is worse than one that misses: it teaches you to ignore it. Found by
+ * sweeping for the old names rather than by anything failing, which is the whole problem with
+ * a rename that leaves a literal behind.
  */
-export const DELEGATION_TOOLS = /helm_dispatch|helm_relay_to_second_mate|helm_resume_crew|helm_resume_fleet/;
+export const DELEGATION_TOOLS = /helm_dispatch|helm_relay_to_project|helm_relay_to_second_mate|helm_resume_crew|helm_resume_fleet/;
 
 /** See the module comment for the distribution this comes from. */
 export const UNDELEGATED_ACTION_LIMIT = 10;

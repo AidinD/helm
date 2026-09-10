@@ -119,7 +119,8 @@ const fm = (tool, input = {}) => decideToolCall({ tier: TIER_FIRST_MATE, tool, i
   ok(asst("mcp__filesystem__write_file", {}).decision === "deny", "a generic filesystem MCP is still refused - the exemption names the stores, not MCP as a category");
   ok(asst("mcp__github__create_pull_request", {}).decision === "deny", "and so is anything that would publish");
   // Delegation, which is the only thing it may do about repository work.
-  ok(asst("helm_create_second_mate", {}).decision === "allow", "and it can hand work to a session");
+  ok(asst("helm_open_project", {}).decision === "allow", "and it can hand work to a session");
+  ok(asst("helm_create_second_mate", {}).decision === "allow", "including through the legacy alias, which is still callable");
   ok(asst("helm_dispatch", {}).decision === "allow", "and dispatch");
 }
 
@@ -133,7 +134,7 @@ const fm = (tool, input = {}) => decideToolCall({ tier: TIER_FIRST_MATE, tool, i
   ok(/do NOT simply refuse/.test(reason), "and refuses to let it answer with a bare refusal, same discipline as the other tiers");
   // The first mate's own sentence must be untouched by all this.
   const fmReason = fm("Write", { file_path: "x" }).reason || "";
-  ok(/helm_create_second_mate/.test(fmReason), "the first mate still gets its own dispatch-shaped answer");
+  ok(/helm_open_project/.test(fmReason), "the first mate still gets its own dispatch-shaped answer, naming the tool as it is called today");
   ok(fmReason !== reason, "the two refusals are genuinely different text, not one shared paragraph");
 }
 

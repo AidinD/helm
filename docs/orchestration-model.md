@@ -101,9 +101,15 @@ than in a card nobody reads before doing dispatch work.
 ## A NOTE ON VOCABULARY, because parts of the code have caught up and parts have not
 
 **The tools were renamed on 2026-09-05.** They are `helm_open_project` and
-`helm_relay_to_project`. `helm_create_second_mate` and `helm_relay_to_second_mate` survive
-only as entries in `LEGACY_TOOL_ALIASES`, kept so a running seat mid-session does not break,
-recorded through `recordLegacyToolCall` and tracked for removal.
+`helm_relay_to_project`. `helm_create_second_mate` and `helm_relay_to_second_mate` remain as
+entries in `LEGACY_TOOL_ALIASES`, recorded through `recordLegacyToolCall` and tracked for
+removal.
+
+The first version of this paragraph said they survive "only so a running seat mid-session does
+not break". That was wrong in a way worth keeping on the page: until 2026-09-10 the tier
+guard's own denial text told every seat it refused to call `helm_create_second_mate`, so the
+app was teaching the deprecated names to brand-new sessions and the aliases could never have
+been retired by attrition. The guard names the current tools now.
 
 **The tier CONSTANTS have not been renamed.** A project seat still launches on
 `TIER_SECOND_MATE`. The behaviour is the new model; that word is the old one, and it is card
