@@ -156,7 +156,9 @@ try {
   process.stderr.write(`[helm-tier-guard] classifier threw: ${err?.message || err}
 `);
   if (tier === TIER_FIRST_MATE) {
-    deny("HELM TIER GUARD: this call could not be classified, and a first mate does not write files. Hand the work to a second mate with helm_create_second_mate or helm_relay_to_second_mate.");
+    // Current tool names, for the reason spelled out in tierGuard.js's denial text: a guard
+    // that names the deprecated tools is a guard that keeps the deprecation alive.
+    deny("HELM TIER GUARD: this call could not be classified, and a first mate does not write files. Hand the work to a project seat with helm_open_project or helm_relay_to_project.");
   }
   if (tier === TIER_ASSISTANT) {
     deny(

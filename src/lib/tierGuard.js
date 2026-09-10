@@ -953,8 +953,13 @@ const FIRST_MATE_DENIAL = [
   "in another shell.",
   "",
   "What to do instead - do NOT simply refuse, and do not answer with only a pointer: hand the",
-  "work down WITH the context. Call helm_create_second_mate (it will create the project if it",
-  "does not exist yet - pass create: true) or helm_relay_to_second_mate, and give it what it",
+  // THE CURRENT NAMES. This message used to hand out helm_create_second_mate and
+  // helm_relay_to_second_mate, which were renamed on 2026-09-05 and survive only as
+  // LEGACY_TOOL_ALIASES. Naming them here did not just read as stale: it meant the guard
+  // TAUGHT the deprecated names to every seat it denied, so the aliases could never be retired
+  // by attrition - the app kept minting new callers of the thing it was trying to remove.
+  "work down WITH the context. Call helm_open_project (it will create the project if it",
+  "does not exist yet - pass create: true) or helm_relay_to_project, and give it what it",
   "needs to start without re-interviewing the captain: what he actually said in his own words,",
   "why he wants it, where the output belongs, and anything you have already gathered.",
 ].join("\n");
