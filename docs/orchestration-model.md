@@ -2,15 +2,20 @@
 
 The mental model Helm is built around, and how you actually work in it.
 
-> **THIS DOCUMENT TAUGHT THE WRONG MODEL FOR FIVE DAYS, and that is why the note is at the
-> top rather than in a changelog.** A layer was removed on 2026-09-04 - see DECISIONS.md,
-> "A tier that gets routed around is not a tier" - and this file kept describing four tiers,
-> a model-per-tier table and a daily routine built on the removed one. Two sessions read it,
-> built to it, and reported the wrong thing back. CLAUDE.md points every session here before
-> any orchestration work, so a stale page here is not a stale page: it is instructions.
+> **DECIDED IS NOT BUILT, and this page has now got that wrong in both directions.** A layer
+> was removed on 2026-09-04 - see DECISIONS.md, "A tier that gets routed around is not a tier".
+> For five days this file kept teaching the four-tier model it replaced, and two sessions read
+> it, built to it and reported the wrong thing back. The repair then overcorrected and wrote the
+> decision in the present tense, as though the code had caught up. It has not, and the review
+> gate caught that on the way in.
 >
-> **DECISIONS.md is the authority.** Where this file and that entry disagree, that entry wins
-> and this file is the bug.
+> So the sections below say which is which, and **anything that says a tier is gone means gone
+> from the DESIGN**. What is actually built is under "What is not built yet". CLAUDE.md points
+> every session here before any orchestration work, so a wrong page here is not a wrong page:
+> it is instructions.
+>
+> **DECISIONS.md is the authority on what was decided. The code is the authority on what runs.**
+> Where this file disagrees with either, this file is the bug.
 
 ## The tiers
 
@@ -33,10 +38,15 @@ The identity fork was the hard one and it is decided, not open - see DECISIONS.m
 entry, under "Six forks the decision did not cover, settled the same evening". A `mate_`
 carries a slot, a pooled name, a persona and a retire path, none of which have substitutes; the
 alternative `sm_<hash>` carries one property, being derivable, which a seat with a store record
-no longer needs. The consequence is not a special case: `secondMateId`'s dispatcher parameter
-has exactly one caller left once the tier is gone - the auto lane - so it becomes
-`autoNodeId(projectPath)`, and the collision the auto split fixed cannot recur because there is
-no second identity left to collide with.
+no longer needs.
+
+That entry also predicted the shape of the consequence - `secondMateId`'s dispatcher parameter
+collapsing into `autoNodeId(projectPath)`. **That function does not exist.** What was built
+instead is `secondMateId(lane, projectPath)` with exactly two permitted lanes, `PROJECT_LANE`
+and `AUTO_LANE`, enforced by `laneOrThrow`. The property the prediction was after - no second
+identity left to collide with - is what the enum delivers; the name in the entry was a sketch,
+not a spec, and reading it as one is how this paragraph came to describe a function nobody
+wrote.
 
 **Where a project seat escalates: the captain's queue, not the standing seat.** The standing
 seat is not in the chain of command for a project's work - it holds goals and people, not a
@@ -70,7 +80,23 @@ Match the model to the *judgment the tier actually exercises*, not to its height
   `claude-opus-4-8` for the tier a project seat launches on.
 - **Crew → by task complexity.** The per-prompt model+effort suggestion already does this.
 
-The Sonnet delegate tier that used to sit above this is gone with the layer it belonged to.
+The Sonnet delegate tier that sat above this goes with the layer it belonged to - in the
+design. See below for what still creates one.
+
+## What is not built yet
+
+**The cross-project seat is still creatable, today, in one click.** "Add widget" offers
+"New first mate…", which calls `mates:add`, which calls `ensureMates(resolveMetaHome(), …)` -
+a seat rooted at the META-HOME, which is the removed tier. Nothing about that path is broken;
+it is the old path, left standing on purpose while the migration ran additively beside it (see
+the epic's step 3, "seats are created by opening a project, additively alongside today's
+paths"). Removing it is a decision about when, not a bug to fix quietly.
+
+So: if you open Helm and make a first mate from the widget menu, you get the tier this page
+says is gone. That sentence is the honest state of the migration, and it belongs here rather
+than in a card nobody reads before doing dispatch work.
+
+**The tier constants have not been renamed either** - see the vocabulary note below.
 
 ## A NOTE ON VOCABULARY, because parts of the code have caught up and parts have not
 
