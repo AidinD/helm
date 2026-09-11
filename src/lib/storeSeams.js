@@ -16,7 +16,7 @@
  * "Isolate config.json so E2E runs never write their throwaway test sessions into the real
  * dev-repo config.json ... Belongs in the harness, not each test, so ALL current and future
  * E2Es are isolated automatically." That reasoning is correct and it was applied to one entry
- * of a list of eleven.
+ * of a list of ten.
  *
  * Measured on 2026-09-11 rather than argued: config.json, the seam the harness owns, was
  * CLEAN. mates.json held three seats rooted in deleted E2E temp directories, and
