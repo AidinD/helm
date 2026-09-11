@@ -11715,43 +11715,72 @@ function choosePersona(mate, key, running) {
 }
 
 /**
- * The Dashboard's one-line subtitle, DERIVED from who is actually on watch.
+ * The Dashboard's one-line subtitle, DERIVED from the seats the board itself draws.
  *
- * Both dashboards call this once they have the mates, because both already fetch
- * them - and because the alternative (a constant string) is what produced a page
- * that claimed no first mate was on watch while naming two of them a few hundred
- * pixels lower down.
+ * It exists because a constant string produced a page that claimed no first mate was on watch
+ * while naming two of them a few hundred pixels lower down. It then went wrong a SECOND way,
+ * for the same underlying reason and in both halves of the sentence at once (the captain,
+ * 2026-09-11, reading his own dashboard):
  *
- * When mates ARE on watch it names them and says where to act on them, which is
- * the page's actual top-level state. When none are, the old explanation of what
- * a first mate is becomes true again, so it is kept for exactly that case.
+ *   WRONG SET     it named `mates` - the untagged coordinator pool - and nothing else. The
+ *                 board draws a widget per SEAT, and a seat is one of three things: the
+ *                 assistant, a coordinator, or a project seat. So the line listed a pool seat
+ *                 with no widget while omitting the assistant and every project seat that had
+ *                 one. Two different answers to "who is on watch", neither admitting the other.
+ *   WRONG PLACE   "...from the Fleet below" outlived the Fleet. The classic section stack was
+ *                 removed in 337895ce and this sentence kept pointing at it.
+ *
+ * So it takes the WHOLE seat picture, the same three lists the grid is built from, rather than
+ * one of them. Fixing the wording alone would have left the next seat kind out again.
+ *
+ * @param {{coordinators: object[], assistant: object|null, projectSeats: object[]}|null} seats
  */
-// Last known first mates, so a re-render can fill the subtitle IMMEDIATELY instead
-// of depending on an async fetch landing after the element exists. Getting that
-// ordering wrong left the line permanently blank in the widget dashboard.
-let lastKnownMates = null;
+// How many to name before the line stops being a sentence. Seven seats is a real board here.
+const SUBTITLE_NAME_LIMIT = 4;
+// Last known seats, so a re-render can fill the subtitle IMMEDIATELY instead of depending on
+// an async fetch landing after the element exists. Getting that ordering wrong left the line
+// permanently blank in the widget dashboard.
+let lastKnownSeats = null;
 
-function paintDashboardSubtitle(mates = null) {
-  if (Array.isArray(mates)) {
-    lastKnownMates = mates;
+function paintDashboardSubtitle(seats = null) {
+  if (seats && typeof seats === "object") {
+    lastKnownSeats = seats;
   }
   const el = document.getElementById("dashSubtitle");
   if (!el) {
     return;
   }
-  const known = Array.isArray(mates) ? mates : lastKnownMates;
-  if (!Array.isArray(known)) {
+  const known = seats && typeof seats === "object" ? seats : lastKnownSeats;
+  if (!known) {
     el.textContent = ""; // genuinely unknown yet - say nothing rather than guess
     return;
   }
-  const names = known.map((m) => m.name).filter(Boolean);
+  // Board order, so the line reads in the order the eye finds the widgets.
+  const names = [
+    ...(known.assistant ? [known.assistant] : []),
+    ...(known.coordinators || []),
+    ...(known.projectSeats || []),
+  ]
+    .map((s) => s?.name)
+    .filter(Boolean);
   if (names.length === 0) {
     el.textContent =
       "No first mate on watch right now. It's a role you fill when you need it, not a session that stays open - start one fresh whenever you like.";
     return;
   }
-  const listed = names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
-  el.textContent = `${listed} ${names.length === 1 ? "is" : "are"} on watch. Retire, rename or hand one off from the Fleet below.`;
+  const shown = names.slice(0, SUBTITLE_NAME_LIMIT);
+  const rest = names.length - shown.length;
+  // The overflow is COUNTED, never dropped - a line that silently stops at four is the
+  // wrong-set bug again, one cause down. It also takes the "and", so the sentence does not
+  // read "S1, S2 and S3 and 3 more": with an overflow the names are a plain comma list and
+  // the count is the last item.
+  const tail = rest > 0 ? `${rest} more` : "";
+  const parts = tail ? [...shown, tail] : shown;
+  const listed = parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
+  const plural = names.length === 1 ? "is" : "are";
+  // Points at the widget, which is where the controls actually are - each seat card carries
+  // its own rename and retire. Naming a place that exists is the whole repair.
+  el.textContent = `${listed} ${plural} on watch. Rename or retire one from its own widget.`;
 }
 
 
@@ -14682,7 +14711,15 @@ async function renderWidgetDashboard(page) {
     state.sessions = sessionData.sessions;
   }
   const mates = matesResult?.ok ? matesResult.active : [];
-  paintDashboardSubtitle(mates);
+  // The WHOLE seat picture, not just the coordinator pool - see paintDashboardSubtitle. Built
+  // here once and passed to both of its calls, so the early paint and the one after the
+  // topbar exists cannot describe different boards.
+  const seatPicture = {
+    coordinators: mates,
+    assistant: matesResult?.ok ? matesResult.assistant || null : null,
+    projectSeats: matesResult?.ok ? matesResult.projects || [] : [],
+  };
+  paintDashboardSubtitle(seatPicture);
   // The SAME derivation the classic Fleet uses. Passing the raw bindings here is
   // what left the Captain widget empty: the captain's own sessions are derived
   // nodes, not bindings, so they only exist after buildFleetModel runs.
@@ -14785,7 +14822,7 @@ async function renderWidgetDashboard(page) {
   // Now that the topbar (with #dashSubtitle) is on the page, fill the subtitle -
   // the earlier paintDashboardSubtitle ran before this element existed (task
   // 337895ce moved the subtitle onto the widget topbar).
-  paintDashboardSubtitle(mates);
+  paintDashboardSubtitle(seatPicture);
 }
 
 async function renderDashboardPage() {
