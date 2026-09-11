@@ -32,6 +32,9 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
+// Where an E2E run's stores live. Importable from plain node on purpose: it is why the
+// registry does not sit in packagedPaths.js, which imports electron.
+import { storeIsolationEnv } from "../../src/lib/storeSeams.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // scripts/checks-lib/ -> repo root is two levels up.
@@ -89,19 +92,42 @@ export async function launch(opts = {}) {
   const userDataTmpDir = makeOwnedTmpDir(USERDATA_PREFIX);
   const userDataFlag = `--user-data-dir=${userDataTmpDir}`;
 
-  // Isolate config.json so E2E runs never write their throwaway test sessions
-  // into the real dev-repo config.json. config.js already honors HELM_CONFIG_PATH
-  // (a packaged-app/test seam), but tests only ever set the meta-home/mates/
-  // second-mates seams - so config.json defaulted to the repo root and every run
-  // that started a session appended a junk helmSessions entry (~36 accumulated,
-  // all temp-dir cwds). Default it to a throwaway file here (honoring a test's own
-  // override if it set one), and clean it up in close(). Belongs in the harness,
-  // not each test, so ALL current and future E2Es are isolated automatically.
+  // ISOLATE EVERY REPO-ROOT STORE, so an E2E run cannot write into the files the captain
+  // actually uses.
+  //
+  // This started as config.json alone: tests set the meta-home/mates/second-mates seams by
+  // hand and nobody set config, so every run that started a session appended a junk
+  // helmSessions entry (~36 accumulated, all temp-dir cwds). The reasoning written down then
+  // was right and general - "Belongs in the harness, not each test, so ALL current and future
+  // E2Es are isolated automatically" - and it was applied to one entry of a list of eleven.
+  //
+  // What that cost, measured on 2026-09-11 rather than argued: config.json, the one seam this
+  // harness owned, was CLEAN. mates.json held three first mates rooted in deleted E2E temp
+  // directories, and goal-run-history.json held seven lines of a dispatch run's scratch repo.
+  // The captain found it by reading his own dashboard and not recognising the seat names on
+  // it. The isolated seam being the clean seam is the whole argument.
+  //
+  // WHICH stores, and whether to isolate at all, is storeIsolationEnv's decision rather than
+  // this file's: it is the part a pure check can call and inspect, and the part a mutation has
+  // to be able to kill. Asserting it from here was tried and a mutation walked straight
+  // through it. This keeps only the I/O - one owned directory, so the existing cleanup
+  // (close, abandonLaunch, the stale-dir sweep) works unchanged, all of it keyed on
+  // CONFIG_PREFIX.
   const env = { ...process.env };
   let configTmpDir = null;
-  if (!env.HELM_CONFIG_PATH) {
-    configTmpDir = makeOwnedTmpDir(CONFIG_PREFIX);
-    env.HELM_CONFIG_PATH = path.join(configTmpDir, "config.json");
+  const probe = makeOwnedTmpDir(CONFIG_PREFIX);
+  const overrides = storeIsolationEnv(env, probe);
+  if (Object.keys(overrides).length > 0) {
+    configTmpDir = probe;
+    Object.assign(env, overrides);
+  } else {
+    // Nothing to isolate (a packaged-redirect check owns the decision), so do not leave an
+    // empty directory behind for the stale-dir sweep to reason about later.
+    try {
+      fs.rmSync(probe, { recursive: true, force: true });
+    } catch {
+      // best-effort: an empty temp dir is litter, not a failure
+    }
   }
 
   // Launched hidden by default. A sweep starts this app 146 times, and every one of them
