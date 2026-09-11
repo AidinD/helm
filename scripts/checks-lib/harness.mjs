@@ -99,7 +99,7 @@ export async function launch(opts = {}) {
   // hand and nobody set config, so every run that started a session appended a junk
   // helmSessions entry (~36 accumulated, all temp-dir cwds). The reasoning written down then
   // was right and general - "Belongs in the harness, not each test, so ALL current and future
-  // E2Es are isolated automatically" - and it was applied to one entry of a list of eleven.
+  // E2Es are isolated automatically" - and it was applied to one entry of a list of ten.
   //
   // What that cost, measured on 2026-09-11 rather than argued: config.json, the one seam this
   // harness owned, was CLEAN. mates.json held three first mates rooted in deleted E2E temp
