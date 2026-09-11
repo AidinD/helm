@@ -3,16 +3,27 @@
 // and confirms: goal:history downgrades the stale "running" to "interrupted",
 // rehydrateGoalRuns seeds goalRuns from it, and the Goal page renders the past
 // runs (the interrupted one with its explanatory status, neither with a Cancel
-// button). Cleans up the history file afterwards.
+// button). The fixture lives in its own temp directory, pointed at through
+// HELM_GOAL_RUN_HISTORY_PATH, and goes with it.
 //
 // Run:  node scripts/app-checks/test-goal-run-persistence.mjs
 import { launch } from "../checks-lib/harness.mjs";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const historyPath = path.join(__dirname, "..", "..", "goal-run-history.json");
+// ITS OWN FILE, via the seam, rather than the repo-root default.
+//
+// This used to write its fixture straight into the captain's real goal-run-history.json and
+// restore it afterwards from a copy held in memory - which is fine until the process dies
+// between the two, and it is his live data either way. It also stopped working on 2026-09-11
+// when the harness began isolating every store seam by default: the app read the isolated
+// temp file while this wrote the repo-root one, so the fixture was never seen. One change
+// fixes both, and the seam existed the whole time.
+//
+// Set BEFORE launch() so the harness sees it already set and leaves it alone - a test's own
+// override always wins over the default isolation.
+const historyPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "helm-goal-persist-")), "goal-run-history.json");
+process.env.HELM_GOAL_RUN_HISTORY_PATH = historyPath;
 
 function log(...a) {
   console.log("[goal-persist-e2e]", ...a);
@@ -25,9 +36,9 @@ function assert(cond, msg) {
   }
 }
 
-// Preserve any real history file so the dev app's state isn't clobbered.
-const hadExisting = fs.existsSync(historyPath);
-const backup = hadExisting ? fs.readFileSync(historyPath, "utf8") : null;
+// No backup/restore any more: the fixture lives in this run's own temp directory, so there is
+// nothing of his to preserve. The old pair held the real file's contents in MEMORY between
+// the two halves, which is a restore that does not survive the process being killed.
 
 const now = 1751800000000; // fixed timestamp (Date.now() avoided for determinism)
 const fixture = [
@@ -78,16 +89,14 @@ try {
   log("ERROR:", err.message);
 } finally {
   await app.close();
-  // Restore/remove the history file so we don't leave the fixture behind.
-  if (hadExisting) {
-    fs.writeFileSync(historyPath, backup, "utf8");
-  } else {
+  // The whole temp directory goes; nothing of the captain's was ever touched.
+  {
     try {
-      fs.unlinkSync(historyPath);
+      fs.rmSync(path.dirname(historyPath), { recursive: true, force: true });
     } catch {
       // ignore
     }
   }
-  log("cleanup: history file restored/removed");
+  log("cleanup: the fixture's temp directory is gone");
 }
 process.exit(exitCode);
