@@ -131,19 +131,83 @@ try {
       await new Promise(r => setTimeout(r, 150));
     }
     const mates = await window.helm.listMates();
-    return { text: el()?.textContent || "", names: (mates?.active || []).map(m => m.name) };
+    // EVERY SEAT KIND the board can draw, not just the coordinator pool. Asking only for
+    // .active is what let the subtitle omit the assistant and every project seat while this
+    // check stayed green (the captain, 2026-09-11, reading three names that did not match
+    // the three widgets under them).
+    return {
+      text: el()?.textContent || "",
+      names: (mates?.active || []).map(m => m.name),
+      assistant: mates?.assistant?.name || null,
+      projects: (mates?.projects || []).map(m => m.name),
+    };
   })()`);
-  ok(sub.names.length > 0, `first mates ARE on watch in this fixture (${sub.names.join(", ")})`);
+  const everySeatName = [...(sub.assistant ? [sub.assistant] : []), ...sub.names, ...sub.projects];
+  ok(everySeatName.length > 0, `seats ARE on watch in this fixture (${everySeatName.join(", ")})`);
   ok(!/No first mate on watch/.test(sub.text), `so the subtitle does not claim otherwise (${JSON.stringify(sub.text.slice(0, 70))})`);
-  ok(sub.names.every((n) => sub.text.includes(n)), "and it names the ones that are");
-  ok(/Fleet below/.test(sub.text), "and says where to act on them");
+  // Named, or COUNTED in the overflow - the line caps at four names, and dropping the rest
+  // silently would be the same wrong-set bug one cause further down.
+  const overflow = Number((/and (\d+) more/.exec(sub.text) || [])[1] || 0);
+  const namedInLine = everySeatName.filter((n) => sub.text.includes(n));
+  ok(
+    namedInLine.length + overflow >= everySeatName.length,
+    `and every seat the board draws is named or counted (${namedInLine.length} named + ${overflow} counted of ${everySeatName.length})`
+  );
+  // WHERE TO ACT, asserted as a place that EXISTS rather than as a phrase. This line used to
+  // pin "Fleet below", which outlived the Fleet itself (removed in 337895ce): the check was
+  // written when it was true, the section went, and the wrong sentence stayed green for it.
+  ok(!/Fleet/.test(sub.text), "and does not point at the Fleet, which this dashboard no longer has");
+  const pointsSomewhereReal = await app.eval(`(() => {
+    const text = document.getElementById("dashSubtitle")?.textContent || "";
+    if (!/widget/i.test(text)) return { ok: false, why: "the line names no place at all" };
+    // The place it names has to be on the page: a widget card the captain can act on.
+    const cards = document.querySelectorAll("section.wd[data-widget-id]");
+    return { ok: cards.length > 0, why: \`\${cards.length} widget card(s) on the page\` };
+  })()`);
+  ok(pointsSomewhereReal.ok, `and points at somewhere that is actually on this page (${pointsSomewhereReal.why})`);
 
   // With none on watch the original explanation is true again, so it comes back.
   const noMates = await app.eval(`(() => {
-    paintDashboardSubtitle([]);
+    paintDashboardSubtitle({ coordinators: [], assistant: null, projectSeats: [] });
     return document.getElementById("dashSubtitle")?.textContent || "";
   })()`);
   ok(/No first mate on watch/.test(noMates), "with none on watch, the old explanation is correct again and is used");
+
+  // The kind that was MISSING gets its own assertion, because "every seat is named" passes
+  // trivially on a fixture that happens to have only coordinators.
+  const eachKind = await app.eval(`(() => {
+    paintDashboardSubtitle({
+      coordinators: [{ name: "Pool Seat" }],
+      assistant: { name: "Standing Seat" },
+      projectSeats: [{ name: "Project Seat" }],
+    });
+    return document.getElementById("dashSubtitle")?.textContent || "";
+  })()`);
+  for (const name of ["Standing Seat", "Pool Seat", "Project Seat"]) {
+    ok(eachKind.includes(name), `a ${name.toLowerCase()} is named in the subtitle (${JSON.stringify(eachKind.slice(0, 90))})`);
+  }
+
+  // A BOARD BIGGER THAN THE NAME CAP, exercised on purpose: the real machine carries seven
+  // seats, so the overflow branch is the normal case there and the untested one here. A line
+  // that just stops at four is the wrong-set bug again, one cause further down.
+  const manySeats = await app.eval(`(() => {
+    paintDashboardSubtitle({
+      coordinators: [{ name: "S1" }, { name: "S2" }, { name: "S3" }],
+      assistant: { name: "S0" },
+      projectSeats: [{ name: "S4" }, { name: "S5" }, { name: "S6" }],
+    });
+    return document.getElementById("dashSubtitle")?.textContent || "";
+  })()`);
+  // Plain includes, not a regex: these seven tokens are distinct and none is a substring of
+  // another, and a hand-built word-boundary pattern inside a template literal is how the last
+  // three measurements in this repo came out wrong.
+  const manyNamed = ["S0", "S1", "S2", "S3", "S4", "S5", "S6"].filter((n) => manySeats.includes(n));
+  const manyOverflow = Number((/and (\d+) more/.exec(manySeats) || [])[1] || 0);
+  ok(
+    manyNamed.length + manyOverflow === 7,
+    `seven seats are all accounted for, named or counted (${manyNamed.length} + ${manyOverflow}) (${JSON.stringify(manySeats.slice(0, 90))})`
+  );
+  ok(manyOverflow > 0, `and the ones past the cap are COUNTED rather than dropped (${manyOverflow} more)`);
 
   // ---- 3 + 4. The quota widget names its window, and repaints on a reading --
   const quota = await app.eval(`(() => {
